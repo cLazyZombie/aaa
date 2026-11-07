@@ -46,7 +46,7 @@ SKIP=""
 LOGS=""
 TEE=""
 E2E_SPEC=""
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY=$(echo "${2:-}" | tr ',' ' '); shift 2 ;;
