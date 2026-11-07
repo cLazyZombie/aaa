@@ -115,6 +115,12 @@ pub(super) struct Snapshot {
     console_host_error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     console_host_code: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    console_input: Option<ConsoleInput>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    console_input_error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    console_input_code: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     children: Vec<ChildSnapshot>,
 }
@@ -133,6 +139,17 @@ struct ConsoleHost {
     kernel_100ns: u64,
     user_100ns: u64,
     threads: Vec<HostThread>,
+}
+// 앞의 최대 128개 사건에서 본 존재 여부다. false로 전체 큐의 키 부재를 단정하지 않는다.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConsoleInput {
+    input_mode: u32,
+    records_present: bool,
+    prefix_key_down: bool,
+    prefix_enter_down: bool,
+    prefix_cancel_down: bool,
+    prefix_eof_down: bool,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +188,8 @@ impl Snapshot {
             && self.threads.len() <= 32
             && self.console_host_error.len() < 80
             && self.console_host_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            && self.console_input_error.len() < 80
+            && self.console_input_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
             && self.children.len() <= 4
             && self.children.iter().all(|child| {
                 child.process_id != 0
@@ -217,6 +236,10 @@ impl Snapshot {
     #[cfg(target_arch = "x86_64")]
     pub(super) fn has_console_host_view(&self) -> bool {
         self.console_host.as_ref().is_some_and(|host| host.process_id != self.process_id && !host.threads.is_empty())
+    }
+    #[cfg(target_arch = "x86_64")]
+    pub(super) fn has_console_input_view(&self) -> bool {
+        self.console_input.is_some() && self.console_input_error.is_empty() && self.console_input_code.is_none()
     }
 }
 

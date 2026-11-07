@@ -1,5 +1,7 @@
 //! 시험과 함께 컴파일하는 외부 프로세스 수집기. CIM·셸·실행 중 컴파일을 쓰지 않는다.
 use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
+#[path = "snapshot_console.rs"]
+mod console;
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -309,6 +311,9 @@ fn capture_one(
     };
     mark("verify_child")?;
     let process = verify(pid, owner, exe)?;
+    mark("console_input")?;
+    // 심볼·스택 조회 전에 큐를 본다. 이 helper는 이미 확정된 실패 뒤에만 수집한다.
+    let input = console::capture(process.as_raw_handle(), pid, owner);
     let views = capture_threads(process.as_raw_handle(), pid, exe, phase)?;
     let mut snapshot = Snapshot {
         format: 1,
@@ -317,8 +322,18 @@ fn capture_one(
         console_host: None,
         console_host_error: String::new(),
         console_host_code: None,
+        console_input: None,
+        console_input_error: String::new(),
+        console_input_code: None,
         children: Vec::new(),
     };
+    match input {
+        Ok(input) => snapshot.console_input = Some(input),
+        Err(error) => {
+            snapshot.console_input_error = error.phase.into();
+            snapshot.console_input_code = Some(error.os_code);
+        }
+    }
     phase("console_host").map_err(|error| Failure {
         phase: "write_progress",
         error_type: "IoError",
