@@ -839,7 +839,11 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
                 } else {
                     100.0 - w.window.used_percent
                 };
-            Remaining { percent: remaining, observed_at_ms: w.window.observed_at_ms, hours: hours_to_reset(&w.window, now) }
+            Remaining {
+                percent: remaining,
+                observed_at_ms: w.window.observed_at_ms,
+                hours: hours_to_reset(&w.window, now),
+            }
         })
         .min_by(|a, b| a.percent.total_cmp(&b.percent))
 }
