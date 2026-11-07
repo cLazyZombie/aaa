@@ -451,12 +451,11 @@ impl Lab {
     /// 검증이 겹친 load 150에서 시작만으로 넘었다(t-1592).
     pub fn wait_host_ready(&mut self, tag: &str, node: &Node) -> Value {
         let deadline = Instant::now() + START_TIMEOUT;
-        let mut last = String::new();
         loop {
-            match node.json(&["status"]) {
+            let last = match node.json(&["status"]) {
                 Ok(v) => return v,
-                Err(e) => last = e,
-            }
+                Err(e) => e,
+            };
             let i = self.procs.iter().position(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
             if let Some(status) = self.procs[i].1.try_wait().unwrap() {
                 panic!("{tag}이 준비 전에 끝났다({status}). 마지막 status 오류: {last}\n{}", self.log(tag));

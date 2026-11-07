@@ -43,3 +43,8 @@ m13 Claude 시험은 fixture `record`에 dequeue 때만 1초 지연을 임시로
 | 1 | mac-b 겹침 둘 | 기준 main | 둘 다 실패: file_backup·deploy_start(둘 다), E2E 12(하나). load 128~154 |
 | 2 | mac-b 겹침 둘 | 수리 1·2차 | 둘 다 실패: machine_setup(둘 다), E2E 09(하나). 1회차 실패는 없음 |
 | 2 | mac-c 겹침 둘 | 수리 1·2차 | 하나 실패: instance. 다른 하나 통과 |
+| 3 | mac-b 겹침 둘 | 수리 전부 + 머신 잠금 | 둘 다 통과. 뒤 gate는 잠금을 298초 기다렸다(그동안 다른 작업으로 load 50~65). 전체 493·726초 |
+| 3 | mac-c 겹침 둘 | 수리 전부 + 머신 잠금 | 둘 다 통과. 뒤 gate는 잠금을 222초 기다렸다. 전체 311·579초 |
+| 3 | mac-a 단독 | 수리 전부 + 머신 잠금 | 통과, 143초 |
+
+3회차의 수리판과 최종 판의 차이는 lab 도우미의 변수 대입 꼴(clippy `unused_assignments`)뿐이며 동작은 같다.
