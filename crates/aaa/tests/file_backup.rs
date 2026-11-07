@@ -2,7 +2,7 @@
 mod lab;
 
 use aaa_common::private_file;
-use std::{fs, time::Duration};
+use std::fs;
 
 #[test]
 fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_write_lock() {
@@ -19,7 +19,7 @@ fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_wr
     ));
     fs::write(config, text).unwrap();
     lab.spawn("source", &node, &["host"]);
-    lab::wait_for("파일 백업 시험 host 준비", Duration::from_secs(5), || node.json(&["status"]).ok());
+    lab.wait_host_ready("source", &node);
     node.ok(&["project", "create", "demo"]);
     node.ok(&["idea", "new", "복원 시험"]);
     let png = lab.root.join("fixture.png");
@@ -49,7 +49,7 @@ fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_wr
     command.env("AAA_STATE_DIR", &output);
     lab.spawn_command("restored", command);
     let recovered = lab::Node { state: output.clone(), ..recovered };
-    lab::wait_for("복원 host 준비", Duration::from_secs(5), || recovered.json(&["status"]).ok());
+    lab.wait_host_ready("restored", &recovered);
     assert_eq!(recovered.ok(&["idea", "show", "n-0001"]), before);
     assert!(recovered.ok(&["db-backup", "status"])["last_attempt_ms"].is_null());
     lab.kill("restored");
