@@ -1,3 +1,5 @@
+- t-1584: [Ubuntu 머신 설정 시험의 스택 고갈 수리](testing-machine-setup-stack-t-1584.md)
+
 - t-1511: [thread fast mode 표시 검증](testing-fast-mode-t-1511.md)
 
 - t-1578: [아이디어·첨부 파일 백업 검증](testing-idea-file-backup-t-1578.md)

@@ -278,6 +278,8 @@ fn a_lab_machine_is_reached_trusted_detected_and_a_changed_key_stops() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let weak = rt.block_on(async {
         let h = host_for(&lab);
+        // 요청 future를 heap에 둬 시험 poll과 dispatcher의 큰 스택 프레임이 겹치지 않게 한다.
+        let call = |role, actor: &'static str, req| Box::pin(h.call(role, actor, req));
         // 처음 보는 키: 인증 전에 받은 키를 보이고 멈춘다
         let s = start(&h, "lab").await;
         assert_eq!(s.phase, MachineSetupPhase::Connecting);
@@ -292,16 +294,16 @@ fn a_lab_machine_is_reached_trusted_detected_and_a_changed_key_stops() {
         // 세션 안 agent·Reader는 믿지 못한다, 다른 지문은 거부
         let trust = |sha: &str| FrontRequest::MachineSetupTrust { job: s.job.clone(), host_key_sha256: sha.into() };
         assert_eq!(
-            h.call(DeviceRole::Local, "local:cli@coordinator", trust(&want)).await.unwrap_err().code,
+            call(DeviceRole::Local, "local:cli@coordinator", trust(&want)).await.unwrap_err().code,
             ErrorCode::Forbidden
         );
-        assert_eq!(h.call(DeviceRole::Reader, "device:r", trust(&want)).await.unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(call(DeviceRole::Reader, "device:r", trust(&want)).await.unwrap_err().code, ErrorCode::Forbidden);
         assert_eq!(
-            h.call(DeviceRole::Controller, WEB, trust("SHA256:nope")).await.unwrap_err().code,
+            call(DeviceRole::Controller, WEB, trust("SHA256:nope")).await.unwrap_err().code,
             ErrorCode::Conflict
         );
         // 믿으면 aaa 전용 known_hosts에 그 줄만 넣고 감지한다
-        let FrontResponse::MachineSetup { setup } = h.call(DeviceRole::Controller, WEB, trust(&want)).await.unwrap()
+        let FrontResponse::MachineSetup { setup } = call(DeviceRole::Controller, WEB, trust(&want)).await.unwrap()
         else {
             panic!()
         };
@@ -344,15 +346,13 @@ fn a_lab_machine_is_reached_trusted_detected_and_a_changed_key_stops() {
         assert_eq!((changed.phase, changed.host_key_state.as_deref()), (MachineSetupPhase::Failed, Some("changed")));
         // 목록(Reader도)·멈춤
         let FrontResponse::MachineSetups { setups } =
-            h.call(DeviceRole::Reader, "device:r", FrontRequest::MachineSetupList).await.unwrap()
+            call(DeviceRole::Reader, "device:r", FrontRequest::MachineSetupList).await.unwrap()
         else {
             panic!()
         };
         assert_eq!(setups.len(), 4);
         assert_eq!(setups[0].job, changed.job, "최근 것부터");
-        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupCancel { job: changed.job.clone() })
-            .await
-            .unwrap();
+        call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupCancel { job: changed.job.clone() }).await.unwrap();
         assert_eq!(h.setup_list().unwrap().len(), 3);
         Arc::downgrade(&h)
     });
