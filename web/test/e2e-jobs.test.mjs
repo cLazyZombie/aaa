@@ -8,14 +8,19 @@ const steps = [...source.matchAll(/^ {2}await step\("((?:[^"\\]|\\.)*)"/gm)].map
 const spec = { name: "37-chat-pages", steps };
 const options = { repeat: 2, workers: 8, durations: { [spec.name]: 120 }, only: null };
 
-test("긴 대화의 남긴 두 경계를 반복마다 정확히 한 번 실행한다", () => {
+test("새 기록과 긴 대화의 네 경계를 반복마다 정확히 한 번 실행한다", () => {
   const jobs = planJobs([spec], options);
-  assert.equal(steps.length, 2);
-  assert.equal(jobs.length, 4);
+  assert.deepEqual(steps, [
+    "새 기록 생성 전후: Chromium claude",
+    "새 기록 생성 전후: WebKit codex",
+    "긴 대화 앞 쪽: Chromium 1280 claude",
+    "긴 대화 앞 쪽: WebKit 390 codex",
+  ]);
+  assert.equal(jobs.length, 8);
   for (const r of [1, 2]) for (const name of steps) {
     assert.equal(jobs.filter((j) => j.r === r && new RegExp(j.filter).test(name)).length, 1, name);
   }
-  assert.ok(jobs.every((j) => j.weight === 60));
+  assert.ok(jobs.every((j) => j.weight === 30));
 });
 
 test("단일 worker는 기존 순서·실험실이고 grep은 선택한 조합만 분할한다", () => {

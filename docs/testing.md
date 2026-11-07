@@ -1,3 +1,5 @@
+- t-1580: [새 대화 기록 생성 전 상태 검증](testing-chat-missing-record-t-1580.md)
+
 - t-1511: [thread fast mode 표시 검증](testing-fast-mode-t-1511.md)
 
 - t-1578: [아이디어·첨부 파일 백업 검증](testing-idea-file-backup-t-1578.md)

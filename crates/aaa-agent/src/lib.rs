@@ -834,7 +834,7 @@ impl Agent {
         harness: &str,
         transcript: Option<&str>,
         harness_session: Option<&str>,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<PathBuf, chat::Error> {
         if harness == "codex" {
             let id = harness_session.ok_or("Codex thread-id가 없다")?;
             let root = self.codex_root_for(session);
@@ -878,7 +878,7 @@ impl Agent {
         let k = key.clone();
         let task = tokio::spawn(async move {
             let mut observed: Option<String> = None;
-            let mut path: Option<Result<PathBuf, String>> = None;
+            let mut path: Option<Result<PathBuf, chat::Error>> = None;
             let mut resolve_at = tokio::time::Instant::now();
             loop {
                 let now = tokio::time::Instant::now();
@@ -898,7 +898,7 @@ impl Agent {
                     (found, seen)
                 })
                 .await
-                .unwrap_or_else(|e| (Err(e.to_string()), "unavailable".into()));
+                .unwrap_or_else(|e| (Err(e.to_string().into()), "unavailable".into()));
                 if resolve {
                     resolve_at = now
                         + if found
@@ -1815,14 +1815,17 @@ impl Agent {
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-                .and_then(|r| {
-                    r.map(|page| AgentResponse::Chat {
+                .and_then(|r| match r {
+                    Ok(page) => Ok(AgentResponse::Chat {
                         truncated: page.before.is_some(),
                         messages: page.messages,
                         before: page.before,
                         history: Some(page.history),
-                    })
-                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+                    }),
+                    Err(chat::Error::Missing) => {
+                        Ok(AgentResponse::Chat { truncated: false, messages: vec![], before: None, history: None })
+                    }
+                    Err(error) => Err(ErrorBody::new(ErrorCode::NotFound, error.to_string())),
                 })
             }
             AgentRequest::Harnesses => {
