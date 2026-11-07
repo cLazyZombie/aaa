@@ -13,6 +13,8 @@
 # 기본: web fmt build test e2e public. test·e2e가 CPU 예산을 나눠 함께 돈다.
 # clippy는 개발 owner·CI가 명시해서 실행한다. 함께 고르면 준비 뒤 먼저 끝내 Cargo 잠금을 나눈다.
 # 1 CPU는 test·e2e도 직렬 실행하며 끝나면 public이다.
+# 같은 머신의 다른 검증과 test·e2e 단계는 겹치지 않는다: 머신 잠금(/tmp/aaa-ci-<uid>.lock, AAA_CI_MACHINE_LOCK)을
+# 얻을 때까지 기다린다(Unix, docs/verification.md 「같은 머신에서 겹친 검증」).
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      verify 실행 파일·unit 사전 컴파일(Windows release cfg도 check)
