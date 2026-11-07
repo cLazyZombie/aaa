@@ -17,6 +17,8 @@ describe("아이디어", () => {
     assert.equal(of("aaa 화면", "rc처럼 한다"), "aaa", "제목이 먼저");
     assert.equal(of("output 정리", "script 고침"), null, "낱말 속 글자는 아니다");
     assert.equal(of("pt 보스"), "pt");
+    assert.equal(of("pt 보스 방."), "pt", "문장 끝 점");
+    assert.equal(draftRepo({ idea: { title: "app.v2 고치기" }, text: "" }, ["app", "app.v2"]), "app.v2", "점 든 긴 이름");
     assert.equal(draftRepo({ idea: { title: "pt 보스" }, text: "" }, []), null, "목록이 오기 전");
   });
 

@@ -97,17 +97,22 @@ export function firstDraft(note: IdeaNote): { title: string; notes: string } {
   return { title: note.idea.title, notes: [`${note.idea.short_id} 정리본대로 한다.`, ...decided].join("\n") };
 }
 
-/** 글에 낱말로 나온 저장소 이름들. 영문·숫자·`_`·`-`가 붙으면 다른 낱말이다(`rc-unity`는 `rc`가 아니다, `pt에서`는 `pt`다) */
+/**
+ * 글에 낱말로 나온 저장소 이름들. 영문·숫자·`_`·`-`가 붙으면 다른 낱말이다(`rc-unity`는 `rc`가 아니다, `pt에서`는 `pt`다).
+ * 긴 이름부터 찾고 찾은 자리는 지운다: `app.v2`에서 `app`을 또 찾지 않는다
+ */
 function reposIn(text: string, repos: readonly string[]): Set<string> {
-  const lower = text.toLowerCase();
+  let lower = text.toLowerCase();
   const found = new Set<string>();
-  for (const repo of repos) {
+  for (const repo of [...repos].sort((a, b) => b.length - a.length)) {
     const name = repo.toLowerCase();
     if (!name) continue;
     for (let at = lower.indexOf(name); at >= 0; at = lower.indexOf(name, at + 1)) {
       const before = lower[at - 1] ?? "";
       const after = lower[at + name.length] ?? "";
-      if (!/[a-z0-9_-]/.test(before) && !/[a-z0-9_-]/.test(after)) { found.add(repo); break; }
+      if (/[a-z0-9_-]/.test(before) || /[a-z0-9_-]/.test(after)) continue;
+      found.add(repo);
+      lower = lower.slice(0, at) + " ".repeat(name.length) + lower.slice(at + name.length);
     }
   }
   return found;
