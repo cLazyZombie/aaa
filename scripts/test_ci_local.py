@@ -113,14 +113,15 @@ class CiLocal(unittest.TestCase):
         (self.root / "web/dist").mkdir(parents=True)
         # e2e의 기존 번들 최신성 검사도 그대로 실행한다.
         (self.root / "web/dist/index.html").touch()
-        for name in ("ci-local.sh", "ci_resources.py", "ci_stream.py", "ci_failure_excerpt.py", "workspace_metrics.py", "check_fixture_secrets.py"):
+        for name in ("ci-local.sh", "ci_resources.py", "ci_stream.py", "ci_failure_excerpt.py", "workspace_metrics.py", "check_fixture_secrets.py", "ci_machine_lock.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
         for name in ("cargo", "npm", "node", "python3", "public"):
             self.write_tool(self.root / "tools" / name)
         (self.root / "scripts/fixtures").mkdir()
         (self.root / "scripts/fixtures/secret-exceptions.json").write_text("[]")
         (self.root / "scripts/check-public.sh").write_text('exec "$FIXTURE_ROOT/tools/public"\n')
-        self.env = dict(os.environ, FIXTURE_ROOT=str(self.root),
+        # 실제 gate의 test 단계 안에서도 돈다: 그 gate가 쥔 머신 잠금을 기다리지 않게 실험실 잠금을 쓴다
+        self.env = dict(os.environ, FIXTURE_ROOT=str(self.root), AAA_CI_MACHINE_LOCK=str(self.root / "machine.lock"),
                         PATH=str(self.root / "tools") + os.pathsep + os.environ["PATH"])
         self.env.pop("GITHUB_ACTIONS", None)
 

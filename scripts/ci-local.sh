@@ -307,9 +307,17 @@ for s in $go; do rm -f "$LOGS/.$s.result"; done
 case " $go " in
   *" e2e "*) prepare_e2e_bin >"$LOGS/e2e-binary.log" 2>&1 || E2E_PREP_FAILED=1 ;;
 esac
+# 같은 머신의 다른 검증과 실행 단계(Rust 시험·웹 E2E)를 겹치지 않는다. 단계마다 CPU 예산을 이 머신 전체로 잡으므로
+# 둘이 겹치면 10 CPU에서 load 150이 되어 시험의 사건 대기가 상한을 넘었다(t-1592, docs/verification.md). 빌드는 겹쳐도
+# 된다. 잠금은 이 셸의 fd 9에 걸리고 셸이 끝나면(죽어도) 풀린다. 자식은 fd 9를 물려받지 않는다.
+machine_lock=""
+if [ -n "$go" ] && [ "$OS" != windows ]; then
+  machine_lock=${AAA_CI_MACHINE_LOCK:-/tmp/aaa-ci-$(id -u).lock}
+  { exec 9<>"$machine_lock" && python3 scripts/ci_machine_lock.py 9 "$LOGS"; } || exit 2
+fi
 if [ "$CI_CPUS" -eq 1 ] || [ "$(echo $go | wc -w)" -lt 2 ]; then
   for s in $ALL; do
-    case " $go " in *" $s "*) run_step "$s"; collect "$s" ;; esac
+    case " $go " in *" $s "*) run_step "$s" 9>&-; collect "$s" ;; esac
   done
 else
   echo "── 함께:$go"
@@ -319,13 +327,13 @@ else
   for s in $go; do : >"$LOGS/$s.log"; done
   stream_pid=""
   if [ -n "$TEE" ]; then
-    python3 scripts/ci_stream.py "$LOGS" "$stream_done" $go &
+    python3 scripts/ci_stream.py "$LOGS" "$stream_done" $go 9>&- &
     stream_pid=$!
   fi
   # 명령의 stdout/stderr는 로컬 로그에만 쓴다. 화면의 속도·종료가 검증 프로세스에 영향을 주지 않는다.
   step_pids=""
   for s in $go; do
-    TEE="" run_step "$s" &
+    TEE="" run_step "$s" 9>&- &
     step_pids="$step_pids $!"
   done
   for step_pid in $step_pids; do wait "$step_pid"; done
@@ -336,6 +344,7 @@ else
   rm -f "$stream_done"
   for s in $go; do collect "$s"; done
 fi
+[ -z "$machine_lock" ] || exec 9>&-
 for s in linux-clippy public; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done
