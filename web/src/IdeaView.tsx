@@ -18,7 +18,7 @@ import type { ChatMessage, IdeaNote, IdeaSummary, IdeaTaskDraft, OwnerChoice, Pa
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { MODAL, editable, scrolledAside, selecting } from "./herdr/edgeSwipe.ts";
 import {
-  IDEA_MEDIA_ACCEPT, ideaFileUrl, ideaMediaFile, ideaMediaSource, ideaMediaSpot, ideaSwipe, movedMedia, sectionBefore, firstDraft,
+  IDEA_MEDIA_ACCEPT, ideaFileUrl, ideaMediaFile, ideaMediaSource, ideaMediaSpot, ideaSwipe, movedMedia, sectionBefore, firstDraft, draftRepo,
   ideaModel, ideaModelChoices, withEditNote, withMediaAlt, withMediaName, withoutMedia, type IdeaPage,
 } from "./ideasModel";
 import { useLightbox } from "./Lightbox";
@@ -709,8 +709,15 @@ function HandoffDialog({ note, onClose, onDone }: { note: IdeaNote; onClose: () 
   const [repos, setRepos] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const guess = draftRepo(note, repos);
   useEffect(() => {
-    call({ op: "tasks" }).then((r) => { if (r.kind === "task_board") setRepos(r.repos); }, () => {});
+    call({ op: "tasks" }).then((r) => {
+      if (r.kind !== "task_board") return;
+      setRepos(r.repos);
+      // 목록이 오기 전에는 저장소를 고를 수 없으니 아직 비어 있는 초안만 채운다
+      const repo = draftRepo(note, r.repos);
+      if (repo !== null) setDrafts((list) => list.map((d) => (d.repo === null ? { ...d, repo } : d)));
+    }, () => {});
   }, []);
   const set = (i: number, d: Partial<IdeaTaskDraft>) => setDrafts((list) => list.map((x, k) => (k === i ? { ...x, ...d } : x)));
   const submit = async () => {
@@ -747,7 +754,7 @@ function HandoffDialog({ note, onClose, onDone }: { note: IdeaNote; onClose: () 
           {problem && <p className="confirm-error" role="alert">{problem}</p>}
         </div>
         <footer className="modal-footer">
-          <button type="button" className="btn idea-draft-add" data-testid="idea-draft-add" disabled={busy} onClick={() => setDrafts((list) => [...list, { title: "", repo: null, notes: "" }])}>할 일 더하기</button>
+          <button type="button" className="btn idea-draft-add" data-testid="idea-draft-add" disabled={busy} onClick={() => setDrafts((list) => [...list, { title: "", repo: guess, notes: "" }])}>할 일 더하기</button>
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>취소</button>
           <button type="button" className="btn btn-primary" data-testid="idea-handoff-submit" disabled={busy || drafts.some((d) => !d.title.trim())} onClick={() => void submit()}>넘기기</button>

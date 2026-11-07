@@ -83,8 +83,8 @@ export function sectionBefore(root: Element, range: Range): string | null {
   return found;
 }
 
-/** 할 일로 넘길 첫 초안: 제목은 아이디어 제목, 메모는 노트의 「결정」 줄(없으면 빈 메모) */
-export function firstDraft(note: IdeaNote): { title: string; repo: string; notes: string } {
+/** 할 일로 넘길 첫 초안: 제목은 아이디어 제목, 메모는 노트의 「결정」 줄(없으면 빈 메모). 저장소는 `draftRepo`가 고른다 */
+export function firstDraft(note: IdeaNote): { title: string; notes: string } {
   const lines = note.text.split("\n");
   const at = lines.findIndex((l) => /^##\s+결정\s*$/.test(l));
   const decided: string[] = [];
@@ -94,7 +94,35 @@ export function firstDraft(note: IdeaNote): { title: string; repo: string; notes
       if (l.trim()) decided.push(l);
     }
   }
-  return { title: note.idea.title, repo: "", notes: [`${note.idea.short_id} 정리본대로 한다.`, ...decided].join("\n") };
+  return { title: note.idea.title, notes: [`${note.idea.short_id} 정리본대로 한다.`, ...decided].join("\n") };
+}
+
+/** 글에 낱말로 나온 저장소 이름들. 영문·숫자·`_`·`-`가 붙으면 다른 낱말이다(`rc-unity`는 `rc`가 아니다, `pt에서`는 `pt`다) */
+function reposIn(text: string, repos: readonly string[]): Set<string> {
+  const lower = text.toLowerCase();
+  const found = new Set<string>();
+  for (const repo of repos) {
+    const name = repo.toLowerCase();
+    if (!name) continue;
+    for (let at = lower.indexOf(name); at >= 0; at = lower.indexOf(name, at + 1)) {
+      const before = lower[at - 1] ?? "";
+      const after = lower[at + name.length] ?? "";
+      if (!/[a-z0-9_-]/.test(before) && !/[a-z0-9_-]/.test(after)) { found.add(repo); break; }
+    }
+  }
+  return found;
+}
+
+/**
+ * 넘기기 초안의 저장소 기본값: 아이디어 제목에 나온 저장소 이름, 제목에 없으면 노트에 나온 이름.
+ * 한 곳에 둘 이상 나오면 짐작하지 않고 정하지 않음(null)이다
+ */
+export function draftRepo(note: Pick<IdeaNote, "text"> & { idea: Pick<IdeaNote["idea"], "title"> }, repos: readonly string[]): string | null {
+  for (const text of [note.idea.title, note.text]) {
+    const found = reposIn(text, repos);
+    if (found.size > 0) return found.size === 1 ? [...found][0]! : null;
+  }
+  return null;
 }
 
 // ── 노트 그림 붙이기·편집(t-1575) ──────────────────────────────────────────────

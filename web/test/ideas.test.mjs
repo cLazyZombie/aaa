@@ -1,10 +1,25 @@
 // 아이디어 화면(t-1260): 휴대폰 페이지 쓸기(결정 24), 고친 노트 머리(결정 16), 노트 인용 꼴(결정 9·17), 노트 그림 주소의 거름.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ideaFileUrl, ideaLinkTarget, ideaModel, ideaModelChoices, ideaSwipe, withEditNote } from "../src/ideasModel.ts";
+import { draftRepo, ideaFileUrl, ideaLinkTarget, ideaModel, ideaModelChoices, ideaSwipe, withEditNote } from "../src/ideasModel.ts";
 import { formatNotes } from "../src/reviewNoteStore.ts";
 
 describe("아이디어", () => {
+  // 할 일로 넘기기 저장소 기본값(t-1616): 제목, 없으면 노트에 낱말로 나온 저장소 이름. 둘 이상이면 정하지 않음
+  it("넘기기 저장소 기본값", () => {
+    const repos = ["rc", "no2-engine", "aaa", "pt", "rc-unity"];
+    const of = (title, text = "") => draftRepo({ idea: { title }, text }, repos);
+    assert.equal(of("pt 보스와 보스 방"), "pt");
+    assert.equal(of("PT에서 보스 방"), "pt", "대소문자·한글 조사");
+    assert.equal(of("rc-unity 저장 고치기"), "rc-unity", "rc가 아니다");
+    assert.equal(of("rc와 pt 함께"), null, "둘이면 짐작하지 않는다");
+    assert.equal(of("보스 방", "## 결정\n- pt 탑에 넣는다"), "pt", "제목에 없으면 노트");
+    assert.equal(of("aaa 화면", "rc처럼 한다"), "aaa", "제목이 먼저");
+    assert.equal(of("output 정리", "script 고침"), null, "낱말 속 글자는 아니다");
+    assert.equal(of("pt 보스"), "pt");
+    assert.equal(draftRepo({ idea: { title: "pt 보스" }, text: "" }, []), null, "목록이 오기 전");
+  });
+
   // 진행 모델(t-1581): 바꾼 뒤 다음 말 전까지는 열린 앞 thread의 모델을 함께 보이고, 끝난 thread·옛 host는 보이지 않는다
   it("진행 모델 칩", () => {
     assert.equal(ideaModel(undefined, null), null, "옛 host");
