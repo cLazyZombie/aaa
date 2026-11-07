@@ -993,3 +993,49 @@ fn nearly_exhausted_weekly_or_session_windows_go_behind_other_accounts() {
         assert_eq!(choose(&l, &p).unwrap().0, expected, "5시간 {used}% 사용");
     }
 }
+
+// 필요: 지정 예약은 풀 자동 선택으로 우회하지 않고 실제 인증·현재 한도만 기다린다.
+#[test]
+fn reserved_account_waits_for_auth_and_limit_but_query_failure_is_not_auth_failure() {
+    let l = Lab::new();
+    l.h.register_account("work", "codex", &codex_auth()).unwrap();
+    let profile = codex_profile();
+    assert!(l.h.check_reserved_account("work", &profile).is_ok(), "미관측 계정 허용");
+    l.h.db.set_meta("account-meta:work", r#"{"rejected_ms":1}"#).unwrap();
+    let e = l.h.check_reserved_account("work", &profile).unwrap_err();
+    assert_eq!(e.code, ErrorCode::Unavailable);
+    assert!(e.message.contains("인증 끊김"));
+    l.h.db.set_meta("account-meta:work", "{}").unwrap();
+    let now = util::now_ms();
+    let generation = l.h.accounts.generation("work").unwrap();
+    let snapshot = QuotaSnapshot {
+        input_missing: None,
+        generation: generation.clone(),
+        source: QuotaSource::CodexRpc,
+        sampled_at_ms: now,
+        windows: vec![QuotaWindow {
+            limit_id: "codex".into(),
+            window_id: "weekly".into(),
+            scope: None,
+            duration_mins: Some(10080),
+            used_percent: 100.0,
+            observed_at_ms: now,
+            resets_at_ms: Some(now + 3_600_000),
+        }],
+        problem: None,
+        retry_at_ms: None,
+    };
+    let mut entry = serde_json::json!({"generation": generation, "attempted_ms": now, "next_ms": now + 60_000,
+        "readings": {"host": {"snapshot": snapshot, "machine": "mac-a", "received_at_ms": now}}});
+    l.h.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+    assert!(l.h.check_reserved_account("work", &profile).unwrap_err().message.contains("사용 한도 도달"));
+    entry["readings"]["host"]["snapshot"]["problem"] = serde_json::json!(QuotaProblem::Expired);
+    entry["readings"]["host"]["snapshot"]["windows"] = serde_json::json!([]);
+    l.h.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+    assert!(l.h.check_reserved_account("work", &profile).is_ok(), "조회 인증 실패는 작업 인증 거부가 아니다");
+    let root = l._root.0.join("host");
+    std::fs::rename(root.join("secrets.key"), root.join("held.key")).unwrap();
+    assert!(l.h.check_reserved_account("work", &profile).unwrap_err().message.contains("인증 잠김"));
+    std::fs::rename(root.join("held.key"), root.join("secrets.key")).unwrap();
+    assert!(l.h.check_reserved_account("work", &profile).is_ok());
+}

@@ -740,6 +740,9 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long)]
         profile: Option<String>,
+        /// 시작할 때까지 유지할 계정. 쓸 수 없으면 다른 계정으로 바꾸지 않고 기다린다
+        #[arg(long)]
+        account: Option<String>,
         /// 앞 할 일(ID·제목). 모두 완료 보관된 뒤 자리 대기에 든다. 여러 값·반복 지정 가능
         #[arg(long, value_name = "ID_OR_TITLE", num_args = 1..)]
         after: Vec<String>,
@@ -2297,7 +2300,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd: TaskCmd::Queue } => {
             front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
         }
-        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile, after, auto_merge, user_request } } => {
+        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile, account, after, auto_merge, user_request } } => {
             let project = project_or_here(None)?;
             auto_merge_first(&project, &task, auto_merge.as_deref(), user_request)?;
             let response = front_call(FrontRequest::ThreadStartPreview {
@@ -2318,6 +2321,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         block: p.task_block,
                         profile: profile.unwrap_or(p.profile),
                         profile_revision: p.profile_revision,
+                        account,
                         after: after.first().cloned(),
                         after_all: Some(after),
                     },
@@ -4363,6 +4367,11 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         {
             anyhow::bail!("여러 앞 할 일을 붙인 예약은 Front API 1.150 이상 host가 필요하다");
         }
+        if matches!(&req, FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { account: Some(_), .. }, .. })
+            && c.proto.minor < 164
+        {
+            anyhow::bail!("계정을 지정한 예약은 Front API 1.164 이상 host가 필요하다");
+        }
         // 옛 host는 모르는 앞 할 일 칸을 버리고 바로 자리 대기에 넣는다.
         if matches!(&req, FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { after: Some(_), .. }, .. })
             && c.proto.minor < 113
@@ -6177,12 +6186,13 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::TaskQueue { entries } => {
             for q in entries {
                 s.push_str(&format!(
-                    "{} · {} · {:?} · {} · 모델 {} · 머신 {}{} · {}{}\n",
+                    "{} · {} · {:?} · {} · 모델 {} · 계정 {} · 머신 {}{} · {}{}\n",
                     q.position,
                     q.task.title,
                     q.state,
                     q.task.short_id.as_deref().unwrap_or(&q.task_id),
                     q.profile,
+                    q.account.as_deref().unwrap_or("자동"),
                     q.machine.as_deref().unwrap_or("자동"),
                     if q.predecessors().is_empty() {
                         String::new()

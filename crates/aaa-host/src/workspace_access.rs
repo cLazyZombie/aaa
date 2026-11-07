@@ -312,6 +312,7 @@ mod tests {
             .task_queue(
                 "demo",
                 QueueOp::Reserve {
+                    account: None,
                     task: task.title,
                     block: task.block_sha256,
                     profile: "claude".into(),

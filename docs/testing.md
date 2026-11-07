@@ -1,3 +1,4 @@
+- t-1615: [예약 지정 계정 검증](testing-reservation-account-t-1615.md)
 - t-1592: [착지 gate를 어느 Mac에서도: 겹친 검증의 시험 결함](testing-landing-load-t-1592.md)
 - t-1596: [Windows workspace_metrics None panic 수리](testing-workspace-metrics-none-t-1596.md)
 - t-1584: [Ubuntu 머신 설정 시험의 스택 고갈 수리](testing-machine-setup-stack-t-1584.md)

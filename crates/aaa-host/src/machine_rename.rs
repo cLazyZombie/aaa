@@ -497,6 +497,7 @@ mod tests {
         let mut task = task.clone();
         crate::tasks::fill_agent(std::slice::from_mut(&mut task), &["codex".into()]);
         let reservation = aaa_proto::TaskReservation {
+            account: None,
             selection: aaa_proto::TaskChoicePin {
                 owner: task.owner.clone(),
                 profile: "codex".into(),

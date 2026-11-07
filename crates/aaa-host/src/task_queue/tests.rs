@@ -222,6 +222,7 @@ async fn reservation_edits_require_new_approval_and_cancel_survives_reopen() {
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.title,
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -432,6 +433,7 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.title,
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -564,6 +566,7 @@ async fn account_wait_does_not_hide_the_next_reservations_actual_reason() {
             .task_queue(
                 "demo",
                 QueueOp::Reserve {
+                    account: None,
                     task: t.title,
                     block: t.block_sha256,
                     profile: "claude".into(),
@@ -679,6 +682,7 @@ async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
                 .task_queue(
                     "demo",
                     QueueOp::Reserve {
+                        account: None,
                         task: t.title,
                         block: t.block_sha256,
                         profile: "claude".into(),
@@ -853,6 +857,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: row.task.title,
                 block: row.approved_block,
                 profile: row.profile,
@@ -978,6 +983,7 @@ async fn stale_model_approval_cannot_migrate_or_unlink_task() {
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.title,
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -1078,6 +1084,7 @@ async fn approved_default_model_is_protected_even_while_the_task_field_is_empty(
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.title,
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -1132,6 +1139,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: changed.title,
                 block: changed.block_sha256,
                 profile: "codex".into(),
@@ -1173,6 +1181,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: current.title,
                 block: current.block_sha256,
                 profile: "codex".into(),
@@ -1554,6 +1563,7 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.title,
                 block: t.block_sha256,
                 profile: profile.clone(),
@@ -1951,6 +1961,7 @@ async fn reserve_after(lab: &Lab, title: &str, after: Option<&str>) -> Result<Fr
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.short_id.unwrap(),
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -2038,6 +2049,7 @@ async fn reserve_many(lab: &Lab, title: &str, after: &[&str]) -> Result<FrontRes
         .task_queue(
             "demo",
             QueueOp::Reserve {
+                account: None,
                 task: t.short_id.unwrap(),
                 block: t.block_sha256,
                 profile: "claude".into(),
@@ -2165,4 +2177,39 @@ async fn multiple_predecessors_wait_through_failure_park_restart_and_detect_dele
     assert_eq!(q.state, S::Check);
     assert!(q.reason.contains(&expected[1]) && q.reason.contains("활성 목록과 완료 보관에 없다"));
     assert!(q.thread.is_none());
+}
+
+// 필요: 승인 계정·선행 조건이 SQLite 왕복과 host 재시작 뒤에도 함께 남아야 한다.
+#[tokio::test]
+async fn reserved_account_and_predecessor_survive_reopen_and_legacy_defaults_to_auto() {
+    let lab = Lab::new();
+    lab.h.register_account("sample", "claude", &aaa_test_support::token("queue-pinned")).unwrap();
+    lab.write("## Backlog\n- [ ] 선행 (claude@mac-offline) [작업 폴더]\n  선행 범위\n- [ ] 후행 (claude@mac-offline) [작업 폴더]\n  후행 범위\n");
+    let tasks = lab.h.task_board("demo").unwrap().tasks;
+    let t = &tasks[1];
+    let action = QueueOp::Reserve {
+        task: t.short_id.clone().unwrap(),
+        block: t.block_sha256.clone(),
+        profile: "claude".into(),
+        profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+        account: Some("sample".into()),
+        after: tasks[0].short_id.clone(),
+        after_all: None,
+    };
+    lab.h.task_queue("demo", action.clone(), "local:cli").await.unwrap();
+    let row = lab.h.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(row.account.as_deref(), Some("sample"));
+    assert_eq!(row.predecessors(), &[tasks[0].id.clone().unwrap()]);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(reopened.db.queue_list("demo").unwrap(), vec![row.clone()]);
+    reopened.queue_pass("demo").await.unwrap();
+    let waiting = reopened.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(waiting.account, row.account);
+    assert!(waiting.reason.contains("완료 대기"));
+    let mut legacy = serde_json::to_value(row).unwrap();
+    legacy.as_object_mut().unwrap().remove("account");
+    assert!(serde_json::from_value::<TaskReservation>(legacy).unwrap().account.is_none());
+    let mut legacy = serde_json::to_value(action).unwrap();
+    legacy.as_object_mut().unwrap().remove("account");
+    assert!(matches!(serde_json::from_value::<QueueOp>(legacy).unwrap(), QueueOp::Reserve { account: None, .. }));
 }

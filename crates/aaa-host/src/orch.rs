@@ -1773,6 +1773,11 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
+        if a.reservation.is_some()
+            && let Some(account) = &a.account
+        {
+            self.check_reserved_account(account, &profile)?;
+        }
         let auto_account = a.account.is_none() && self.pool_harness_enabled(&profile.harness)?;
         if a.account.is_none() && !auto_account {
             a.account = self.default_account(&profile.harness)?;
