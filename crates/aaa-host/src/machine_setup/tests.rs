@@ -527,9 +527,10 @@ fn the_binary_reaches_a_private_remote_temp_dir_and_a_mismatch_removes_it() {
         .await
         .unwrap();
         assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
-        // 보낼 파일: `--version`에 판을 답하는 작은 실행 파일
+        // 보낼 파일: `--version`에 판을 답하는 작은 실행 파일. 원격 임시 폴더는 같은 사용자의 TMPDIR라 같은 Mac에서 겹친 다른
+        // 검증의 같은 시험도 쓴다: 실험실 경로를 내용에 넣어 이 시험이 놓은 폴더만 센다(t-1592)
         let file = lab.root.join("fake-aaa");
-        std::fs::write(&file, "#!/bin/sh\necho 'aaa 9.9.9'\n").unwrap();
+        std::fs::write(&file, format!("#!/bin/sh\n# {}\necho 'aaa 9.9.9'\n", lab.root.display())).unwrap();
         let sha = hex::encode(Sha256::digest(std::fs::read(&file).unwrap()));
         let ssh = h.ssh();
         let t = parse_target("lab").unwrap();
@@ -553,7 +554,8 @@ fn the_binary_reaches_a_private_remote_temp_dir_and_a_mismatch_removes_it() {
     });
 }
 
-/// 실험실 원격(같은 머신)의 `aaa-setup.*` 임시 폴더 중 `file`과 같은 `aaa`를 가진 것(나란히 도는 다른 시험의 폴더는 내용이 다르다)
+/// 실험실 원격(같은 머신)의 `aaa-setup.*` 임시 폴더 중 `file`과 같은 `aaa`를 가진 것(나란히 도는 다른 시험·같은 Mac의 다른
+/// 검증의 폴더는 내용이 다르다)
 #[cfg(unix)]
 fn remote_setup_dirs(file: &Path) -> Vec<PathBuf> {
     let want = std::fs::read(file).unwrap();
