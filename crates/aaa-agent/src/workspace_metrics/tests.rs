@@ -139,6 +139,13 @@ fn collect_lines(cwd: &Path, store: &Path, known: &[String]) -> Result<Option<aa
     // 집계 규칙·오류 원인 시험은 실제 Git을 쓰되 머신 부하로 시간 상한에 걸리지 않게 한다.
     lines::collect_with_elapsed(cwd, store, known, || Duration::ZERO)
 }
+fn collect_main_fixture(state: &Path, cwd: &Path) -> WorkspaceCollected {
+    // main/push 계약도 실제 Git·캐시를 쓰고, 코드 집계의 경과 출처만 고정한다.
+    collect_with_lines(state, cwd, &[], |cwd, store, known| {
+        lines::collect_main_with_elapsed(cwd, store, known, || Duration::ZERO)
+    })
+    .unwrap()
+}
 #[test]
 fn code_lines_use_commit_objects_incrementally_handle_rename_delete_and_keep_mixed_code_as_total() {
     let l = Lab::new();
@@ -371,11 +378,11 @@ fn legacy_runs_need_main_checkout_but_confirmed_records_and_code_follow_pushed_o
     let state = Lab::new();
     fixture(&l);
     main_repo(&l);
-    let saved = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    let saved = collect_main_fixture(&state.0, &l.0);
     assert_eq!(saved.runs.len(), 1);
     assert_eq!(saved.code_lines.as_ref().unwrap().branch, "main");
     git(&l, &["checkout", "-qb", "thread"]);
-    let branch = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    let branch = collect_main_fixture(&state.0, &l.0);
     assert_eq!(branch.runs, saved.runs, "확정한 main 결과는 현재 checkout과 독립이다");
     assert_eq!(branch.code_lines.unwrap().commit, saved.code_lines.unwrap().commit);
     assert!(branch.remote_id.is_some());
@@ -383,13 +390,39 @@ fn legacy_runs_need_main_checkout_but_confirmed_records_and_code_follow_pushed_o
     l.put("src/app.ts", "export const n = 2;\n");
     git(&l, &["add", "src"]);
     git(&l, &["commit", "-qm", "not pushed"]);
-    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, saved.runs);
+    assert_eq!(collect_main_fixture(&state.0, &l.0).runs, saved.runs);
     git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let main = mainline::Mainline::read(&l.0).unwrap();
     assert!(!main.accepts(main.stable_since_ms - 1, main.stable_since_ms + 100));
     // 오래된 캐시 판은 전혀 읽지 않는다.
     fixture(&l);
-    assert!(collect(&Lab::new().0, &l.0, "ws", &[]).unwrap().runs.is_empty());
+    assert!(collect_main_fixture(&Lab::new().0, &l.0).runs.is_empty());
+}
+
+#[test]
+fn code_budget_exhaustion_keeps_confirmed_runs_without_inventing_code_or_rescanning() {
+    let l = Lab::new();
+    let state = Lab::new();
+    fixture(&l);
+    main_repo(&l);
+    let mut cause = String::new();
+    let result = collect_with_lines(&state.0, &l.0, &[], |cwd, store, known| {
+        let error = lines::collect_main_with_elapsed(cwd, store, known, || Duration::from_millis(750)).unwrap_err();
+        cause = error.to_string();
+        assert!(!store.join("lines.json").exists(), "실패를 성공 스냅샷으로 저장하지 않는다");
+        Err(error)
+    })
+    .unwrap();
+    assert_eq!(cause, "코드 집계 경과 상한");
+    assert_eq!(result.runs.len(), 1);
+    assert!(result.code_lines.is_none());
+    assert!(result.notes.iter().any(|n| n.contains("코드 줄 수 수집 대기")));
+    let again = collect_with_lines(&state.0, &l.0, &[], |cwd, store, known| {
+        lines::collect_main_with_elapsed(cwd, store, known, || panic!("같은 커밋은 다시 스캔하지 않는다"))
+    })
+    .unwrap();
+    assert_eq!(again.runs, result.runs);
+    assert!(again.code_lines.is_none());
 }
 
 fn archive_fixture(l: &Lab, name: &str, commit: &str, outcome: &str) {
@@ -415,19 +448,19 @@ fn ci_archive_waits_for_main_then_survives_stale_checkout_deleted_sources_and_re
     archive_fixture(&l, "success", &pushed, "succeeded");
     archive_fixture(&l, "failure", &pushed, "failed");
     git(&l, &["checkout", "-q", "main"]);
-    let before = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    let before = collect_main_fixture(&state.0, &l.0);
     assert!(before.runs.is_empty());
     assert!(before.notes.iter().any(|n| n.contains("반영 대기 CI 실행 2개")));
     git(&l, &["update-ref", "refs/remotes/origin/main", &pushed]);
     assert_eq!(git(&l, &["rev-parse", "HEAD"]), old, "등록 checkout은 옛 main 그대로");
-    let after = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    let after = collect_main_fixture(&state.0, &l.0);
     assert_eq!(after.runs.len(), 2, "push 전의 부정 결과를 캐시하지 않는다");
     assert!(after.runs.iter().all(|r| r.commit == pushed && r.build_ms == Some(250) && r.artifact_bytes == Some(1234)));
     assert!(after.runs.iter().any(|r| r.outcome == "failed"));
     assert_eq!(after.code_lines.unwrap().total_lines, 2, "코드는 origin/main 객체 기준");
     fs::remove_dir_all(l.0.join(".git/aaa-workspace-runs/run-success")).unwrap();
     fs::remove_dir_all(l.0.join(".git/aaa-workspace-runs/run-failure")).unwrap();
-    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, after.runs);
+    assert_eq!(collect_main_fixture(&state.0, &l.0).runs, after.runs);
 }
 
 #[test]

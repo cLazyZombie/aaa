@@ -532,6 +532,14 @@ pub fn collect(
     _workspace_key: &str,
     known_code_commits: &[String],
 ) -> Result<WorkspaceCollected> {
+    collect_with_lines(state, cwd, known_code_commits, lines::collect_main)
+}
+fn collect_with_lines(
+    state: &Path,
+    cwd: &Path,
+    known_code_commits: &[String],
+    collect_lines: impl FnOnce(&Path, &Path, &[String]) -> Result<Option<aaa_proto::CodeLines>>,
+) -> Result<WorkspaceCollected> {
     READ_BYTES.with(|read| read.set(0));
     BUDGET_EXHAUSTED.with(|flag| flag.set(false));
     let remote_id = lines::text(cwd, &["remote", "get-url", "origin"]).ok().and_then(|url| mainline::remote_id(&url));
@@ -719,7 +727,7 @@ pub fn collect(
         let lines_store = state.join("workspace-metrics-v2").join(hex::encode(Sha256::digest(remote.as_bytes())));
         fs::create_dir_all(&lines_store)?;
         let _lines_lock = CollectionLock(aaa_common::private_file::lock(&lines_store.join("lines.lock"))?);
-        match lines::collect_main(cwd, &lines_store, known_code_commits) {
+        match collect_lines(cwd, &lines_store, known_code_commits) {
             Ok(l) => result.code_lines = l,
             Err(source_error) => {
                 aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
