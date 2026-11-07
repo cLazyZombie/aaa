@@ -288,7 +288,15 @@ impl Host {
         let _gate = self.queue_gate.lock().await;
         match action {
             QueueOp::List => unreachable!(),
-            QueueOp::Reserve { task, block, profile, profile_revision: approved_profile, after, after_all } => {
+            QueueOp::Reserve {
+                task,
+                block,
+                profile,
+                profile_revision: approved_profile,
+                account,
+                after,
+                after_all,
+            } => {
                 let board = self.task_board(project)?;
                 let old = tasks::find(&board.tasks, &task)
                     .or_else(|| board.tasks.iter().find(|t| t.id.as_deref() == Some(&task)))
@@ -374,6 +382,12 @@ impl Host {
                 if profile_revision != approved_profile {
                     return Err(err(ErrorCode::Conflict, "확인한 모델·effort 설정이 바뀌었다"));
                 }
+                if let Some(name) = &account {
+                    let resolved = self.configured_thread_profile(Some(project), &profile)?;
+                    if !self.accounts.list()?.iter().any(|a| &a.name == name && a.harness == resolved.harness) {
+                        return Err(err(ErrorCode::BadRequest, "등록 계정과 profile의 harness가 다르거나 계정이 없다"));
+                    }
+                }
                 let title = old.title.clone();
                 self.task_identify(project)?;
                 let board = self.task_board(project)?;
@@ -452,6 +466,7 @@ impl Host {
                             task_id: id,
                             approved_block: t.block_sha256.clone(),
                             profile,
+                            account,
                             model,
                             effort,
                             profile_revision,
@@ -865,7 +880,7 @@ impl Host {
                 over_limit: None,
                 reservation: Some((row.task_id.clone(), row.approved_block.clone())),
                 machine_override: None,
-                account: None,
+                account: row.account.clone(),
                 holds: vec![],
                 project: project.into(),
                 title: String::new(),

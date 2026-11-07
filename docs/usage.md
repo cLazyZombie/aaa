@@ -196,6 +196,10 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 
 할 일을 자리 나면 시작하려면 설명·완료 범위 메모와 저장소(또는 `작업 폴더`)를 저장한 뒤
 `aaa task reserve d-0001`로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
+`aaa task reserve d-0001 --account example-account` 또는 웹 예약의 계정 칸으로 계정을 지정할 수 있다.
+지정 계정은 host 재시작 뒤에도 유지하며 `--after`와 함께 쓸 수 있다. 한도 도달·인증 끊김·인증 잠김이면
+예약 상태에 이유를 보이고 같은 계정을 기다린다. 계정을 생략하면 시작 시 기존 자동 선택을 쓴다.
+예약 갱신 때도 같은 계정을 쓸 경우 `--account`를 다시 주며, 웹은 기존 선택을 채운다.
 `aaa task queue`는 차례·모델/effort·머신·대기 사유·실제 thread를 읽는다.
 `aaa task queue --json`도 같은 읽기 전용 조회이며 승인판·차례·대기 이유·변경 시각을 바꾸지 않는다.
 목록만 보려고 `reserve`를 다시 부르지 않는다. `reserve`는 지금 내용으로 실행 승인을 갱신하는 변경이다.

@@ -230,6 +230,23 @@ impl Host {
         Ok(())
     }
 
+    /// 지정 예약은 직접 시작과 달리 알려진 한도·인증 문제를 풀 때까지 같은 계정으로 기다린다.
+    pub(crate) fn check_reserved_account(&self, account: &str, profile: &ResolvedProfile) -> Result<(), ErrorBody> {
+        let wait = |why: &str| crate::err(aaa_proto::ErrorCode::Unavailable, format!("지정 계정 {account}: {why}"));
+        let credential = self.accounts.credential(account).map_err(|_| wait("인증 잠김·없음"))?;
+        if credential.harness != profile.harness {
+            return Err(bad("계정과 profile의 harness가 다르다"));
+        }
+        if crate::account_meta::health(&self.account_meta(account), util::now_ms()).broken() {
+            return Err(wait("인증 끊김 · 다시 로그인 대기"));
+        }
+        let (quota, _) = self.cached_allocation_quota(account, &profile.harness)?;
+        if known_limit(&quota, Some(&profile.model), util::now_ms()) {
+            return Err(wait("사용 한도 도달 · 한도 회복 대기"));
+        }
+        Ok(())
+    }
+
     pub(crate) async fn account_selection_input(
         self: &Arc<Self>,
         _project: &str,

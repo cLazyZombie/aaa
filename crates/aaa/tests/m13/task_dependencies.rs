@@ -59,3 +59,59 @@ fn multiple_predecessors_start_once_after_all_archives_and_capacity_across_resta
     assert_eq!(w.show(&started)["pane"], v["pane"]);
     assert_eq!(w.h.ok(&["thread", "list"])["threads"].as_array().unwrap().len(), 2);
 }
+
+// 필요: 실제 CLI --account·--after가 재시작을 넘어 같은 인증으로 agent에 전달되는지 확인한다.
+#[test]
+fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() {
+    let mut w = world();
+    let deadline = Duration::from_secs(5);
+    let value = aaa_test_support::token("queue-account-chosen");
+    let auth = w.scripts.join("chosen-auth");
+    std::fs::write(&auth, &value).unwrap();
+    w.h.ok(&["account", "import", "chosen", "--harness", "claude", "--file", path_str(&auth)]);
+    let other_auth = w.scripts.join("other-auth");
+    std::fs::write(&other_auth, aaa_test_support::token("queue-account-other")).unwrap();
+    w.h.ok(&["account", "import", "other", "--harness", "claude", "--file", path_str(&other_auth)]);
+    let proof = w.scripts.join("account-proof");
+    // 외부 제공자를 부르지 않는 harness. 인증을 비교하고 성공 여부만 남긴다.
+    std::fs::write(w.scripts.join("claude.sh"), format!(
+        "#!/bin/sh\nif [ \"$(cat '{}')\" = \"$CLAUDE_CODE_OAUTH_TOKEN\" ]; then echo chosen > '{}'; fi\nexec /bin/sh '{}' \"$@\"\n",
+        path_str(&auth), path_str(&proof), path_str(&w.scripts.join("fake.sh"))
+    )).unwrap();
+    let path = w.projects.join("demo/TASKS.md");
+    std::fs::write(&path, "## Backlog\n- [ ] 선행 (claude@labA) [작업 폴더]\n  선행 범위\n- [ ] 지정 계정 (claude@labA) [작업 폴더]\n  noreport\n").unwrap();
+    let tasks = w.h.ok(&["task", "list"])["tasks"].as_array().unwrap().clone();
+    let first = tasks[0]["short_id"].as_str().unwrap();
+    let second = tasks[1]["short_id"].as_str().unwrap();
+    w.h.ok(&["task", "reserve", second, "--account", "chosen", "--after", first]);
+    w.h.ticks(1);
+    let row = w.h.ok(&["task", "queue"])["entries"][0].clone();
+    assert_eq!(row["account"], "chosen");
+    assert_eq!(row["after"], tasks[0]["id"]);
+    assert!(row["thread"].is_null());
+    w.lab.kill("host");
+    // 인증 금고 키를 잠시 치워 실제 재시작에서 잠긴 계정을 흉내 낸다. 다른 계정이 있어도 시작하면 안 된다.
+    std::fs::rename(w.h.state.join("host/secrets.key"), w.h.state.join("host/held.key")).unwrap();
+    w.spawn_host("host-pinned-account");
+    wait_for("지정 예약 재연결", deadline, || w.h.connected("labA").then_some(()));
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace("- [ ] 선행", "- [x] 선행")).unwrap();
+    wait_for("지정 계정 대기", deadline, || {
+        w.h.ticks(1);
+        let row = w.h.ok(&["task", "queue"])["entries"][0].clone();
+        (row["reason"].as_str()?.contains("인증 잠김") && row["state"] == "queued").then_some(())
+    });
+    assert!(w.h.ok(&["thread", "list"])["threads"].as_array().unwrap().is_empty());
+    assert!(!proof.exists());
+    std::fs::rename(w.h.state.join("host/held.key"), w.h.state.join("host/secrets.key")).unwrap();
+    let tid = wait_for("지정 계정 시작", deadline, || {
+        w.h.ticks(1);
+        w.h.ok(&["task", "queue"])["entries"][0]["thread"].as_str().map(str::to_string)
+    });
+    let v = w.wait_show("지정 계정 pane", &tid, |v| v["pane"].is_string());
+    assert_eq!(v["account"], "chosen");
+    wait_for("agent의 지정 인증 수신", deadline, || {
+        std::fs::read_to_string(&proof).ok().filter(|s| s.trim() == "chosen")
+    });
+    assert_eq!(w.h.ok(&["task", "queue"])["entries"][0]["account"], "chosen");
+}

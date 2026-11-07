@@ -8536,3 +8536,15 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **보기(2A).** 웹 대화 머리의 thread 칩 옆에 모델 칩(고르기)을 둔다. 바꾼 뒤 다음 말 전까지는 `앞 모델 →`을 함께 보인다.
   CLI는 `aaa idea model <n-ID> <profile>`, `aaa idea show` 첫 줄과 `aaa idea list`에 모델이 나온다.
 - **검증.** [진행 모델 검증 기록](testing-idea-model-t-1581.md).
+
+
+### 8.560 예약의 지정 계정 보존(t-1615)
+
+- CLI `aaa task reserve <ID> --account <이름>`과 웹 예약 확인의 계정 칸으로 시작할 계정을 정한다.
+  `--after`와 함께 쓰며 승인판·순서·선행 조건과 같은 SQLite 예약에 저장한다. host 재시작 뒤에도 유지한다.
+- 시작할 때 지정 계정을 그대로 전달한다. 현재 사용 한도·실제 인증 끊김·금고 잠김은 이유를 보이는 대기이며 다른 계정으로 바꾸지 않는다.
+  사용량 미관측이나 조회 인증 실패만으로 작업 인증이 끊겼다고 판정하지 않는다. 문제가 풀리면 같은 예약을 다시 판정한다.
+- 생략한 계정은 기존 자동 선택을 쓴다. 웹 갱신은 기존 계정을 채우고 CLI 갱신은 `--account`를 다시 지정한다.
+  FRONT_API 1.164의 선택 `QueueOp::Reserve.account`·`TaskReservation.account`이며 구판 저장값은 자동 선택이다.
+  새 CLI는 구판 host에 지정 계정을 보내지 않고 거절하며 웹도 계정 고르기를 숨긴다. AGENT_LINK는 유지한다.
+- 검증 경계는 [예약 계정 검증](testing-reservation-account-t-1615.md)에 기록한다.

@@ -145,6 +145,7 @@ impl Host {
             self.task_queue(
                 project,
                 aaa_proto::QueueOp::Reserve {
+                    account: None,
                     task: t.id.clone().ok_or_else(|| err(ErrorCode::Conflict, "할 일 ID가 없다"))?,
                     block: t.block_sha256.clone(),
                     profile,

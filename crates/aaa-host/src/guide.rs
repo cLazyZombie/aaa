@@ -499,6 +499,9 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 
 - 사용자가 자리가 나면 시작하라고 맡긴 일은 준비된 task를 `aaa task reserve <task ID>`로 예약한다. 채팅의 약속만 남기지 않는다.
   같은 task를 먼저 찾고 설명·완료 범위·첨부·저장소(저장소 없으면 작업 폴더)를 준비한다. 명시 예약은 그 내용의 시작 승인이다.
+  계정도 지정하려면 `aaa task reserve <task ID> --account <이름>`을 쓴다(`--after`와 함께 쓸 수 있다).
+  host 재시작 뒤에도 같은 계정을 쓰며 한도·인증 문제는 예약 상태에 이유를 보이고 기다린다. 다른 계정으로 바꾸지 않는다.
+  생략하면 시작 시 자동 선택한다. 갱신 때 지정 계정을 유지하려면 `--account`를 다시 준다(웹은 기존 선택을 채운다).
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
 - 자동 병합(기본 off, 프로젝트 기본값 없음)은 사용자가 켜거나 끄라고 한 할 일만 `aaa task add|edit|reserve … --auto-merge on|off`,
   thread는 `aaa thread auto-merge <thread> on|off`로 바꾼다(`aaa thread start --auto-merge`도 된다). coordinator는

@@ -298,7 +298,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.161: asks의 가벼운 색인·원문 페이지와 ask_history 단건 조회. 구판 요청은 전체 응답을 유지한다.
 // 1.162: 아이디어 그림 붙이기 `idea_attach`·`idea_attached`, IdeaNote.media·media_bytes(선택, t-1575). 옛 host에는 새 요청을 보내지 않는다.
 // 1.163: 아이디어 진행 모델 `idea_model`, IdeaSummary.profile(선택, t-1581). 옛 host에는 새 요청을 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 163 };
+// 1.164: 예약의 지정 계정(QueueOp::Reserve.account·TaskReservation.account). 구판 예약은 자동 선택.
+pub const FRONT_API: Version = Version { major: 1, minor: 164 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

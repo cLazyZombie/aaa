@@ -436,6 +436,10 @@ export type QueueState = "queued" | "check" | "starting" | "running" | "finished
 
 export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block: string, profile: string, profile_revision: string,
 /**
+ * 지정 계정. 생략하면 시작 시 자동 선택(FRONT_API 1.164).
+ */
+account?: string,
+/**
  * 앞 할 일(ID·제목). 그 할 일이 완료 보관될 때까지 이 예약은 시작하지 않는다(FRONT_API 1.113). 생략하면 바로 자리 대기
  */
 after?: string,
@@ -446,7 +450,11 @@ after_all?: Array<string>, } | { "op": "cancel", task_id: string, } | { "op": "m
 
 export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
 
-export type TaskReservation = { selection: TaskChoicePin, task_id: string, task: TaskView, approved_block: string, profile: string, model: string, effort: string, profile_revision: string, machine: string | null, position: number, state: QueueState, reason: string,
+export type TaskReservation = { selection: TaskChoicePin, task_id: string, task: TaskView, approved_block: string, profile: string, model: string, effort: string, profile_revision: string, machine: string | null,
+/**
+ * 예약부터 실제 시작까지 유지하는 지정 계정. 구판 예약은 자동 선택.
+ */
+account?: string, position: number, state: QueueState, reason: string,
 /**
  * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
  */

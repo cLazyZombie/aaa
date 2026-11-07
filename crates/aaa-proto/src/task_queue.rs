@@ -23,6 +23,10 @@ pub enum QueueOp {
         block: String,
         profile: String,
         profile_revision: String,
+        /// 지정 계정. 생략하면 시작 시 자동 선택(FRONT_API 1.164).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        account: Option<String>,
         /// 앞 할 일(ID·제목). 그 할 일이 완료 보관될 때까지 이 예약은 시작하지 않는다(FRONT_API 1.113). 생략하면 바로 자리 대기
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -64,6 +68,10 @@ pub struct TaskReservation {
     pub effort: String,
     pub profile_revision: String,
     pub machine: Option<String>,
+    /// 예약부터 실제 시작까지 유지하는 지정 계정. 구판 예약은 자동 선택.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
     pub position: u32,
     pub state: QueueState,
     pub reason: String,
