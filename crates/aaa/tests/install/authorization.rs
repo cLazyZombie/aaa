@@ -103,6 +103,31 @@ mod terminal_exit;
 #[path = "terminal_snapshot.rs"]
 mod terminal_snapshot;
 
+fn terminal_fixture_succeeded(output: &str) -> bool {
+    // ConPTY는 같은 문장 사이에도 cursor·입력 mode 제어열을 보낸다.
+    // OSC 제목이나 지운 글이 아닌 실제 화면의 libtest 결과를 확인한다.
+    let mut terminal = aaa_vt::Vt::new(36, 120);
+    terminal.feed(output.as_bytes());
+    terminal.unwrapped_all().contains("test result: ok. 1 passed")
+}
+
+#[test]
+fn terminal_fixture_result_uses_the_screen_and_rejects_missing_failed_or_hidden_results() {
+    // CI 원문의 결과 구간. mode 제어열이 두 단어 사이에 끼어 원시 contains는 실패했다.
+    let result = "test result: \x1b[?25h\x1b[?25l\x1b[?9001l\x1b[?1004lok. 1 passed; 0 failed";
+    assert!(!result.contains("test result: ok. 1 passed"));
+    assert!(terminal_fixture_succeeded(result));
+    for output in [
+        "",
+        "test result: ok. 0 passed; 0 failed",
+        "test result: FAILED. 0 passed; 1 failed",
+        "\x1b]0;test result: ok. 1 passed\x07",
+        "test result: ok. 1 passed\r\x1b[2Ktest result: FAILED. 0 passed; 1 failed",
+    ] {
+        assert!(!terminal_fixture_succeeded(output), "실제 통과한 한 시험이 필요하다");
+    }
+}
+
 fn drive_terminal(
     command: CommandBuilder,
     steps: &[(&str, &str)],

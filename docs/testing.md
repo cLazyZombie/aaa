@@ -5074,3 +5074,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 자동화 저장 시험의 Windows 기본 스택 재현·poll 프레임 축소·회귀 검사: [t-1543 검증 기록](testing-automation-save-stack-t1543.md).
 
 - 웹 첫 화면의 열린 작업 우선 표시·답변 이력 페이지 조회: [검증 경계와 owner](testing-startup-pages-t1571.md).
+
+- Windows 격리 입력 큐 fixture의 ConPTY 제어열 결과 판정 수리와 원문 재생 회귀는 [t-1623 검증 기록](testing-win-input-queue-fixture-t1623.md)에 둔다.
