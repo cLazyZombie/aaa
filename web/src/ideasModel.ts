@@ -23,6 +23,22 @@ export function ideaRefs(i: IdeaSummary): string {
 export type IdeaPage = "note" | "chat";
 
 /**
+ * 진행 모델 칩(t-1581): 고른 모델과 전용 thread의 profile이 다르면 다음 말 때 바뀐다. 그동안 앞 모델을 함께 보인다.
+ * 끝났거나 실패한 thread는 다음 말에 어차피 새로 뜬다. 옛 host(profile 없음)는 칩을 그리지 않는다(null).
+ */
+export function ideaModel(chosen: string | undefined, thread: { profile: string; status: string } | null): { model: string; from: string | null } | null {
+  if (!chosen) return null;
+  const live = thread && thread.status !== "resolved" && thread.status !== "failed";
+  return { model: chosen, from: live && thread.profile !== chosen ? thread.profile : null };
+}
+
+/** 고를 수 있는 진행 모델: host 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
+export function ideaModelChoices(owners: readonly { machine: string; profiles: string[] }[], hostMachine: string | null, chosen: string): string[] {
+  const usable = owners.find((o) => o.machine === hostMachine)?.profiles ?? [];
+  return [...new Set([chosen, ...usable])];
+}
+
+/**
  * 「페이지처럼」(결정 24): 노트에서 ← 쓸면 대화, 대화에서 → 쓸면 노트. 노트에서 →(목록)는 drawer가 받는다.
  * 왼쪽 끝 24px은 브라우저 뒤로 쓸기 자리라 받지 않는다(edgeSwipe와 같은 규칙). 세로로 더 움직이면 스크롤이다
  */

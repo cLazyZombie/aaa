@@ -3162,7 +3162,10 @@ impl Host {
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
         }
-        self.inbox_add(project, "thread-state", id, "resolved", &summary);
+        // 아이디어 thread는 사용자 모르게 바뀐다(보류와 같다, park.rs): 진행 모델을 바꿔 끝낸 것은 알림함 항목을 내지 않는다
+        if rec.idea.is_none() {
+            self.inbox_add(project, "thread-state", id, "resolved", &summary);
+        }
         Ok(self.thread_view(&self.load(project, id).unwrap_or(rec)))
     }
 

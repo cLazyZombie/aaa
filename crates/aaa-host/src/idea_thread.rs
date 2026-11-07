@@ -5,6 +5,8 @@
 //!   다시 말하거나 아이디어 화면을 열면 같은 대화로 잇는다(park.rs). 잇지 못하면 새 thread가 노트를 읽고 이어 간다(차선책).
 //! - 보낸 말은 thread가 brief를 받은 뒤에 간다(harness.rs `thread_message`): 그 전까지 메타 `pending`에 두고 배경 일이 보낸다.
 //! - 사람이 노트를 고친 요약은 다음 말 앞에 「(노트 고침: …)」으로 붙인다(결정 16). 겹친 사람 글은 thread에 합치기를 맡긴다(결정 11).
+//! - 진행 모델(t-1581): 사람이 고른 profile을 메타에 둔다. 전용 thread의 profile과 다르면 다음 말 때 앞 thread의 답이 끝나기를
+//!   기다려 끝내고, 고른 profile의 새 thread가 노트를 읽고 이어 간다(profile을 바꾸면 새 대화: `thread restart --profile`과 같다).
 
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ use aaa_proto::{
 };
 
 use crate::ideas::{Folder, Saved};
-use crate::orch::{StartArgs, ThreadRec, bad, internal};
+use crate::orch::{ResolveOpts, ResolveWhy, StartArgs, ThreadRec, bad, internal};
 use crate::{Host, err};
 
 /// 보낸 말 한 개 상한(웹 입력창과 같다)
@@ -31,12 +33,33 @@ pub(crate) fn should_rest(r: &ThreadRec, agent: Option<&aaa_proto::AgentStatus>,
         && agent.is_some_and(|a| a.activity == AgentActivity::Idle && now.saturating_sub(a.since_ms) >= rest_ms)
 }
 
+/// 고른 진행 모델이 전용 thread의 profile과 달라 새 thread로 바꿔야 하나. 고르지 않았으면 프로젝트 기본이 바뀌어도 그대로 둔다
+pub(crate) fn model_switch(chosen: Option<&str>, thread_profile: &str) -> bool {
+    chosen.is_some_and(|p| p != thread_profile)
+}
+
+/// 전용 thread를 왜 새로 띄우나
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Begin {
+    /// 처음 말했다
+    New,
+    /// 앞 thread를 잇지 못했다
+    Again,
+    /// 사람이 진행 모델을 바꿨다(앞 thread의 profile)
+    Model(String),
+}
+
 /// 새 thread에 줄 할 일 글(brief 끝). 이어 받는 thread는 앞 대화를 못 보므로 노트부터 읽는다
-fn task_text(short: &str, title: &str, dir: &std::path::Path, again: bool) -> String {
-    let start = if again {
-        "앞 대화를 이을 수 없어 새로 시작했다. 노트가 지금까지의 정리본이다: 먼저 읽고, 사용자의 다음 말을 기다린다."
-    } else {
-        "새 아이디어다. 노트를 읽고 사용자의 말을 기다린다."
+fn task_text(short: &str, title: &str, dir: &std::path::Path, begin: &Begin) -> String {
+    let start = match begin {
+        Begin::Again => {
+            "앞 대화를 이을 수 없어 새로 시작했다. 노트가 지금까지의 정리본이다: 먼저 읽고, 사용자의 다음 말을 기다린다.".to_string()
+        }
+        Begin::Model(from) => format!(
+            "사용자가 진행 모델을 바꿔({from}에서) 새 대화로 시작했다. 앞 대화는 넘어오지 않는다. 노트가 지금까지의 정리본이다: \
+             먼저 읽고 사용자의 다음 말에 답한다."
+        ),
+        Begin::New => "새 아이디어다. 노트를 읽고 사용자의 말을 기다린다.".to_string(),
     };
     format!(
         "아이디어 {short} 「{title}」의 전용 thread다. {start}\n\n- 노트 읽기: `aaa idea show {short}`\n- 노트 저장: \
@@ -90,6 +113,23 @@ impl Host {
             }
             FrontRequest::IdeaCopy { project, idea } => {
                 Ok(FrontResponse::Idea { note: self.idea_copy(&project, &idea, actor)? })
+            }
+            FrontRequest::IdeaModel { project, idea, profile } => {
+                // 정해진 모델 변경은 사람만(thread_restart --profile과 같다): thread 세션 안 CLI·평가자는 바꾸지 못한다
+                if actor.starts_with("worker:")
+                    || actor.starts_with("evaluator:")
+                    || crate::front::in_session(actor)
+                    || actor.starts_with("detached:")
+                {
+                    return Err(err(ErrorCode::Forbidden, "진행 모델은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다"));
+                }
+                if !role.can_control() {
+                    return Err(err(
+                        ErrorCode::Forbidden,
+                        format!("보기 권한으로는 진행 모델을 바꿀 수 없다{}", crate::front::reader_reason(actor)),
+                    ));
+                }
+                Ok(FrontResponse::Idea { note: self.idea_model(&project, &idea, &profile, actor).await? })
             }
             FrontRequest::IdeaAttach { project, idea, names, paths, alt, section, store_only } => {
                 let f = self.idea_folder(&project, &idea)?;
@@ -147,9 +187,17 @@ impl Host {
         let lock = self.idea_lock(project, &f.id);
         let _one = lock.lock().await;
         let meta = f.meta()?;
-        let mut again = false;
+        let mut begin = Begin::New;
         if let Some(id) = meta.thread.as_deref() {
             match self.load(project, id) {
+                Ok(rec) if model_switch(meta.profile.as_deref(), &rec.profile) => {
+                    // 화면 열기는 옛 모델의 thread를 잇지 않는다: 다음 말이 새 모델로 바꾼다
+                    if !start {
+                        return Ok(None);
+                    }
+                    self.idea_retire(project, &rec, actor).await?;
+                    begin = Begin::Model(rec.profile.clone());
+                }
                 Ok(rec) => match rec.status {
                     ThreadStatus::Open | ThreadStatus::Starting => return Ok(Some(id.to_string())),
                     ThreadStatus::Parked => match self.thread_unpark(project, id, None, None, false, actor).await {
@@ -161,14 +209,14 @@ impl Host {
                                 "아이디어 thread를 잇지 못해 새로 띄운다: {}",
                                 e.message
                             );
-                            again = true;
+                            begin = Begin::Again;
                         }
                     },
-                    ThreadStatus::Failed | ThreadStatus::Resolved => again = true,
+                    ThreadStatus::Failed | ThreadStatus::Resolved => begin = Begin::Again,
                 },
                 Err(e) => {
                     tracing::warn!(project, thread = id, "아이디어 thread 기록을 읽지 못해 새로 띄운다: {}", e.message);
-                    again = true;
+                    begin = Begin::Again;
                 }
             }
         }
@@ -182,9 +230,10 @@ impl Host {
             title: format!("아이디어 {short} {}", meta.title),
             // 결정 21: 늘 host 머신(잇기 쉽게). 로컬 agent가 없으면 resolve_machine이 까닭을 준다
             machine: None,
-            profile: String::new(),
+            // 고르지 않았으면 비워 프로젝트 기본 thread profile을 쓴다
+            profile: meta.profile.clone().unwrap_or_default(),
             kind: ThreadKind::Dir,
-            task: task_text(&short, &meta.title, &f.dir, again),
+            task: task_text(&short, &meta.title, &f.dir, &begin),
             role: Role::Worker,
             idea: Some(f.id.clone()),
             ..Default::default()
@@ -198,6 +247,87 @@ impl Host {
         }
         self.ideas_bump(project);
         Ok(Some(view.id))
+    }
+
+    /// 진행 모델을 고른다: host 머신이 맡을 수 있는 profile(`assignable`과 같은 출처, 프로젝트 허용 목록 반영)만 받는다.
+    /// 지금 thread는 건드리지 않는다. 다음 말 때(아직 보내지 못한 말이 있으면 바로) `idea_thread_ready`가 바꾼다
+    pub(crate) async fn idea_model(
+        self: &Arc<Self>,
+        project: &str,
+        idea: &str,
+        profile: &str,
+        actor: &str,
+    ) -> Result<IdeaNote, ErrorBody> {
+        let profile = profile.trim();
+        if profile.is_empty() {
+            return Err(bad("profile이 비었다"));
+        }
+        let f = self.idea_folder(project, idea)?;
+        if f.meta()?.status == IdeaStatus::Done {
+            return Err(bad("할 일로 넘겨 잠긴 아이디어다"));
+        }
+        self.check_profile_allowed(project, profile)?;
+        let host = self
+            .machine_views()
+            .into_iter()
+            .find(|m| m.local)
+            .map(|m| m.name)
+            .ok_or_else(|| bad("host 머신 agent가 없어 진행 모델을 고를 수 없다"))?;
+        let owners = self.assignable(project).await;
+        let usable = owners.into_iter().find(|o| o.machine == host).map(|o| o.profiles).unwrap_or_default();
+        if !usable.iter().any(|p| p == profile) {
+            return Err(bad(format!(
+                "host 머신 {host}이 맡을 수 있는 profile이 아니다: {profile}(쓸 수 있는 것: {})",
+                if usable.is_empty() { "없음".to_string() } else { usable.join(", ") }
+            )));
+        }
+        let waiting = {
+            let _w = self.idea_writing()?;
+            let mut meta = f.meta()?;
+            meta.profile = Some(profile.to_string());
+            f.write_meta(&meta)?;
+            !meta.pending.is_empty()
+        };
+        self.db.audit(actor, "idea_model", &format!("{project}/{idea} {profile}"));
+        self.ideas_bump(project);
+        // 아직 보내지 못한 말은 앞 모델에 보내지 않는다(배달 일이 멈춘다): 새 모델로 바꾸고 보낸다
+        if waiting {
+            self.spawn_idea_work(project, &f.id, true, actor);
+        }
+        self.idea_read_note(project, &f, None).await
+    }
+
+    /// 진행 모델을 바꾸려고 앞 thread를 끝낸다. 답하는 중이면 그 답이 끝나기를 기다린다(넘으면 말은 남기고 다음에 다시 한다).
+    /// 이미 끝났거나 실패한 thread는 그대로 둔다
+    async fn idea_retire(self: &Arc<Self>, project: &str, rec: &ThreadRec, actor: &str) -> Result<(), ErrorBody> {
+        if matches!(rec.status, ThreadStatus::Resolved | ThreadStatus::Failed) {
+            return Ok(());
+        }
+        if rec.status == ThreadStatus::Open
+            && let Some(pane) = rec.pane.as_deref()
+            && let Ok(mut rx) = self.pane_events(pane)
+        {
+            let busy = |h: &Host| {
+                h.pane_view_of(pane, DeviceRole::Local).is_some_and(|v| v.state.is_running())
+                    && h.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Working)
+            };
+            let idle = async {
+                while busy(self) {
+                    if let Err(tokio::sync::broadcast::error::RecvError::Closed) = rx.recv().await {
+                        return;
+                    }
+                }
+            };
+            if tokio::time::timeout(DELIVER_WAIT, idle).await.is_err() {
+                return Err(err(
+                    ErrorCode::Unavailable,
+                    format!("{}가 아직 답하는 중이라 진행 모델을 바꾸지 못했다. 말은 남겨 두었다", rec.id),
+                ));
+            }
+        }
+        self.thread_resolve(project, &rec.id, ResolveOpts::default(), ResolveWhy::Manual, actor).await?;
+        tracing::info!(project, thread = %rec.id, from = %rec.profile, "아이디어 진행 모델을 바꾸려고 앞 thread를 끝냈다");
+        Ok(())
     }
 
     /// 사람이 전용 thread에 말한다(웹 대화 입력창). 고친 노트 요약을 앞에 붙이고, thread가 준비되면 보낸다
@@ -297,9 +427,13 @@ impl Host {
             let Ok(meta) = f.meta() else { return };
             let Some(next) = meta.pending.first().cloned() else { return };
             let Some(thread) = meta.thread.clone() else { return };
-            let ready = self
-                .load(project, &thread)
-                .is_ok_and(|r| r.status == ThreadStatus::Open && r.brief == aaa_proto::BriefState::Delivered);
+            let rec = self.load(project, &thread);
+            // 그사이 진행 모델을 바꿨다: 앞 모델 thread에 보내지 않고 끝낸다. 뒤에 줄 선 배경 일이 thread를 바꾼 뒤 보낸다
+            if rec.as_ref().is_ok_and(|r| model_switch(meta.profile.as_deref(), &r.profile)) {
+                return;
+            }
+            let ready =
+                rec.is_ok_and(|r| r.status == ThreadStatus::Open && r.brief == aaa_proto::BriefState::Delivered);
             if ready {
                 match self.thread_message(project, &thread, next.clone(), MessageMode::Queue, "idea").await {
                     Ok(_) => {
@@ -519,6 +653,58 @@ mod tests {
         }
         let create = FrontRequest::IdeaCreate { project: "demo".into(), title: "새".into(), text: String::new() };
         assert_eq!(h.call(DeviceRole::Reader, "worker:pane-i", create).await.unwrap_err().code, ErrorCode::Forbidden);
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// 진행 모델(t-1581): 고른 profile이 전용 thread와 다를 때만 바꾸고, 고르지 않았으면 프로젝트 기본이 바뀌어도 잇는다.
+    /// 새 thread의 할 일 글은 앞 모델과 새 대화임을 알린다
+    #[test]
+    fn switches_only_when_the_chosen_model_differs() {
+        assert!(model_switch(Some("sonnet-high"), "opus-high"));
+        assert!(!model_switch(Some("opus-high"), "opus-high"));
+        assert!(!model_switch(None, "opus-high"));
+        let dir = std::path::Path::new("/ideas/x");
+        let text = task_text("n-0007", "알림", dir, &Begin::Model("opus-high".into()));
+        assert!(text.contains("진행 모델을 바꿔(opus-high에서) 새 대화로 시작했다"), "{text}");
+        assert!(!task_text("n-0007", "알림", dir, &Begin::New).contains("진행 모델"));
+    }
+
+    /// 진행 모델 바꾸기는 사람만: thread 세션·보기 기기는 거절하고, 고르지 않은 아이디어는 프로젝트 기본 모델을 보인다.
+    /// host 머신 agent가 없으면 고를 수 있는 profile을 모르니 저장하지 않는다
+    #[tokio::test]
+    async fn only_people_choose_the_idea_model() {
+        use aaa_proto::{DeviceRole, FrontRequest};
+        let state = std::env::temp_dir().join(format!("aaa-idea-model-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        let h = Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.project_set("demo", "thread_profile", "claude", "test").unwrap();
+        let note = h.idea_create("demo", "알림", "", None, "test").unwrap();
+        assert_eq!(note.idea.profile.as_deref(), Some("claude"), "고르지 않으면 프로젝트 기본");
+        // 고르지 않았으면 열린 전용 thread가 다음 말을 받는다: 프로젝트 기본과 달라도 그 thread의 profile을 보인다
+        let mut r = ThreadRec::starting("demo", "x", "m", "codex", Role::Worker, ThreadKind::Dir, 0);
+        (r.id, r.status, r.idea) = ("t-0001".into(), ThreadStatus::Open, Some(note.idea.id.clone()));
+        h.db.thread_import("demo", "t-0001", "open", &serde_json::to_string(&r).unwrap()).unwrap();
+        let f = h.idea_folder("demo", "n-0001").unwrap();
+        let mut meta = f.meta().unwrap();
+        meta.thread = Some("t-0001".into());
+        f.write_meta(&meta).unwrap();
+        assert_eq!(h.idea_list("demo").unwrap()[0].profile.as_deref(), Some("codex"), "열린 thread의 profile");
+        let model =
+            || FrontRequest::IdeaModel { project: "demo".into(), idea: "n-0001".into(), profile: "codex".into() };
+        for (role, actor) in [
+            (DeviceRole::Reader, "worker:pane-i"),
+            (DeviceRole::Controller, "local:user@session-1"),
+            (DeviceRole::Reader, "device:viewer"),
+        ] {
+            let e = h.call(role, actor, model()).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::Forbidden, "{actor}");
+        }
+        let e = h.call(DeviceRole::Controller, "device:phone", model()).await.unwrap_err();
+        assert!(e.message.contains("host 머신 agent가 없어"), "{}", e.message);
+        assert_eq!(h.idea_list("demo").unwrap()[0].profile.as_deref(), Some("codex"), "거절하면 그대로");
         let _ = std::fs::remove_dir_all(&state);
     }
 

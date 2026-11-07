@@ -71,6 +71,9 @@ pub(crate) struct Meta {
     pub error: Option<String>,
     /// 그림·영상 이름 → 출처(t-1575). 처음 들인 기록만 둔다(같은 내용은 같은 이름이다)
     pub media: std::collections::BTreeMap<String, MediaMeta>,
+    /// 사람이 고른 진행 모델(t-1581). 없으면 프로젝트 기본 thread profile. 전용 thread의 profile과 다르면 다음 말 때 새 thread로 바꾼다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 /// 그림·영상 하나의 출처(`idea.json` `media`)
@@ -472,6 +475,20 @@ impl Host {
         Ok(Folder { id, dir })
     }
 
+    /// 다음 말을 맡을 모델: 고른 것, 고르지 않았으면 이어 받을 전용 thread의 profile(끝났으면 프로젝트 기본). 고르지 않은 아이디어는
+    /// 기본이 바뀌어도 열린 thread를 잇기 때문이다(`idea_thread::model_switch`)
+    fn idea_profile(&self, project: &str, m: &Meta) -> String {
+        if let Some(p) = &m.profile {
+            return p.clone();
+        }
+        m.thread
+            .as_deref()
+            .and_then(|t| self.load(project, t).ok())
+            .filter(|r| !matches!(r.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Failed))
+            .map(|r| r.profile)
+            .unwrap_or_else(|| self.default_thread_profile(project))
+    }
+
     fn idea_summary(&self, project: &str, f: &Folder, m: &Meta) -> Result<IdeaSummary, ErrorBody> {
         let tasks = m
             .tasks
@@ -493,6 +510,7 @@ impl Host {
             tasks,
             thread: m.thread.clone(),
             copied_from,
+            profile: Some(self.idea_profile(project, m)),
         })
     }
 

@@ -708,6 +708,8 @@ enum IdeaCmd {
     Say { idea: String, text: String },
     /// 노트를 복사해 새 아이디어로(완료한 것을 다시 다듬을 때)
     Copy { idea: String },
+    /// 진행 모델을 바꾼다(host 머신이 맡을 수 있는 profile, `aaa assignable`). 다음 말부터 그 모델의 새 thread가 노트를 읽고 잇는다
+    Model { idea: String, profile: String },
     /// 그림·영상(PNG·JPEG·GIF·WebP·MP4·WebM, 16MiB까지)을 노트 끝에 붙여 새 판으로 저장한다. 전용 thread는 자기 작업 폴더와
     /// 프로젝트 uploads/ 안의 파일만 붙인다. 붙인 이름을 한 줄씩 출력한다
     Attach {
@@ -4162,6 +4164,7 @@ fn idea_cli(json: bool, cmd: IdeaCmd) -> Result<ExitCode> {
         }
         IdeaCmd::Say { idea, text } => front(json, FrontRequest::IdeaSay { project, idea, text }),
         IdeaCmd::Copy { idea } => front(json, FrontRequest::IdeaCopy { project, idea }),
+        IdeaCmd::Model { idea, profile } => front(json, FrontRequest::IdeaModel { project, idea, profile }),
         IdeaCmd::Attach { idea, files, alt, section, store_only } => {
             // host가 경로를 직접 읽는다(아이디어 thread·coordinator·사람 CLI는 host 머신에서 돈다): 실행한 폴더 기준 절대 경로로 준다
             let paths = files
@@ -6211,13 +6214,14 @@ fn render_front(r: &FrontResponse) -> String {
             for i in ideas {
                 let _ = writeln!(
                     s,
-                    "{}\t{}\t판 {}\t{}{}{}",
+                    "{}\t{}\t판 {}\t{}{}{}{}",
                     i.short_id,
                     i.status.as_str(),
                     i.rev,
                     i.title,
                     if i.tasks.is_empty() { String::new() } else { format!("\t→ {}", i.tasks.join(", ")) },
-                    i.thread.as_deref().map(|t| format!("\t{t}")).unwrap_or_default()
+                    i.thread.as_deref().map(|t| format!("\t{t}")).unwrap_or_default(),
+                    i.profile.as_deref().map(|p| format!("\t모델 {p}")).unwrap_or_default()
                 );
             }
             if ideas.is_empty() {
@@ -6230,9 +6234,10 @@ fn render_front(r: &FrontResponse) -> String {
             // 첫 줄 하나에 머리를 모은다: thread는 첫 줄의 판을 읽고 셋째 줄부터를 노트로 쓴다
             let edited = note.edited.as_deref().map(|e| format!(" · 사람이 고침: {e}")).unwrap_or_default();
             let merging = note.merging.map(|m| format!(" · 판 {m} 기준 사람 고침을 합치는 중")).unwrap_or_default();
+            let model = i.profile.as_deref().map(|p| format!("모델 {p} · ")).unwrap_or_default();
             let _ = writeln!(
                 s,
-                "{} · 판 {}{old} · {} · {}{edited}{merging}",
+                "{} · 판 {}{old} · {} · {model}{}{edited}{merging}",
                 i.short_id,
                 note.rev,
                 i.status.as_str(),

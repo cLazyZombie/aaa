@@ -57,6 +57,10 @@ pub struct IdeaSummary {
     pub thread: Option<String>,
     /// 복사해 온 아이디어(`n-NNNN`)
     pub copied_from: Option<String>,
+    /// 진행 모델: 다음 말을 맡을 profile(고른 것, 없으면 프로젝트 기본 thread profile). FRONT_API 1.163, 옛 host는 없다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile: Option<String>,
 }
 
 /// 남은 판 하나
