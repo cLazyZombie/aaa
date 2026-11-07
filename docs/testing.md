@@ -5054,6 +5054,7 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - Windows 승인 완료 뒤 worker 사건 대기 분류와 직계 자식 스택 수집·실기 검증: [t-1487 조사 기록](testing-win-worker-stall-t1487.md).
 
 - Windows plain wizard의 Enter 관측 뒤 ReadConsoleW 미반환·자연 실패 대조: [t-1583 조사 기록](testing-win-pty-enter-t1583.md).
+- Windows PTY 실패 뒤 입력 큐 비소비 스냅샷·실기 회귀: [t-1583 진단 검증](testing-win-pty-input-snapshot-t1583.md).
 
 - [자동화 보고 회수·기억 hash 검증 수리(t-1499)](testing-automation-copy-t-1499.md)
 

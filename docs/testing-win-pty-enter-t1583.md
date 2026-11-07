@@ -1,5 +1,8 @@
 # Windows 설치 PTY의 Enter 관측 뒤 읽기 정체(t-1583)
 
+이 문서는 첫 조사 당시의 결과다. 검수 뒤 구현한 진단과 실기 확인은
+[실패 뒤 입력 큐 스냅샷 기록](testing-win-pty-input-snapshot-t1583.md)에 있다.
+
 ## 결론
 
 새 자연 실패는 plain wizard의 역할 변경 질문에서 Enter가 콘솔 입력에 관측됐는데도
