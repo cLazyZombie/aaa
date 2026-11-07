@@ -75,6 +75,7 @@ fn candidate(name: &str, five: f64, week: f64) -> Candidate {
         member: AccountPoolMember { account: name.into(), group: name.into(), models: vec![] },
         generation: format!("generation-{name}"),
         last_quota: None,
+        weight: None,
         quota: Some(AccountQuota {
             session_limit: None,
             input_missing: None,
@@ -835,7 +836,9 @@ fn last_weekly_quota_ranks_accounts_and_reset_restores_full_capacity() {
     l.seed(&name, allocation, ThreadStatus::Open, true);
     assert_eq!(choose(&l, &p).unwrap().0, "b", "잔량이 작업 수보다 먼저다");
     p.candidates[0].last_quota.as_mut().unwrap().windows[1].window.resets_at_ms = Some(NOW + 1);
-    assert_eq!(choose(&l, &p).unwrap().0, "b", "리셋 직전에는 원래 잔량이다");
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "a", "리셋 직전 남은 11%는 곧 버려지므로 먼저 쓴다(1시간 하한: 11 > 65÷168)");
+    assert!(allocation.selection.reason.contains("잔량 11.0%"), "리셋 직전에는 원래 잔량이다");
     p.candidates[0].last_quota.as_mut().unwrap().windows[1].window.resets_at_ms = Some(NOW);
     let (name, allocation) = choose(&l, &p).unwrap();
     assert_eq!(name, "a");
@@ -917,12 +920,12 @@ fn session_policy_and_absence_exclude_history_from_all_allocation_checks() {
     assert!(!known_limit(&q, None, NOW));
     assert!(!below_usage_threshold(&q, [Some(50.), None], NOW));
     assert_eq!(fresh_windows(&q, None, NOW).unwrap().len(), 1);
-    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().0, 80.);
+    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().percent, 80.);
     q.session_limit = Some(true);
     q.input_missing = Some(vec![300]);
     assert!(!known_limit(&q, None, NOW));
     assert!(!below_usage_threshold(&q, [Some(50.), None], NOW));
-    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().0, 80.);
+    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().percent, 80.);
     q.windows.retain(|w| w.window.duration_mins == Some(300));
     assert_eq!(remaining_quota(&q, None, NOW, false, false), None);
     q.input_missing = None;
@@ -930,4 +933,63 @@ fn session_policy_and_absence_exclude_history_from_all_allocation_checks() {
     assert_eq!(remaining_quota(&q, None, NOW, false, false), None, "지난 5시간 숫자를 마지막 관측으로 배정하지 않는다");
     q.windows[0].window.resets_at_ms = Some(NOW + 60000);
     assert!(known_limit(&q, None, NOW), "실제 5시간 제한은 남는다");
+}
+
+/// 주간 창만 남기고 잔량·초기화까지 시간을 정한다.
+fn weekly(name: &str, weight: Option<f64>, left: f64, reset_hours: u64) -> Candidate {
+    let mut c = candidate(name, 0.0, 100.0 - left);
+    let q = c.quota.as_mut().unwrap();
+    q.windows.retain(|w| w.window.duration_mins == Some(10080));
+    q.windows[0].window.resets_at_ms = Some(NOW + reset_hours * 3_600_000);
+    c.weight = weight;
+    c
+}
+
+// 필요: 사용자 결정 1A·3A. 요금제 배수와 초기화까지 시간으로 곧 버려질 양을 먼저 쓴다.
+#[test]
+fn plan_weight_and_time_to_reset_pick_the_account_that_would_waste_most() {
+    let l = Lab::new();
+    // 큰 요금제(×2)·60%·19시간 뒤 초기화가 ×1·66%·3일 뒤보다 먼저다(지금 규칙은 66%를 골랐다).
+    let p = input(&l, vec![weekly("small", Some(1.0), 66.0, 72), weekly("large", Some(2.0), 60.0, 19)]);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "large");
+    let reason = &allocation.selection.reason;
+    assert!(reason.contains("최신 관측 잔량 60.0% · 요금제 ×2 · 초기화 19.0시간 뒤 · 시간당 6.32"), "{reason}");
+    // 작은 계정이 6시간 뒤 초기화되면 그 66이 먼저 버려진다.
+    let p = input(&l, vec![weekly("small", Some(1.0), 66.0, 6), weekly("large", Some(2.0), 60.0, 19)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "small");
+    // 요금제를 모르면 1배로 본다: 0.6×100÷19 ≒ 3.16 < 0.7×100÷20 = 3.5.
+    let p = input(&l, vec![weekly("unknown", None, 60.0, 19), weekly("known", Some(1.0), 70.0, 20)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "known");
+    let p = input(&l, vec![weekly("unknown", None, 60.0, 19), weekly("known", Some(1.0), 59.0, 19)]);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "unknown");
+    assert!(allocation.selection.reason.contains("요금제 미확인 ×1"));
+    // 초기화를 모르면 한 주(168시간)로 본다: 같은 잔량이면 19시간 뒤 초기화가 먼저다.
+    let mut none = weekly("none", Some(1.0), 60.0, 1);
+    none.quota.as_mut().unwrap().windows[0].window.resets_at_ms = None;
+    let p = input(&l, vec![none, weekly("soon", Some(1.0), 60.0, 19)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "soon");
+}
+
+// 필요: 사용자 결정 4A. 곧 막힐 계정(주간 5% 미만·5시간 10% 미만)은 점수와 관계없이 뒤로 두되 제외하지는 않는다.
+#[test]
+fn nearly_exhausted_weekly_or_session_windows_go_behind_other_accounts() {
+    let l = Lab::new();
+    // 주간 4%·1시간 뒤 초기화는 점수(4)가 커도 주간 50%·168시간(0.3)보다 뒤다.
+    let p = input(&l, vec![weekly("low", Some(1.0), 4.0, 1), weekly("plenty", Some(1.0), 50.0, 168)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "plenty");
+    let p = input(&l, vec![weekly("low", Some(1.0), 4.0, 1)]);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "low", "다른 계정이 없으면 그대로 쓴다");
+    assert!(allocation.selection.reason.contains("주간 잔량 5% 미만이라 뒤로"));
+    // 5시간 창 잔량 9%는 주간 점수가 커도 뒤로, 10%는 그대로 비교한다.
+    for (used, expected) in [(91.0, "other"), (90.0, "session")] {
+        let mut session = weekly("session", Some(2.0), 90.0, 24);
+        let mut five = candidate("session", used, 0.0).quota.unwrap().windows.remove(0);
+        five.window.resets_at_ms = Some(NOW + 3_600_000);
+        session.quota.as_mut().unwrap().windows.push(five);
+        let p = input(&l, vec![session, weekly("other", Some(1.0), 50.0, 168)]);
+        assert_eq!(choose(&l, &p).unwrap().0, expected, "5시간 {used}% 사용");
+    }
 }

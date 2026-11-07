@@ -46,6 +46,8 @@ pub(crate) struct Candidate {
     generation: String,
     quota: Option<AccountQuota>,
     last_quota: Option<AccountQuota>,
+    /// 요금제 배수(월 금액 ÷ 100). None은 미확인이며 1배로 본다.
+    weight: Option<f64>,
 }
 
 pub(crate) struct SelectionInput {
@@ -287,10 +289,11 @@ impl Host {
             }
             let generation = credential.auth_generation.ok_or_else(|| bad("계정 인증 세대를 확인하지 못했다"))?;
             input.candidates.push(Candidate {
-                member,
                 generation,
                 quota: report.accounts.iter().find(|a| a.account == name).cloned(),
                 last_quota: cached.iter().find(|(_, q)| q.account == name).map(|(_, q)| q.clone()),
+                weight: self.account_plan_weight(&name, &profile.harness),
+                member,
             });
         }
         Ok(Some(input))
@@ -703,38 +706,53 @@ impl SelectionInput {
                     .or(quota)
                     .and_then(|q| remaining_quota(q, self.model.as_deref(), now, false, weekly));
                 match (live, saved) {
-                    (Some(live), Some(saved)) if saved.1 > live.1 => {
+                    (Some(live), Some(saved)) if saved.observed_at_ms > live.observed_at_ms => {
                         unobserved = true;
-                        Some(saved.0)
+                        Some(saved)
                     }
-                    (Some(live), _) => Some(live.0),
+                    (Some(live), _) => Some(live),
                     (None, Some(saved)) => {
                         unobserved = true;
-                        Some(saved.0)
+                        Some(saved)
                     }
                     _ => None,
                 }
             });
-            candidates.push((c, active, last, unobserved, remaining));
+            // 곧 막힐 계정은 점수와 관계없이 뒤로 둔다: 주간 잔량 5% 미만, 현재 5시간 창 잔량 10% 미만.
+            let behind = if remaining.as_ref().is_some_and(|r| r.percent < LOW_WEEKLY) {
+                Some("주간 잔량 5% 미만이라 뒤로")
+            } else if quota.is_some_and(|q| low_session(q, self.model.as_deref(), now)) {
+                Some("5시간 잔량 10% 미만이라 뒤로")
+            } else {
+                None
+            };
+            let urgency = remaining.as_ref().map(|r| r.percent * c.weight.unwrap_or(1.0) / r.hours);
+            candidates.push((c, active, last, unobserved, remaining, behind, urgency));
         }
         candidates.sort_by(|a, b| {
-            // 잔량을 아는 계정부터 큰 순서. 같은 잔량·모두 미관측일 때 기존 작업 수·차례를 쓴다.
-            b.4.partial_cmp(&a.4)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            // 곧 막힐 계정은 뒤로. 그다음 시간당 써야 할 양(잔량% × 요금제 배수 ÷ 초기화까지 시간)이 큰 순서.
+            // 점수가 같거나 모두 모를 때 기존 작업 수·차례를 쓴다.
+            a.5.is_some()
+                .cmp(&b.5.is_some())
+                .then_with(|| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal))
                 .then_with(|| (a.1, a.2, &a.0.member.account).cmp(&(b.1, b.2, &b.0.member.account)))
         });
-        if let Some((c, active, _, unobserved, remaining)) = candidates.first() {
-            let reason = if let Some(remaining) = remaining {
+        if let Some((c, active, _, unobserved, remaining, behind, urgency)) = candidates.first() {
+            let reason = if let (Some(r), Some(urgency)) = (remaining, urgency) {
+                let weight = c.weight.map_or_else(|| "요금제 미확인 ×1".to_string(), |w| format!("요금제 ×{w}"));
                 format!(
-                    "{} 잔량 {remaining:.1}% · 잔량 많은 계정",
-                    if *unobserved { "마지막 관측으로 판단" } else { "최신 관측" }
+                    "{} 잔량 {:.1}% · {weight} · 초기화 {:.1}시간 뒤 · 시간당 {urgency:.2} 큰 계정",
+                    if *unobserved { "마지막 관측으로 판단" } else { "최신 관측" },
+                    r.percent,
+                    r.hours,
                 )
             } else if *unobserved {
                 "사용량 판단 불가 · 그대로 시작".into()
             } else {
                 "진행 중 작업·최근 배정 순서".into()
             };
-            return Ok(self.allocate(c, *unobserved, now, percent, &format!("{reason} · 진행 중 {active}개")));
+            let behind = behind.map(|b| format!(" · {b}")).unwrap_or_default();
+            return Ok(self.allocate(c, *unobserved, now, percent, &format!("{reason}{behind} · 진행 중 {active}개")));
         }
         if rejected.is_empty() {
             rejected.push("이 harness에서 사용할 수 있는 자동 배정 계정이 없음".into());
@@ -762,8 +780,35 @@ impl SelectionInput {
     }
 }
 
+/// 주간 잔량이 이보다 작으면(%) 곧 막히므로 다른 계정 뒤로 둔다.
+const LOW_WEEKLY: f64 = 5.0;
+/// 현재 5시간 창 잔량이 이보다 작으면(%) 다른 계정 뒤로 둔다. 100% 사용은 `known_limit`가 뺀다.
+const LOW_SESSION: f64 = 10.0;
+const HOUR_MS: f64 = 3_600_000.0;
+const WEEK_MS: u64 = 10080 * 60_000;
+
+/// 배정 점수의 재료: 잔량 %, 그 창의 관측 시각, 다음 초기화까지 시간(최소 1시간).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Remaining {
+    pub percent: f64,
+    pub observed_at_ms: u64,
+    pub hours: f64,
+}
+
+/// 다음 초기화까지 시간. 지난 리셋은 창 길이만큼 다음 리셋을 잇고, 리셋을 모르면 창 한 길이로 본다.
+fn hours_to_reset(w: &QuotaWindow, now: u64) -> f64 {
+    let length = w.duration_mins.map_or(WEEK_MS, |n| u64::from(n) * 60_000).max(1);
+    let left = match w.resets_at_ms {
+        Some(reset) if reset > now => reset - now,
+        Some(reset) => length - (now - reset) % length,
+        None => length,
+    };
+    (left as f64 / HOUR_MS).max(1.0)
+}
+
 /// 배정 비교에는 주간 공용 창을 우선한다. 유효기간 안의 마지막 관측을 현재 창으로 쓴다.
-fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool, weekly: bool) -> Option<(f64, u64)> {
+/// 5시간 창은 점수에 넣지 않는다(고갈 제외와 뒤로 두기만 한다).
+fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool, weekly: bool) -> Option<Remaining> {
     if fresh && q.problem.is_some() {
         return None;
     }
@@ -772,7 +817,7 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
         .iter()
         .filter(|w| {
             active_window(q, w)
-                && (w.window.duration_mins != Some(300) || aaa_common::quota::usable_for_allocation(&w.window, now))
+                && w.window.duration_mins != Some(300)
                 && aaa_common::quota::valid(&w.window)
                 && !w.conflict
                 && w.window.observed_at_ms <= now.saturating_add(aaa_common::quota::CLOCK_SKEW_MS)
@@ -794,9 +839,25 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
                 } else {
                     100.0 - w.window.used_percent
                 };
-            (remaining, w.window.observed_at_ms)
+            Remaining { percent: remaining, observed_at_ms: w.window.observed_at_ms, hours: hours_to_reset(&w.window, now) }
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .min_by(|a, b| a.percent.total_cmp(&b.percent))
+}
+
+/// 확실히 관측한 현재 5시간 창의 잔량이 적다. 판정 조건은 `known_limit`와 같다.
+fn low_session(q: &AccountQuota, model: Option<&str>, now: u64) -> bool {
+    q.problem.is_none()
+        && q.windows.iter().any(|w| {
+            w.window.duration_mins == Some(300)
+                && active_window(q, w)
+                && w.window.scope.as_deref().is_none_or(|s| model == Some(s))
+                && w.problem.is_none()
+                && !w.conflict
+                && w.freshness != QuotaFreshness::Unknown
+                && aaa_common::quota::usable_for_allocation(&w.window, now)
+                && w.window.resets_at_ms.is_some_and(|t| t > now)
+                && 100.0 - w.window.used_percent < LOW_SESSION
+        })
 }
 
 /// 확실하게 관측한 현재 한도만 제외한다. 일부 창이 없어도 알려진 고갈은 존중한다.

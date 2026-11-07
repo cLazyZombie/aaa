@@ -219,6 +219,12 @@ impl Host {
             .and_then(|p| p.session_limit)
     }
 
+    /// 자동 배정의 요금제 배수. None은 요금제 미확인이며 배정에서는 1배로 본다.
+    pub(crate) fn account_plan_weight(&self, name: &str, harness: &str) -> Option<f64> {
+        let meta = self.account_meta(name);
+        crate::account_plan::weight(harness, meta.plan_override.as_deref(), meta.plan.as_deref())
+    }
+
     pub(crate) fn account_meta(&self, name: &str) -> AccountMeta {
         self.db
             .meta(&key(name))
