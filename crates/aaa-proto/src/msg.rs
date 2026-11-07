@@ -3044,6 +3044,15 @@ pub enum FrontRequest {
         #[ts(optional)]
         store_only: Option<bool>,
     },
+    /// 진행 모델을 바꾼다(FRONT_API 1.163, 조작 권한, thread 세션 밖). host 머신이 맡을 수 있는 profile만 받는다. 지금 thread는
+    /// 그대로 두고, 다음 말부터 그 profile의 새 thread가 노트를 읽고 이어 간다
+    IdeaModel {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        profile: String,
+    },
     /// 노트를 복사해 새 아이디어로(조작 권한). 완료한 것을 다시 다듬을 때
     IdeaCopy {
         #[serde(default)]
@@ -3793,6 +3802,7 @@ impl FrontRequest {
             | FrontRequest::IdeaWake { project, .. }
             | FrontRequest::IdeaHandoff { project, .. }
             | FrontRequest::IdeaCopy { project, .. }
+            | FrontRequest::IdeaModel { project, .. }
             | FrontRequest::IdeaAttach { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }

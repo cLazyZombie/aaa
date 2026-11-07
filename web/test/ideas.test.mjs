@@ -1,10 +1,27 @@
 // 아이디어 화면(t-1260): 휴대폰 페이지 쓸기(결정 24), 고친 노트 머리(결정 16), 노트 인용 꼴(결정 9·17), 노트 그림 주소의 거름.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ideaFileUrl, ideaLinkTarget, ideaSwipe, withEditNote } from "../src/ideasModel.ts";
+import { ideaFileUrl, ideaLinkTarget, ideaModel, ideaModelChoices, ideaSwipe, withEditNote } from "../src/ideasModel.ts";
 import { formatNotes } from "../src/reviewNoteStore.ts";
 
 describe("아이디어", () => {
+  // 진행 모델(t-1581): 바꾼 뒤 다음 말 전까지는 열린 앞 thread의 모델을 함께 보이고, 끝난 thread·옛 host는 보이지 않는다
+  it("진행 모델 칩", () => {
+    assert.equal(ideaModel(undefined, null), null, "옛 host");
+    assert.deepEqual(ideaModel("opus-high", null), { model: "opus-high", from: null });
+    assert.deepEqual(ideaModel("opus-high", { profile: "opus-high", status: "open" }), { model: "opus-high", from: null });
+    assert.deepEqual(ideaModel("sonnet-high", { profile: "opus-high", status: "parked" }), { model: "sonnet-high", from: "opus-high" });
+    assert.deepEqual(ideaModel("sonnet-high", { profile: "opus-high", status: "resolved" }), { model: "sonnet-high", from: null });
+  });
+
+  // 고르기 목록은 host 머신이 맡을 수 있는 profile뿐이고, 지금 값은 목록에 없어도 남는다
+  it("진행 모델 목록", () => {
+    const owners = [{ machine: "mac-a", profiles: ["opus-high", "codex-high"] }, { machine: "mac-b", profiles: ["sonnet-high"] }];
+    assert.deepEqual(ideaModelChoices(owners, "mac-a", "opus-high"), ["opus-high", "codex-high"]);
+    assert.deepEqual(ideaModelChoices(owners, "mac-a", "old-max"), ["old-max", "opus-high", "codex-high"]);
+    assert.deepEqual(ideaModelChoices(owners, null, "opus-high"), ["opus-high"]);
+  });
+
   // 「목록 | 노트 | 대화」가 한 줄: 노트 ← 대화, 대화 → 노트. 노트 →는 drawer(목록) 몫, 왼쪽 끝 24px은 브라우저 뒤로다
   it("페이지처럼 쓸기", () => {
     assert.equal(ideaSwipe("note", 200, -80, 5), "chat");

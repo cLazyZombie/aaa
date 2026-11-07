@@ -1815,6 +1815,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             ideas={ideas.list ?? []}
             threads={allThreads}
             panes={panes}
+            hostMachine={machines.find((m) => m.local)?.name ?? null}
             canControl={canControl}
             onOpen={(id) => goSel(`idea:${id}`)}
             onOpenLink={(href) => {

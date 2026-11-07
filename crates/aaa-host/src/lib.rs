@@ -2151,6 +2151,7 @@ impl Host {
             | FrontRequest::IdeaWake { .. }
             | FrontRequest::IdeaHandoff { .. }
             | FrontRequest::IdeaCopy { .. }
+            | FrontRequest::IdeaModel { .. }
             | FrontRequest::IdeaAttach { .. }) => self.call_idea(role, actor, req).await,
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;

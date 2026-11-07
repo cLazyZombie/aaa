@@ -664,7 +664,11 @@ thread: string | null,
 /**
  * 복사해 온 아이디어(`n-NNNN`)
  */
-copied_from: string | null, };
+copied_from: string | null,
+/**
+ * 진행 모델: 다음 말을 맡을 profile(고른 것, 없으면 프로젝트 기본 thread profile). FRONT_API 1.163, 옛 host는 없다
+ */
+profile?: string, };
 
 export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
 /**
@@ -1454,7 +1458,7 @@ alt?: string,
 /**
  * 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
  */
-section?: string, store_only?: boolean, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
+section?: string, store_only?: boolean, } | { "op": "idea_model", project?: string, idea: string, profile: string, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
 /**
  * 끝난 thread를 뺀다(준비·실패·보류는 포함).
  */

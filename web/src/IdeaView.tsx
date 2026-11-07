@@ -14,12 +14,12 @@ import { ChatComposer, MAX_COMPOSER_CHARS, restorePending, savePending, type Pen
 import { ChatPanel } from "./Chat";
 import { NoteEditor } from "./ChatQuote";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
-import type { ChatMessage, IdeaNote, IdeaSummary, IdeaTaskDraft, PaneView, ThreadView } from "./gen/proto";
+import type { ChatMessage, IdeaNote, IdeaSummary, IdeaTaskDraft, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { MODAL, editable, scrolledAside, selecting } from "./herdr/edgeSwipe.ts";
 import {
   IDEA_MEDIA_ACCEPT, ideaFileUrl, ideaMediaFile, ideaMediaSource, ideaMediaSpot, ideaSwipe, movedMedia, sectionBefore, firstDraft,
-  withEditNote, withMediaAlt, withMediaName, withoutMedia, type IdeaPage,
+  ideaModel, ideaModelChoices, withEditNote, withMediaAlt, withMediaName, withoutMedia, type IdeaPage,
 } from "./ideasModel";
 import { useLightbox } from "./Lightbox";
 import { ReportMarkdown } from "./ReportsView";
@@ -36,7 +36,7 @@ import { usePageVisible } from "./pageVisible";
 function useIdeaNote(target: string | null, summary: IdeaSummary | undefined) {
   const [note, setNote] = useState<IdeaNote | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const stamp = summary ? `${summary.rev}:${summary.unseen}:${summary.status}:${summary.updated_ms}:${summary.thread ?? ""}` : "";
+  const stamp = summary ? `${summary.rev}:${summary.unseen}:${summary.status}:${summary.updated_ms}:${summary.thread ?? ""}:${summary.profile ?? ""}` : "";
   const [again, setAgain] = useState(0);
   useEffect(() => {
     if (!target) { setNote(null); return; }
@@ -133,7 +133,7 @@ async function clipboardMedia(): Promise<File[] | null> {
   return out;
 }
 
-export function IdeaView({ shown, target, ideas, threads, panes, canControl, onOpen, onOpenLink }: {
+export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, canControl, onOpen, onOpenLink }: {
   shown: boolean;
   /** 연 아이디어(`n-0001`) */
   target: string | null;
@@ -141,6 +141,8 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
   /** 모든 thread(아이디어 thread 포함) */
   threads: ThreadView[];
   panes: PaneView[];
+  /** host 머신 이름(아이디어 thread가 뜨는 곳). 진행 모델 목록을 거른다 */
+  hostMachine: string | null;
   canControl: boolean;
   onOpen: (id: string) => void;
   onOpenLink?: (href: string) => boolean;
@@ -314,7 +316,7 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
           {!narrow && <IdeaResizer percent={notePercent} onResize={setNotePercent} />}
           <section className="idea-chat-pane" aria-label="대화" hidden={narrow && page !== "chat"} data-testid="idea-chat-pane"
             data-drawer-swipe={narrow && page === "chat" ? "off" : undefined}>
-            {note && <IdeaChat note={note} threads={threads} panes={panes} canControl={canControl} notes={notes} active={shown && (!narrow || page === "chat")}
+            {note && <IdeaChat note={note} threads={threads} panes={panes} hostMachine={hostMachine} canControl={canControl} notes={notes} active={shown && (!narrow || page === "chat")}
               onSaid={(n) => setNote(n)} onError={setError} onOpenLink={onOpenLink} />}
           </section>
         </div>
@@ -552,11 +554,58 @@ function NoteEditorPane({ note, editing, busy, uploads, onChange, onCancel, onSa
   );
 }
 
+/** 진행 모델 칩(t-1581, 사용자 11-07 2A): 다음 말을 맡을 profile. 고르면 host가 저장하고 다음 말부터 그 모델의 새 thread가 잇는다 */
+function IdeaModelChip({ note, thread, hostMachine, canChange, onChanged, onError }: {
+  note: IdeaNote;
+  thread: ThreadView | null;
+  hostMachine: string | null;
+  canChange: boolean;
+  onChanged: (note: IdeaNote) => void;
+  onError: (e: string | null) => void;
+}) {
+  const state = ideaModel(note.idea.profile, thread);
+  const [owners, setOwners] = useState<OwnerChoice[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    call({ op: "assignable", project: note.project, check: null })
+      .then((r) => { if (r.kind === "assignable") setOwners(r.owners); })
+      .catch((e) => onError(`모델 목록을 읽지 못했다: ${e instanceof ApiError ? e.message : String(e)}`));
+  }, [note.project, onError]);
+  useEffect(() => { if (canChange && state) load(); }, [canChange, !!state, load]);
+  if (!state) return null;
+  const from = state.from && <span className="idea-model-from" data-testid="idea-model-from">{state.from} →</span>;
+  if (!canChange) return <span className="idea-model">{from}<span className="idea-model-name" data-testid="idea-model">{state.model}</span></span>;
+  const names = ideaModelChoices(owners ?? [], hostMachine, state.model);
+  const choose = async (profile: string) => {
+    if (profile === state.model) return;
+    setBusy(true);
+    try {
+      const r = await call({ op: "idea_model", idea: note.idea.short_id, profile });
+      if (r.kind === "idea") onChanged(r.note);
+      onError(null);
+    } catch (e) {
+      onError(`모델을 바꾸지 못했다: ${e instanceof ApiError ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="idea-model">
+      {from}
+      <select className="idea-model-select" aria-label="진행 모델" value={state.model} disabled={busy} data-testid="idea-model"
+        onFocus={load} onChange={(e) => void choose(e.target.value)}>
+        {names.map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+    </span>
+  );
+}
+
 /** 전용 thread 대화: 돌고 있는 pane이면 그 대화 기록, 입력창은 host(`idea_say`)로 보낸다(없으면 띄우고, 쉬면 잇는다) */
-function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onError, onOpenLink }: {
+function IdeaChat({ note, threads, panes, hostMachine, canControl, notes, active, onSaid, onError, onOpenLink }: {
   note: IdeaNote;
   threads: ThreadView[];
   panes: PaneView[];
+  hostMachine: string | null;
   canControl: boolean;
   notes: ReturnType<typeof useReviewNotes>;
   active: boolean;
@@ -593,6 +642,7 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
     <div className="idea-chat" data-testid="idea-chat">
       <div className="idea-chat-head">
         {thread ? <a className="idea-thread-chip" href={`#thread=${encodeURIComponent(thread.id)}`} data-testid="idea-thread">{thread.id} · {thread.machine}</a> : <span className="muted">대화 없음</span>}
+        <IdeaModelChip note={note} thread={thread} hostMachine={hostMachine} canChange={canControl && !done} onChanged={onSaid} onError={onError} />
       </div>
       <div className="idea-chat-body">
         <ProviderError agent={pane?.agent} />

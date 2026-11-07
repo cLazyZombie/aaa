@@ -8519,3 +8519,20 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 구판 `asks` 요청과 조작 응답은 기존 전체 기록을 유지한다. 새 웹도 구판 host에선 전체 응답을 쓴다.
   AGENT_LINK는 유지한다. 기타 초기 중복 조회와 JS 지연 로딩은 이 범위에 포함하지 않는다.
 - 검증 경계는 [첫 화면 페이지 조회 검증](testing-startup-pages-t1571.md)에 기록한다.
+
+### 8.559 아이디어 진행 모델 고르기·보기(t-1581)
+
+- **요청.** 사용자 11-07 「앞으로 내가 원할때 아이디어를 진행하는 모델을 바꾸고 싶어. 확인도 하고」. 결정은 보고의 질문 1A·2A이다.
+  같은 아이디어를 여러 모델로 비교하는 부분(질문 3·4)은 사용자 답 「이건 구현하지 마」로 만들지 않았다.
+- **저장.** 아이디어 메타(`idea.json`)의 `profile`이 사람이 고른 진행 모델이다. 없으면 프로젝트 기본 thread profile을 쓴다.
+  `IdeaSummary.profile`(FRONT_API 1.163, 선택)은 다음 말을 맡을 profile이다: 고른 것, 고르지 않았으면 열린 전용 thread의 profile
+  (끝났으면 프로젝트 기본). 고르지 않은 아이디어는 기본이 바뀌어도 열린 thread를 잇는다.
+- **고르기.** `idea_model`(조작 권한)은 host 머신이 맡을 수 있는 profile(`assignable`의 host 머신 줄, 프로젝트 허용 목록 반영)만
+  받는다. thread 세션 안 CLI·보기 기기는 거절한다(`thread restart --profile`의 「정해진 모델 변경은 사용자가」와 같다).
+- **바꾸는 때(1A).** 고르기는 지금 thread를 건드리지 않는다. 다음 말에 고른 profile이 전용 thread의 profile과 다르면, 앞 thread가
+  답하는 중이면 끝나기를 기다린 뒤 끝내고(알림함 항목 없음) 고른 profile의 새 thread가 노트를 읽고 이어 간다. 화면 열기는 옛
+  모델의 쉬는 thread를 잇지 않는다. 앞 말의 배달 일은 모델이 바뀐 것을 보면 멈추고, 아직 보내지 못한 말은 새 thread가 받는다. profile을 바꾸면 새 대화인 것은 herdr-projects `thread restart --profile`·aaa `thread_restart`와
+  같다. 앞 대화 기록은 넘기지 않고 노트가 정본이다.
+- **보기(2A).** 웹 대화 머리의 thread 칩 옆에 모델 칩(고르기)을 둔다. 바꾼 뒤 다음 말 전까지는 `앞 모델 →`을 함께 보인다.
+  CLI는 `aaa idea model <n-ID> <profile>`, `aaa idea show` 첫 줄과 `aaa idea list`에 모델이 나온다.
+- **검증.** [진행 모델 검증 기록](testing-idea-model-t-1581.md).
