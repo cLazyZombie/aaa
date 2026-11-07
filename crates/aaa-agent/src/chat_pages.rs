@@ -266,8 +266,8 @@ pub(super) fn read(
     path: &Path,
     before: Option<&str>,
     parse: impl Fn(&Value) -> Vec<ChatMessage>,
-) -> Result<Page, String> {
-    let io = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
+) -> Result<Page, super::Error> {
+    let io = |e| super::Error::io(e, "기록을 읽지 못했다");
     let mut file = std::fs::File::open(path).map_err(io)?;
     let (history, len) = file_history(path, &file).map_err(io)?;
     let mut cursor = match before {

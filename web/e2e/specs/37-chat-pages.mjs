@@ -1,6 +1,7 @@
 import { installChatRefreshClock, advanceChatRefresh } from "../lib/chat-refresh-clock.mjs";
 // 실제 lab JSONL → agent → host → 웹. 앞 쪽 도달과 prepend 위치는 브라우저가 소유한다.
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import { root, aaa, AA, step, inList, until, domIs, shot, pairPage, browser, webkit, inTime } from "../lib/harness.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 import { phase as markPhase, measured, sample } from "../lib/phases.mjs";
@@ -370,7 +371,49 @@ export default async function () {
     aaa("pane", "kill", label);
     fs.unlinkSync(tr);
   };
+  const newRecord = async (engine, harness) => {
+    const label = `new-record-${harness}`;
+    const id = "01900000-0000-7000-8000-00000000a046";
+    const dir = harness === "claude" ? `${root}/claude/projects/${label}` : `${root}/codex/sessions/2026/11/07`;
+    const tr = `${dir}/rollout-${label}-${id}.jsonl`;
+    assert.ok(!fs.existsSync(tr));
+    const payload = harness === "claude"
+      ? { hook_event_name: "SessionStart", session_id: id, source: "startup", transcript_path: tr }
+      : { type: "agent-turn-complete", "thread-id": id };
+    aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c",
+      '"$0" hook --agent "$1" "$2"; exec cat', AA, harness, JSON.stringify(payload));
+    await until("새 기록의 harness 연결", () => aaa("pane", "list").panes.find(p => p.name === label)?.agent?.harness === harness);
+    const ph = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 900 }, {
+      init: () => {
+        window.chatWarnings = [];
+        const observe = () => {
+          for (const el of document.querySelectorAll('[data-testid="chat"] .banner.warn')) window.chatWarnings.push(el.textContent);
+        };
+        new MutationObserver(observe).observe(document, { childList: true, subtree: true, characterData: true });
+      },
+    });
+    try {
+      const page = ph.page;
+      await inList(page, `pane-${label}`);
+      const toggle = page.getByTestId("chat-toggle");
+      await toggle.waitFor();
+      if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+      const chat = page.getByTestId("chat");
+      await chat.getByText("아직 대화가 없다.", { exact: true }).waitFor();
+      assert.deepEqual(await page.evaluate(() => window.chatWarnings), []);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(tr, line(harness, 0));
+      await chat.getByText("기록 0 ·", { exact: false }).first().waitFor();
+      assert.deepEqual(await page.evaluate(() => window.chatWarnings), []);
+      assert.deepEqual(ph.errors, []);
+    } finally {
+      await ph.page.context().close();
+      aaa("pane", "kill", label);
+    }
+  };
   try {
+  await step("새 기록 생성 전후: Chromium claude", async () => newRecord(browser, "claude"));
+  await step("새 기록 생성 전후: WebKit codex", async () => newRecord(await safariBrowser(), "codex"));
     // 독립된 조합마다 같은 상한을 적용한다. literal 이름으로 --list/--grep에도 모두 보인다.
   await step("긴 대화 앞 쪽: Chromium 1280 claude", async () => check(browser, 1280, "claude"), failure);
   await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(await safariBrowser(), 390, "codex"), failure);

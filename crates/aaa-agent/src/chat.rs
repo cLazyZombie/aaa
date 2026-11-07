@@ -42,20 +42,64 @@ pub(crate) fn codex_root() -> PathBuf {
     codex_home().join("sessions")
 }
 
+/// 기록 생성 전 상태는 실제 읽기·경로 오류와 구분해 요청 응답에서만 빈 대화로 바꾼다.
+#[derive(Clone, Debug)]
+pub(crate) enum Error {
+    Missing,
+    Failed(String),
+}
+impl Error {
+    pub(super) fn io(error: std::io::Error, context: &str) -> Self {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Self::Missing
+        } else {
+            Self::Failed(aaa_common::diagnostic::context(error, context.to_string()))
+        }
+    }
+}
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+impl From<&str> for Error {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.into())
+    }
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => f.write_str("대화 기록이 아직 없다"),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
 /// root 안의 일반 `.jsonl` 파일인지 실제 위치로 확인한다
-pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let deny = || "기록 폴더 밖의 파일은 읽지 않는다".to_string();
+pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, Error> {
+    let deny = || Error::from("기록 폴더 밖의 파일은 읽지 않는다");
     if !path.is_absolute() || path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return Err(deny());
     }
-    let root = std::fs::canonicalize(root)
-        .map_err(|e| aaa_common::diagnostic::context(e, "기록 폴더를 열지 못했다".to_string()))?;
-    let real = std::fs::canonicalize(path)
-        .map_err(|e| aaa_common::diagnostic::context(e, "기록 파일을 열지 못했다".to_string()))?;
-    if !real.starts_with(&root) || real.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+    let resolve = |target: &Path, context| {
+        std::fs::canonicalize(target).map_err(|e| {
+            // 없는 경로도 명백한 외부·상위 경로 요청은 빈 대화로 숨기지 않는다.
+            if e.kind() == std::io::ErrorKind::NotFound
+                && (!path.starts_with(root) || path.components().any(|c| c == std::path::Component::ParentDir))
+            {
+                deny()
+            } else {
+                Error::io(e, context)
+            }
+        })
+    };
+    let real_root = resolve(root, "기록 폴더를 열지 못했다")?;
+    let real = resolve(path, "기록 파일을 열지 못했다")?;
+    if !real.starts_with(&real_root) || real.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return Err(deny());
     }
-    if !std::fs::metadata(&real).map(|m| m.is_file()).unwrap_or(false) {
+    if !std::fs::metadata(&real).map_err(|e| Error::io(e, "기록 파일을 확인하지 못했다"))?.is_file() {
         return Err(deny());
     }
     Ok(real)
@@ -88,23 +132,20 @@ pub(crate) fn codex_hint(root: &Path, id: &str, transcript: &str) -> Option<Path
 }
 
 /// 경로를 모르는 hook·옛 세션은 ID로 찾는다. 셸에서 확인한 정확한 경로가 있으면 `codex_hint`를 먼저 쓴다.
-pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, Error> {
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
     }
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir)
-            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
-        else {
-            continue;
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::io(e, "기록 폴더를 읽지 못했다")),
         };
-        for e in rd.flatten() {
-            let Ok(ft) = e.file_type().inspect_err(|error| {
-                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
-            }) else {
-                continue;
-            };
+        for entry in rd {
+            let e = entry.map_err(|e| Error::io(e, "기록 폴더 항목을 읽지 못했다"))?;
+            let ft = e.file_type().map_err(|e| Error::io(e, "기록 파일을 확인하지 못했다"))?;
             if ft.is_dir() && depth < 3 {
                 dirs.push((e.path(), depth + 1));
             } else if ft.is_file() && codex_record_name(&e.path(), id) {
@@ -112,14 +153,16 @@ pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
             }
         }
     }
-    Err("Codex 기록 파일을 찾지 못했다".into())
+    Err(Error::Missing)
 }
 
 /// 계정 실행의 전용 홈에서만 ID가 다른 SessionStart를 보완한다. 공유 홈에서는 추측하지 않는다.
 /// 같은 실행 이후 시작한 CLI 기록의 cwd를 대조하며, 둘 이상이면 고르지 않는다.
-pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: u64) -> Result<PathBuf, String> {
-    if let Ok(path) = codex_file(root, id) {
-        return Ok(path);
+pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: u64) -> Result<PathBuf, Error> {
+    match codex_file(root, id) {
+        Ok(path) => return Ok(path),
+        Err(Error::Missing) => {}
+        Err(error) => return Err(error),
     }
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
@@ -127,6 +170,7 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
     let cwd = std::fs::canonicalize(cwd)
         .map_err(|e| aaa_common::diagnostic::context(e, "실행 작업 폴더를 열지 못했다".to_string()))?;
     let mut found = None;
+    let mut invalid_record = false;
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
         let Ok(rd) = std::fs::read_dir(dir)
@@ -149,11 +193,13 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
                 continue;
             }
             let Ok(path) = inside(root, &entry.path()).inspect_err(|error| {
+                invalid_record |= !matches!(error, Error::Missing);
                 aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
             }) else {
                 continue;
             };
             let Ok(file) = std::fs::File::open(&path).inspect_err(|error| {
+                invalid_record |= error.kind() != std::io::ErrorKind::NotFound;
                 aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
             }) else {
                 continue;
@@ -163,13 +209,17 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
             if std::io::BufReader::new(file.take(CHUNK))
                 .read_until(b'\n', &mut bytes)
                 .as_ref()
-                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .inspect_err(|error| {
+                    invalid_record = true;
+                    aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                })
                 .is_err()
                 || bytes.last() != Some(&b'\n')
             {
                 continue;
             }
             let Ok(meta) = serde_json::from_slice::<Value>(&bytes).inspect_err(|error| {
+                invalid_record = true;
                 aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
             }) else {
                 continue;
@@ -197,7 +247,12 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
             }
         }
     }
-    found.ok_or_else(|| "Codex 기록 파일을 찾지 못했다".into())
+    match found {
+        Some(path) => Ok(path),
+        // 읽기 실패·손상은 오류로 남기고, 무관한 이전 기록만 있으면 새 기록은 아직 없다.
+        None if invalid_record => Err("Codex 기록 파일을 찾지 못했다".into()),
+        None => Err(Error::Missing),
+    }
 }
 
 fn clip(t: &str) -> String {
@@ -457,7 +512,7 @@ fn claude_pending(path: &Path, history: &str) -> std::io::Result<Vec<ChatMessage
 type LineParser = fn(&Value, bool) -> Vec<ChatMessage>;
 
 /// 읽을 기록 파일(읽기와 감시가 같은 파일을 본다). 오류 글에 경로를 넣지 않는다(홈 경로가 웹으로 간다).
-pub fn path(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn path(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Result<PathBuf, Error> {
     match harness {
         "claude" => {
             let t = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
@@ -578,8 +633,8 @@ pub(crate) fn read_path(
     compact: bool,
     commands: bool,
     before: Option<&str>,
-) -> Result<pages::Page, String> {
-    let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
+) -> Result<pages::Page, Error> {
+    let failed = |e| Error::io(e, "기록을 읽지 못했다");
     let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact, commands))?;
     if harness == "claude" && before.is_none() {
         page.messages.extend(claude_pending(&path, &page.history).map_err(failed)?);
