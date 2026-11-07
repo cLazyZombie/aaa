@@ -3,6 +3,7 @@
 mod cli;
 mod db_backup;
 mod deployment;
+mod file_backup;
 mod image;
 mod init;
 mod install;

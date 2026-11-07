@@ -30,6 +30,19 @@ const MAX_ALT: usize = 200;
 /// 노트 쓰기는 한 번에 하나(사람·thread가 함께 저장해도 판 번호가 겹치지 않게)
 pub(crate) static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// 프로세스 안 순서와 프로세스 사이 snapshot 경계를 함께 잡는다.
+pub(crate) struct Writing {
+    _local: std::sync::MutexGuard<'static, ()>,
+    _file: crate::file_backup::FilesLock,
+}
+impl Host {
+    pub(crate) fn idea_writing(&self) -> Result<Writing, ErrorBody> {
+        let local = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let file = crate::file_backup::files_lock(&self.state, true).map_err(internal)?;
+        Ok(Writing { _local: local, _file: file })
+    }
+}
+
 /// `idea.json`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -285,7 +298,7 @@ impl Host {
     pub(crate) fn idea_seen(&self, project: &str, idea: &str, rev: u32) -> Result<(), ErrorBody> {
         let f = self.idea_folder(project, idea)?;
         let changed = {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut m = f.meta()?;
             if rev == 0 || rev > m.rev {
                 return Err(bad("읽은 판이 없다"));
@@ -321,7 +334,7 @@ impl Host {
             }
         };
         if text != note.text {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             if f.text(Some(note.rev))? == note.text {
                 write_atomic(&f.rev_path(note.rev), text.as_bytes()).map_err(internal)?;
             }
@@ -422,7 +435,7 @@ impl Host {
             out.replace_range(range, &name);
         }
         if !sources.is_empty() {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             for (name, source, who) in &sources {
                 let file = imported.iter().find(|(_, n)| *n == name).map(|(k, _)| k.clone());
@@ -574,13 +587,31 @@ impl Host {
         let f = Folder { dir: self.ideas_root(project)?.join(&id), id };
         let now = aaa_common::util::now_ms();
         let mut meta = Meta { title, created_ms: now, copied_from, ..Default::default() };
+        let short;
         {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             std::fs::create_dir_all(&f.dir).map_err(|e| internal(format!("{}: {e}", f.dir.display())))?;
+            // 복사 노트는 그림이 모두 준비된 뒤 처음 공개한다.
+            if let Some(source) = &meta.copied_from {
+                let from = Folder { id: source.clone(), dir: self.ideas_root(project)?.join(source) };
+                let old = from.meta()?;
+                let old_short = self.db.idea_short_id(project, source).map_err(internal)?;
+                for name in media_refs(&text) {
+                    let bytes = self.idea_file_read(project, source, &name)?;
+                    write_atomic(&f.dir.join(&name), &bytes).map_err(internal)?;
+                    let mut info = old.media.get(&name).cloned().unwrap_or_default();
+                    info.source = IdeaMediaSource::Copy;
+                    info.file = Some(match info.file {
+                        Some(file) => format!("{old_short} {file}"),
+                        None => old_short.clone(),
+                    });
+                    meta.media.insert(name, info);
+                }
+            }
             f.write_rev(&mut meta, &text, IdeaAuthor::User, Some("만듦".into()), now)?;
+            short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
         }
-        // 번호는 폴더를 쓴 뒤 예약한다(쓰다 실패한 아이디어가 번호를 먹지 않게)
-        let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
+        // snapshot에는 파일과 번호 원장이 함께 잡힌다.
         self.db.audit(actor, "idea_create", &format!("{project}/{short}"));
         self.ideas_bump(project);
         self.idea_note(project, &f, None)
@@ -602,7 +633,7 @@ impl Host {
         let summary = summary.map(|s| one_line("바뀐 곳 요약", &s, MAX_SUMMARY)).transpose()?;
         let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
         let outcome = {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             if meta.status == IdeaStatus::Done {
                 return Err(bad(format!("{short}는 할 일로 넘겨 잠겼다. 다시 다듬으려면 복사해서 새 아이디어로 한다")));
@@ -759,7 +790,7 @@ impl Host {
             .filter_map(|t| t.id.clone())
             .collect();
         {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             meta.status = IdeaStatus::Done;
             meta.tasks.extend(added.iter().cloned());
@@ -802,33 +833,7 @@ impl Host {
         let f = self.idea_folder(project, idea)?;
         let meta = f.meta()?;
         let text = f.text(None)?;
-        let note = self.idea_create(project, &meta.title, &text, Some(f.id.clone()), actor)?;
-        // 노트가 가리키는 그림·영상도 같은 이름으로 옮긴다(이름이 내용 hash라 겹치지 않는다)
-        let to = Folder { dir: self.ideas_root(project)?.join(&note.idea.id), id: note.idea.id.clone() };
-        let mut copied = Vec::new();
-        for name in media_refs(&text) {
-            let src = f.dir.join(&name);
-            if src.symlink_metadata().is_ok_and(|m| m.is_file()) {
-                std::fs::copy(&src, to.dir.join(&name)).map_err(|e| internal(format!("{}: {e}", src.display())))?;
-                copied.push(name);
-            }
-        }
-        if !copied.is_empty() {
-            let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
-            let mut new = to.meta()?;
-            for name in &copied {
-                let mut info = meta.media.get(name).cloned().unwrap_or_default();
-                info.source = IdeaMediaSource::Copy;
-                info.file = Some(match info.file {
-                    Some(file) => format!("{short} {file}"),
-                    None => short.clone(),
-                });
-                new.media.insert(name.clone(), info);
-            }
-            to.write_meta(&new)?;
-        }
-        self.idea_note(project, &to, None)
+        self.idea_create(project, &meta.title, &text, Some(f.id.clone()), actor)
     }
 
     /// 웹이 올린 그림·영상을 아이디어 폴더에 쓰고 노트에 적을 이름을 돌려준다(이름은 내용 hash)
@@ -847,7 +852,7 @@ impl Host {
         let name = self.idea_store_file(&f, bytes)?;
         let file =
             file.map(|n| n.chars().filter(|c| !c.is_control()).take(200).collect::<String>()).filter(|n| !n.is_empty());
-        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let _w = self.idea_writing()?;
         let mut meta = f.meta()?;
         meta.note_media(&name, IdeaMediaSource::Web, "사람", file);
         f.write_meta(&meta)?;
@@ -899,7 +904,7 @@ impl Host {
             added.iter().map(|(name, _, _)| format!("![{}]({name})", media_alt(alt, name))).collect();
         let n = added.len();
         let written = {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             if meta.status == IdeaStatus::Done {
                 return Err(bad(format!("{short}는 할 일로 넘겨 잠겼다")));
@@ -942,7 +947,7 @@ impl Host {
         use sha2::Digest as _;
         let name = format!("{}.{ext}", &hex::encode(sha2::Sha256::digest(bytes))[..16]);
         let path = f.dir.join(&name);
-        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let _w = self.idea_writing()?;
         match path.symlink_metadata() {
             Ok(m) if m.is_file() => {
                 if std::fs::read(&path).map_err(internal)? != bytes {
@@ -1051,7 +1056,7 @@ fn in_code(line: &str, at: usize) -> bool {
 }
 
 /// Markdown 링크·그림의 대상 범위. 코드 안의 예시는 파일 요청으로 바꾸지 않는다.
-fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+pub(crate) fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
     static TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r#"\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^\n]*?["'])?\s*\)"#).unwrap()
     });

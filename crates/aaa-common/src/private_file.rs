@@ -79,6 +79,28 @@ pub fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     if bytes.len() as u64 > limit { Err(denied()) } else { Ok(bytes) }
 }
 
+/// 새 private 폴더만 만든다. 기존 경로는 종류와 관계없이 거부한다.
+pub fn new_directory(path: &Path) -> io::Result<()> {
+    create_directory(path)
+}
+
+/// host 파일 저장과 별도 CLI snapshot의 공통 잠금. 기존 설치 예약 잠금과는 분리한다.
+/// 반환 FD는 소유자가 명시적으로 unlock해야 fork로 복제된 FD가 수명을 늘리지 않는다.
+pub fn coordinated_lock(path: &Path, wait: bool) -> io::Result<File> {
+    let file = match new_file(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => open(path, false, true)?,
+        Err(e) => return Err(e),
+    };
+    verify(&file, false)?;
+    if wait {
+        file.lock()?;
+    } else {
+        file.try_lock().map_err(io::Error::from)?;
+    }
+    Ok(file)
+}
+
 pub fn lock(path: &Path) -> io::Result<File> {
     #[cfg(windows)]
     {

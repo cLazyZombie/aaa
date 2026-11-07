@@ -96,6 +96,32 @@ pub struct HostConfig {
     pub defaults: DefaultsSection,
     pub update: UpdateSection,
     pub backup: BackupSection,
+    pub file_backup: FileBackupSection,
+}
+
+/// 아이디어·첨부 파일 백업. 목적지·공개키는 `[backup]`에서 가져온다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FileBackupSection {
+    pub enabled: bool,
+    pub daily_utc: String,
+    pub keep: u32,
+}
+impl Default for FileBackupSection {
+    fn default() -> Self {
+        Self { enabled: false, daily_utc: "19:45".into(), keep: 30 }
+    }
+}
+impl FileBackupSection {
+    pub fn effective(&self, shared: &BackupSection) -> BackupSection {
+        BackupSection {
+            enabled: self.enabled,
+            daily_utc: self.daily_utc.clone(),
+            keep: self.keep,
+            directory: shared.directory.clone(),
+            recipient: shared.recipient.clone(),
+        }
+    }
 }
 
 /// host DB 전체의 암호화 백업. 목적지와 공개키를 명시하기 전에는 실행하지 않는다.
@@ -307,6 +333,7 @@ impl Default for HostConfig {
             defaults: DefaultsSection::default(),
             update: UpdateSection::default(),
             backup: BackupSection::default(),
+            file_backup: FileBackupSection::default(),
         }
     }
 }
@@ -738,7 +765,16 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     if !(1..=365).contains(&c.backup.keep) {
         out.push(Invalid { path: key(&["backup", "keep"]), message: "1~365개여야 한다".into() });
     }
-    if c.backup.enabled {
+    if c.file_backup.effective(&c.backup).time().is_none() {
+        out.push(Invalid {
+            path: key(&["file_backup", "daily_utc"]),
+            message: "UTC HH:MM(00:00~23:59)이어야 한다".into(),
+        });
+    }
+    if !(1..=365).contains(&c.file_backup.keep) {
+        out.push(Invalid { path: key(&["file_backup", "keep"]), message: "1~365개여야 한다".into() });
+    }
+    if c.backup.enabled || c.file_backup.enabled {
         if !is_absolute_anywhere(&c.backup.directory) {
             out.push(Invalid {
                 path: key(&["backup", "directory"]),
