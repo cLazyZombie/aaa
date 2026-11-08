@@ -29,6 +29,14 @@ Rust 시험이 끝난 뒤 `aaa agent --host local --dev-mode`가 부모 없이(P
 - 회귀 시험: m13 `lab_host_without_local_agent_mode_starts_no_detached_agent`가 실제 설정 loader로 실험실 host.toml을 읽어
   적지 않은 모드는 `none`, 적은 `child`는 그대로인지 본다. 프로세스를 띄우지 않는다. 수리를 되돌리면 실패한다.
 
+## 검증 중 만난 간헐 실패
+
+- m13 `thread_park::park_moves_between_machines_through_the_pushed_branch`가 owner 검증에서 한 번 실패했다:
+  resolve가 「마지막 사본이 실패해 resolve하지 않는다: sub/d.txt: 받는 동안 바뀌었다」로 거부됐다.
+- 원인: 앞 머신으로 돌아온 brief가 배달되자마자 시험이 resolve했다. 가짜 agent는 그 brief를 처리하며 library 파일을
+  다시 쓰는 중이었고(로그에서 brief 입력 수락 직후 resolve), host의 마지막 사본이 그 변화를 잡았다. 제품의 거부는 맞는 동작이다.
+- 수리: 새 대화 pane에서 가짜 agent의 처리 끝 표지 `done`을 기다린 뒤 resolve한다. 시한·기대값은 그대로다.
+
 ## 남은 것
 
 - host.toml 없이 만든 node(`lab.node(name, None)`)에서 `host`를 띄우면 여전히 개발 모드다. 지금 그런 시험은 없다.
