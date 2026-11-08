@@ -121,7 +121,13 @@ export default async function ({ page }) {
     await until("thread에 간 글의 사본 경로", () => fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8").includes(sentLine));
     const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.event === "question answered" && i.subject === t.id);
     if (!notice?.body.includes(`박쥐 간격에 offset\n![그림](${root}/projects/demo/uploads/${name})`)) throw new Error(`coordinator inbox 원문: ${JSON.stringify(notice)}`);
-    await until("답한 카드의 줄바꿈과 그림", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-text-images"]')) === 1);
+    await page.getByTestId("ask-done-card").waitFor();
+    // 답 그림 썸네일은 lazy다: 보이게 한 뒤 decode 완료(사건)를 기다린다
+    const doneImage = page.getByTestId("ask-done-text-images").locator("img");
+    await doneImage.waitFor();
+    await doneImage.scrollIntoViewIfNeeded();
+    await doneImage.evaluate((i) => i.decode());
+    if ((await pictures(page, '[data-testid="ask-done-text-images"]')) !== 1) throw new Error("답한 카드에 붙인 그림이 보이지 않는다");
     if ((await page.getByTestId("ask-done-text").innerText()) !== "직접 쓴 답 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset") throw new Error(`답한 카드 글: ${JSON.stringify(await page.getByTestId("ask-done-text").innerText())}`);
     await shot(page, "53-answer-lines-done");
     await page.setViewportSize({ width: 1280, height: 800 });
