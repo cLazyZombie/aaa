@@ -1,3 +1,4 @@
+- t-1646: [시험 host가 남긴 개발 모드 로컬 agent](testing-lab-local-agent-t-1646.md)
 - t-1638: [E53 답 완료 대기 수리](testing-e53-answer-completion-t-1638.md)
 - t-1638: [그림 든 아이디어 전달 E2E 대기 조사·수리](testing-idea-media-wait-t-1638.md)
 - t-1615: [예약 지정 계정 검증](testing-reservation-account-t-1615.md)
