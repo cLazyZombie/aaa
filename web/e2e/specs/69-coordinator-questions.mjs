@@ -1,6 +1,7 @@
 import { listIds } from "../lib/list-ids.mjs";
 // coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 평문 호환을 본다.
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA, drawerSettled } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -172,20 +173,34 @@ export default async function ({ page }) {
     await phone.page.getByTestId("thread-ask-pick-1B").click();
     const direct = "눈 아이콘은 항상 보이게\n원래 색은 유지";
     await phone.page.getByTestId("thread-ask-text-2").fill(direct);
+    // 확인 필요 post 카드도 그림을 붙인다(t-1635): host가 맡은 프로젝트 uploads에 올리고 답 글 끝 그림 줄이 된다
+    const png = fs.readFileSync(`${root}/pic.png`);
+    const name = `${createHash("sha256").update(png).digest("hex").slice(0, 16)}.png`;
+    if ((await phone.page.getByTestId("thread-ask-text-2-pick").count()) !== 1) throw new Error("확인 필요 post 카드에 그림 단추가 없다(프로젝트를 모른다)");
+    await phone.page.getByTestId("thread-ask-text-2-input").setInputFiles({ name: "shot.png", mimeType: "image/png", buffer: png });
+    await phone.page.getByTestId("thread-ask-text-2-image").waitFor();
     await phone.page.getByTestId("thread-ask-send").click();
     await domIs(phone.page, "답한 post 카드", () => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind === "request");
     const data = (await call(page, { op: "asks" })).ok;
     const done = data.done.find((r) => r.subject === req.id);
-    if (done?.summary !== "1B 2직접" || done.answer.text !== null || JSON.stringify(done.answer.picks) !== "[1,null]" || JSON.stringify(done.answer.comments) !== JSON.stringify([null, direct]) || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
+    if (done?.summary !== "1B 2직접" || done.answer.text !== null || JSON.stringify(done.answer.picks) !== "[1,null]" || JSON.stringify(done.answer.comments) !== JSON.stringify([null, `${direct}\n![그림](uploads/${name})`]) || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
     const inbox = aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.event === "question answered" && i.summary.includes(req.question_id));
-    if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(`2번 직접 쓴 답: ${direct}`) || !inbox[0].summary.includes("2 직접: 눈 아이콘은 항상 보이게")) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
+    if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(`2번 직접 쓴 답: ${direct}\n![그림](${root}/projects/demo/uploads/${name})`) || !inbox[0].summary.includes("2 직접: 눈 아이콘은 항상 보이게")) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
     if (!aaa("post", "status", "demo", post.id).handled) throw new Error("post가 답함이 아니다");
+    const copy = `${root}/projects/demo/asks/${done.id}/uploads/${name}`;
+    if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(png)) throw new Error(`답 사본 폴더에 그림이 없다: ${copy}`);
     await chipState(page, req.questions.items.map((q) => q.id), "done");
     await open(page, req.question_id, '[data-testid="ask-done-card"]');
     await domIs(page, "다른 기기의 같은 답", (direct) => {
       const text = document.querySelector('[data-testid="ask-done-text-2"]');
       return text?.textContent === `직접 쓴 답 ${direct}`;
     }, direct);
+    if (await images(page, '[data-testid="ask-done-text-2-images"]') !== 1) throw new Error("다른 기기의 답한 카드에 붙인 그림이 없다");
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.getByTestId("ask-done-text-2-images").scrollIntoViewIfNeeded();
+    await shot(page, "69-request-answer-image");
+    await page.setViewportSize(size);
     const again = await call(page, { op: "ask_answer", item: req.id, body_hash: req.questions.report_hash, picks: [0,0], text: null });
     if (!again.err) throw new Error("두 번째 답을 받았다");
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다
