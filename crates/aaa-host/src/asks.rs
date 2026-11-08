@@ -471,6 +471,14 @@ impl Host {
         let items = self.identify_questions(project, "post", item, &post.body_sha256, &parsed)?;
         let (message, summary) = crate::answer::compose(&items, &picks, text.as_deref(), &comments)
             .map_err(|e| err(ErrorCode::BadRequest, e))?;
+        // 답 그림은 coordinator(host)가 여는 프로젝트 uploads/의 절대 경로로 적는다(기록은 `uploads/…` 그대로, t-1635)
+        let images = crate::answer::upload_refs(&message);
+        let message = if images.is_empty() {
+            message
+        } else {
+            let uploads = self.project_dir(project)?.join("uploads");
+            crate::answer::rebase_uploads(&message, &images, &uploads.to_string_lossy())
+        };
         let by = self.answered_by(actor);
         let now = aaa_common::util::now_ms();
         let id = aaa_common::util::new_id();

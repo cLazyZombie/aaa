@@ -350,29 +350,7 @@ impl Host {
                 // 아직 쓴 적이 없다: brief가 「복사해 두었다」고 하지 않게 시작을 멈춘다
                 Err(e) => return Err(err(e.code, format!("task 첨부 {}를 넘기지 못했다: {}", f.src, e.message))),
             };
-            let want = hex::encode(Sha256::digest(&bytes));
-            let mut saved = false;
-            for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
-                let offset = i * aaa_proto::ATTACH_CHUNK;
-                let response = conn
-                    .request(AgentRequest::WorkAttachWrite {
-                        work_dir: work_dir.clone(),
-                        att: f.name.clone(),
-                        offset: offset as u64,
-                        data: B64(chunk.to_vec()),
-                        eof: offset + chunk.len() == bytes.len(),
-                    })
-                    .await?;
-                if let AgentResponse::Attached { sha256, .. } = response {
-                    if sha256 != want {
-                        return Err(err(ErrorCode::Internal, format!("넘긴 task 첨부 {}의 sha256이 다르다", f.name)));
-                    }
-                    saved = true;
-                }
-            }
-            if !saved {
-                return Err(err(ErrorCode::Internal, format!("task 첨부 {} 저장 응답이 없다", f.name)));
-            }
+            work_attach_write(&conn, &work_dir, &f.name, &bytes).await?;
             sent.push(f.name.clone());
         }
         if rec.attachments.iter().any(|f| !f.sent) {
@@ -382,6 +360,39 @@ impl Host {
         }
         Ok(())
     }
+}
+
+/// 파일 하나를 그 머신 작업 폴더 `attachments/<name>`에 조각으로 쓰고, agent가 돌려준 sha256이 보낸 내용과 같은지 본다
+pub(crate) async fn work_attach_write(
+    conn: &crate::AgentConn,
+    work_dir: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), ErrorBody> {
+    let want = hex::encode(Sha256::digest(bytes));
+    let mut saved = false;
+    for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
+        let offset = i * aaa_proto::ATTACH_CHUNK;
+        let response = conn
+            .request(AgentRequest::WorkAttachWrite {
+                work_dir: work_dir.to_string(),
+                att: name.to_string(),
+                offset: offset as u64,
+                data: B64(chunk.to_vec()),
+                eof: offset + chunk.len() == bytes.len(),
+            })
+            .await?;
+        if let AgentResponse::Attached { sha256, .. } = response {
+            if sha256 != want {
+                return Err(err(ErrorCode::Internal, format!("넘긴 첨부 {name}의 sha256이 다르다")));
+            }
+            saved = true;
+        }
+    }
+    if !saved {
+        return Err(err(ErrorCode::Internal, format!("첨부 {name} 저장 응답이 없다")));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

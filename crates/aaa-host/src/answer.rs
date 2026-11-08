@@ -5,6 +5,9 @@
 //!   못하면 자리를 풀어 다시 답할 수 있다.
 //! - 보내는 길은 `thread message`와 같다(확인창·입력창 글·brief 전 거부, task 기록). coordinator를 거치지 않는다.
 //! - 웹에서 답하면 coordinator inbox에 「질문에 답함」을 남긴다: coordinator가 같은 질문을 다시 묻거나 중계하지 않는다.
+//! - 직접 쓴 답은 여러 줄이고 그림 줄(`![그림](uploads/<이름>)`, task 첨부와 같은 프로젝트 uploads/)을 실을 수 있다(t-1635).
+//!   기록·웹은 `uploads/…` 그대로 두고, 보낼 글만 읽는 쪽이 여는 경로로 바꾼다: thread에는 그 머신 작업 폴더 `attachments/`에
+//!   복사한 사본(task 첨부와 같은 `WorkAttachWrite`), coordinator inbox에는 host 프로젝트 `uploads/`의 절대 경로다.
 
 use std::sync::Arc;
 
@@ -66,6 +69,18 @@ pub(crate) fn compose(
     }
     let message = format!("보고의 질문에 대한 사용자 답({})\n{}", short.join(" "), lines.join("\n"));
     Ok((message, short.join(" ")))
+}
+
+/// 답 글이 가리키는 프로젝트 uploads 파일 이름들(`](uploads/<이름>)`, 처음 나온 차례, 겹치지 않게)
+pub(crate) fn upload_refs(text: &str) -> Vec<String> {
+    crate::task_attach::refs(text).into_iter().filter_map(|t| t.strip_prefix("uploads/").map(str::to_string)).collect()
+}
+
+/// 글의 `](uploads/<이름>)`을 `](<dir><sep><이름>)`으로 바꾼다. `dir`이 Windows 경로(`\`만 쓴다)면 그 구분자를 쓴다
+pub(crate) fn rebase_uploads(text: &str, names: &[String], dir: &str) -> String {
+    let sep = if dir.contains('\\') && !dir.contains('/') { '\\' } else { '/' };
+    let dir = dir.trim_end_matches(sep);
+    names.iter().fold(text.to_string(), |out, n| out.replace(&format!("](uploads/{n})"), &format!("]({dir}{sep}{n})")))
 }
 
 /// 빈 의견은 null로 정리하되 질문 배열 위치와 본문 줄바꿈을 보존한다.
@@ -143,6 +158,16 @@ impl Host {
         }
         let (message, summary) =
             compose(&rec.questions, &picks, text.as_deref(), &comments).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        // 답에 붙인 그림: 자리를 잡기 전에 thread 머신으로 넘긴다(못 넘기면 답을 기록하지 않고 거절한다). 같은 내용은 같은 이름이라
+        // 다시 답해도 덮어쓸 뿐이다
+        let images = upload_refs(&message);
+        let (to_thread, to_inbox) = if images.is_empty() {
+            (message.clone(), message.clone())
+        } else {
+            let there = self.answer_images_to_thread(&rec, &images).await?;
+            let here = self.project_dir(project)?.join("uploads");
+            (rebase_uploads(&message, &images, &there), rebase_uploads(&message, &images, &here.to_string_lossy()))
+        };
         let requests = self.question_requests(project, id)?;
         let by = self.answered_by(actor);
         let answer = QuestionAnswerView {
@@ -169,7 +194,7 @@ impl Host {
         if let Some(old) = taken {
             return Err(err(ErrorCode::BadRequest, format!("이미 답함({}): {}", old.by, old.summary)));
         }
-        if let Err(e) = self.thread_message(project, id, message.clone(), MessageMode::Queue, actor).await {
+        if let Err(e) = self.thread_message(project, id, to_thread, MessageMode::Queue, actor).await {
             // 보내지 못했다: 다시 답할 수 있게 자리를 푼다(그사이 새 보고면 이미 비었다)
             aaa_common::diagnostic::ignored(
                 self.update_rec(project, id, |r| {
@@ -196,10 +221,58 @@ impl Host {
                 id,
                 "question answered",
                 &format!("{id} {question_ids} 질문에 답함({by}): {answer_preview}"),
-                &message,
+                &to_inbox,
             );
         }
         Ok(self.thread_view(&rec))
+    }
+
+    /// 답 그림(프로젝트 `uploads/<이름>`)을 thread 머신 작업 폴더 `attachments/`에 쓰고 그 폴더 경로(그 머신의 것)를 돌려준다.
+    /// 원본은 task 첨부처럼 이름(내용 hash)과 내용이 같은 일반 파일이어야 한다
+    async fn answer_images_to_thread(
+        self: &Arc<Self>,
+        rec: &crate::orch::ThreadRec,
+        names: &[String],
+    ) -> Result<String, ErrorBody> {
+        use crate::task_attach::{FEATURE, MAX_BYTES, work_attach_write};
+        use sha2::{Digest, Sha256};
+        let machine = self.machine_name(&rec.machine_id);
+        if !self.machine_feature(&rec.machine_id, FEATURE) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!(
+                    "{machine} agent가 답 그림을 받지 못한다({FEATURE} 없음). 그 머신 aaa를 갱신하거나 그림을 떼고 답한다"
+                ),
+            ));
+        }
+        let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::Internal, "작업 폴더 기록이 없다"))?;
+        let uploads = self.project_dir(&rec.project)?.join("uploads");
+        let conn = self.live_conn(&rec.machine_id)?;
+        for name in names {
+            let path = uploads.join(name);
+            let file = path
+                .symlink_metadata()
+                .map_err(|e| err(ErrorCode::NotFound, format!("답 그림 uploads/{name}를 읽지 못했다: {e}")))?;
+            if !file.is_file() || file.len() == 0 || file.len() > MAX_BYTES {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    format!("답 그림 uploads/{name}는 1바이트~16MiB 일반 파일이 아니다"),
+                ));
+            }
+            let bytes = std::fs::read(&path)
+                .map_err(|e| err(ErrorCode::NotFound, format!("답 그림 uploads/{name}를 읽지 못했다: {e}")))?;
+            if !hex::encode(Sha256::digest(&bytes)).starts_with(name.split('.').next().unwrap_or_default()) {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    format!("답 그림 uploads/{name}의 이름과 내용 해시가 다르다. 다시 붙인다"),
+                ));
+            }
+            work_attach_write(&conn, &work_dir, name, &bytes).await.map_err(|e| {
+                err(e.code, format!("답 그림 uploads/{name}를 {machine}의 작업 폴더로 넘기지 못했다: {}", e.message))
+            })?;
+        }
+        let sep = if work_dir.contains('\\') && !work_dir.contains('/') { "\\" } else { "/" };
+        Ok(format!("{}{sep}attachments", work_dir.trim_end_matches(['/', '\\'])))
     }
 }
 
@@ -268,5 +341,31 @@ mod tests {
         assert!(compose(&items, &[Some(0), None], None, &[None, Some(" \n ".into())]).is_err());
         assert!(compose(&items, &[Some(0), None], None, &comments[..1]).unwrap_err().contains("받은 의견 1개"));
         assert!(compose(&items, &[Some(99), None], None, &comments).is_err());
+    }
+
+    /// 답 그림(t-1635): 여러 줄 공통 답의 줄과 그림 줄을 그대로 싣고, 보낼 곳마다 그 쪽이 여는 경로(Unix·Windows)로만 바꾼다.
+    /// 프로젝트 uploads 꼴이 아닌 참조(밖으로 나가는 경로·library)는 넘기지도 바꾸지도 않는다
+    #[test]
+    fn answer_images_are_rebased_per_reader_and_keep_lines() {
+        let a = "0123456789abcdef.png";
+        let b = "fedcba9876543210.jpg";
+        let text = format!(
+            "첫 줄\n둘째 줄\n![그림](uploads/{a})\n![그림](uploads/{b})\n![밖](uploads/../x.png)\n![다시](uploads/{a})"
+        );
+        let (message, _) = compose(&qs(), &[Some(0), None], Some(&text), &[]).unwrap();
+        assert!(message.ends_with(&format!("직접 쓴 답: {text}")), "{message}");
+        let names = upload_refs(&message);
+        assert_eq!(names, [a, b]);
+        let unix = rebase_uploads(&message, &names, "/work/t-0001/attachments/");
+        assert!(unix.contains(&format!(
+            "둘째 줄\n![그림](/work/t-0001/attachments/{a})\n![그림](/work/t-0001/attachments/{b})"
+        )));
+        assert!(
+            unix.contains(&format!("![다시](/work/t-0001/attachments/{a})")) && unix.contains("](uploads/../x.png)"),
+            "{unix}"
+        );
+        let windows = rebase_uploads(&message, &names, r"F:\work\t-0001\attachments");
+        assert!(windows.contains(&format!(r"![그림](F:\work\t-0001\attachments\{b})")), "{windows}");
+        assert!(upload_refs("[계획](library/t-0001/plan.md)\n![그림](uploads/0123456789ABCDEF.png)").is_empty());
     }
 }

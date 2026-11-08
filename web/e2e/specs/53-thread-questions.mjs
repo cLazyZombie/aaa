@@ -68,6 +68,65 @@ export default async function ({ page }) {
     aaa("thread", "resolve", t.id);
   });
 
+  await step("직접 답 여러 줄·그림(t-1635): Enter는 줄바꿈, 조합 중 ⌘Enter는 보내지 않고, 붙인 그림은 thread 작업 폴더 사본으로 간다", async () => {
+    if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task-answer-lines.md`, "여러 줄 답 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "여러 줄 답", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-answer-lines.md`);
+    await until("첫 여러 줄 보고", () => aaa("thread", "show", t.id).report_hash);
+    const body = "[결정 필요] 질문 1개: 궤적\n\n## Questions\n### 1. 궤적을 이대로 둘까\n- A 그대로 (추천)\n- B 고친다\n";
+    fs.writeFileSync(`${t.work_dir}/report.md`, body);
+    const hash = createHash("sha256").update(body).digest("hex");
+    await until("한 질문 카드", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions && v; });
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, t.id);
+    const card = page.getByTestId(`thread-ask-${t.id}`);
+    const text = card.getByTestId("thread-ask-text");
+    await text.waitFor();
+    await card.getByTestId("thread-ask-pick-1B").click();
+    await text.click();
+    await page.keyboard.type("올라갈 때 한 번 꺾인다");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("박쥐 간격에 offset");
+    if ((await text.inputValue()) !== "올라갈 때 한 번 꺾인다\n박쥐 간격에 offset" || (await page.getByTestId("ask-done-card").count()) !== 0) throw new Error(`Enter가 줄바꿈이 아니다: ${JSON.stringify(await text.inputValue())}`);
+    // 한글 조합 중의 ⌘/Ctrl+Enter(keyCode 229)는 조합을 끝내는 키다: 보내지 않는다
+    await text.evaluate((el) => {
+      for (const init of [{ isComposing: true, keyCode: 13 }, { isComposing: false, keyCode: 229 }]) {
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, ctrlKey: true, bubbles: true, cancelable: true, ...init }));
+      }
+    });
+    // 붙여 넣은 그림은 프로젝트 uploads/에 내용 hash 이름으로 올라가 칸 아래 썸네일이 된다(입력칸 글에는 섞이지 않는다)
+    const png = fs.readFileSync(`${root}/pic.png`);
+    const name = `${createHash("sha256").update(png).digest("hex").slice(0, 16)}.png`;
+    await text.evaluate((el, b64) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "", { type: "image/png" }));
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, png.toString("base64"));
+    await until("붙인 그림 썸네일", async () => (await pictures(page, `[data-testid="thread-ask-${t.id}"] [data-testid="thread-ask-text-field"]`)) === 1);
+    if ((await text.inputValue()).includes("uploads/") || (await page.getByTestId("ask-done-card").count()) !== 0) throw new Error("그림 줄이 입력칸에 보이거나 조합 중에 보냈다");
+    await shot(page, "53-answer-lines-desktop");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await text.scrollIntoViewIfNeeded();
+    await shot(page, "53-answer-lines-phone");
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await text.press("ControlOrMeta+Enter");
+    await waitOutput(t.pane, "직접 쓴 답: 올라갈 때 한 번 꺾인다");
+    await waitOutput(t.pane, "박쥐 간격에 offset");
+    const copy = `${t.work_dir}/attachments/${name}`;
+    if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(png)) throw new Error(`thread 작업 폴더에 그림 사본이 없다: ${copy}`);
+    const answered = aaa("thread", "show", t.id).questions.answer;
+    if (answered.text !== `올라갈 때 한 번 꺾인다\n박쥐 간격에 offset\n![그림](uploads/${name})`) throw new Error(`기록한 직접 답: ${JSON.stringify(answered)}`);
+    const followups = fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8");
+    if (!followups.includes(`직접 쓴 답: 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset\n![그림](${copy})`)) throw new Error(`thread에 간 글이 사본 경로가 아니다:\n${followups}`);
+    const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.event === "question answered" && i.subject === t.id);
+    if (!notice?.body.includes(`박쥐 간격에 offset\n![그림](${root}/projects/demo/uploads/${name})`)) throw new Error(`coordinator inbox 원문: ${JSON.stringify(notice)}`);
+    await until("답한 카드의 줄바꿈과 그림", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-text-images"]')) === 1);
+    if ((await page.getByTestId("ask-done-text").innerText()) !== "직접 쓴 답 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset") throw new Error(`답한 카드 글: ${JSON.stringify(await page.getByTestId("ask-done-text").innerText())}`);
+    await shot(page, "53-answer-lines-done");
+    await page.setViewportSize({ width: 1280, height: 800 });
+    aaa("thread", "resolve", t.id);
+  });
+
   await step("근거가 Questions 위에만: thread 카드는 근거 경고·보고서 열기 r-ID(PC·휴대폰 폭), thread pane에 고칠 방법, post는 거절", async () => {
     fs.writeFileSync(`${root}/task-evidence.md`, "근거 위치 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "근거 위치", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-evidence.md`);

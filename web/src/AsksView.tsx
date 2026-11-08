@@ -23,6 +23,9 @@ import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
 import { mergeQuestionDraft, questionDrafts, questionIdentity, type QuestionDraft } from "./questionDraft";
+import { AnswerField } from "./AnswerField";
+import { addAnswerImage, answerBody, answerImages, projectOfBase, removeAnswerImage, withAnswerBody } from "./answerImages";
+import { taskImageUrl } from "./tasksModel";
 export { withRecommended } from "./questionAnswer";
 
 const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
@@ -402,7 +405,11 @@ function QuestionCard({
   }, [owner, q]);
   const multiple = q.items.length > 1;
   const commentInputs = useRef<(HTMLTextAreaElement | null)[]>([]);
-  const customInput = useRef<HTMLInputElement>(null);
+  const customInput = useRef<HTMLTextAreaElement>(null);
+  // 올리는 중인 그림 수(칸마다). 올리는 동안은 보내지 않는다: 그림 줄이 빠진 답이 가지 않게 한다
+  const [uploads, setUploads] = useState<Record<string, number>>({});
+  const uploading = Object.values(uploads).some((n) => n > 0);
+  const onUploading = useCallback((field: string) => (count: number) => setUploads((u) => (u[field] === count ? u : { ...u, [field]: count })), []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revision = useRef(q.report_hash);
@@ -426,12 +433,12 @@ function QuestionCard({
     const input = (event: Event) => {
       if (event.target === customInput.current) {
         const value = customInput.current!.value;
-        update(d => ({ ...d, custom: value }));
+        update(d => ({ ...d, custom: withAnswerBody(d.custom, value) }));
       }
       const n = commentInputs.current.findIndex(element => element !== null && element === event.target);
       if (n >= 0) {
         const value = commentInputs.current[n]!.value;
-        update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? value : old) }));
+        update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? withAnswerBody(old ?? "", value) : old) }));
       }
     };
     view.addEventListener("input", input, true);
@@ -456,9 +463,11 @@ function QuestionCard({
     if (shown.current && revision.current === sentRevision) setPending(false);
   };
   // 다 골랐거나 직접 쓴 답이 있으면 그대로, 아니면 남은 질문을 추천으로 채워 보낸다
-  const submit = () => { if (!off) void (all || text ? send(picks) : filled && send(filled)); };
+  const submit = () => { if (!off && !uploading && !needsReviewText) void (all || text ? send(picks) : filled && send(filled)); };
   const label = all ? `답 보내기 (${q.items.length})` : text ? "답 보내기" : filled ? "추천대로 보내기" : "답 보내기";
   const base = q.files_base;
+  const project = projectOfBase(base) ?? t?.project ?? null;
+  const setComment = (n: number, f: (old: string) => string) => update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? f(old ?? "") : old) }));
   return (
     <section className="prompt-card thread-ask-card ask-card" role="region" aria-label={`${t?.id ?? request?.title} 질문`} aria-busy={pending} data-testid={t ? `thread-ask-${t.id}` : `request-ask-${request?.id}`} data-state="open" data-kind={t ? "question" : "request"}>
       <header className="prompt-card-header">
@@ -504,10 +513,12 @@ function QuestionCard({
             </div>
             {multiple && <div className="prompt-card-custom ask-question-comment">
               <label className="prompt-card-custom-label" htmlFor={`${customId}-${n}`}>직접 쓴 답</label>
-              <textarea id={`${customId}-${n}`} ref={element => { commentInputs.current[n] = element; }} className="input" rows={2}
-                value={comments[n] ?? ""} disabled={off} aria-label={`${item.source_number ?? n + 1}번 직접 쓴 답`}
-                data-testid={`thread-ask-text-${item.source_number ?? n + 1}`}
-                onChange={e => { const value = e.currentTarget.value; update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? value : old) })); }} />
+              <AnswerField id={`${customId}-${n}`} inputRef={element => { commentInputs.current[n] = element; }} value={comments[n] ?? ""} project={project}
+                disabled={off} label={`${item.source_number ?? n + 1}번 직접 쓴 답`} testId={`thread-ask-text-${item.source_number ?? n + 1}`}
+                onChange={next => setComment(n, () => next)}
+                onImages={targets => setComment(n, old => targets.reduce(addAnswerImage, old))}
+                onRemoveImage={target => setComment(n, old => removeAnswerImage(old, target))}
+                onSubmit={submit} onUploading={onUploading(`c${n}`)} onZoom={onZoom} />
             </div>}
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
           </div>
@@ -515,17 +526,15 @@ function QuestionCard({
       })}
       {(!multiple || custom) && <div className="prompt-card-custom">
         <span className="prompt-card-custom-label" id={customId}>또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
-        <div className="prompt-card-custom-row">
-          <input ref={customInput} className="input" value={custom} disabled={off} placeholder="예: 2 둘 다 보이게" aria-labelledby={customId} data-testid="thread-ask-text"
-            onChange={(e) => { const value = e.currentTarget.value; update(d => ({ ...d, custom: value })); }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && text.length > 0) submit();
-            }} />
-        </div>
+        <AnswerField inputRef={customInput} value={custom} project={project} disabled={off} placeholder="예: 2 둘 다 보이게" labelledBy={customId} testId="thread-ask-text"
+          onChange={next => update(d => ({ ...d, custom: next }))}
+          onImages={targets => update(d => ({ ...d, custom: targets.reduce(addAnswerImage, d.custom) }))}
+          onRemoveImage={target => update(d => ({ ...d, custom: removeAnswerImage(d.custom, target) }))}
+          onSubmit={submit} onUploading={onUploading("custom")} onZoom={onZoom} />
       </div>}
       <div className="thread-ask-foot">
         <span className="muted">{got}/{q.items.length} 고름{!all && filled ? " · 고르지 않은 것은 추천대로" : ""}</span>
-        <button type="button" className={`btn${all || text ? " btn-primary" : ""}`} data-testid="thread-ask-send" disabled={off || needsReviewText || !(all || text || filled)} onClick={submit}>
+        <button type="button" className={`btn${all || text ? " btn-primary" : ""}`} data-testid="thread-ask-send" disabled={off || uploading || needsReviewText || !(all || text || filled)} onClick={submit}>
           <Send aria-hidden="true" /> {label}
         </button>
       </div>
@@ -574,6 +583,28 @@ function RequestCard({ questionId, title, body, at, canControl, onHandle, onRepl
       {!canControl && <p className="prompt-card-hint">보기 권한이라 답할 수 없다</p>}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
     </section>
+  );
+}
+
+/** 답한 카드의 직접 쓴 답: 줄바꿈 그대로, 끝의 그림 줄은 썸네일(누르면 크게)로 */
+function DoneAnswer({ text, project, testId, onZoom }: { text: string; project: string | null; testId: string; onZoom: (z: { src: string; alt: string }) => void }) {
+  const body = answerBody(text).trim();
+  const images = project ? answerImages(text) : [];
+  return (
+    <>
+      <p className="ask-done-text" data-testid={testId}><span className="muted">직접 쓴 답</span> <strong>{images.length === 0 ? text : body}</strong></p>
+      {images.length > 0 && (
+        <ul className="ask-answer-images is-done" aria-label="답에 붙인 그림" data-testid={`${testId}-images`}>
+          {images.map((target, i) => (
+            <li key={target} className="ask-answer-image" data-path={target}>
+              <button type="button" className="ask-answer-thumb" aria-label={`답 그림 ${i + 1} 크게 보기`} onClick={() => onZoom({ src: taskImageUrl(project!, target), alt: `답 그림 ${i + 1}` })}>
+                <img src={taskImageUrl(project!, target)} alt="" loading="lazy" decoding="async" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 
@@ -634,12 +665,12 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
               })}
             </div>
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
-            {r.answer?.comments?.[n] ? <p className="ask-done-text" data-testid={`ask-done-text-${item.source_number ?? n + 1}`}><span className="muted">직접 쓴 답</span> <strong>{r.answer.comments[n]}</strong></p>
+            {r.answer?.comments?.[n] ? <DoneAnswer text={r.answer.comments[n]} project={projectOfBase(base)} testId={`ask-done-text-${item.source_number ?? n + 1}`} onZoom={onZoom} />
               : pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );
       })}
-      {r.answer?.text && <p className="ask-done-text" data-testid="ask-done-text"><span className="muted">직접 쓴 답</span> <strong>{r.answer.text}</strong></p>}
+      {r.answer?.text && <DoneAnswer text={r.answer.text} project={projectOfBase(base)} testId="ask-done-text" onZoom={onZoom} />}
       {r.kind !== "question" && r.items.length === 0 && r.body && <AskMarkdown base={base}>{r.body}</AskMarkdown>}
       {report !== null && (
         <div className="ask-report" data-testid="ask-report">
