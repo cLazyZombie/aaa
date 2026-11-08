@@ -60,6 +60,32 @@ fn record_files_base(project: &str, id: &str) -> String {
     format!("/api/v1/projects/{project}/asks/{id}/")
 }
 
+/// 답 글(공통 답·질문별 의견)이 가리키는 프로젝트 `uploads/` 그림을 답 사본 폴더 `uploads/`에 복사한다(t-1635). 답한 카드는
+/// 그 사본을 사본 주소(`files_base`)로 읽는다: 웹 주소는 기기별 읽기 경로라 프로젝트 uploads 주소를 만들 수 없고, uploads를
+/// 정리해도 답할 때의 그림이 남는다. symlink·일반 파일이 아닌 원본은 넘기지 않는다
+pub(crate) fn snapshot_answer_images(dir: &Path, root: &Path, answer: &QuestionAnswerView) -> std::io::Result<()> {
+    let mut names: Vec<String> = Vec::new();
+    for text in answer.text.iter().chain(answer.comments.iter().flatten()) {
+        for name in crate::answer::upload_refs(text) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    if names.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(root.join("uploads"))?;
+    for name in names {
+        let src = dir.join("uploads").join(&name);
+        if !std::fs::symlink_metadata(&src)?.is_file() {
+            return Err(std::io::Error::other(format!("uploads/{name}가 일반 파일이 아니다")));
+        }
+        std::fs::copy(&src, root.join("uploads").join(&name))?;
+    }
+    Ok(())
+}
+
 /// 본문 Markdown이 가리키는 `library/…` 상대 경로(그림·링크 대상). 대상 끝의 제목(`"…"`)·조각(`#…`)은 뗀다
 pub(crate) fn library_refs(markdown: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -471,6 +497,14 @@ impl Host {
         let items = self.identify_questions(project, "post", item, &post.body_sha256, &parsed)?;
         let (message, summary) = crate::answer::compose(&items, &picks, text.as_deref(), &comments)
             .map_err(|e| err(ErrorCode::BadRequest, e))?;
+        // 답 그림은 coordinator(host)가 여는 프로젝트 uploads/의 절대 경로로 적는다(기록은 `uploads/…` 그대로, t-1635)
+        let images = crate::answer::upload_refs(&message);
+        let message = if images.is_empty() {
+            message
+        } else {
+            let uploads = self.project_dir(project)?.join("uploads");
+            crate::answer::rebase_uploads(&message, &images, &uploads.to_string_lossy())
+        };
         let by = self.answered_by(actor);
         let now = aaa_common::util::now_ms();
         let id = aaa_common::util::new_id();
@@ -506,6 +540,11 @@ impl Host {
             body: Some(post.input.body),
             files_base: Some(record_files_base(project, &id)),
         };
+        if let Some(answer) = &record.answer
+            && let Err(e) = snapshot_answer_images(&dir, &root, answer)
+        {
+            tracing::warn!("답 그림 사본을 다 두지 못했다({project}/{item}): {e:#}");
+        }
         let notice = InboxItem {
             short_id: None,
             id: format!("{}-thread-state-coordinator-{}", aaa_common::util::utc_compact(now), id),
@@ -643,6 +682,9 @@ impl Host {
         let root = dir.join("asks").join(&id);
         if let Err(e) = self.snapshot_question(&dir, rec, &root) {
             tracing::warn!("답한 질문 사본을 다 두지 못했다({}/{}): {e:#}", project, rec.id);
+        }
+        if let Err(e) = snapshot_answer_images(&dir, &root, answer) {
+            tracing::warn!("답 그림 사본을 다 두지 못했다({}/{}): {e:#}", project, rec.id);
         }
         self.ask_save(
             project,
@@ -872,13 +914,23 @@ impl Host {
         file_under(&self.project_dir(project)?, path)
     }
 
-    /// 답한 것 사본의 파일
+    /// 답한 것 사본의 파일. 사본 폴더 안 `uploads/<이름>`(답에 붙인 그림의 사본, t-1635)도 연다
     pub(crate) fn ask_file(&self, project: &str, id: &str, path: &str) -> Result<PathBuf, ErrorBody> {
         let dir = self.project_dir(project)?;
         if !crate::library::safe_rel(id) || id.contains('/') {
             return Err(err(ErrorCode::BadRequest, "기록 ID가 아니다"));
         }
-        file_under(&dir.join("asks").join(id), path)
+        let root = dir.join("asks").join(id);
+        if let Some(name) = path.strip_prefix("uploads/").filter(|n| crate::task_attach::valid_name(n)) {
+            let at = root.join("uploads").join(name);
+            let plain = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| !m.file_type().is_symlink());
+            return if plain(&root.join("uploads")) && plain(&at) && at.is_file() {
+                Ok(at)
+            } else {
+                Err(err(ErrorCode::NotFound, format!("파일이 없다: {path}")))
+            };
+        }
+        file_under(&root, path)
     }
 }
 
@@ -1359,8 +1411,12 @@ mod tests {
             body: Some("![지금](library/now.png)".into()),
             choices: vec![choice("A", Some("![A](library/mock/a.png)")), choice("B", None)],
         }];
+        // 답에 붙인 그림(t-1635): 프로젝트 uploads의 원본을 사본 폴더 uploads/에 둔다
+        let shot = "0123456789abcdef.png";
+        std::fs::create_dir_all(dir.join("uploads")).unwrap();
+        std::fs::write(dir.join("uploads").join(shot), b"shot").unwrap();
         let answer = QuestionAnswerView {
-            comments: Vec::new(),
+            comments: vec![Some(format!("궤적이 꺾인다\n![그림](uploads/{shot})"))],
             picks: vec![Some(0)],
             text: None,
             summary: "1A".into(),
@@ -1378,6 +1434,11 @@ mod tests {
         // 새 보고가 원본을 바꾸고 지워도 사본이 남는다. 가리키지 않은 파일은 두지 않는다
         std::fs::write(dir.join("threads/t-0001.md"), "[완료]\n").unwrap();
         std::fs::remove_dir_all(dir.join("library/t-0001")).unwrap();
+        std::fs::remove_file(dir.join("uploads").join(shot)).unwrap();
+        assert_eq!(std::fs::read(h.ask_file("demo", &id, &format!("uploads/{shot}")).unwrap()).unwrap(), b"shot");
+        for bad in ["uploads/fedcba9876543210.png", "uploads/../report.md", "uploads/0123456789ABCDEF.png"] {
+            assert!(h.ask_file("demo", &id, bad).is_err(), "{bad}");
+        }
         assert_eq!(
             std::fs::read(h.ask_file("demo", &id, "report.md").unwrap()).unwrap(),
             "[결정 필요] 질문 1개\n".as_bytes()
