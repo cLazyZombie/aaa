@@ -738,7 +738,7 @@ host 프로젝트 폴더 구성:
 - **nudge:** 0.2.35를 이어받는다.
   - 처음 보는(unseen) 끝내지 않은 항목 ID 묶음의 hash가 지난번과 다를 때만 보낸다. 문구는 `[aaa inbox] <대상> <사건>, …; …(aaa inbox list <p>)` 한 줄이고, 대상은 5개까지 적고 나머지는 「N more」로 줄인다.
   - coordinator는 host 머신에서 cwd가 프로젝트 폴더인 실행 중 pane이다. ~~**coordinator가 없으면 보내지 않고 hash도 남기지 않는다.** 생기면 그때 알린다(0.2.35는 기록만 하고 넘어갔다).~~ → (10-18 §8.136) 참고대로 hash만 남기고 넘어간다. project.toml `nudge = false`도 같다.
-  - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
+  - 보내는 때: hook 상태가 있으면 idle·started로 `nudge_idle_secs`(기본 60초, herdr-projects `NUDGE_IDLE_SECS`. t-1627에서 3초, §8.561) 넘게 머물 때, 없으면 화면이 그만큼 그대로일 때다. 입력창(맨 아래 `❯`·`›` 줄)이 이번 검사와 `nudge_quiet_secs`(기본 10초, t-1627에서 2초) 전 검사에서 모두 비어 보일 때만 보낸다(herdr-projects `box_quiet`, 사람이 치는 글과 섞이지 않게). 쓰던 글이 있거나 입력 줄이 없으면(일반 셸 등, 글을 쳐 넣으면 명령으로 실행된다) 보내지 않는다.
   - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
 - **닫힌 질문(실제 시험 뒤 결정):** 질문에 답했거나 harness가 넘어가 질문이 닫히면, 그 질문의 `question` 항목은 끝낸 것으로 둔다(기록은 `inbox/done/`에 남는다). 실제 시험에서 이미 답한 질문이 알림마다 「question」으로 섞였기 때문이다.
@@ -8548,3 +8548,25 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
   FRONT_API 1.164의 선택 `QueueOp::Reserve.account`·`TaskReservation.account`이며 구판 저장값은 자동 선택이다.
   새 CLI는 구판 host에 지정 계정을 보내지 않고 거절하며 웹도 계정 고르기를 숨긴다. AGENT_LINK는 유지한다.
 - 검증 경계는 [예약 계정 검증](testing-reservation-account-t-1615.md)에 기록한다.
+
+### 8.561 턴 도중·턴 끝 inbox 알림을 바로 보내기(t-1627)
+
+- **문제.** inbox 알림(nudge)은 coordinator가 쉼 상태로 `nudge_idle_secs`(60초) 머물고 입력창이 `nudge_quiet_secs`(10초) 간격으로 두 번
+  비어 보여야 갔다. ticker 주기(15초)까지 더해 턴이 끝나고 약 75초 뒤였고, 턴 도중에는 가지 않았다. 사용자가 답한 직후의 inbox가
+  다음 턴까지 밀렸다(사용자 11-08). 이미 쓴 답을 막거나 고치게 하는 턴 끝 Stop hook은 원하지 않았다(q-3015 D).
+- **턴 도중(hook).** coordinator 맨 위 agent의 PostToolUse hook마다 agent가 host에 `inbox_hook_notice`(FRONT_API 1.165)를 묻는다.
+  host는 그 pane에 아직 알리지 않은 처음 보는 끝내지 않은 항목을 nudge와 같은 `[aaa inbox] …` 한 줄로 돌려주고, agent는 그 줄을
+  `additionalContext`에 붙인다. 도구 결과 다음에 들어가므로 그 턴 안에서 보인다. 입력창에 치지 않아 권한 선택 창·사람이 쓰던 글과 섞이지 않는다.
+  - 알린 항목은 host 메모리(`nudge_told`)와 묶음 hash(`nudged:<p>`)에 남는다. 같은 항목은 hook이 다시 붙이지 않고, 턴 끝 nudge도
+    hook이 알린 묶음을 다시 보내지 않는다. nudge가 보낸 항목도 hook이 다시 붙이지 않는다. host를 다시 띄우면 메모리 기억은 비어
+    아직 안 본 항목이 한 번 더 붙을 수 있다.
+  - 묻는 쪽은 이 머신 agent(세션 밖 연결)나 그 coordinator pane 자신이다. thread·자동화·다른 pane은 거절한다(coordinator 알림을 가로채
+    「알렸다」로 적지 못하게). coordinator pane이 아니거나 `nudge = false`면 빈 답이다. 하위 agent의 도구 결과, 이 pane이 시작한 것과 다른
+    harness 세션의 사건에는 묻지 않는다. thread hook은 바뀌지 않는다.
+  - agent는 1초만 기다리고, host가 없거나 옛 판이면 조용히 넘긴다(턴 끝 nudge가 남는다). `aaa report`의 PostToolUse에도 inbox는 붙인다.
+- **턴 끝(nudge).** 기본값을 `nudge_idle_secs = 3`·`nudge_quiet_secs = 2`로 줄였다(사용자 q-3020 A: 약 5초). 시간 조건만 남으면 nudge가
+  다시 볼 때를 남기고 ticker가 주기(15초)를 기다리지 않고 그때 깬다. 입력창이 비어 보일 때만 보내는 검사, 화면만으로 보는 pane의 규칙,
+  질문 누락의 즉시 알림은 그대로다. host.toml에 옛 값을 적어 둔 host는 그 값을 쓴다.
+- **검토했으나 뺀 길.** 턴 도중에도 입력창에 쳐 넣기: 권한 선택 창이 열려 있으면 글·Enter가 승인으로 먹을 수 있고 사람이 턴 중에 써 두는
+  글과 섞인다.
+- 검증 경계는 [inbox hook 알림 검증](testing-inbox-hook-t-1627.md)에 기록한다.

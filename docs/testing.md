@@ -5076,3 +5076,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 웹 첫 화면의 열린 작업 우선 표시·답변 이력 페이지 조회: [검증 경계와 owner](testing-startup-pages-t1571.md).
 
 - Windows 격리 입력 큐 fixture의 ConPTY 제어열 결과 판정 수리와 원문 재생 회귀는 [t-1623 검증 기록](testing-win-input-queue-fixture-t1623.md)에 둔다.
+- 턴 도중 inbox hook 알림·턴 끝 약 5초 nudge: [t-1627 검증 기록](testing-inbox-hook-t-1627.md).

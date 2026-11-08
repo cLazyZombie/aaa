@@ -5,8 +5,11 @@
 //! - **항목 출처:** ticker의 묶음 전이(`thread-state`: 확인 필요·쉼·새 보고, transitions.rs), thread 사건
 //!   (`thread-state`: resolved·brief not delivered·message not delivered·not launched)과 ticker가 찾는 특수 항목
 //!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
-//! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs` 이상
-//!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다.
+//! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs`(기본 3초) 이상
+//!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다. 시간 조건만
+//!   남으면 ticker가 그때 깬다(t-1627: 턴 끝 뒤 약 5초).
+//! - **hook 알림(t-1627):** 턴 도중에는 coordinator의 PostToolUse hook이 `inbox_hook_notice`로 아직 알리지 않은 항목을
+//!   물어 다음 도구 결과에 한 줄로 붙인다. 알린 항목은 `nudge_told`와 묶음 hash에 남아 턴 끝 nudge가 다시 보내지 않는다.
 //!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없거나 project.toml `nudge = false`면 그 묶음을
 //!   본 것으로만 적는다: 항목은 coordinator의 다음 턴 `context`가 보인다(herdr-projects steps.rs `nudge`, plan §8.136).
 //! - **ticker:** host 안의 task다. `tick_secs`마다, 그리고 사건이 오면 바로 돈다.
@@ -22,6 +25,9 @@ use sha2::Digest;
 
 use crate::orch::ThreadRec;
 use crate::{Host, err};
+
+#[cfg(test)]
+mod hook_tests;
 
 /// nudge 문구에 나열하는 대상 수
 const NUDGE_SUBJECTS: usize = 5;
@@ -498,7 +504,7 @@ impl Host {
                 let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
                 loop {
                     // 다음 조회·배경 작업 차례가 더 이르면 그때 깨어난다
-                    let sleep = [me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
+                    let sleep = [me.ci_next_due(), me.git_next_due(), me.background_wait_due(), me.nudge_next_due()]
                         .into_iter()
                         .flatten()
                         .map(|d| d.saturating_duration_since(std::time::Instant::now()))
@@ -532,6 +538,8 @@ impl Host {
     }
 
     async fn tick(self: &Arc<Self>) {
+        // 이번 tick의 nudge가 아직 기다릴 것이면 다시 적는다(지난 때로 바로 다시 돌지 않게)
+        *self.nudge_due.lock().unwrap() = None;
         self.backup_pass_at(aaa_common::util::now_ms());
         self.refresh_usage();
         // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)을 알림함에 낸다(plan §8.351)
@@ -787,9 +795,92 @@ impl Host {
             .collect()
     }
 
-    pub(crate) async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
+    /// 처음 보는 끝내지 않은 항목과 그 ID 묶음 hash. 이미 알린 ID 기억에서 본·끝낸 항목을 뺀다
+    fn unseen_open(&self, project: &str) -> (Vec<InboxItem>, String) {
         let unseen: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| !i.seen).collect();
+        let mut ids: Vec<&str> = unseen.iter().map(|i| i.id.as_str()).collect();
+        ids.sort();
+        let hash = hex::encode(sha2::Sha256::digest(ids.join("\n").as_bytes()));
+        let mut told = self.nudge_told.lock().unwrap();
+        if let Some(set) = told.get_mut(project) {
+            set.retain(|id| unseen.iter().any(|i| &i.id == id));
+            if set.is_empty() {
+                told.remove(project);
+            }
+        }
+        (unseen, hash)
+    }
+
+    fn remember_told(&self, project: &str, items: &[InboxItem]) {
+        self.nudge_told
+            .lock()
+            .unwrap()
+            .entry(project.to_string())
+            .or_default()
+            .extend(items.iter().map(|i| i.id.clone()));
+    }
+
+    /// nudge가 시간 조건만 기다린다: ticker를 `after` 뒤에 깨운다(여러 프로젝트면 가장 이른 때)
+    fn nudge_wait(&self, after: Duration) {
+        let at = Instant::now() + after;
+        let mut due = self.nudge_due.lock().unwrap();
+        if due.is_none_or(|d| at < d) {
+            *due = Some(at);
+        }
+    }
+
+    pub(crate) fn nudge_next_due(&self) -> Option<Instant> {
+        *self.nudge_due.lock().unwrap()
+    }
+
+    /// coordinator PostToolUse hook: 그 pane에 아직 알리지 않은 처음 보는 항목을 nudge와 같은 한 줄로 돌려준다(t-1627).
+    /// 턴 도중에 도착한 항목이 다음 도구 결과에 붙어 그 턴 안에서 보인다. 알린 항목과 지금 묶음 hash를 남겨 턴 끝
+    /// nudge가 같은 것을 다시 보내지 않는다. 묻는 쪽은 이 머신 agent(세션 밖 연결)나 그 coordinator pane 자신이다:
+    /// thread·자동화 pane이 coordinator 알림을 가로채지 못한다.
+    pub(crate) fn inbox_hook_notice(
+        &self,
+        project: &str,
+        pane: &str,
+        actor: &str,
+    ) -> Result<Option<String>, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let outside = actor.starts_with("local:") && !crate::front::in_session(actor);
+        let own = self.coordinator_project_of_actor(actor).as_deref() == Some(project)
+            && actor.rsplit_once('@').is_some_and(|(_, p)| p == pane);
+        if !(outside || own) {
+            return Err(err(ErrorCode::Forbidden, "inbox hook 알림은 이 머신 agent나 그 coordinator pane만 묻는다"));
+        }
+        if !self.settings(project).nudge || !self.coordinator_panes(&dir).iter().any(|p| p.id == pane) {
+            return Ok(None);
+        }
+        let (mut unseen, hash) = self.unseen_open(project);
+        if unseen.is_empty() {
+            return Ok(None);
+        }
+        self.db.inbox_display_ids(&mut unseen).map_err(internal)?;
+        // 한 응답의 도구 여러 개가 PostToolUse hook을 동시에 띄운다: 걸러내기와 기록을 한 잠금 안에서 해 한 번만 알린다
+        let fresh: Vec<InboxItem> = {
+            let mut told = self.nudge_told.lock().unwrap();
+            let set = told.entry(project.to_string()).or_default();
+            let fresh: Vec<InboxItem> = unseen.into_iter().filter(|i| !set.contains(&i.id)).collect();
+            set.extend(fresh.iter().map(|i| i.id.clone()));
+            fresh
+        };
+        if fresh.is_empty() {
+            return Ok(None);
+        }
+        let text = nudge_text(project, &fresh);
+        aaa_common::diagnostic::ignored(
+            self.db.set_meta(&format!("nudged:{project}"), &hash),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
+        self.flow_project(project, "nudge_sent", None, format!("hook: {text}"));
+        Ok(Some(text))
+    }
+
+    pub(crate) async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
+        let (unseen, hash) = self.unseen_open(project);
         let forget_box = || {
             self.nudge_box.lock().unwrap().remove(project);
         };
@@ -797,9 +888,6 @@ impl Host {
             forget_box();
             return;
         }
-        let mut ids: Vec<&str> = unseen.iter().map(|i| i.id.as_str()).collect();
-        ids.sort();
-        let hash = hex::encode(sha2::Sha256::digest(ids.join("\n").as_bytes()));
         let key = format!("nudged:{project}");
         if self
             .db
@@ -835,15 +923,20 @@ impl Host {
         // 입력 대기: hook 상태가 있으면 그것으로, 없으면 화면이 그만큼 그대로인지로 본다
         let lines = self.screen_lines(&coord.machine_id, &coord.id).await.unwrap_or_default();
         let ready = match &coord.agent {
-            Some(a) => idle_long_enough(
-                &a.activity,
-                a.since_ms,
-                aaa_common::util::now_ms(),
-                if question_missing { Duration::ZERO } else { idle_for },
-            ),
+            Some(a) => {
+                let window = if question_missing { Duration::ZERO } else { idle_for };
+                let now_ms = aaa_common::util::now_ms();
+                let ready = idle_long_enough(&a.activity, a.since_ms, now_ms, window);
+                if !ready && matches!(a.activity, AgentActivity::Idle | AgentActivity::Started) {
+                    let waited = Duration::from_millis(now_ms.saturating_sub(a.since_ms));
+                    self.nudge_wait(window.saturating_sub(waited));
+                }
+                ready
+            }
             None => {
                 let h = hex::encode(sha2::Sha256::digest(lines.join("\n").as_bytes()));
                 let mut seen = self.nudge_screens.lock().unwrap();
+                // 화면이 바뀌는 동안은 다시 깨우지 않는다(작업 중일 수 있다): 주기 tick·사건으로 본다
                 steady_observation(&mut seen, &coord.id, &h, Instant::now(), idle_for, false)
             }
         };
@@ -855,14 +948,12 @@ impl Host {
         // (herdr-projects steps.rs `box_quiet`: 마지막 키 입력 시각을 알 수 없어 입력창으로 본다).
         if !question_missing {
             let mut boxes = self.nudge_box.lock().unwrap();
-            if !steady_observation(
-                &mut boxes,
-                project,
-                &coord.id,
-                Instant::now(),
-                Duration::from_secs(self.cfg.projects.nudge_quiet_secs),
-                true,
-            ) {
+            let quiet = Duration::from_secs(self.cfg.projects.nudge_quiet_secs);
+            if !steady_observation(&mut boxes, project, &coord.id, Instant::now(), quiet, true) {
+                // 첫 관측이면 quiet 전체, 이미 본 것이면 남은 만큼 뒤에 다시 본다
+                let left = boxes.get(project).map_or(quiet, |(_, since)| quiet.saturating_sub(since.elapsed()));
+                drop(boxes);
+                self.nudge_wait(left);
                 return;
             }
         }
@@ -874,6 +965,7 @@ impl Host {
         let text = nudge_text(project, &display);
         match self.send_prompt(&coord.machine_id, &coord.id, &text).await {
             Ok(accepted) => {
+                self.remember_told(project, &unseen);
                 // 받았는지 몰라도 같은 묶음은 다시 보내지 않는다(§8.5 a)
                 aaa_common::diagnostic::ignored(
                     self.db.set_meta(&key, &hash),

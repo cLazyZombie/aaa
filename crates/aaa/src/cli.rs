@@ -6470,6 +6470,9 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Ticker { runs } => {
             let _ = writeln!(s, "ticker가 한 번 돌았다(이 host 실행에서 {runs}번째까지 끝남)");
         }
+        FrontResponse::InboxHookNotice { text } => {
+            let _ = writeln!(s, "{}", text.as_deref().unwrap_or("새로 알릴 inbox 항목이 없다"));
+        }
         FrontResponse::Inbox { items, done: Some(n), omitted_open, .. } => {
             let _ = writeln!(s, "{n}개 항목을 끝냈다(inbox/done으로 옮김)");
             let left = items.len() as u32 + omitted_open;

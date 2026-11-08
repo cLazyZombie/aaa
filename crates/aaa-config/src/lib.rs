@@ -374,10 +374,11 @@ pub struct ProjectsSection {
     pub brief_memory_chars: usize,
     /// host ticker 주기(초). 사건이 오면 주기를 기다리지 않고 바로 돈다.
     pub tick_secs: u64,
-    /// coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다(herdr-projects `NUDGE_IDLE_SECS`)
+    /// coordinator가 이만큼(초) 입력 대기 상태로 머물러야 inbox 알림(nudge)을 보낸다. herdr-projects `NUDGE_IDLE_SECS`는 60초였고
+    /// 턴 끝 뒤 바로 처리되게 3초로 줄였다(사용자 11-08, t-1627)
     pub nudge_idle_secs: u64,
     /// coordinator 입력창이 이만큼(초) 비어 있는 것을 두 번 보아야 nudge를 보낸다. 사람이 치는 글과 섞이지 않게 한다
-    /// (herdr-projects `NUDGE_QUIET_SECS`).
+    /// (herdr-projects `NUDGE_QUIET_SECS` 10초, t-1627에서 2초).
     pub nudge_quiet_secs: u64,
     /// 머신이 이만큼(초) 끊기거나 CI·Git 조회가 계속 실패하면 inbox에 outage 항목을 만든다.
     pub outage_secs: u64,
@@ -422,8 +423,8 @@ impl Default for ProjectsSection {
             library_max_mb: 20 * 1024,
             brief_memory_chars: 32_000,
             tick_secs: 15,
-            nudge_idle_secs: 60,
-            nudge_quiet_secs: 10,
+            nudge_idle_secs: 3,
+            nudge_quiet_secs: 2,
             outage_secs: 600,
             ci_poll_secs: 60,
             git_poll_secs: 60,

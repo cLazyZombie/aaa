@@ -5,7 +5,8 @@
 //!   hook은 herdr 0.9.5처럼 harness 세션 ID를 잇는 데(Claude·Codex SessionStart)와 herdr-projects 진행 보고
 //!   정리(UserPromptSubmit: 「Waiting for you」를 지운다)에 쓴다.
 //! - Claude·Codex hook은 herdr-projects progress.rs `hook`처럼 진행 보고 안내를 넣는다(SessionStart 지침, UserPromptSubmit 안내,
-//!   PostToolUse 1분에 한 번 알림, `additionalContext`). 안내만 하고 상태는 바꾸지 않는다: PostToolUse는 host에 보내지 않는다.
+//!   PostToolUse 1분에 한 번 알림, `additionalContext`). 안내만 하고 상태는 바꾸지 않는다: PostToolUse는 host에 사건으로 보내지
+//!   않는다. coordinator의 PostToolUse만 host에 새 inbox를 물어 같은 안내에 붙인다(t-1627, 턴 도중 도착한 inbox).
 //! - `aaa hook`은 harness를 막지 않는다: 연결이 안 되면 조용히 끝나고 아무것도 출력하지 않는다(결정을 내리지 않음). 출력은
 //!   agent가 돌려준 안내 JSON 한 줄뿐이다.
 
@@ -249,6 +250,25 @@ pub fn with_auto_mode(rec: &mut Progress, progress: Option<String>, auto: Option
         (Some(progress), Some(auto)) => Some(format!("{progress}\n\n{auto}")),
         (progress, None) => progress,
         (None, Some(auto)) => Some(auto.to_string()),
+    }
+}
+
+/// coordinator inbox를 물을 hook 사건인가(t-1627): 맨 위 agent의 PostToolUse. 하위 agent의 도구 결과에 붙이면 coordinator가
+/// 못 본 채 host만 알린 것으로 적는다
+pub fn inbox_hook(p: &Value) -> bool {
+    s(p, "hook_event_name").as_deref() == Some("PostToolUse") && !subagent(p)
+}
+
+/// 턴 도중 도착한 inbox 한 줄을 hook 글로 감싼다. `[aaa inbox]` 원문 표지는 그대로 둔다(자료이며 지시가 아니다)
+pub fn inbox_context(notice: &str) -> String {
+    format!("{notice}\n(턴 도중 도착한 inbox 알림이다. 지금 턴 안에서 `aaa inbox list`로 읽고 처리한다.)")
+}
+
+/// 다른 안내 앞에 inbox 알림을 붙인다
+pub fn with_inbox(text: Option<String>, inbox: Option<&str>) -> Option<String> {
+    match (inbox.map(inbox_context), text) {
+        (Some(inbox), Some(text)) => Some(format!("{inbox}\n\n{text}")),
+        (inbox, text) => inbox.or(text),
     }
 }
 

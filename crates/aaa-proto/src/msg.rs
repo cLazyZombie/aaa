@@ -3417,6 +3417,14 @@ pub enum FrontRequest {
         #[serde(default)]
         peek: bool,
     },
+    /// coordinator hook(PostToolUse)이 묻는다: 이 pane에 아직 알리지 않은 처음 보는 inbox 항목 한 줄(t-1627, FRONT_API 1.165).
+    /// 알린 항목은 턴 끝 알림(nudge)이 다시 보내지 않는다. 그 프로젝트 coordinator pane이 아니면 빈 답이다.
+    InboxHookNotice {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        pane: String,
+    },
     /// inbox 항목을 끝낸다(`all`이면 끝내지 않은 것 모두)
     InboxDone {
         #[serde(default)]
@@ -3833,6 +3841,7 @@ impl FrontRequest {
             | FrontRequest::ThreadMessage { project, .. }
             | FrontRequest::ThreadAnswer { project, .. }
             | FrontRequest::Inbox { project, .. }
+            | FrontRequest::InboxHookNotice { project, .. }
             | FrontRequest::InboxDone { project, .. }
             | FrontRequest::MissionShow { project, .. }
             | FrontRequest::MissionApprove { project, .. }
@@ -4306,6 +4315,12 @@ pub enum FrontResponse {
         /// 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
         #[serde(default)]
         omitted_done: u32,
+    },
+    /// `inbox_hook_notice`: hook에 붙일 한 줄. 새로 알릴 항목이 없으면 없다
+    InboxHookNotice {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        text: Option<String>,
     },
     /// `ticker_tick`: 이 host 실행에서 끝난 tick 수(방금 돈 것까지)
     Ticker {
