@@ -109,7 +109,12 @@ export default async function ({ page }) {
     await text.scrollIntoViewIfNeeded();
     await shot(page, "53-answer-lines-phone");
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await text.press("ControlOrMeta+Enter");
+    // pane 출력·Follow-ups보다 inbox 생성이 뒤다. 이 답 요청의 완료를 관측한 뒤 원문을 읽는다.
+    const answerDone = page.waitForResponse(response => response.url().endsWith("/api/v1/call")
+      && response.request().postDataJSON()?.op === "thread_answer"
+      && response.request().postDataJSON()?.thread === t.id).then(response => response.json());
+    const [reply] = await Promise.all([answerDone, text.press("ControlOrMeta+Enter")]);
+    if (!reply.ok) throw new Error(`답 API 응답: ${JSON.stringify(reply)}`);
     await waitOutput(t.pane, "직접 쓴 답: 올라갈 때 한 번 꺾인다");
     await waitOutput(t.pane, "박쥐 간격에 offset");
     const copy = `${t.work_dir}/attachments/${name}`;
