@@ -116,8 +116,9 @@ export default async function ({ page }) {
     if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(png)) throw new Error(`thread 작업 폴더에 그림 사본이 없다: ${copy}`);
     const answered = aaa("thread", "show", t.id).questions.answer;
     if (answered.text !== `올라갈 때 한 번 꺾인다\n박쥐 간격에 offset\n![그림](uploads/${name})`) throw new Error(`기록한 직접 답: ${JSON.stringify(answered)}`);
-    const followups = fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8");
-    if (!followups.includes(`직접 쓴 답: 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset\n![그림](${copy})`)) throw new Error(`thread에 간 글이 사본 경로가 아니다:\n${followups}`);
+    // Follow-ups는 thread가 받은 뒤 적힌다: 그 기록(파일 내용)을 기다린다
+    const sentLine = `직접 쓴 답: 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset\n![그림](${copy})`;
+    await until("thread에 간 글의 사본 경로", () => fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8").includes(sentLine));
     const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.event === "question answered" && i.subject === t.id);
     if (!notice?.body.includes(`박쥐 간격에 offset\n![그림](${root}/projects/demo/uploads/${name})`)) throw new Error(`coordinator inbox 원문: ${JSON.stringify(notice)}`);
     await until("답한 카드의 줄바꿈과 그림", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-text-images"]')) === 1);
