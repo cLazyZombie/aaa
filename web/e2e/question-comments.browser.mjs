@@ -120,10 +120,14 @@ try {
     const page=await browser.newPage(); page.setDefaultTimeout(5000);
     await page.goto(`${base}?${scenario}`); await page.locator('.ask-card').waitFor();
     if(scenario==='single') {
+      // 한 질문 칸도 여러 줄이다(t-1635): Enter는 줄바꿈, ⌘/Ctrl+Enter가 보낸다
       await page.getByTestId('thread-ask-text').fill('한 질문 원문');
       await page.getByTestId('thread-ask-text').press('Enter');
+      await page.getByTestId('thread-ask-text').pressSequentially('둘째 줄');
+      assert.equal(await page.getByTestId('ask-done-text').count(),0);
+      await page.getByTestId('thread-ask-text').press('ControlOrMeta+Enter');
       await page.getByTestId('ask-done-text').waitFor();
-      assert.deepEqual(await page.evaluate(()=>window.sent),{picks:[null],text:'한 질문 원문',comments:[]});
+      assert.deepEqual(await page.evaluate(()=>window.sent),{picks:[null],text:'한 질문 원문\n둘째 줄',comments:[]});
     } else if(scenario==='reader') {
       for(const node of await page.locator('textarea,[role=radio],[data-testid=thread-ask-send]').all())assert.equal(await node.isDisabled(),true);
     } else if(scenario==='no-recommend') {

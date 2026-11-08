@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type Ref } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
 import { ApiError, uploadTaskFile } from "./api";
-import { answerBody, answerImages, pickAnswerImages, withAnswerBody } from "./answerImages";
+import { answerBody, answerImages, pickAnswerImages } from "./answerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import { filesOf } from "./TaskAttachments";
 import { ATTACH_TYPES, taskImageUrl } from "./tasksModel";
@@ -28,7 +28,7 @@ export function AnswerField({
   labelledBy,
   testId,
   inputRef,
-  onChange,
+  onBody,
   onImages,
   onRemoveImage,
   onSubmit,
@@ -46,8 +46,8 @@ export function AnswerField({
   labelledBy?: string;
   testId: string;
   inputRef?: Ref<HTMLTextAreaElement>;
-  /** 입력칸 글이 바뀐 답 전체 */
-  onChange: (next: string) => void;
+  /** 입력칸 글(그림 줄을 뺀 것). 부모가 그때의 최신 답에 `withAnswerBody`로 합친다: 막 올라온 그림 줄을 덮지 않는다 */
+  onBody: (body: string) => void;
   /** 다 올린 그림 대상들(`uploads/<이름>`). 부모가 그때의 최신 답에 붙인다 */
   onImages: (targets: string[]) => void;
   onRemoveImage: (target: string) => void;
@@ -67,7 +67,9 @@ export function AnswerField({
       mounted.current = false;
     };
   }, []);
-  useEffect(() => onUploading(pending.length), [pending.length, onUploading]);
+  const reportUploading = useRef(onUploading);
+  reportUploading.current = onUploading;
+  useEffect(() => reportUploading.current(pending.length), [pending.length]);
   const images = answerImages(value);
   const canAttach = project !== null && !disabled;
   const attach = async (files: File[]) => {
@@ -115,7 +117,7 @@ export function AnswerField({
         aria-labelledby={labelledBy}
         data-testid={testId}
         enterKeyHint="enter"
-        onChange={(e) => onChange(withAnswerBody(value, e.currentTarget.value))}
+        onChange={(e) => onBody(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (!isSubmitKey(e)) return;
           e.preventDefault();

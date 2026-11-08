@@ -35,7 +35,7 @@ export async function questionReplyScenario(engine, width) {
           const node = document.querySelector('.thread-ask-card');
           const state = { at: performance.now(), id: node?.dataset.testid,
             question: node?.querySelector("h3 code")?.textContent,
-            input: node?.querySelector("input")?.value,
+            input: node?.querySelector('[data-testid="thread-ask-text"]')?.value,
             disabled: node?.querySelector('[data-testid="thread-ask-send"]')?.disabled };
           const key = JSON.stringify({ ...state, at: 0 });
           if (key !== previous) window.__questionReplyTrace.push(state);
@@ -109,7 +109,7 @@ export async function questionReplyScenario(engine, width) {
     await card.waitFor();
     const state = await card.evaluate(node => ({
       same: node === window.__questionReply.node, detached: window.__questionReply.detached,
-      input: node.querySelector("input").value,
+      input: node.querySelector('[data-testid="thread-ask-text"]').value,
       disabled: node.querySelector('[data-testid="thread-ask-send"]').disabled,
     }));
     console.log("question-reply", JSON.stringify({ label, previous, current, ...state }));

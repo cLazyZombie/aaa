@@ -515,7 +515,7 @@ function QuestionCard({
               <label className="prompt-card-custom-label" htmlFor={`${customId}-${n}`}>직접 쓴 답</label>
               <AnswerField id={`${customId}-${n}`} inputRef={element => { commentInputs.current[n] = element; }} value={comments[n] ?? ""} project={project}
                 disabled={off} label={`${item.source_number ?? n + 1}번 직접 쓴 답`} testId={`thread-ask-text-${item.source_number ?? n + 1}`}
-                onChange={next => setComment(n, () => next)}
+                onBody={body => setComment(n, old => withAnswerBody(old, body))}
                 onImages={targets => setComment(n, old => targets.reduce(addAnswerImage, old))}
                 onRemoveImage={target => setComment(n, old => removeAnswerImage(old, target))}
                 onSubmit={submit} onUploading={onUploading(`c${n}`)} onZoom={onZoom} />
@@ -527,7 +527,7 @@ function QuestionCard({
       {(!multiple || custom) && <div className="prompt-card-custom">
         <span className="prompt-card-custom-label" id={customId}>또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
         <AnswerField inputRef={customInput} value={custom} project={project} disabled={off} placeholder="예: 2 둘 다 보이게" labelledBy={customId} testId="thread-ask-text"
-          onChange={next => update(d => ({ ...d, custom: next }))}
+          onBody={body => update(d => ({ ...d, custom: withAnswerBody(d.custom, body) }))}
           onImages={targets => update(d => ({ ...d, custom: targets.reduce(addAnswerImage, d.custom) }))}
           onRemoveImage={target => update(d => ({ ...d, custom: removeAnswerImage(d.custom, target) }))}
           onSubmit={submit} onUploading={onUploading("custom")} onZoom={onZoom} />
