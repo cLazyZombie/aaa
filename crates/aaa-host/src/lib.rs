@@ -702,6 +702,10 @@ pub struct Host {
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
     /// 프로젝트별로 nudge가 기다리는 coordinator pane과 그 입력창이 비어 보인 때(herdr-projects `box_pane`·`box_empty_since`)
     nudge_box: Mutex<HashMap<String, (String, Instant)>>,
+    /// nudge가 시간 조건(쉼·입력창 확인 간격)만 기다릴 때 다시 볼 때. ticker가 15초 주기를 기다리지 않고 그때 깬다(t-1627)
+    nudge_due: Mutex<Option<Instant>>,
+    /// 프로젝트별로 coordinator에게 이미 알린 처음 보는 inbox 항목 ID(hook·nudge). hook은 여기 없는 항목만 알린다(t-1627)
+    nudge_told: Mutex<HashMap<String, HashSet<String>>>,
     /// task.md Follow-ups 덧붙이기는 한 번에 하나씩
     follow_up_lock: Mutex<()>,
     /// thread 작업 요약 표지 재료(summary.rs): 목록이 매번 파일을 읽지 않게
@@ -947,6 +951,8 @@ impl Host {
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             nudge_box: Mutex::new(HashMap::new()),
+            nudge_due: Mutex::new(None),
+            nudge_told: Mutex::new(HashMap::new()),
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
             usage_limits: Mutex::new(HashMap::new()),
@@ -2320,6 +2326,9 @@ impl Host {
                         omitted_done: p.omitted_done,
                     }
                 })
+            }
+            FrontRequest::InboxHookNotice { project, pane } => {
+                self.inbox_hook_notice(&project, &pane, actor).map(|text| FrontResponse::InboxHookNotice { text })
             }
             FrontRequest::InboxDone { project, ids, all } => {
                 self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {

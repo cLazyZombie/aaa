@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { root, AA, aaa, until, step, browser, webkit, pairPage, waitOutput, domIs, shot, start, stop } from "../lib/harness.mjs";
 
 const quote = s => `'${s.replaceAll("'", "'\\''")}'`;
@@ -47,7 +48,7 @@ export default async function () {
   let desktop, mirror, ids, safari;
   const pages = [];
   try {
-  await step("auto mode: 메뉴 켜기·두 기기 방송·host 재시작 유지·coordinator hook", async () => {
+  await step("auto mode: 메뉴 켜기·두 기기 방송·host 재시작 유지·coordinator hook·턴 도중 inbox", async () => {
     aaa("project", "create", "demo");
     coord = aaa("project", "open", "demo", "--profile", "fake").pane.id;
     await waitOutput(coord, "auto-ready>");
@@ -72,6 +73,19 @@ export default async function () {
     fs.writeFileSync(file, `${quote(AA)} hook --agent claude ${quote(JSON.stringify({ ...hook, source: "compact" }))} > ${quote(`${root}/compact.json`)}\nprintf 'auto-compact-done\\n'\n`);
     aaa("pane", "run", coord, `post-probe ${file}`); await waitOutput(coord, "auto-compact-done");
     assert.match(fs.readFileSync(`${root}/compact.json`, "utf8"), /auto_mode: on/);
+    // 턴 도중 도착한 inbox(t-1627): coordinator 도구 결과의 PostToolUse hook이 실제 agent→host로 물어 한 줄로 붙이고, 같은 항목은 한 번만.
+    const db = new DatabaseSync(`${root}/s/host/host.db`);
+    try {
+      const item = { id: "hook-e2e", project: "demo", item_kind: "thread-state", subject: "t-0001", event: "new report", summary: "새 보고", body: "", done: false, seen: false, created_at_ms: Date.now(), done_at_ms: null };
+      db.prepare("INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?,'demo','thread-state','t-0001','new report',0,?,?)").run(item.id, item.created_at_ms, JSON.stringify(item));
+    } finally { db.close(); }
+    const tool = { hook_event_name: "PostToolUse", session_id: hook.session_id, tool_name: "Bash", tool_input: { command: "ls" }, transcript_path: transcript };
+    for (const n of [1, 2]) {
+      fs.writeFileSync(`${root}/tool-${n}.sh`, `${quote(AA)} hook --agent claude ${quote(JSON.stringify(tool))} > ${quote(`${root}/tool-${n}.json`)}\nprintf 'auto-tool-${n}-done\\n'\n`);
+      aaa("pane", "run", coord, `post-probe ${root}/tool-${n}.sh`); await waitOutput(coord, `auto-tool-${n}-done`);
+    }
+    assert.match(fs.readFileSync(`${root}/tool-1.json`, "utf8"), /\[aaa inbox\] t-0001 new report/);
+    assert.doesNotMatch(fs.readFileSync(`${root}/tool-2.json`, "utf8"), /aaa inbox\]/, "같은 항목은 다음 도구 결과에 다시 붙이지 않는다");
   });
   await step("auto mode: 실제 자동 답·예외 카드 유지·post 기록·외부 푸시 제외", async () => {
     fs.writeFileSync(`${root}/auto-questions.md`, "## Questions\n### 1. 글자 렌더 방식\n실측 결과를 비교해 고른다.\n- A Canvas (추천) — 기본안\n- B WebGL 유지 — 스크롤 보존\n### 2. [사람] 서비스 설치 승인\n사용자가 기기 변경을 정한다.\n- A 승인\n- B 보류\n");

@@ -5074,3 +5074,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 자동화 저장 시험의 Windows 기본 스택 재현·poll 프레임 축소·회귀 검사: [t-1543 검증 기록](testing-automation-save-stack-t1543.md).
 
 - 웹 첫 화면의 열린 작업 우선 표시·답변 이력 페이지 조회: [검증 경계와 owner](testing-startup-pages-t1571.md).
+- 턴 도중 inbox hook 알림·턴 끝 약 5초 nudge: [t-1627 검증 기록](testing-inbox-hook-t-1627.md).

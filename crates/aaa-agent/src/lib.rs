@@ -454,20 +454,28 @@ impl Agent {
         let managed = spec.spec.role.is_some();
         Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
             let coordinator = spec.spec.role == Some(aaa_proto::Role::Coordinator);
+            let project = spec
+                .spec
+                .cwd
+                .as_deref()
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|p| p.to_str())
+                .unwrap_or_default();
             let auto_context = if coordinator
                 && matches!(hooks::guide_kind(&msg.payload), Some("SessionStart" | "UserPromptSubmit"))
             {
-                let project = spec
-                    .spec
-                    .cwd
-                    .as_deref()
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|p| p.to_str())
-                    .unwrap_or_default();
                 Some(self.coordinator_auto_context(project).await)
             } else {
                 None
             };
+            // 턴 도중 도착한 inbox: coordinator 맨 위 agent의 도구 결과마다 host에 묻는다(t-1627). 다른 harness 세션의
+            // 사건이면 묻지 않는다: 물으면 host가 알린 것으로 적는데 안내는 버려진다
+            let inbox =
+                if coordinator && hooks::inbox_hook(&msg.payload) && !self.foreign_hook(&msg.session, &msg.payload) {
+                    self.coordinator_inbox_notice(project, &msg.session).await
+                } else {
+                    None
+                };
             let reentry = spec
                 .spec
                 .env
@@ -480,6 +488,7 @@ impl Agent {
                 hooks::Reader { thread: !coordinator, reentry },
                 now,
                 auto_context.as_ref().map(|(state, text)| (state.as_str(), text.as_str())),
+                inbox.as_deref(),
             )
             .map(hooks::Reply::Text)
         } else {
@@ -498,21 +507,49 @@ impl Agent {
         reader: hooks::Reader,
         now: u64,
         auto_context: Option<(&str, &str)>,
+        inbox: Option<&str>,
     ) -> Option<String> {
-        let kind = hooks::guide_kind(p)?;
-        let id = p.get("session_id").and_then(|v| v.as_str());
-        if kind != "SessionStart"
-            && let (Some(started), Some(id)) = (self.harness_started.lock().unwrap().get(session), id)
-            && started != id
-        {
+        // `aaa report`의 PostToolUse는 진행 안내를 넣지 않지만 inbox는 붙인다
+        let Some(kind) = hooks::guide_kind(p) else {
+            return inbox.map(|text| hooks::output("PostToolUse", &hooks::inbox_context(text)));
+        };
+        if kind != "SessionStart" && self.foreign_hook(session, p) {
             return None;
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
         let rec = map.entry(session.to_string()).or_default();
         let progress = hooks::respond(rec, kind, &prefix, now, reader, hooks::typed_by_aaa(p));
-        let text = hooks::with_auto_mode(rec, progress, auto_context)?;
+        let text = hooks::with_inbox(hooks::with_auto_mode(rec, progress, auto_context), inbox)?;
         Some(hooks::output(kind, &text))
+    }
+
+    /// 이 pane이 시작한 harness 세션과 다른 세션의 hook 사건인가(SessionStart 전에는 모른다: 버리지 않는다)
+    fn foreign_hook(&self, session: &str, p: &serde_json::Value) -> bool {
+        let id = p.get("session_id").and_then(|v| v.as_str());
+        matches!((self.harness_started.lock().unwrap().get(session), id), (Some(started), Some(id)) if started != id)
+    }
+
+    /// coordinator hook에 붙일 inbox 한 줄을 host에 묻는다(t-1627). 도구마다 부르므로 짧게 기다리고, host가 없거나 옛 판이면
+    /// 조용히 넘긴다: 턴 끝 nudge가 남는다.
+    async fn coordinator_inbox_notice(&self, project: &str, pane: &str) -> Option<String> {
+        let root = self.state.parent().unwrap_or(&self.state);
+        let request = aaa_proto::FrontRequest::InboxHookNotice { project: project.into(), pane: pane.into() };
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut client = aaa_common::front::FrontClient::connect(root).await?;
+            match client.call(request).await?? {
+                aaa_proto::FrontResponse::InboxHookNotice { text } => Ok::<_, anyhow::Error>(text),
+                _ => anyhow::bail!("inbox hook 조회의 응답 종류가 다르다"),
+            }
+        })
+        .await;
+        match result {
+            Ok(Ok(text)) => text,
+            other => {
+                tracing::info!(%project, %pane, "coordinator hook inbox 조회 실패(턴 끝 알림에 맡긴다): {other:?}");
+                None
+            }
+        }
     }
 
     /// coordinator는 host 머신에 있다. 재시작·compaction 뒤에도 캐시 대신 host의 정본을 읽는다. (상태, 안내)를 돌려준다:
