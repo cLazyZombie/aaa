@@ -1,3 +1,4 @@
+- t-1638: [그림 든 아이디어 전달 E2E 대기 조사·수리](testing-idea-media-wait-t-1638.md)
 - t-1615: [예약 지정 계정 검증](testing-reservation-account-t-1615.md)
 - t-1592: [착지 gate를 어느 Mac에서도: 겹친 검증의 시험 결함](testing-landing-load-t-1592.md)
 - t-1596: [Windows workspace_metrics None panic 수리](testing-workspace-metrics-none-t-1596.md)
