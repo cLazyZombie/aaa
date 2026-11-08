@@ -131,9 +131,14 @@ export default async function ({ page }) {
     await dialog.waitFor({ state: "detached" });
   });
 
+  let handoffAt;
   await step("그림 든 아이디어를 넘기면 할 일 화면과 thread 작업 폴더에서 그림이 보인다", async () => {
+    // 긴 정리 메모 뒤 첨부는 lazy 로드 범위 밖에 있다. 화면에 넣기 전 decode하는 대기 결함을 재현한다.
+    const handoffNotes = ["정리본대로 만든다.", ...Array.from({ length: 180 }, (_, i) => `- 확인할 항목 ${i + 1}`)].join("\n");
+    handoffAt = "idea_handoff";
     const done = (await call(page, { op: "idea_handoff", idea: note.idea.short_id, base_rev: note.rev,
-      tasks: [{ title: "간판 만들기", repo: null, notes: "정리본대로 만든다." }] })).note;
+      tasks: [{ title: "간판 만들기", repo: null, notes: handoffNotes }] })).note;
+    handoffAt = "uploads 바이트 대조";
     const [short] = done.idea.tasks;
     const task = aaa("task", "list").tasks.find(t => t.short_id === short);
     const names = note.media.map(m => m.name);
@@ -141,12 +146,44 @@ export default async function ({ page }) {
     assert.deepEqual(memoImages.sort(), names.map(n => `![${n === note.media.find(m => m.source === "web").name ? "가게 앞" : "밤 시안"}](uploads/${n})`).sort());
     for (const n of names) assert.deepEqual(fs.readFileSync(`${project}/uploads/${n}`), fs.readFileSync(`${project}/ideas/${note.idea.id}/${n}`));
     // 웹 할 일 상세: 첨부 썸네일 둘이 실제로 그려진다
-    await page.goto(`${base}/#task=${short}`);
-    const items = page.getByTestId("task-attach-item");
+    handoffAt = "할 일 주소 이동";
+    // 첫 capabilities 응답을 보기 전 상세가 먼저 그려지는 순서를 사건으로 고정한다.
+    let releaseMe;
+    const meGate = new Promise(done => { releaseMe = done; });
+    const holdMe = async route => { await meGate; await route.continue(); };
+    const form = page.getByTestId("task-form");
+    await page.route("**/api/v1/me", holdMe);
+    try {
+      await page.goto(`${base}/#task=${short}`);
+      handoffAt = "할 일 임시 상세";
+      await page.getByTestId("task-attach-item").first().waitFor();
+      releaseMe();
+      // /me보다 task board가 먼저 오면 읽기 전용 상세가 잠깐 보인다.
+      // 편집 폼이 준비되며 그 img가 교체되므로, 최종 폼 안의 그림을 잡는다.
+      handoffAt = "할 일 편집 폼";
+      await form.waitFor();
+    } finally {
+      releaseMe();
+      await page.unroute("**/api/v1/me", holdMe);
+    }
+    handoffAt = "할 일 첨부 둘";
+    const items = form.getByTestId("task-attach-item");
     await until("할 일 첨부 둘", async () => await items.count() === 2);
-    for (let i = 0; i < 2; i++) await items.nth(i).locator("img").evaluate(img => img.decode());
+    for (let i = 0; i < 2; i++) {
+      handoffAt = `할 일 그림 표시 ${i}`;
+      await items.nth(i).scrollIntoViewIfNeeded();
+      handoffAt = `할 일 그림 해독 ${i}`;
+      await items.nth(i).locator("img").evaluate(img => {
+        const state = window.__ideaDecode = { img, state: "pending", detached: false };
+        const observer = new MutationObserver(() => { if (!img.isConnected) state.detached = true; });
+        observer.observe(document, { childList: true, subtree: true });
+        return img.decode().then(() => { state.state = "resolved"; observer.disconnect(); }, e => { state.state = "rejected"; observer.disconnect(); throw e; });
+      });
+    }
+    handoffAt = "할 일 화면 촬영";
     await shot(page, "130-idea-task");
     // 그 할 일로 thread를 띄우면 그림·노트가 attachments/로 가고 task·brief·노트의 그림 링크가 그 폴더를 가리킨다
+    handoffAt = "thread 시작";
     const started = aaa("thread", "start", "--from-task", "간판 만들기", "--link-task", "--machine", "labA", "--profile", "fake", "--kind", "dir");
     const thread = aaa("thread", "show", started.id);
     for (const n of names) {
@@ -158,9 +195,28 @@ export default async function ({ page }) {
     assert.ok(noteLink, text);
     const copied = fs.readFileSync(`${thread.work_dir}/attachments/${noteLink[1]}`, "utf8");
     for (const n of names) assert.ok(copied.includes(`](${n})`), "노트의 그림은 같은 폴더 이름");
+    handoffAt = "thread 보고";
     await until("thread 보고", () => aaa("thread", "show", started.id).report_hash);
     const brief = fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8");
     for (const n of names) assert.ok(brief.includes(`](attachments/${n})`), `brief의 ${n}`);
     aaa("thread", "resolve", started.id);
-  });
+  }, { diagnose: async error => {
+    const dir = `${root}/diagnostics`;
+    fs.mkdirSync(dir, { recursive: true });
+    // renderer 조회나 화면 저장이 실패해도 최초 오류와 마지막 대기 위치는 남긴다.
+    const record = { at: handoffAt, error: String(error) };
+    const save = () => fs.writeFileSync(`${dir}/idea-handoff.json`, JSON.stringify(record, null, 2));
+    save();
+    const state = await page.evaluate(() => {
+      const info = img => ({ connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth,
+        src: img.getAttribute("src"), rect: img.getBoundingClientRect().toJSON() });
+      const decode = window.__ideaDecode;
+      return { hash: location.hash, decode: decode && { state: decode.state, detached: decode.detached, image: info(decode.img) },
+        images: [...document.querySelectorAll('[data-testid="task-attach-item"] img')].map(info) };
+    });
+    Object.assign(record, state);
+    save();
+    console.log("IDEA-HANDOFF " + JSON.stringify(record));
+    await page.screenshot({ path: `${dir}/idea-handoff.png`, animations: "disabled" });
+  } });
 }
