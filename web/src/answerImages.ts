@@ -39,13 +39,6 @@ export function removeAnswerImage(text: string, target: string): string {
   return text.split("\n").filter((l) => !(isImageLine(l) && attachmentOfLine(l)?.target === target)).join("\n");
 }
 
-/** host가 준 파일 주소 앞부분(`/api/v1/projects/<p>/…`)의 프로젝트 이름 */
-export function projectOfBase(base: string | null | undefined): string | null {
-  // host가 쓰는 프로젝트 이름은 주소에 그대로 쓰는 글자뿐이다(`%` 꼴이 없다)
-  const m = base ? /^\/api\/v1\/projects\/([^/%]+)\//.exec(base) : null;
-  return m?.[1] ?? null;
-}
-
 /** 붙일 수 있는 그림과 뺀 까닭(그림 형식·1바이트~16MiB, host와 같다) */
 export function pickAnswerImages<T extends { name: string; type: string; size: number }>(files: readonly T[]): { ok: T[]; skipped: string[] } {
   const ok: T[] = [];

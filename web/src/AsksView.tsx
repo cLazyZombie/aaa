@@ -24,8 +24,7 @@ import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
 import { mergeQuestionDraft, questionDrafts, questionIdentity, type QuestionDraft } from "./questionDraft";
 import { AnswerField } from "./AnswerField";
-import { addAnswerImage, answerBody, answerImages, projectOfBase, removeAnswerImage, withAnswerBody } from "./answerImages";
-import { taskImageUrl } from "./tasksModel";
+import { addAnswerImage, answerBody, answerImages, removeAnswerImage, withAnswerBody } from "./answerImages";
 export { withRecommended } from "./questionAnswer";
 
 const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
@@ -166,8 +165,11 @@ export function AsksView({
   onOpenTask,
   onTaskAnswer,
   onThread,
+  project,
 }: {
   shown: boolean;
+  /** host가 맡은 프로젝트(할 일 목록의 프로젝트). 모르면 null: 확인 필요 post 답에는 그림을 붙이지 않는다 */
+  project: string | null;
   onClose: () => void;
   selection: AskSelection;
   canControl: boolean;
@@ -227,12 +229,12 @@ export function AsksView({
           {selection.kind === "loading" && (selection.error ? <p role="alert">{selection.error} <button onClick={selection.retry}>다시 읽기</button></p> : <p role="status">답변을 불러오는 중…</p>)}
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
-            <QuestionCard key={JSON.stringify(["question", selection.ask.thread.project, selection.ask.thread.id, questionIdentity(selection.ask.thread.questions)])} t={selection.ask.thread} q={selection.ask.thread.questions}
+            <QuestionCard key={JSON.stringify(["question", selection.ask.thread.project, selection.ask.thread.id, questionIdentity(selection.ask.thread.questions)])} t={selection.ask.thread} q={selection.ask.thread.questions} defaultProject={project}
               active={shown} canControl={canControl} onAnswer={(p, text, comments) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text, comments)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
-              <QuestionCard key={JSON.stringify([selection.ask.key, questionIdentity(selection.ask.request.questions)])} request={selection.ask.request} q={selection.ask.request.questions}
+              <QuestionCard key={JSON.stringify([selection.ask.key, questionIdentity(selection.ask.request.questions)])} request={selection.ask.request} q={selection.ask.request.questions} defaultProject={project}
                 active={shown} canControl={canControl} onAnswer={(p, text, comments) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text, comments)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
@@ -375,9 +377,12 @@ function QuestionCard({
   onAnswer,
   onZoom,
   onThread,
+  defaultProject,
 }: {
   t?: ThreadView;
   request?: UserRequestView;
+  /** 프로젝트를 모르는 카드(coordinator 확인 필요 post)의 그림을 올릴 프로젝트: host가 맡은 프로젝트(답할 것·할 일 목록과 같다) */
+  defaultProject: string | null;
   q: ThreadQuestions;
   active: boolean;
   canControl: boolean;
@@ -466,7 +471,7 @@ function QuestionCard({
   const submit = () => { if (!off && !uploading && !needsReviewText) void (all || text ? send(picks) : filled && send(filled)); };
   const label = all ? `답 보내기 (${q.items.length})` : text ? "답 보내기" : filled ? "추천대로 보내기" : "답 보내기";
   const base = q.files_base;
-  const project = projectOfBase(base) ?? t?.project ?? null;
+  const project = t?.project ?? defaultProject ?? null;
   const setComment = (n: number, f: (old: string) => string) => update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? f(old ?? "") : old) }));
   return (
     <section className="prompt-card thread-ask-card ask-card" role="region" aria-label={`${t?.id ?? request?.title} 질문`} aria-busy={pending} data-testid={t ? `thread-ask-${t.id}` : `request-ask-${request?.id}`} data-state="open" data-kind={t ? "question" : "request"}>
@@ -586,10 +591,12 @@ function RequestCard({ questionId, title, body, at, canControl, onHandle, onRepl
   );
 }
 
-/** 답한 카드의 직접 쓴 답: 줄바꿈 그대로, 끝의 그림 줄은 썸네일(누르면 크게)로 */
-function DoneAnswer({ text, project, testId, onZoom }: { text: string; project: string | null; testId: string; onZoom: (z: { src: string; alt: string }) => void }) {
+/** 답한 카드의 직접 쓴 답: 줄바꿈 그대로, 끝의 그림 줄은 썸네일(누르면 크게)로. 그림은 host가 답 사본 폴더에 둔 사본
+ * (`<files_base>uploads/<이름>`)이다: 웹이 받는 사본 주소는 기기별 읽기 경로라 프로젝트를 알 수 없다 */
+function DoneAnswer({ text, base, testId, onZoom }: { text: string; base: string | null | undefined; testId: string; onZoom: (z: { src: string; alt: string }) => void }) {
   const body = answerBody(text).trim();
-  const images = project ? answerImages(text) : [];
+  const images = base ? answerImages(text) : [];
+  const src = (target: string) => `${base}uploads/${encodeURIComponent(target.replace(/^uploads\//, ""))}`;
   return (
     <>
       <p className="ask-done-text" data-testid={testId}><span className="muted">직접 쓴 답</span> <strong>{images.length === 0 ? text : body}</strong></p>
@@ -597,8 +604,8 @@ function DoneAnswer({ text, project, testId, onZoom }: { text: string; project: 
         <ul className="ask-answer-images is-done" aria-label="답에 붙인 그림" data-testid={`${testId}-images`}>
           {images.map((target, i) => (
             <li key={target} className="ask-answer-image" data-path={target}>
-              <button type="button" className="ask-answer-thumb" aria-label={`답 그림 ${i + 1} 크게 보기`} onClick={() => onZoom({ src: taskImageUrl(project!, target), alt: `답 그림 ${i + 1}` })}>
-                <img src={taskImageUrl(project!, target)} alt="" loading="lazy" decoding="async" />
+              <button type="button" className="ask-answer-thumb" aria-label={`답 그림 ${i + 1} 크게 보기`} onClick={() => onZoom({ src: src(target), alt: `답 그림 ${i + 1}` })}>
+                <img src={src(target)} alt="" loading="lazy" decoding="async" />
               </button>
             </li>
           ))}
@@ -665,12 +672,12 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
               })}
             </div>
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
-            {r.answer?.comments?.[n] ? <DoneAnswer text={r.answer.comments[n]} project={projectOfBase(base)} testId={`ask-done-text-${item.source_number ?? n + 1}`} onZoom={onZoom} />
+            {r.answer?.comments?.[n] ? <DoneAnswer text={r.answer.comments[n]} base={base} testId={`ask-done-text-${item.source_number ?? n + 1}`} onZoom={onZoom} />
               : pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );
       })}
-      {r.answer?.text && <DoneAnswer text={r.answer.text} project={projectOfBase(base)} testId="ask-done-text" onZoom={onZoom} />}
+      {r.answer?.text && <DoneAnswer text={r.answer.text} base={base} testId="ask-done-text" onZoom={onZoom} />}
       {r.kind !== "question" && r.items.length === 0 && r.body && <AskMarkdown base={base}>{r.body}</AskMarkdown>}
       {report !== null && (
         <div className="ask-report" data-testid="ask-report">

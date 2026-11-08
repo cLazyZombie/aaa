@@ -1750,6 +1750,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         {asksOpened && (
           <AsksView
+            project={taskBoard.board?.project ?? null}
             shown={asksShown}
             onClose={() => goSel(beforeAsks.current)}
             selection={askSelection}

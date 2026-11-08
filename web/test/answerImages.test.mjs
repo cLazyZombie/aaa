@@ -2,7 +2,7 @@
 // 보낸 답에서 그림이나 줄이 빠지지 않는다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addAnswerImage, answerBody, answerImages, pickAnswerImages, projectOfBase, removeAnswerImage, withAnswerBody } from "../src/answerImages.ts";
+import { addAnswerImage, answerBody, answerImages, pickAnswerImages, removeAnswerImage, withAnswerBody } from "../src/answerImages.ts";
 
 const A = "uploads/0123456789abcdef.png";
 const B = "uploads/fedcba9876543210.jpg";
@@ -31,11 +31,7 @@ describe("답 그림 줄", () => {
     }
   });
 
-  it("파일 주소 앞부분의 프로젝트, 받는 그림 형식·크기", () => {
-    assert.equal(projectOfBase("/api/v1/projects/demo/asks/01HX/"), "demo");
-    assert.equal(projectOfBase("/api/v1/projects/my_proj-2/requests/i/h/"), "my_proj-2");
-    assert.equal(projectOfBase(null), null);
-    assert.equal(projectOfBase("/elsewhere/demo/"), null);
+  it("받는 그림 형식·크기", () => {
     const { ok, skipped } = pickAnswerImages([
       { name: "a.png", type: "image/png", size: 10 },
       { name: "plan.md", type: "text/markdown", size: 10 },
