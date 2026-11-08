@@ -797,6 +797,19 @@ fn lab_capture_returns_while_another_process_holds_the_output() {
     assert!(alive, "출력을 든 손자 {holder}가 돌아오기 전에 끝났다");
 }
 
+/// 실험실 host는 `[local_agent]`를 적지 않아도 개발 모드 로컬 agent를 띄우지 않는다. 그 agent는 setsid로 분리돼 실험실이
+/// host를 끝내도 PPID 1로 남았다(t-1646: web_publication이 세 Mac에 11개). 시험이 적은 모드는 그대로 둔다.
+#[test]
+fn lab_host_without_local_agent_mode_starts_no_detached_agent() {
+    let lab = Lab::new();
+    let mode = |name: &str, toml: &str| {
+        let node = lab.node(name, Some(toml));
+        aaa_config::load_host(&node.cfg).unwrap_or_else(|e| panic!("{name} host.toml: {e:?}")).config.local_agent.mode
+    };
+    assert_eq!(mode("plain", "schema = 1\n[host]\nagent_listen = ''\n"), aaa_config::LocalAgentMode::None);
+    assert_eq!(mode("chosen", "schema = 1\n[local_agent]\nmode = 'child'\n"), aaa_config::LocalAgentMode::Child);
+}
+
 /// 준비 대기는 구독 전의 현재 목록과 구독 뒤의 연결 변화를 모두 받아야 한다.
 #[test]
 fn agent_readiness_uses_initial_state_and_reconnection_events() {

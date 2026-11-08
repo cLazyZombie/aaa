@@ -3,6 +3,9 @@
 //! - Unix는 UDS 길이 제한(macOS 104바이트) 때문에 `/tmp/aae-<pid>-<n>`처럼 짧게 둔다. Windows는 Named Pipe라 임시 폴더를 쓴다.
 //! - 띄운 프로세스는 `Child`로만 잡고, 끝날 때 그 PID만 종료한다. session host(setsid로 분리)는
 //!   상태 폴더의 meta.json에 적힌 PID 중 명령줄이 이 실험실 경로를 가리키는 것만 종료한다.
+//! - 개발 모드 host가 띄우는 로컬 agent(`--dev-mode`, setsid로 분리)는 실험실이 끝내지 못한다. 그래서 `Lab::node`는
+//!   `[local_agent]`가 없는 host.toml에 `mode = "none"`을 넣는다. host.toml 없이(`None`) 만든 node에서 `host`를 띄우거나
+//!   개발 모드를 일부러 쓰는 시험은 그 agent를 직접 끝낸다.
 
 #![allow(dead_code)]
 
@@ -374,11 +377,16 @@ impl Lab {
         std::fs::write(node.cfg.join("shrc"), "PS1='$ '\n").unwrap();
         if let Some(t) = host_toml {
             // projects root를 주지 않은 시험 host도 실제 HOME의 프로젝트를 세지 않게(한 host 한 프로젝트 시작 검사, plan §8.283)
-            let t = if t.contains("[projects]") {
+            let mut t = if t.contains("[projects]") {
                 t.to_string()
             } else {
                 format!("{t}\n[projects]\nroot = {:?}\n", dir.join("projects"))
             };
+            // 로컬 agent 모드를 정하지 않은 시험 host도 개발 모드 agent를 띄우지 않게. 그 agent는 setsid로 분리돼
+            // 실험실이 host를 끝내도 PPID 1로 남아 재접속을 되풀이한다(t-1646: m13 web_publication이 세 Mac에 남김)
+            if !t.contains("[local_agent]") {
+                t.push_str("\n[local_agent]\nmode = \"none\"\n");
+            }
             std::fs::write(node.cfg.join("host.toml"), t).unwrap();
         }
         node
