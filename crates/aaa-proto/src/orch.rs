@@ -1191,7 +1191,7 @@ pub struct ThreadView {
     pub questions: Option<Box<ThreadQuestions>>,
 }
 
-/// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
+/// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 답은 현재 보고 hash에 묶이며, 같은 미답 질문의 번호·부분 답은 보고 갱신에도 유지한다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestions {
     /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.

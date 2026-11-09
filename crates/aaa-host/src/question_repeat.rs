@@ -11,7 +11,7 @@ pub(crate) struct RepeatedQuestions {
     pub ids: Vec<String>,
 }
 
-fn same_question(a: &ThreadQuestion, b: &ThreadQuestion) -> bool {
+pub(crate) fn same_question(a: &ThreadQuestion, b: &ThreadQuestion) -> bool {
     let normalize = |q: &ThreadQuestion| {
         let mut q = q.clone();
         q.id = None;

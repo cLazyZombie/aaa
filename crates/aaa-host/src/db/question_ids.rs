@@ -3,6 +3,39 @@ use super::*;
 use crate::question_ids::Target;
 
 impl Db {
+    /// 보고가 돌아와도 폐기한 번호를 다시 열지 않는다. 이어갈 번호만 새 판·위치로 옮긴다.
+    pub(crate) fn refresh_thread_question_ids(
+        &self,
+        project: &str,
+        subject: &str,
+        previous: &str,
+        revision: &str,
+        retained: &[(String, usize)],
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute(
+            "UPDATE question_ids SET revision='retired:' || id
+             WHERE project=?1 AND kind='thread' AND subject=?2 AND revision IN (?3,?4)",
+            params![project, subject, previous, revision],
+        )?;
+        for (id, position) in retained {
+            let n = tx.execute(
+                "UPDATE question_ids SET revision=?4,position=?5
+                 WHERE project=?1 AND kind='thread' AND subject=?2 AND id=?3 AND revision='retired:' || id",
+                params![project, subject, id, revision, *position as i64],
+            )?;
+            anyhow::ensure!(n == 1, "이어갈 질문 번호가 없다: {id}");
+        }
+        tx.execute(
+            "UPDATE question_ids SET draft=NULL
+             WHERE project=?1 AND kind='thread' AND subject=?2 AND revision='retired:' || id",
+            params![project, subject],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 독립 post로 한 번 식별한 요청은 나중의 thread 카드에 다시 붙이지 않는다.
     pub(crate) fn has_post_questions(&self, project: &str, subject: &str) -> Result<bool> {
         Ok(self.conn.lock().unwrap().query_row(
@@ -68,8 +101,8 @@ impl Db {
 
     pub(crate) fn question_claim_draft(&self, target: &Target, answer: &aaa_proto::QuestionAnswerView) -> Result<bool> {
         let n = self.conn.lock().unwrap().execute(
-            "UPDATE question_ids SET draft=?3 WHERE project=?1 AND id=?2 AND draft IS NULL",
-            params![target.project, target.id, serde_json::to_string(answer)?],
+            "UPDATE question_ids SET draft=?3 WHERE project=?1 AND id=?2 AND draft IS NULL AND revision=?4 AND position=?5",
+            params![target.project, target.id, serde_json::to_string(answer)?, target.revision, target.position as i64],
         )?;
         Ok(n == 1)
     }
@@ -88,8 +121,14 @@ impl Db {
         answer: Option<&aaa_proto::QuestionAnswerView>,
     ) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "UPDATE question_ids SET draft=?3 WHERE project=?1 AND id=?2",
-            params![target.project, target.id, answer.map(serde_json::to_string).transpose()?],
+            "UPDATE question_ids SET draft=?3 WHERE project=?1 AND id=?2 AND revision=?4 AND position=?5",
+            params![
+                target.project,
+                target.id,
+                answer.map(serde_json::to_string).transpose()?,
+                target.revision,
+                target.position as i64
+            ],
         )?;
         Ok(())
     }

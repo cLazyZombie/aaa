@@ -2568,6 +2568,12 @@ impl Host {
 
     async fn collect_snapshot(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
+        let pending_materials =
+            if rec.question_answer.is_none() && rec.question_warning.is_none() && !self.default_review_for(&rec) {
+                self.pending_question_materials(&rec)?
+            } else {
+                Vec::new()
+            };
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
@@ -2814,6 +2820,21 @@ impl Host {
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) {
+                    // 본문 hash가 같아도 같은 경로의 그림이 달라질 수 있다.
+                    if changed && rec.question_answer.is_none() {
+                        let mut questions = rec.questions.clone();
+                        for q in &mut questions {
+                            q.id = None;
+                        }
+                        self.carry_pending_questions(
+                            &rec,
+                            if failures.is_empty() { &pending_materials } else { &[] },
+                            &hash,
+                            &mut questions,
+                        )?;
+                        let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
+                        self.update_rec(project, id, |r| r.questions = questions)?;
+                    }
                     let missing = self.report_missing_files(project, id, &String::from_utf8_lossy(&report), &failures);
                     let rec = self.update_rec(project, id, |r| {
                         if let Some(missing) = missing {
@@ -2852,10 +2873,21 @@ impl Host {
                     None
                 };
                 let repeated_ids = repeated.as_ref().map(|r| r.ids.clone()).unwrap_or_default();
-                let (questions, answer) = match repeated {
-                    Some(r) => (self.identify_questions(project, "thread", id, &hash, &r.items)?, r.answer),
-                    None => (self.identify_questions(project, "thread", id, &hash, &questions)?, None),
+                let (mut questions, answer) = match repeated {
+                    Some(r) => (r.items, r.answer),
+                    None => (questions, None),
                 };
+                self.carry_pending_questions(
+                    &rec,
+                    if failures.is_empty() && question_warning.is_none() && !crate::report_mark::default_review(&text) {
+                        &pending_materials
+                    } else {
+                        &[]
+                    },
+                    &hash,
+                    &mut questions,
+                )?;
+                let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
                 let closed_question = questions.is_empty()
                     && question_warning.is_none()
                     && !rec.questions.is_empty()
@@ -2886,9 +2918,6 @@ impl Host {
                     self.warn_answered_questions(&rec, &repeated_ids).await;
                 }
                 self.warn_question_format(&rec).await;
-                self.db
-                    .question_clear_drafts(project, "thread", id, previous.report_hash.as_deref().unwrap_or_default())
-                    .map_err(internal)?;
                 if closed_question {
                     self.record_question_closed(&previous);
                 }
