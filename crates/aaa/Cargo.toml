@@ -57,4 +57,4 @@ portable-pty.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
 # 실패 진단은 시험 실행 파일의 별도 프로세스에서 수집한다. 제품 실행 파일에는 더하지 않는다.
-windows-sys = { workspace = true, features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus"] }
+windows-sys = { workspace = true, features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_LibraryLoader"] }
