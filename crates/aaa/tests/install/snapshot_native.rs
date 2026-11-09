@@ -1,7 +1,9 @@
 //! 시험과 함께 컴파일하는 외부 프로세스 수집기. CIM·셸·실행 중 컴파일을 쓰지 않는다.
-use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
+use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Measurement, Snapshot, Thread, WaitNode};
 #[path = "snapshot_console.rs"]
 mod console;
+#[path = "console_repro.rs"]
+mod repro;
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -9,7 +11,9 @@ use std::path::Path;
 use windows_sys::Win32::{
     Foundation::*,
     Globalization::{CSTR_EQUAL, CompareStringOrdinal},
-    Storage::FileSystem::GetFullPathNameW,
+    Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, GetFullPathNameW, VS_FIXEDFILEINFO, VerQueryValueW,
+    },
     System::{
         Diagnostics::{Debug::*, ToolHelp::*},
         ProcessStatus::GetModuleFileNameExW,
@@ -31,6 +35,48 @@ impl Failure {
     fn os(phase: &'static str) -> Self {
         Self { phase, error_type: "Win32Error", os_code: unsafe { GetLastError() } }
     }
+}
+impl<T> From<Result<T, Failure>> for Measurement<T> {
+    fn from(result: Result<T, Failure>) -> Self {
+        match result {
+            Ok(value) => Self::Ok { value },
+            Err(error) => Self::Error { phase: error.phase.into(), os_code: error.os_code },
+        }
+    }
+}
+
+fn file_version(path: &Path) -> Result<[u16; 4], Failure> {
+    let path = wide(path.as_os_str());
+    let size = unsafe { GetFileVersionInfoSizeW(path.as_ptr(), std::ptr::null_mut()) };
+    if size == 0 {
+        return Err(Failure::os("console_host_version_size"));
+    }
+    if size > 1024 * 1024 {
+        return Err(Failure::rejected("console_host_version_limit"));
+    }
+    let mut buffer = vec![0u8; size as usize];
+    if unsafe { GetFileVersionInfoW(path.as_ptr(), 0, size, buffer.as_mut_ptr().cast()) } == 0 {
+        return Err(Failure::os("console_host_version_read"));
+    }
+    let mut info = std::ptr::null_mut();
+    let mut length = 0;
+    if unsafe { VerQueryValueW(buffer.as_ptr().cast(), [92u16, 0].as_ptr(), &mut info, &mut length) } == 0 {
+        return Err(Failure::os("console_host_version_query"));
+    }
+    if info.is_null() || (length as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>() {
+        return Err(Failure::rejected("console_host_version_schema"));
+    }
+    // 버전 resource는 byte buffer이므로 alignment를 가정하지 않는다. 문자열 resource는 출력하지 않는다.
+    let info = unsafe { info.cast::<VS_FIXEDFILEINFO>().read_unaligned() };
+    if info.dwSignature != 0xfeef04bd {
+        return Err(Failure::rejected("console_host_version_signature"));
+    }
+    Ok([
+        (info.dwFileVersionMS >> 16) as u16,
+        info.dwFileVersionMS as u16,
+        (info.dwFileVersionLS >> 16) as u16,
+        info.dwFileVersionLS as u16,
+    ])
 }
 fn owned(handle: HANDLE, phase: &'static str) -> Result<OwnedHandle, Failure> {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
@@ -497,7 +543,9 @@ pub(super) fn owned_children(pid: u32, owner: u32, exe: &Path) -> Result<Vec<Chi
 // 호스트는 중지하지 않는다. 수집기 5초 상한에 helper가 종료돼도 호스트 thread가 중지된 채 남지 않는다.
 fn capture_host(client: HANDLE, owner: u32) -> Result<ConsoleHost, Failure> {
     let pid = console_host(client)?;
-    let host = verify(pid, owner, &console_host_image()?)?;
+    let image = console_host_image()?;
+    let host = verify(pid, owner, &image)?;
+    let file_version = file_version(&image).into();
     let mut created = FILETIME::default();
     let mut exited = FILETIME::default();
     let mut kernel = FILETIME::default();
@@ -554,5 +602,11 @@ fn capture_host(client: HANDLE, owner: u32) -> Result<ConsoleHost, Failure> {
     if found == 0 && unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
         return Err(Failure::os("console_host_thread_next"));
     }
-    Ok(ConsoleHost { process_id: pid, kernel_100ns: ticks(kernel), user_100ns: ticks(user), threads: views })
+    Ok(ConsoleHost {
+        process_id: pid,
+        kernel_100ns: ticks(kernel),
+        user_100ns: ticks(user),
+        threads: views,
+        file_version,
+    })
 }

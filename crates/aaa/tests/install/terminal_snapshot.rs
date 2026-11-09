@@ -139,6 +139,38 @@ struct ConsoleHost {
     kernel_100ns: u64,
     user_100ns: u64,
     threads: Vec<HostThread>,
+    file_version: Measurement<[u16; 4]>,
+}
+// OS 오류도 원문·경로 없이 독립 보존한다. 부가 조회 실패가 입력 큐 관측을 지우지 않는다.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum Measurement<T> {
+    Ok { value: T },
+    Error { phase: String, os_code: u32 },
+}
+impl<T> Measurement<T> {
+    fn valid(&self) -> bool {
+        match self {
+            Self::Ok { .. } => true,
+            Self::Error { phase, .. } => {
+                !phase.is_empty() && phase.len() < 80 && phase.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            }
+        }
+    }
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct InputWait {
+    result: u32,
+    os_code: Option<u32>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ScreenSize {
+    buffer_cols: i16,
+    buffer_rows: i16,
+    window_cols: i32,
+    window_rows: i32,
 }
 // 앞의 최대 128개 사건에서 본 존재 여부다. false로 전체 큐의 키 부재를 단정하지 않는다.
 #[derive(Debug, Deserialize, Serialize)]
@@ -150,6 +182,10 @@ struct ConsoleInput {
     prefix_enter_down: bool,
     prefix_cancel_down: bool,
     prefix_eof_down: bool,
+    // helper가 새로 연 CONIN$의 상태다. 대상 CLI의 stdin handle 조회로 부르지 않는다.
+    conin_wait: InputWait,
+    selection_flags: Measurement<u32>,
+    screen_size: Measurement<ScreenSize>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -190,6 +226,10 @@ impl Snapshot {
             && self.console_host_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
             && self.console_input_error.len() < 80
             && self.console_input_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            && self
+                .console_input
+                .as_ref()
+                .is_none_or(|input| input.selection_flags.valid() && input.screen_size.valid())
             && self.children.len() <= 4
             && self.children.iter().all(|child| {
                 child.process_id != 0
@@ -202,6 +242,7 @@ impl Snapshot {
                 host.process_id != pid
                     && host.process_id != 0
                     && host.threads.len() <= 32
+                    && host.file_version.valid()
                     && host.threads.iter().all(|thread| {
                         thread.nodes.len() <= 16
                             && thread
@@ -235,11 +276,21 @@ impl Snapshot {
     }
     #[cfg(target_arch = "x86_64")]
     pub(super) fn has_console_host_view(&self) -> bool {
-        self.console_host.as_ref().is_some_and(|host| host.process_id != self.process_id && !host.threads.is_empty())
+        self.console_host.as_ref().is_some_and(|host| {
+            host.process_id != self.process_id
+                && !host.threads.is_empty()
+                && matches!(host.file_version, Measurement::Ok { value } if value[0] > 0)
+        })
     }
     #[cfg(target_arch = "x86_64")]
     pub(super) fn has_console_input_view(&self) -> bool {
-        self.console_input.is_some() && self.console_input_error.is_empty() && self.console_input_code.is_none()
+        self.console_input.as_ref().is_some_and(|input| {
+            matches!(input.conin_wait.result, 0 | 258)
+                && input.conin_wait.os_code.is_none()
+                && matches!(input.selection_flags, Measurement::Ok { .. })
+                && matches!(input.screen_size, Measurement::Ok { ref value } if value.buffer_cols == 120 && value.buffer_rows == 36)
+        }) && self.console_input_error.is_empty()
+            && self.console_input_code.is_none()
     }
 }
 
