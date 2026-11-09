@@ -1,5 +1,8 @@
 # Windows 설치 PTY: 실패 뒤에도 남아 있는 Enter(t-1658)
 
+아래는 첫 조사 기록이다. 승인 뒤 추가한 진단과 남은 실기·재현 범위는
+[읽기 준비 상태·질의 회신 진단](testing-win-pty-readiness-t1658.md)에 기록한다.
+
 ## 결론
 
 plain wizard의 열두 번째 `ReadConsoleW`가 반환하지 않았으며, 실패 판정 뒤에도 콘솔 입력 큐에
