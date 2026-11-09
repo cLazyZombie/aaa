@@ -19,6 +19,7 @@ struct Lab {
     hash_requests: Arc<AtomicUsize>,
     empty_conflict: Arc<std::sync::atomic::AtomicBool>,
     report: Arc<std::sync::Mutex<&'static str>>,
+    file: Arc<std::sync::Mutex<(&'static [u8], &'static [u8])>>,
     fake: tokio::task::JoinHandle<()>,
     _cleanup: Cleanup,
 }
@@ -108,6 +109,8 @@ impl Lab {
         let hash_seen = hash_requests.clone();
         let report = Arc::new(std::sync::Mutex::new(report));
         let reply_report = report.clone();
+        let file = Arc::new(std::sync::Mutex::new((file_bytes, manifest)));
+        let reply_file = file.clone();
         let empty_conflict = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reject_empty = empty_conflict.clone();
         let fake = tokio::spawn(async move {
@@ -174,14 +177,15 @@ impl Lab {
                                 }
                                 continue;
                             }
+                            let (file_bytes, material) = *reply_file.lock().unwrap();
                             let snapshot = ReportSnapshot {
                                 hash: hex::encode(sha2::Sha256::digest(&report)),
                                 report: B64(report),
                                 files: if !file_bytes.is_empty() && max_library_bytes != 0 {
                                     vec![LibFile {
                                         path: name.into(),
-                                        size: manifest.len() as u64,
-                                        sha256: hex::encode(sha2::Sha256::digest(manifest)),
+                                        size: material.len() as u64,
+                                        sha256: hex::encode(sha2::Sha256::digest(material)),
                                     }]
                                 } else {
                                     vec![]
@@ -197,7 +201,7 @@ impl Lab {
                     }
                     AgentRequest::FileRead { offset, len, .. } | AgentRequest::ReportFileRead { offset, len, .. } => {
                         // manifest 뒤 append: 요청한 범위만 읽는 실제 agent와 같은 응답이다.
-                        let file = file_bytes;
+                        let file = reply_file.lock().unwrap().0;
                         let start = offset as usize;
                         let end = (start + len as usize).min(file.len());
                         let data = B64(file[start..end].to_vec());
@@ -225,7 +229,7 @@ impl Lab {
         });
         let weak = Arc::downgrade(&h);
         let cleanup = Cleanup(root.clone(), weak);
-        Self { h, root, requests, hash_requests, empty_conflict, report, fake, _cleanup: cleanup }
+        Self { h, root, requests, hash_requests, empty_conflict, report, file, fake, _cleanup: cleanup }
     }
 }
 
@@ -1096,4 +1100,92 @@ async fn empty_report_snapshots_preserve_state_until_one_nonempty_revision_arriv
             lab.close().await;
         }
     }
+}
+
+const PENDING_QUESTIONS: &str =
+    "[결정 필요] 질문\n## Questions\n### 1. 자리\n- A 아래\n- B 위\n### 2. 색\n- A 파랑\n- B 회색\n";
+
+/// 보고 수집 → 짧은 ID 답 → 재수집·재해석의 실제 경로에서 번호·부분 의견이 질문을 따라야 한다.
+#[tokio::test]
+async fn pending_questions_keep_ids_and_partial_comments_across_progress_reorder_and_reversion() {
+    let lab = Lab::with_report(0, b"", "unused", b"", PENDING_QUESTIONS);
+    let h = &lab.h;
+    h.collect("p", "t-0001", false).await.unwrap();
+    let first = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    let ids: Vec<_> = first.items.iter().map(|q| q.id.clone().unwrap()).collect();
+    let stale = h.db.question_target(Some("p"), &ids[1]).unwrap().unwrap();
+    h.reply_by_id("p", &ids[0], Some("B"), Some("간격 유지\n색만 변경".into()), "test").await.unwrap();
+    *lab.report.lock().unwrap() = "[결정 필요] 질문\n## 진행\n- [x] 조사\n## Remember\n기억\n## Next\n확인한다\n## Questions\n### 1. 자리\n- A 아래\n- B 위\n### 2. 색\n- A 파랑\n- B 회색\n";
+    h.collect("p", "t-0001", false).await.unwrap();
+    h.backfill_review_questions().unwrap();
+    let current = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_ne!(current.report_hash, first.report_hash);
+    assert_eq!(current.items.iter().map(|q| q.id.clone().unwrap()).collect::<Vec<_>>(), ids);
+    assert_eq!(current.draft.as_ref().unwrap().picks, [Some(1), None]);
+    assert_eq!(current.draft.as_ref().unwrap().comments, [Some("간격 유지\n색만 변경".into()), None]);
+    assert!(
+        !h.db.question_claim_draft(&stale, current.draft.as_ref().unwrap()).unwrap(),
+        "옛 판의 경합 답을 받지 않는다"
+    );
+    *lab.report.lock().unwrap() =
+        "[결정 필요] 질문\n## Questions\n### 1. 색\n- A 파랑\n- B 회색\n### 2. 자리\n- A 아래\n- B 위\n";
+    h.collect("p", "t-0001", false).await.unwrap();
+    let reordered = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_eq!(reordered.items[0].id.as_ref(), Some(&ids[1]));
+    assert_eq!(reordered.items[1].id.as_ref(), Some(&ids[0]));
+    assert_eq!(reordered.draft.as_ref().unwrap().picks, [None, Some(1)]);
+    assert_eq!(reordered.draft.as_ref().unwrap().comments, [None, Some("간격 유지\n색만 변경".into())]);
+    *lab.report.lock().unwrap() =
+        "[결정 필요] 질문\n## Questions\n### 1. 자리\n- A 아래\n- B 가운데\n### 2. 색\n- A 파랑\n- B 회색\n";
+    h.collect("p", "t-0001", false).await.unwrap();
+    let changed = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_ne!(changed.items[0].id.as_ref(), Some(&ids[0]));
+    assert_eq!(changed.items[1].id.as_ref(), Some(&ids[1]));
+    assert!(changed.draft.is_none());
+    assert!(h.reply_by_id("p", &ids[0], Some("A"), None, "test").await.is_err());
+    *lab.report.lock().unwrap() = PENDING_QUESTIONS;
+    h.collect("p", "t-0001", false).await.unwrap();
+    let reverted = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_ne!(reverted.items[0].id.as_ref(), Some(&ids[0]), "옛 보고 hash로 돌아가도 폐기한 번호를 열지 않는다");
+    assert_eq!(reverted.items[1].id.as_ref(), Some(&ids[1]));
+    assert!(reverted.draft.is_none());
+    *lab.report.lock().unwrap() = "[진행 중] 질문 닫음\n";
+    h.collect("p", "t-0001", false).await.unwrap();
+    *lab.report.lock().unwrap() = PENDING_QUESTIONS;
+    h.collect("p", "t-0001", false).await.unwrap();
+    let reopened = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_ne!(reopened.items[1].id.as_ref(), Some(&ids[1]), "닫았다 다시 연 질문은 새 번호다");
+    lab.close().await;
+}
+
+/// URL·본문이 같아도 그림 bytes가 달라지거나 누락되면 그 질문의 부분 답을 새 판단에 붙이지 않는다.
+#[tokio::test]
+async fn pending_questions_invalidate_only_changed_material_even_without_report_text_changes() {
+    const REPORT: &str = "[결정 필요] 질문\n## Questions\n### 1. 시안\n![시안](library/a.png)\n- A 적용\n- B 보류\n### 2. 색\n- A 파랑\n- B 회색\n";
+    let lab = Lab::with_report(0, b"original", "a.png", b"original", REPORT);
+    let h = &lab.h;
+    h.collect("p", "t-0001", false).await.unwrap();
+    let first = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    let ids: Vec<_> = first.items.iter().map(|q| q.id.clone().unwrap()).collect();
+    h.reply_by_id("p", &ids[0], None, Some("그림 그대로".into()), "test").await.unwrap();
+    // 같은 자료의 마지막 재수집은 부분 답을 보존한다.
+    h.collect("p", "t-0001", true).await.unwrap();
+    assert!(h.thread_show("p", "t-0001").unwrap().questions.unwrap().draft.is_some());
+    *lab.file.lock().unwrap() = (b"changed", b"changed");
+    h.collect("p", "t-0001", true).await.unwrap();
+    let changed = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_eq!(changed.report_hash, first.report_hash);
+    assert_ne!(changed.items[0].id.as_ref(), Some(&ids[0]));
+    assert_eq!(changed.items[1].id.as_ref(), Some(&ids[1]));
+    assert!(changed.draft.is_none());
+    assert!(h.reply_by_id("p", &ids[0], Some("A"), None, "test").await.is_err());
+    h.reply_by_id("p", changed.items[0].id.as_ref().unwrap(), Some("A"), None, "test").await.unwrap();
+    *lab.file.lock().unwrap() = (b"", b"");
+    h.collect("p", "t-0001", true).await.unwrap();
+    let missing = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_ne!(missing.items[0].id, changed.items[0].id);
+    assert_eq!(missing.items[1].id.as_ref(), Some(&ids[1]));
+    assert!(missing.draft.is_none());
+    assert!(missing.format_warning.unwrap().contains("a.png"));
+    lab.close().await;
 }

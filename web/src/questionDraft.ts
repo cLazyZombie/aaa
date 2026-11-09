@@ -6,10 +6,10 @@ type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type SavedDraft = { identity: string; revision: string; server: QuestionDraft; value: QuestionDraft };
 const PREFIX = "aaa:question-draft:";
 
-/** 보고의 주변 글·q-ID는 새 판마다 바뀐다. 실제 질문·선택지·검수 규칙이 같을 때만 초안을 잇는다. */
+/** host가 유지한 q-ID와 질문·선택지·검수 규칙이 같을 때만 초안을 잇는다. 자료 교체는 새 q-ID로 구별한다. */
 export function questionIdentity(q: ThreadQuestions): string {
   return JSON.stringify([q.review ?? false, q.items.map((item, n) => [
-    item.source_number ?? n + 1, item.text, item.body ?? "", item.after ?? "",
+    item.id ?? null, item.source_number ?? n + 1, item.text, item.body ?? "", item.after ?? "",
     item.choices.map((c, i) => [c.letter ?? String.fromCharCode(65 + i), c.label, c.description ?? "", c.recommended, c.body ?? ""]),
   ])]);
 }

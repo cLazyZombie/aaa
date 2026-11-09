@@ -14,6 +14,65 @@ pub(crate) struct Target {
 }
 
 impl Host {
+    /// 사본 교체 전에 읽는다. 자료가 없거나 읽지 못하면 같은 자료로 간주하지 않는다.
+    pub(crate) fn pending_question_materials(
+        &self,
+        rec: &crate::orch::ThreadRec,
+    ) -> Result<Vec<Option<Vec<String>>>, ErrorBody> {
+        let dir = self.project_dir(&rec.project)?;
+        Ok(rec
+            .questions
+            .iter()
+            .map(|q| {
+                let mut hashes = Vec::new();
+                for text in q.body.iter().chain(q.after.iter()).chain(q.choices.iter().filter_map(|c| c.body.as_ref()))
+                {
+                    for rel in crate::asks::library_refs(text) {
+                        let (path, _) = crate::library::local_file(&dir, &rec.id, &rel).ok()?;
+                        hashes.push(aaa_common::util::sha256_file(&path).ok()?);
+                    }
+                }
+                Some(hashes)
+            })
+            .collect())
+    }
+
+    /// 미완료 묶음에서 같은 질문만 한 번씩 대응한다. 순서·원문 번호가 바뀌어도 답은 질문을 따른다.
+    pub(crate) fn carry_pending_questions(
+        &self,
+        previous: &crate::orch::ThreadRec,
+        materials: &[Option<Vec<String>>],
+        revision: &str,
+        items: &mut [ThreadQuestion],
+    ) -> Result<(), ErrorBody> {
+        let current = crate::orch::ThreadRec { questions: items.to_vec(), ..previous.clone() };
+        let current_materials = self.pending_question_materials(&current)?;
+        let mut retained = Vec::new();
+        for (position, item) in items.iter_mut().enumerate() {
+            if item.id.is_some() {
+                continue; // 전달 완료 답의 재사용은 repeated_answer가 맡는다.
+            }
+            if let Some((_, old)) = previous.questions.iter().enumerate().find(|(n, old)| {
+                old.id.as_ref().is_some_and(|id| !retained.iter().any(|(kept, _)| kept == id))
+                    && crate::question_repeat::same_question(item, old)
+                    && materials.get(*n).is_some_and(|m| m.is_some() && current_materials[position] == *m)
+            }) {
+                let id = old.id.clone().unwrap();
+                item.id = Some(id.clone());
+                retained.push((id, position));
+            }
+        }
+        self.db
+            .refresh_thread_question_ids(
+                &previous.project,
+                &previous.id,
+                previous.report_hash.as_deref().unwrap_or_default(),
+                revision,
+                &retained,
+            )
+            .map_err(internal)
+    }
+
     pub(crate) fn identify_questions(
         &self,
         project: &str,
@@ -257,6 +316,9 @@ impl Host {
             }
         };
         let item = items.get(target.position).ok_or_else(|| err(ErrorCode::NotFound, "질문이 없다"))?;
+        if item.id.as_deref() != Some(id) {
+            return Err(err(ErrorCode::BadRequest, "이미 닫혔거나 바뀐 질문이다"));
+        }
         let choice = choice.map(str::trim).filter(|s| !s.is_empty());
         let pick = choice
             .filter(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_alphabetic())

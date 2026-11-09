@@ -12,14 +12,15 @@ const storage = () => {
   return { getItem: k => values.get(k) ?? null, setItem: (k,v) => values.set(k,v), removeItem: k => values.delete(k), values };
 };
 
-test("새 q-ID·보고 hash만 바뀌면 새 페이지에서도 복원하고, 다른 소유자·질문 내용에는 옮기지 않는다", () => {
+test("보고 hash만 바뀌면 새 페이지에서도 복원하고, 다른 번호·소유자·질문 내용에는 옮기지 않는다", () => {
   const disk = storage(), store = new QuestionDraftStore(() => disk), q = question();
   store.write("project-a/thread-a", q, local);
-  const repost = { ...q, report_hash: "repost", items: q.items.map((i,n) => ({ ...i, id: `q-${2000+n}` })) };
+  const repost = { ...q, report_hash: "repost" };
   const fresh = new QuestionDraftStore(() => disk);
   assert.deepEqual(fresh.read("project-a/thread-a", repost), local);
   assert.deepEqual(fresh.read("project-b/thread-a", repost), mergeQuestionDraft(repost));
   for (const changed of [
+    { ...q, items: q.items.map((i,n) => ({ ...i, id: `q-${2000+n}` })) },
     question({ review: true }),
     question({ items: [...q.items].reverse() }),
     question({ items: [{ ...q.items[0], text: "다른 자리" }, q.items[1]] }),
