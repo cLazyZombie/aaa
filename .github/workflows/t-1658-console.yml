@@ -1,0 +1,122 @@
+# t-1658 진단 branch 전용이다. 이 workflow·기존 ci의 branch 제외는 main에 착지하지 않는다.
+name: t-1658 Windows console diagnostic
+
+on:
+  push:
+    branches: ["hp/t-1658-win-console-events"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  console:
+    if: github.ref == 'refs/heads/hp/t-1658-win-console-events'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: OS·이미지·conhost 판
+        id: environment
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path scratch/console-diagnostic | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $file = (Get-Item (Join-Path $env:SystemRoot 'System32/conhost.exe')).VersionInfo
+          $version = '{0}.{1}.{2}.{3}' -f $file.FileMajorPart, $file.FileMinorPart, $file.FileBuildPart, $file.FilePrivatePart
+          $metadata = @{
+            os_version = $os.Version
+            product_type = [int]$os.ProductType
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+            matches_failure_image_version = ($env:ImageVersion -eq '20261103.298.1')
+            conhost_file_version = $version
+            source_sha = $env:GITHUB_SHA
+            run_id = $env:GITHUB_RUN_ID
+            attempt = $env:GITHUB_RUN_ATTEMPT
+          }
+          $metadata | ConvertTo-Json | Set-Content -Encoding utf8 scratch/console-diagnostic/environment.json
+          $metadata | ConvertTo-Json
+          if ($os.BuildNumber -ne '26100' -or [int]$os.ProductType -ne 3) { throw '요청한 Windows Server 2025 실행 환경이 아니다' }
+          "AAA_TEST_CONSOLE_EXPECTED_BUILD=$($os.BuildNumber)" >> $env:GITHUB_ENV
+          "AAA_TEST_CONSOLE_EXPECTED_PRODUCT_TYPE=$($os.ProductType)" >> $env:GITHUB_ENV
+          "AAA_TEST_CONSOLE_EXPECTED_VERSION=$version" >> $env:GITHUB_ENV
+          $tmp = Join-Path $env:RUNNER_TEMP 't-1658-console'
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          "TEMP=$tmp" >> $env:GITHUB_ENV
+          "TMP=$tmp" >> $env:GITHUB_ENV
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "rustc=$((rustc -V).Split(' ')[1])" >> $env:GITHUB_OUTPUT
+          "week=$((Get-Date).ToUniversalTime().ToString('yyyy-MM'))" >> $env:GITHUB_OUTPUT
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: console-t1658-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            console-t1658-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-
+            cargo-v1-rust-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-
+      - name: 관련 실행 파일·시험 빌드
+        id: build
+        timeout-minutes: 15
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --test install --bin aaa --no-run 2>&1 | Tee-Object scratch/console-diagnostic/build.log
+          exit $LASTEXITCODE
+      - name: Windows native strict Clippy
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo clippy --profile verify --locked -p aaa --all-targets -- -D warnings 2>&1 | Tee-Object scratch/console-diagnostic/clippy.log
+          exit $LASTEXITCODE
+      - name: 확장한 콘솔·승인 owner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --test install authorization:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/authorization.log
+          exit $LASTEXITCODE
+      - name: 두 wizard owner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --test install wizard:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/wizard.log
+          exit $LASTEXITCODE
+      - name: 공유 helper의 암호 입력 owner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --bin aaa install::engine::input::password:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/password.log
+          exit $LASTEXITCODE
+      - name: 사건 순서·출력 유무 여섯 조건 한 번
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --test install authorization::terminal_snapshot::native::repro::cooked_read_event_orders -- --exact --ignored --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/repro.log
+          exit $LASTEXITCODE
+      - name: 사건·실패 원문 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: console-t1658-${{ github.run_id }}-${{ github.run_attempt }}
+          path: scratch/console-diagnostic/
+          retention-days: 14

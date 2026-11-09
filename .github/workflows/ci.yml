@@ -2,7 +2,8 @@ name: ci
 
 on:
   push:
-    branches: [main, "hp/**"]
+    # 이 진단 branch는 t-1658-console.yml의 Windows 사건 owner만 실행한다.
+    branches: [main, "hp/**", "!hp/t-1658-win-console-events"]
   pull_request:
 
 permissions:
