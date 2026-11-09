@@ -133,14 +133,23 @@ fn drive_terminal(
     steps: &[(&str, &str)],
     observe: impl FnMut(&mut dyn portable_pty::Child, &str),
 ) -> (u32, String) {
+    drive_terminal_as(command, steps, observe, Path::new(BIN))
+}
+fn drive_terminal_as(
+    command: CommandBuilder,
+    steps: &[(&str, &str)],
+    observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    image: &Path,
+) -> (u32, String) {
     let pair = native_pty_system().openpty(PtySize { rows: 36, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
-    drive_terminal_on(pair, command, steps, observe)
+    drive_terminal_on(pair, command, steps, observe, image)
 }
 fn drive_terminal_on(
     pair: portable_pty::PtyPair,
     command: CommandBuilder,
     steps: &[(&str, &str)],
     mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    _snapshot_image: &Path,
 ) -> (u32, String) {
     struct OwnedChild {
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -257,7 +266,7 @@ fn drive_terminal_on(
                 );
                 #[cfg(windows)]
                 if child_exit.is_none() {
-                    terminal_snapshot::record(pid, Path::new(BIN));
+                    terminal_snapshot::record(pid, _snapshot_image);
                 }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();

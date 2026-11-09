@@ -19,7 +19,12 @@ impl Drop for Attached {
     }
 }
 
-pub(super) fn capture(client: HANDLE, pid: u32, owner: u32) -> Result<ConsoleInput, Failure> {
+pub(super) fn capture(
+    client: HANDLE,
+    pid: u32,
+    owner: u32,
+    mark: &mut impl FnMut(&'static str) -> Result<(), Failure>,
+) -> Result<ConsoleInput, Failure> {
     let host_pid = console_host(client)?;
     // CLI와 host의 검증된 process handle을 수집 끝까지 유지한다.
     let _host = verify(host_pid, owner, &console_host_image()?)?;
@@ -42,7 +47,7 @@ pub(super) fn capture(client: HANDLE, pid: u32, owner: u32) -> Result<ConsoleInp
     if count != 2 || !clients[..2].contains(&pid) || !clients[..2].contains(&std::process::id()) {
         return Err(Failure::rejected("console_input_shared"));
     }
-    sample(open_input()?.as_raw_handle())
+    sample_observed(open_input()?.as_raw_handle(), mark)
 }
 
 fn open_input() -> Result<OwnedHandle, Failure> {
@@ -64,15 +69,18 @@ fn open_input() -> Result<OwnedHandle, Failure> {
 }
 
 fn sample(input: HANDLE) -> Result<ConsoleInput, Failure> {
+    sample_observed(input, &mut |_| Ok(()))
+}
+fn sample_observed(
+    input: HANDLE,
+    mark: &mut impl FnMut(&'static str) -> Result<(), Failure>,
+) -> Result<ConsoleInput, Failure> {
+    mark("console_input_mode")?;
     let mut input_mode = 0;
     if unsafe { GetConsoleMode(input, &mut input_mode) } == 0 {
         return Err(Failure::os("console_input_mode"));
     }
-    // zero-time wait는 입력을 소비하지 않는다. 원래 stdin이 아닌 이 CONIN$ handle의 결과를 보존한다.
-    let result = unsafe { WaitForSingleObject(input, 0) };
-    let conin_wait = InputWait { result, os_code: (result == WAIT_FAILED).then(|| unsafe { GetLastError() }) };
-    let selection_flags = selection_flags().into();
-    let screen_size = screen_size().into();
+    mark("console_input_peek")?;
     let mut records = [INPUT_RECORD::default(); 128];
     let mut count = 0;
     if unsafe { PeekConsoleInputW(input, records.as_mut_ptr(), records.len() as u32, &mut count) } == 0 {
@@ -88,6 +96,14 @@ fn sample(input: HANDLE) -> Result<ConsoleInput, Failure> {
             .map(|record| unsafe { record.Event.KeyEvent })
             .filter(|key| key.bKeyDown != 0)
     };
+    // 기존 큐 조회 뒤에 부가 상태를 읽으며, 각각의 API 진입을 journal에 남긴다.
+    mark("console_input_wait")?;
+    let result = unsafe { WaitForSingleObject(input, 0) };
+    let conin_wait = InputWait { result, os_code: (result == WAIT_FAILED).then(|| unsafe { GetLastError() }) };
+    mark("console_selection_info")?;
+    let selection_flags = selection_flags().into();
+    mark("console_screen_size")?;
+    let screen_size = screen_size().into();
     // 원문·길이는 내보내지 않는다. Peek 뒤에도 대상의 원래 입력을 그대로 둔다.
     Ok(ConsoleInput {
         input_mode,

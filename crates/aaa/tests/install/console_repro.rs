@@ -215,7 +215,8 @@ fn cooked_read_event_orders() {
             }
             let markers: Vec<_> = (0..14).map(|round| format!("fixture_input_{round}")).collect();
             let steps: Vec<_> = markers.iter().map(|marker| (marker.as_str(), "0\r")).collect();
-            let (code, text) = super::super::super::drive_terminal(command, &steps, |_, _| {});
+            let (code, text) =
+                super::super::super::drive_terminal_as(command, &steps, |_, _| {}, &std::env::current_exe().unwrap());
             assert_eq!(code, 0, "order={order} trace={trace}: {text}");
             assert!(super::super::super::terminal_fixture_succeeded(&text), "order={order} trace={trace}: {text}");
             eprintln!("console_repro order={order} trace={trace} reads=14 exit=0");

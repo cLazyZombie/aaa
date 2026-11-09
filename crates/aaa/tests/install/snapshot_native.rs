@@ -359,7 +359,7 @@ fn capture_one(
     let process = verify(pid, owner, exe)?;
     mark("console_input")?;
     // 심볼·스택 조회 전에 큐를 본다. 이 helper는 이미 확정된 실패 뒤에만 수집한다.
-    let input = console::capture(process.as_raw_handle(), pid, owner);
+    let input = console::capture(process.as_raw_handle(), pid, owner, &mut mark);
     let views = capture_threads(process.as_raw_handle(), pid, exe, phase)?;
     let mut snapshot = Snapshot {
         format: 1,
