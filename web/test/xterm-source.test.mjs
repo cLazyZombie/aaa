@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { applyPatch } from "../xterm-source.mjs";
-import { scrollHistoryWhenReady } from "../e2e/lib/history-scroll.mjs";
+import { historyScrollReady } from "../e2e/lib/history-scroll.mjs";
 import ts from "typescript-api";
 
 // checkout의 패치(CRLF)와 npm 소스(LF)가 달라도 같은 결과여야 한다.
@@ -63,7 +63,7 @@ test("앞 기록 fixture는 xterm 본문 뒤 늦은 viewport frame과 크기 맞
       dataset: { readonly: 'false', fit: 'same', historyMore: '1', historyWaiting: '0', viewBase: '2000', viewTop: '2000' },
       querySelector: selector => selector === '.xterm-viewport' ? viewport : { getBoundingClientRect: () => ({ height: 19 }) },
     };
-    const scrollWhenReady = () => runInNewContext(`(${scrollHistoryWhenReady})('terminal')`, { document: { querySelector: () => box } });
+    const ready = () => runInNewContext(`(${historyScrollReady})('terminal')`, { document: { querySelector: () => box } });
     const state = Object.assign(Object.create(patched.prototype), {
       _viewportElement: viewport, _scrollArea: scrollArea,
       _charSizeService: { height: 13 }, _currentRowHeight: 0,
@@ -78,21 +78,23 @@ test("앞 기록 fixture는 xterm 본문 뒤 늦은 viewport frame과 크기 맞
     state.syncScrollArea();
     assert.equal(frames.length, 1, '실제 xterm 메서드가 viewport 반영을 예약했다');
     if (waitForViewport) {
-      assert.equal(scrollWhenReady(), false);
+      assert.equal(ready(), false);
       assert.equal(scrollWrites, 0, '준비 전에는 scrollTop을 쓰지 않는다');
     } else viewport.scrollTop = 0;
     frames.shift()();
     assert.equal(viewport.scrollTop, 38000, '늦은 viewport 반영은 맨 아래로 동기화한다');
     if (waitForViewport) {
       box.dataset.fit = 'sent';
-      assert.equal(scrollWhenReady(), false, '크기 응답도 기다린다');
+      assert.equal(ready(), false, '크기 응답도 기다린다');
       assert.equal(scrollWrites, 1, 'xterm의 자체 동기화 한 번뿐이다');
       box.dataset.fit = 'same';
-      const before = scrollWhenReady();
-      assert.equal(before.top, 38000);
+      const target = ready();
+      assert.equal(target, viewport);
+      assert.equal(scrollWrites, 1, 'rAF 준비 확인은 스크롤을 쓰지 않는다');
+      target.scrollTop = 0;
       assert.equal(viewport.scrollTop, 0);
       assert.equal(scrollWrites, 2, 'fixture의 이동은 정확히 한 번이다');
-      assert.equal(scrollWhenReady(), false, '같은 이동을 반복하지 않는다');
+      assert.equal(ready(), false, '같은 이동을 반복하지 않는다');
       assert.equal(scrollWrites, 2);
     }
     state._handleScroll(new Event('scroll'));
