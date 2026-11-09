@@ -47,7 +47,7 @@ fn child_exit_closes_terminal_owner_before_eof_and_preserves_final_output() {
         "-c",
         r#"printf '정확히 yes: '; IFS= read -r answer; [ "$answer" = yes ] || exit 41; i=0; while [ "$i" -lt 300 ]; do printf 'final-output-%03d\n' "$i"; i=$((i+1)); done; exit 7"#,
     ]);
-    let (code, text) = drive_terminal_on(pair, command, &[("정확히 yes", "yes\r")], |_, _| {});
+    let (code, text) = drive_terminal_on(pair, command, &[("정확히 yes", "yes\r")], |_, _| {}, Path::new(BIN));
     assert_eq!(code, 7, "{}", redact_private(&text));
     assert_eq!(text.matches("final-output-").count(), 300, "끝 출력도 모두 수집해야 한다");
     assert!(text.contains("final-output-299"));
