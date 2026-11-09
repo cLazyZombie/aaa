@@ -11,15 +11,15 @@ use std::path::Path;
 use windows_sys::Win32::{
     Foundation::*,
     Globalization::{CSTR_EQUAL, CompareStringOrdinal},
-    Storage::FileSystem::{
-        GetFileVersionInfoSizeW, GetFileVersionInfoW, GetFullPathNameW, VS_FIXEDFILEINFO, VerQueryValueW,
-    },
+    Storage::FileSystem::GetFullPathNameW,
     System::{
         Diagnostics::{Debug::*, ToolHelp::*},
+        LibraryLoader::*,
         ProcessStatus::GetModuleFileNameExW,
         SystemInformation::{GetSystemDirectoryW, IMAGE_FILE_MACHINE_AMD64},
         Threading::*,
     },
+    UI::WindowsAndMessaging::RT_VERSION,
 };
 
 #[derive(Debug, serde::Serialize)]
@@ -47,36 +47,88 @@ impl<T> From<Result<T, Failure>> for Measurement<T> {
 
 fn file_version(path: &Path) -> Result<[u16; 4], Failure> {
     let path = wide(path.as_os_str());
-    let size = unsafe { GetFileVersionInfoSizeW(path.as_ptr(), std::ptr::null_mut()) };
+    // GetFileVersionInfoW는 manifest 호환성에 따라 실제 10.0을 6.2로 돌려줄 수 있다.
+    // 실행·import 초기화 없이 파일의 RT_VERSION data만 매핑한다. 제품 manifest는 바꾸지 않는다.
+    let module = unsafe {
+        LoadLibraryExW(path.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)
+    };
+    if module.is_null() {
+        return Err(Failure::os("console_host_version_map"));
+    }
+    struct ResourceModule(HMODULE);
+    impl Drop for ResourceModule {
+        fn drop(&mut self) {
+            unsafe { FreeLibrary(self.0) };
+        }
+    }
+    let module = ResourceModule(module);
+    // Win32의 정수 resource ID다. 포인터로 역참조하지 않는다.
+    let resource = unsafe { FindResourceW(module.0, std::ptr::without_provenance(1), RT_VERSION) };
+    if resource.is_null() {
+        return Err(Failure::os("console_host_version_find"));
+    }
+    let size = unsafe { SizeofResource(module.0, resource) };
     if size == 0 {
         return Err(Failure::os("console_host_version_size"));
     }
     if size > 1024 * 1024 {
         return Err(Failure::rejected("console_host_version_limit"));
     }
-    let mut buffer = vec![0u8; size as usize];
-    if unsafe { GetFileVersionInfoW(path.as_ptr(), 0, size, buffer.as_mut_ptr().cast()) } == 0 {
-        return Err(Failure::os("console_host_version_read"));
+    let data = unsafe { LoadResource(module.0, resource) };
+    if data.is_null() {
+        return Err(Failure::os("console_host_version_load"));
     }
-    let mut info = std::ptr::null_mut();
-    let mut length = 0;
-    if unsafe { VerQueryValueW(buffer.as_ptr().cast(), [92u16, 0].as_ptr(), &mut info, &mut length) } == 0 {
-        return Err(Failure::os("console_host_version_query"));
+    let bytes = unsafe { LockResource(data) };
+    if bytes.is_null() {
+        return Err(Failure::rejected("console_host_version_lock"));
     }
-    if info.is_null() || (length as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>() {
+    // SizeofResource가 보증한 범위이며 module은 파싱이 끝난 뒤에만 해제한다.
+    version_resource(unsafe { std::slice::from_raw_parts(bytes.cast(), size as usize) })
+}
+
+fn version_resource(bytes: &[u8]) -> Result<[u16; 4], Failure> {
+    // VS_VERSIONINFO의 key(16 UTF-16 units) 뒤 DWORD 정렬된 VS_FIXEDFILEINFO 52바이트다.
+    if bytes.len() < 92 {
         return Err(Failure::rejected("console_host_version_schema"));
     }
-    // 버전 resource는 byte buffer이므로 alignment를 가정하지 않는다. 문자열 resource는 출력하지 않는다.
-    let info = unsafe { info.cast::<VS_FIXEDFILEINFO>().read_unaligned() };
-    if info.dwSignature != 0xfeef04bd {
+    let word = |at| u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap());
+    let length = usize::from(word(0));
+    let key = "VS_VERSION_INFO\0".encode_utf16();
+    if length < 92
+        || length > bytes.len()
+        || word(2) != 52
+        || word(4) != 0
+        || !key.enumerate().all(|(i, unit)| word(6 + 2 * i) == unit)
+    {
+        return Err(Failure::rejected("console_host_version_schema"));
+    }
+    let dword = |at| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    if dword(40) != 0xfeef04bd {
         return Err(Failure::rejected("console_host_version_signature"));
     }
-    Ok([
-        (info.dwFileVersionMS >> 16) as u16,
-        info.dwFileVersionMS as u16,
-        (info.dwFileVersionLS >> 16) as u16,
-        info.dwFileVersionLS as u16,
-    ])
+    Ok([(dword(48) >> 16) as u16, dword(48) as u16, (dword(52) >> 16) as u16, dword(52) as u16])
+}
+
+#[test]
+fn version_resource_reads_fixed_numbers_and_rejects_truncation_or_wrong_root() {
+    let mut bytes = vec![0u8; 92];
+    bytes[..2].copy_from_slice(&92u16.to_le_bytes());
+    bytes[2..4].copy_from_slice(&52u16.to_le_bytes());
+    for (i, unit) in "VS_VERSION_INFO\0".encode_utf16().enumerate() {
+        bytes[6 + 2 * i..8 + 2 * i].copy_from_slice(&unit.to_le_bytes());
+    }
+    bytes[40..44].copy_from_slice(&0xfeef04bdu32.to_le_bytes());
+    bytes[48..52].copy_from_slice(&(10u32 << 16).to_le_bytes());
+    bytes[52..56].copy_from_slice(&((26100u32 << 16) | 9549).to_le_bytes());
+    assert_eq!(version_resource(&bytes).unwrap(), [10, 0, 26100, 9549]);
+    for end in 0..92 {
+        assert_eq!(version_resource(&bytes[..end]).unwrap_err().phase, "console_host_version_schema");
+    }
+    for at in [0, 2, 4, 6, 36, 40] {
+        let mut bad = bytes.clone();
+        bad[at] ^= 1;
+        assert!(version_resource(&bad).is_err(), "잘못된 길이·key·signature를 숫자로 해석하지 않는다");
+    }
 }
 fn owned(handle: HANDLE, phase: &'static str) -> Result<OwnedHandle, Failure> {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
