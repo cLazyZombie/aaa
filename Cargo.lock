@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aaa"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-agent",
  "aaa-common",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-agent"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-common"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-proto",
  "aaa-test-support",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-config"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-proto",
  "aaa-test-support",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-doctor"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-host"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-common",
  "aaa-config",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-proto"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-test-support",
  "base64 0.22.1",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-session"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-common",
  "aaa-proto",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-test-support"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "rand 0.9.5",
  "serde_json",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "aaa-vt"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aaa-proto",
  "vt100",
