@@ -1,11 +1,14 @@
 //! 실패 뒤 helper의 콘솔 연결만 바꾼다. 입력·mode·살아 있는 호스트 thread는 바꾸지 않는다.
-use super::super::ConsoleInput;
+use super::super::{ConsoleInput, InputWait, ScreenSize};
 use super::{Failure, console_host, console_host_image, owned, verify};
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use windows_sys::Win32::{
     Foundation::*,
     Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
-    System::{Console::*, Threading::GetCurrentProcess},
+    System::{
+        Console::*,
+        Threading::{GetCurrentProcess, WaitForSingleObject},
+    },
 };
 
 struct Attached;
@@ -16,7 +19,12 @@ impl Drop for Attached {
     }
 }
 
-pub(super) fn capture(client: HANDLE, pid: u32, owner: u32) -> Result<ConsoleInput, Failure> {
+pub(super) fn capture(
+    client: HANDLE,
+    pid: u32,
+    owner: u32,
+    mark: &mut impl FnMut(&'static str) -> Result<(), Failure>,
+) -> Result<ConsoleInput, Failure> {
     let host_pid = console_host(client)?;
     // CLI와 host의 검증된 process handle을 수집 끝까지 유지한다.
     let _host = verify(host_pid, owner, &console_host_image()?)?;
@@ -39,7 +47,7 @@ pub(super) fn capture(client: HANDLE, pid: u32, owner: u32) -> Result<ConsoleInp
     if count != 2 || !clients[..2].contains(&pid) || !clients[..2].contains(&std::process::id()) {
         return Err(Failure::rejected("console_input_shared"));
     }
-    sample(open_input()?.as_raw_handle())
+    sample_observed(open_input()?.as_raw_handle(), mark)
 }
 
 fn open_input() -> Result<OwnedHandle, Failure> {
@@ -61,10 +69,18 @@ fn open_input() -> Result<OwnedHandle, Failure> {
 }
 
 fn sample(input: HANDLE) -> Result<ConsoleInput, Failure> {
+    sample_observed(input, &mut |_| Ok(()))
+}
+fn sample_observed(
+    input: HANDLE,
+    mark: &mut impl FnMut(&'static str) -> Result<(), Failure>,
+) -> Result<ConsoleInput, Failure> {
+    mark("console_input_mode")?;
     let mut input_mode = 0;
     if unsafe { GetConsoleMode(input, &mut input_mode) } == 0 {
         return Err(Failure::os("console_input_mode"));
     }
+    mark("console_input_peek")?;
     let mut records = [INPUT_RECORD::default(); 128];
     let mut count = 0;
     if unsafe { PeekConsoleInputW(input, records.as_mut_ptr(), records.len() as u32, &mut count) } == 0 {
@@ -80,6 +96,14 @@ fn sample(input: HANDLE) -> Result<ConsoleInput, Failure> {
             .map(|record| unsafe { record.Event.KeyEvent })
             .filter(|key| key.bKeyDown != 0)
     };
+    // 기존 큐 조회 뒤에 부가 상태를 읽으며, 각각의 API 진입을 journal에 남긴다.
+    mark("console_input_wait")?;
+    let result = unsafe { WaitForSingleObject(input, 0) };
+    let conin_wait = InputWait { result, os_code: (result == WAIT_FAILED).then(|| unsafe { GetLastError() }) };
+    mark("console_selection_info")?;
+    let selection_flags = selection_flags().into();
+    mark("console_screen_size")?;
+    let screen_size = screen_size().into();
     // 원문·길이는 내보내지 않는다. Peek 뒤에도 대상의 원래 입력을 그대로 둔다.
     Ok(ConsoleInput {
         input_mode,
@@ -88,6 +112,50 @@ fn sample(input: HANDLE) -> Result<ConsoleInput, Failure> {
         prefix_enter_down: keys().any(|key| unsafe { key.uChar.UnicodeChar } == 13),
         prefix_cancel_down: keys().any(|key| unsafe { key.uChar.UnicodeChar } == 3),
         prefix_eof_down: keys().any(|key| unsafe { key.uChar.UnicodeChar } == 26),
+        conin_wait,
+        selection_flags,
+        screen_size,
+    })
+}
+
+fn selection_flags() -> Result<u32, Failure> {
+    let mut selection = CONSOLE_SELECTION_INFO::default();
+    if unsafe { GetConsoleSelectionInfo(&mut selection) } == 0 {
+        return Err(Failure::os("console_selection_info"));
+    }
+    // 선택 영역 좌표·화면 글자는 내보내지 않는다.
+    Ok(selection.dwFlags)
+}
+
+fn screen_size() -> Result<ScreenSize, Failure> {
+    let name: Vec<_> = "CONOUT$\0".encode_utf16().collect();
+    let output = owned(
+        unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        },
+        "console_output_open",
+    )?;
+    screen_size_on(output.as_raw_handle())
+}
+
+fn screen_size_on(output: HANDLE) -> Result<ScreenSize, Failure> {
+    let mut screen = CONSOLE_SCREEN_BUFFER_INFO::default();
+    if unsafe { GetConsoleScreenBufferInfo(output, &mut screen) } == 0 {
+        return Err(Failure::os("console_screen_info"));
+    }
+    Ok(ScreenSize {
+        buffer_cols: screen.dwSize.X,
+        buffer_rows: screen.dwSize.Y,
+        window_cols: i32::from(screen.srWindow.Right) - i32::from(screen.srWindow.Left) + 1,
+        window_rows: i32::from(screen.srWindow.Bottom) - i32::from(screen.srWindow.Top) + 1,
     })
 }
 
@@ -131,6 +199,14 @@ fn input_queue_view_preserves_keys_mode_and_private_values_in_an_isolated_consol
             && !empty.prefix_cancel_down
             && !empty.prefix_eof_down
     );
+    assert_eq!(empty.conin_wait.result, WAIT_TIMEOUT);
+    assert!(empty.conin_wait.os_code.is_none());
+    assert!(matches!(empty.selection_flags, super::super::Measurement::Ok { value: 0 }));
+    assert!(matches!(empty.screen_size, super::super::Measurement::Ok { ref value }
+        if value.buffer_cols == 120 && value.buffer_rows == 36 && value.window_cols == 120 && value.window_rows == 36));
+    let bad_screen: super::super::Measurement<ScreenSize> = screen_size_on(input).into();
+    assert!(matches!(bad_screen, super::super::Measurement::Error { ref phase, os_code }
+        if phase == "console_screen_info" && os_code != 0));
     let key = |unit, down| {
         let mut record = INPUT_RECORD { EventType: KEY_EVENT as u16, ..Default::default() };
         record.Event.KeyEvent = KEY_EVENT_RECORD {
@@ -157,6 +233,8 @@ fn input_queue_view_preserves_keys_mode_and_private_values_in_an_isolated_consol
         assert!(written as usize == expected.len());
         let view = sample(input).unwrap();
         assert!(view.records_present);
+        assert_eq!(view.conin_wait.result, WAIT_OBJECT_0, "입력이 있는 CONIN$의 zero-time wait");
+        assert!(view.conin_wait.os_code.is_none());
         assert_eq!(view.input_mode, empty.input_mode, "관측이 mode를 바꾸지 않는다");
         let mut after_mode = 0;
         assert_ne!(unsafe { GetConsoleMode(input, &mut after_mode) }, 0);

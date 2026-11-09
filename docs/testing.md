@@ -1,4 +1,5 @@
 - t-1659: [WebKit 화면 복귀 초기 앞 기록 대기 수리](testing-pane-return-history-t-1659.md)
+- t-1658: [Windows 설치 PTY 실패 뒤에도 남은 Enter 조사](testing-win-pty-queued-enter-t1658.md) · [읽기 준비 상태·질의 회신 진단](testing-win-pty-readiness-t1658.md) · [실기·Server 2025 검증](testing-win-pty-native-ci-t1658.md)
 - t-1646: [시험 host가 남긴 개발 모드 로컬 agent](testing-lab-local-agent-t-1646.md)
 - t-1638: [E53 답 완료 대기 수리](testing-e53-answer-completion-t-1638.md)
 - t-1638: [그림 든 아이디어 전달 E2E 대기 조사·수리](testing-idea-media-wait-t-1638.md)

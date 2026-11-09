@@ -1,7 +1,9 @@
 //! 시험과 함께 컴파일하는 외부 프로세스 수집기. CIM·셸·실행 중 컴파일을 쓰지 않는다.
-use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
+use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Measurement, Snapshot, Thread, WaitNode};
 #[path = "snapshot_console.rs"]
 mod console;
+#[path = "console_repro.rs"]
+mod repro;
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -12,10 +14,12 @@ use windows_sys::Win32::{
     Storage::FileSystem::GetFullPathNameW,
     System::{
         Diagnostics::{Debug::*, ToolHelp::*},
+        LibraryLoader::*,
         ProcessStatus::GetModuleFileNameExW,
         SystemInformation::{GetSystemDirectoryW, IMAGE_FILE_MACHINE_AMD64},
         Threading::*,
     },
+    UI::WindowsAndMessaging::RT_VERSION,
 };
 
 #[derive(Debug, serde::Serialize)]
@@ -30,6 +34,100 @@ impl Failure {
     }
     fn os(phase: &'static str) -> Self {
         Self { phase, error_type: "Win32Error", os_code: unsafe { GetLastError() } }
+    }
+}
+impl<T> From<Result<T, Failure>> for Measurement<T> {
+    fn from(result: Result<T, Failure>) -> Self {
+        match result {
+            Ok(value) => Self::Ok { value },
+            Err(error) => Self::Error { phase: error.phase.into(), os_code: error.os_code },
+        }
+    }
+}
+
+fn file_version(path: &Path) -> Result<[u16; 4], Failure> {
+    let path = wide(path.as_os_str());
+    // GetFileVersionInfoW는 manifest 호환성에 따라 실제 10.0을 6.2로 돌려줄 수 있다.
+    // 실행·import 초기화 없이 파일의 RT_VERSION data만 매핑한다. 제품 manifest는 바꾸지 않는다.
+    let module = unsafe {
+        LoadLibraryExW(path.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE)
+    };
+    if module.is_null() {
+        return Err(Failure::os("console_host_version_map"));
+    }
+    struct ResourceModule(HMODULE);
+    impl Drop for ResourceModule {
+        fn drop(&mut self) {
+            unsafe { FreeLibrary(self.0) };
+        }
+    }
+    let module = ResourceModule(module);
+    // Win32의 정수 resource ID다. 포인터로 역참조하지 않는다.
+    let resource = unsafe { FindResourceW(module.0, std::ptr::without_provenance(1), RT_VERSION) };
+    if resource.is_null() {
+        return Err(Failure::os("console_host_version_find"));
+    }
+    let size = unsafe { SizeofResource(module.0, resource) };
+    if size == 0 {
+        return Err(Failure::os("console_host_version_size"));
+    }
+    if size > 1024 * 1024 {
+        return Err(Failure::rejected("console_host_version_limit"));
+    }
+    let data = unsafe { LoadResource(module.0, resource) };
+    if data.is_null() {
+        return Err(Failure::os("console_host_version_load"));
+    }
+    let bytes = unsafe { LockResource(data) };
+    if bytes.is_null() {
+        return Err(Failure::rejected("console_host_version_lock"));
+    }
+    // SizeofResource가 보증한 범위이며 module은 파싱이 끝난 뒤에만 해제한다.
+    version_resource(unsafe { std::slice::from_raw_parts(bytes.cast(), size as usize) })
+}
+
+fn version_resource(bytes: &[u8]) -> Result<[u16; 4], Failure> {
+    // VS_VERSIONINFO의 key(16 UTF-16 units) 뒤 DWORD 정렬된 VS_FIXEDFILEINFO 52바이트다.
+    if bytes.len() < 92 {
+        return Err(Failure::rejected("console_host_version_schema"));
+    }
+    let word = |at| u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap());
+    let length = usize::from(word(0));
+    let key = "VS_VERSION_INFO\0".encode_utf16();
+    if length < 92
+        || length > bytes.len()
+        || word(2) != 52
+        || word(4) != 0
+        || !key.enumerate().all(|(i, unit)| word(6 + 2 * i) == unit)
+    {
+        return Err(Failure::rejected("console_host_version_schema"));
+    }
+    let dword = |at| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    if dword(40) != 0xfeef04bd {
+        return Err(Failure::rejected("console_host_version_signature"));
+    }
+    Ok([(dword(48) >> 16) as u16, dword(48) as u16, (dword(52) >> 16) as u16, dword(52) as u16])
+}
+
+#[test]
+fn version_resource_reads_fixed_numbers_and_rejects_truncation_or_wrong_root() {
+    let mut bytes = vec![0u8; 92];
+    bytes[..2].copy_from_slice(&92u16.to_le_bytes());
+    bytes[2..4].copy_from_slice(&52u16.to_le_bytes());
+    for (i, unit) in "VS_VERSION_INFO\0".encode_utf16().enumerate() {
+        bytes[6 + 2 * i..8 + 2 * i].copy_from_slice(&unit.to_le_bytes());
+    }
+    bytes[40..44].copy_from_slice(&0xfeef04bdu32.to_le_bytes());
+    bytes[48..52].copy_from_slice(&(10u32 << 16).to_le_bytes());
+    bytes[52..56].copy_from_slice(&((26100u32 << 16) | 9549).to_le_bytes());
+    assert_eq!(version_resource(&bytes).unwrap(), [10, 0, 26100, 9549]);
+    for end in 0..92 {
+        assert_eq!(version_resource(&bytes[..end]).unwrap_err().phase, "console_host_version_schema");
+    }
+    for at in [0, 2, 4, 6, 36, 40] {
+        let mut bad = bytes.clone();
+        bad[at] ^= 1;
+        assert!(version_resource(&bad).is_err(), "잘못된 길이·key·signature를 숫자로 해석하지 않는다");
     }
 }
 fn owned(handle: HANDLE, phase: &'static str) -> Result<OwnedHandle, Failure> {
@@ -313,7 +411,7 @@ fn capture_one(
     let process = verify(pid, owner, exe)?;
     mark("console_input")?;
     // 심볼·스택 조회 전에 큐를 본다. 이 helper는 이미 확정된 실패 뒤에만 수집한다.
-    let input = console::capture(process.as_raw_handle(), pid, owner);
+    let input = console::capture(process.as_raw_handle(), pid, owner, &mut mark);
     let views = capture_threads(process.as_raw_handle(), pid, exe, phase)?;
     let mut snapshot = Snapshot {
         format: 1,
@@ -497,7 +595,9 @@ pub(super) fn owned_children(pid: u32, owner: u32, exe: &Path) -> Result<Vec<Chi
 // 호스트는 중지하지 않는다. 수집기 5초 상한에 helper가 종료돼도 호스트 thread가 중지된 채 남지 않는다.
 fn capture_host(client: HANDLE, owner: u32) -> Result<ConsoleHost, Failure> {
     let pid = console_host(client)?;
-    let host = verify(pid, owner, &console_host_image()?)?;
+    let image = console_host_image()?;
+    let host = verify(pid, owner, &image)?;
+    let file_version = file_version(&image).into();
     let mut created = FILETIME::default();
     let mut exited = FILETIME::default();
     let mut kernel = FILETIME::default();
@@ -554,5 +654,11 @@ fn capture_host(client: HANDLE, owner: u32) -> Result<ConsoleHost, Failure> {
     if found == 0 && unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
         return Err(Failure::os("console_host_thread_next"));
     }
-    Ok(ConsoleHost { process_id: pid, kernel_100ns: ticks(kernel), user_100ns: ticks(user), threads: views })
+    Ok(ConsoleHost {
+        process_id: pid,
+        kernel_100ns: ticks(kernel),
+        user_100ns: ticks(user),
+        threads: views,
+        file_version,
+    })
 }

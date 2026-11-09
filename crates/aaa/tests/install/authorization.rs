@@ -133,14 +133,23 @@ fn drive_terminal(
     steps: &[(&str, &str)],
     observe: impl FnMut(&mut dyn portable_pty::Child, &str),
 ) -> (u32, String) {
+    drive_terminal_as(command, steps, observe, Path::new(BIN))
+}
+fn drive_terminal_as(
+    command: CommandBuilder,
+    steps: &[(&str, &str)],
+    observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    image: &Path,
+) -> (u32, String) {
     let pair = native_pty_system().openpty(PtySize { rows: 36, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
-    drive_terminal_on(pair, command, steps, observe)
+    drive_terminal_on(pair, command, steps, observe, image)
 }
 fn drive_terminal_on(
     pair: portable_pty::PtyPair,
     command: CommandBuilder,
     steps: &[(&str, &str)],
     mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    _snapshot_image: &Path,
 ) -> (u32, String) {
     struct OwnedChild {
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -187,14 +196,33 @@ fn drive_terminal_on(
     let mut status = None;
     let mut reader_done = false;
     let mut input_writes = Vec::new();
+    let mut query_events = Vec::new();
+    let mut queries_omitted = 0usize;
     while status.is_none() || !reader_done {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(TerminalEvent::Output(bytes)) => {
-                let visible = if status.is_none() {
-                    terminal.feed(&bytes, &mut writer).unwrap()
-                } else {
-                    terminal.feed(&bytes, &mut std::io::sink()).unwrap()
+                let mut query_note = |kind, stage, code| {
+                    if query_events.len() < 256 {
+                        query_events.push((started.elapsed().as_micros(), answered, kind, stage, code));
+                    } else {
+                        queries_omitted += 1;
+                    }
                 };
+                let visible = if status.is_none() {
+                    terminal.feed_observed(&bytes, &mut writer, &mut query_note)
+                } else {
+                    // 종료 뒤에는 응답을 쓰지 않는다. sink의 flush를 실제 회신으로 기록하지 않는다.
+                    terminal.feed_observed(&bytes, &mut std::io::sink(), |kind, stage, code| {
+                        query_note(kind, if stage == "flushed" { "after_exit" } else { stage }, code);
+                    })
+                }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "PTY query I/O: kind={:?}, os_code={:?}, events={query_events:?}, omitted={queries_omitted}",
+                        error.kind(),
+                        error.raw_os_error()
+                    );
+                });
                 seen.extend(visible);
                 observe(child.child.as_mut(), &String::from_utf8_lossy(&seen));
                 if status.is_none()
@@ -233,9 +261,12 @@ fn drive_terminal_on(
                 eprintln!(
                     "PTY failure decided: elapsed={failed_after:?}, input_writes(step,before_us,flushed_us,utc_us)={input_writes:?}"
                 );
+                eprintln!(
+                    "PTY queries(elapsed_us,answered,kind,stage,os_code)={query_events:?}, omitted={queries_omitted}"
+                );
                 #[cfg(windows)]
                 if child_exit.is_none() {
-                    terminal_snapshot::record(pid, Path::new(BIN));
+                    terminal_snapshot::record(pid, _snapshot_image);
                 }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();
