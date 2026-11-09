@@ -1,5 +1,8 @@
 # Windows 설치 PTY의 읽기 준비 상태·질의 회신 진단(t-1658)
 
+아래는 실기 단절 때의 첫 구현 기록이다. 이후 실행·버전 조회 수리와 Server CI 결과는
+[실기·Server 2025 검증](testing-win-pty-native-ci-t1658.md)에 기록한다.
+
 ## 현재 결론
 
 사용자 승인 뒤 [첫 조사](testing-win-pty-queued-enter-t1658.md)의 진단 계획 1·2와 사건 제어 도구를 구현했다.
