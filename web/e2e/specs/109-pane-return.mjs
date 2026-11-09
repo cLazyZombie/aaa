@@ -140,9 +140,8 @@ process.stdin.on('data', bytes => {
       // 앞 기록 재구성이 마우스 추적뿐 아니라 SGR 좌표 인코딩도 보존해야 한다.
       // 실제 history 응답을 먼저 붙여야 다음 첫 휠이 재구성 뒤 상태를 결정적으로 검사한다.
       phase = { stage: 'initial-history-ready', pane: fixture.coordinator };
-      const initialScroll = await page.waitForFunction(scrollHistoryWhenReady, '[data-testid="terminal"]');
-      phase = { stage: 'initial-history', pane: fixture.coordinator, before: await initialScroll.jsonValue() };
-      await initialScroll.dispose();
+      const initialScroll = await scrollHistoryWhenReady(page, '[data-testid="terminal"]');
+      phase = { stage: 'initial-history', pane: fixture.coordinator, before: initialScroll };
       await page.waitForFunction(() => Number(document.querySelector('[data-testid="terminal"]')?.dataset.historyApplied) > 0);
       await page.getByTestId('jump-bottom').click();
       await until('기록 재구성 뒤 맨 아래', () => terminal.evaluate(el => el.dataset.viewTop === el.dataset.viewBase));
@@ -204,9 +203,8 @@ process.stdin.on('data', bytes => {
       // 앞 기록 요청 뒤 숨긴다. 숨은 xterm의 render를 기다리면 이후 출력도 ACK도 멈춘다.
       phase = { stage: "hidden-history", pane: fixture.coordinator };
       gateHistory = true;
-      const hiddenScroll = await page.waitForFunction(scrollHistoryWhenReady, '[data-testid="terminal"]');
-      const appliedBeforeHide = Number((await hiddenScroll.jsonValue()).dataset.historyApplied);
-      await hiddenScroll.dispose();
+      const hiddenScroll = await scrollHistoryWhenReady(page, '[data-testid="terminal"]');
+      const appliedBeforeHide = Number(hiddenScroll.dataset.historyApplied);
       await inTime(historyArrival, 20_000, '터미널 앞 기록 요청 도착');
       await go(page, 'tasks');
       await terminal.waitFor({ state: 'detached' });
