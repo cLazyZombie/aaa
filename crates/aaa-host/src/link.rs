@@ -452,6 +452,9 @@ async fn serve_connection(
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
+                    // 인증 갱신 요청은 인증 전달이다. 가리면 본문 JSON이 깨져 OpenAI에 묻지도 못한다(t-1688).
+                    // host는 이 값을 기록하지 않고 형식만 확인한 뒤 버린다(제공자에는 금고 값을 보낸다).
+                    msg @ LinkMsg::Event(AgentEvent::AccountRefresh(_)) => msg,
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
                     // 작업 파일은 목록의 원본 hash와 검증한다. 살아 있는 요청 ID·응답 종류가
                     // 맞을 때만 가림을 미룬다. FileView의 같은 FileChunk에는 적용하지 않는다.

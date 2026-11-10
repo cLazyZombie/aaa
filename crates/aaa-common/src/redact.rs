@@ -99,11 +99,14 @@ pub fn remember_env(key: &str, value: &str) {
     }
 }
 
-/// auth.json은 토큰 값만 등록한다. 키 이름·계정 id·시각을 가림 규칙으로 삼지 않는다.
+/// JSON 인증(Codex auth.json·Claude 조회 OAuth)은 harness와 상관없이 토큰 값만 등록한다. 키 이름·계정 id·시각을
+/// 가림 규칙으로 삼지 않는다: 키 조각이 규칙이 되면 `"refresh_token"` 같은 글이 모든 기록·전달에서 가려진다(t-1688).
+/// JSON이 아닌 Claude 인증(setup-token)은 값 전체를 등록한다.
 pub fn remember_auth(harness: &str, value: &str) {
-    if harness == "claude" {
-        remember(value);
-        return;
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => visit(&v),
+        _ if harness == "claude" => remember(value),
+        _ => {}
     }
     fn visit(v: &serde_json::Value) {
         match v {
@@ -125,9 +128,6 @@ pub fn remember_auth(harness: &str, value: &str) {
             }
             _ => {}
         }
-    }
-    if let Ok(v) = serde_json::from_str(value) {
-        visit(&v);
     }
 }
 
@@ -297,6 +297,27 @@ mod tests {
     struct Msg {
         text: String,
         raw: B64,
+    }
+
+    // 필요: 11-09 운영 회귀(t-1688). Claude 조회 OAuth JSON을 통째로 등록하면 키 이름 조각이 규칙이 되어
+    // Codex 갱신 요청의 `"refresh_token"` 글까지 가렸다. 값만 가리고 키·다른 글은 그대로여야 한다.
+    #[test]
+    fn json_credentials_register_token_values_but_not_key_names() {
+        let access = aaa_test_support::token("redact-usage-access");
+        let refresh = aaa_test_support::token("redact-usage-refresh");
+        let usage = serde_json::json!({"access_token":access,"refresh_token":refresh,"expires_ms":1_800_000_000_000u64,"scopes":["user:profile"]});
+        remember_auth("claude", &usage.to_string());
+        let request = r#"{"client_id":"app_x","grant_type":"refresh_token","refresh_reason":"proactive_expiry"}"#;
+        assert_eq!(text(request), request, "키 이름·값 글을 가렸다");
+        // 토큰 값만 뺀 조회 JSON: 키 이름·시각·scope 글은 하나도 가리지 않는다
+        let keys = usage.to_string().replace(&access, "").replace(&refresh, "");
+        assert_eq!(text(&keys), keys);
+        let shown = text(&format!("a {access} r {refresh}"));
+        assert!(!shown.contains(&access[..8]) && !shown.contains(&refresh[..8]), "토큰 값이 남았다");
+        // JSON이 아닌 Claude setup-token은 값 전체를 등록한다.
+        let setup = format!("sk-ant-oat01-{}", aaa_test_support::token("redact-setup"));
+        remember_auth("claude", &setup);
+        assert!(!text(&setup).contains(&setup[13..21]));
     }
 
     // c3137ed8의 운영 회귀를 실제 protocol B64 타입으로 검사한다.

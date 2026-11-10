@@ -444,20 +444,25 @@ impl Accounts {
         request: &SecretText,
         outcome: &mut RefreshOutcome,
     ) -> Result<(u64, String), ErrorBody> {
-        let c = self.credential(name)?;
-        if c.harness != "codex" || version > c.version {
-            return Err(fail());
+        let c = self.credential(name).map_err(|e| refresh_failed(name, "vault_read", &e.message))?;
+        if c.harness != "codex" {
+            return Err(refresh_failed(name, "harness", "Codex 계정이 아니다"));
         }
-        let mut auth: serde_json::Value = serde_json::from_str(&c.secret.0)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
-        let req: serde_json::Value = serde_json::from_str(&request.0)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
-        if req.get("grant_type").and_then(|v| v.as_str()) != Some("refresh_token") {
-            return Err(fail());
+        if version > c.version {
+            return Err(refresh_failed(name, "version", format_args!("요청 판 {version} > 금고 판 {}", c.version)));
         }
+        let mut auth: serde_json::Value =
+            serde_json::from_str(&c.secret.0).map_err(|e| refresh_failed(name, "vault_format", e))?;
+        // 옛 판 요청에는 금고의 최신 인증을 준다. 이 pane은 이미 이 계정 인증을 받은 실행이라 본문보다 판을 먼저 본다:
+        // 다시 로그인하거나 host가 먼저 갱신한 뒤 도는 pane이 재시작 없이 새 인증을 받는다(t-1688)
         if version < c.version {
             *outcome = RefreshOutcome::Served;
             return Ok((c.version, token_response(&auth)?));
+        }
+        let req: serde_json::Value =
+            serde_json::from_str(&request.0).map_err(|e| refresh_failed(name, "request_format", e))?;
+        if req.get("grant_type").and_then(|v| v.as_str()) != Some("refresh_token") {
+            return Err(refresh_failed(name, "request_grant", "grant_type이 refresh_token이 아니다"));
         }
         // 주소는 production에서 고정한다. 가짜 서버는 debug 실험실의 loopback에만 허용한다.
         let mut url = "https://auth.openai.com/oauth/token".to_string();
@@ -467,27 +472,39 @@ impl Accounts {
         {
             url = format!("{}/oauth/token", origin.trim_end_matches('/'));
         }
-        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|e| refresh_failed(name, "request_build", e))?;
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             crate::http::request("POST", &url, &[("Content-Type", "application/json".into())], &body, MAX),
         )
         .await
-        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
-        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        .map_err(|e| refresh_failed(name, "provider_timeout", e))?
+        .map_err(|e| refresh_failed(name, "provider_connect", e))?;
         redact::remember_auth("codex", &String::from_utf8_lossy(&response.body));
         if response.status != 200 {
+            // 본문은 남기지 않는다(제공자가 인증 조각을 되돌려 줄 수 있다). 상태와 오류 코드만
+            let code = provider_code(&response.body);
+            tracing::warn!(
+                account = name,
+                stage = "provider",
+                status = response.status,
+                code = code.as_deref().unwrap_or("-"),
+                "제공자가 계정 인증 갱신을 받지 않았다"
+            );
             // 묻는 사이 다시 로그인해 금고 판이 올랐으면 거부는 옛 인증의 것이다(끊김이 아니다)
             if matches!(response.status, 400 | 401) && self.store.lock().unwrap().record(name)?.version == version {
                 *outcome = RefreshOutcome::Rejected;
             }
             return Err(fail());
         }
-        let tokens: serde_json::Value = serde_json::from_slice(&response.body)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let tokens: serde_json::Value =
+            serde_json::from_slice(&response.body).map_err(|e| refresh_failed(name, "provider_response", e))?;
         for k in ["access_token", "refresh_token"] {
             if let Some(v) = tokens.get(k).filter(|v| !v.is_null()) {
-                let v = v.as_str().filter(|s| s.len() >= 12).ok_or_else(fail)?;
+                let v = v
+                    .as_str()
+                    .filter(|s| s.len() >= 12)
+                    .ok_or_else(|| refresh_failed(name, "provider_response", format_args!("{k} 형식")))?;
                 auth["tokens"][k] = v.into();
             }
         }
@@ -500,15 +517,35 @@ impl Accounts {
         redact::remember_auth("codex", &value);
         let s = self.store.lock().unwrap();
         if s.record(name)?.version != version {
-            return Err(fail());
+            return Err(refresh_failed(name, "version_changed", "갱신 중에 금고 판이 바뀌었다(다시 로그인)"));
         }
         let v = version.checked_add(1).ok_or_else(fail)?;
         let generation = Some(s.record(name)?.auth_generation());
-        s.write(name, "codex", v, &value, generation)?;
+        s.write(name, "codex", v, &value, generation).map_err(|e| refresh_failed(name, "vault_write", &e.message))?;
         *outcome = RefreshOutcome::Renewed;
         Ok((v, token_response(&auth)?))
     }
 }
+/// 갱신 실패를 계정·단계·하위 오류와 함께 WARN으로 남긴다(사용자 10-23: 원인이 로그로 다 잡혀야 한다).
+/// 값·본문은 넣지 않는다. 기록은 LogWriter 가림을 한 번 더 거친다
+fn refresh_failed(account: &str, stage: &'static str, detail: impl std::fmt::Display) -> ErrorBody {
+    tracing::warn!(account, stage, error = %detail, "계정 인증 갱신 실패");
+    fail()
+}
+
+/// 제공자 오류 본문의 오류 코드만 읽는다(Codex `TokenErrorDetail`과 같은 자리: `error` 글, `error.code`, `code`).
+/// 설명·메시지는 읽지 않는다. 짧은 낱말 꼴이 아니면 버린다
+pub(crate) fn provider_code(body: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let code = v
+        .get("error")
+        .and_then(|e| e.as_str())
+        .or_else(|| v.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_str()))
+        .or_else(|| v.get("code").and_then(|c| c.as_str()))?;
+    (!code.is_empty() && code.len() <= 64 && code.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)))
+        .then(|| code.to_string())
+}
+
 fn token_response(auth: &serde_json::Value) -> Result<String, ErrorBody> {
     let t = auth.get("tokens").and_then(|v| v.as_object()).ok_or_else(fail)?;
     let mut out = serde_json::Map::new();
@@ -750,5 +787,25 @@ mod tests {
         assert!(locked.credential("work").is_err());
         locked.import("work", "claude", &value).unwrap();
         assert_ne!(locked.generation("work").unwrap(), generation, "같은 별칭 삭제·재등록도 새 세대");
+    }
+
+    // 필요: 11-09 회복 경로(t-1688). 다시 로그인으로 금고 판이 오르면 옛 판 pane은 요청 본문이 깨져 있어도
+    // 제공자에게 묻지 않고 최신 인증을 받아야 한다(재시작 없이 회복). 지금 판의 깨진 본문은 거절한다.
+    #[tokio::test]
+    async fn an_old_version_is_served_before_the_request_body_is_read() {
+        let state = Temp(std::env::temp_dir().join(format!("aaa-refresh-order-{}", util::new_id())));
+        let accounts = Accounts::new(&state.0).unwrap();
+        let auth = |n: &str| {
+            serde_json::json!({"tokens":{"access_token":aaa_test_support::token(&format!("order-access-{n}")),"refresh_token":aaa_test_support::token(&format!("order-refresh-{n}"))}}).to_string()
+        };
+        accounts.import("work", "codex", &auth("1")).unwrap();
+        accounts.import("work", "codex", &auth("2")).unwrap();
+        let broken = SecretText(r#"{"client_id":"app_x","grant_type":***********}"#.into());
+        let (served, outcome) = accounts.refresh("work", 1, &broken).await;
+        assert_eq!((served.version, outcome), (2, RefreshOutcome::Served));
+        let tokens: serde_json::Value = serde_json::from_str(&served.response.unwrap().0).unwrap();
+        assert_eq!(tokens["access_token"], aaa_test_support::token("order-access-2"));
+        let (failed, outcome) = accounts.refresh("work", 2, &broken).await;
+        assert_eq!((failed.response, outcome), (None, RefreshOutcome::Failed));
     }
 }

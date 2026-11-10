@@ -297,6 +297,21 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let claude_file = w.scripts.join("import.token");
     std::fs::write(&claude_file, &claude).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&claude_file)]);
+    // 11-09 운영 회귀(t-1688): 같은 host에 Claude 조회 인증(JSON)이 있으면 링크 가림이 Codex 갱신 요청 본문의
+    // `"refresh_token"` 글까지 가려 갱신이 503으로 끝났다. 아래 갱신 물결이 이 조합에서도 그대로 돌아야 한다.
+    let (usage_access, usage_access_hex) = canary("usage-access");
+    let (usage_refresh, usage_refresh_hex) = canary("usage-refresh");
+    install_login_fixture(
+        &w,
+        &gate,
+        &serde_json::json!({
+            "claude_json":{"oauthAccount":{"emailAddress":"me@example.com"}},
+            "claude_auth":{"claudeAiOauth":{"accessToken":usage_access,"refreshToken":usage_refresh,"expiresAt":aaa_common::util::now_ms()+3_600_000,"scopes":["user:profile","user:inference"]}},
+        }),
+    );
+    let usage = w.h.ok(&["account", "usage-login", "token", "--email", "me@example.com"]);
+    Gate::release(gate.take(1, 8), b'1');
+    login_result(&w, usage["login"]["id"].as_str().unwrap(), "succeeded");
     // 기본·profile 인증 경로를 격리한다. 자동 배정은 E2E81이 검사한다.
     for account in ["work", "token"] {
         w.h.ok(&["account", "pool", "remove", account]);
@@ -363,6 +378,8 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     Gate::release(resumed, b'X');
     w.wait_show("재개 종료", id, |v| v["agent"]["activity"] == "exited");
     let mut find = needles(&claude, &claude_hex);
+    find.extend(needles(&usage_access, &usage_access_hex));
+    find.extend(needles(&usage_refresh, &usage_refresh_hex));
     for (a, r) in &pairs {
         find.extend(needles(&a.0, &a.1));
         find.extend(needles(&r.0, &r.1));
