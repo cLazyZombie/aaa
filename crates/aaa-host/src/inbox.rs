@@ -542,7 +542,9 @@ impl Host {
         *self.nudge_due.lock().unwrap() = None;
         self.backup_pass_at(aaa_common::util::now_ms());
         self.refresh_usage();
-        // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)을 알림함에 낸다(plan §8.351)
+        // Codex 인증은 만료 하루 전에 host가 미리 갱신한다(배경 작업, t-1688)
+        self.account_refresh_pass();
+        // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)과 이어진 갱신 실패를 알림함에 낸다(plan §8.351)
         self.account_health_pass();
         self.settle_background_waits();
         if let Err(e) = self.library_retention_pass_at(aaa_common::util::now_ms()) {

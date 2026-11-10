@@ -1080,11 +1080,13 @@ impl Agent {
         let tx = host.borrow_and_update().clone();
         if let Some(tx) = tx {
             // 실행 환경은 실행 입력이다. ThreadReady/Relaunch는 기록 경계에서만 가린다.
+            // 인증 갱신 요청은 인증 전달이다: 가리면 요청 본문 JSON이 깨진다(t-1688). host가 받는 곳에서도 가리지 않는다.
             let clean = match msg {
                 LinkMsg::Res {
                     result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_)),
                     ..
-                } => msg.clone(),
+                }
+                | LinkMsg::Event(AgentEvent::AccountRefresh(_)) => msg.clone(),
                 _ => match aaa_common::redact::json(msg.clone()) {
                     Ok(clean) => clean,
                     Err(_) => return, // 가림 실패는 기록한 뒤 메시지를 거부한다. 원문은 보내지 않는다.

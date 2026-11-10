@@ -6295,6 +6295,20 @@ fn render_front(r: &FrontResponse) -> String {
                         day(a.last_auth_ms).as_deref().unwrap_or("모름"),
                     );
                 }
+                // 1.167 host: Codex 인증 만료 예정(host가 하루 전에 갱신한다)·마지막 갱신·이어진 갱신 실패(UTC)
+                let minute = aaa_common::util::utc_text;
+                if let Some(f) = &a.refresh_failure {
+                    let _ = write!(s, "\t갱신 실패({})", f.reason());
+                    if !f.threads.is_empty() {
+                        let _ = write!(s, " 멈춘 thread {}", f.threads.join(","));
+                    }
+                }
+                if let Some(ms) = a.token_expires_ms {
+                    let _ = write!(s, "\t인증 만료 {}", minute(ms));
+                }
+                if let Some(ms) = a.refreshed_ms {
+                    let _ = write!(s, "\t갱신 {}", minute(ms));
+                }
                 s.push('\n');
             }
         }

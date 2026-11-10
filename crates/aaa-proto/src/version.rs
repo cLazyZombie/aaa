@@ -301,7 +301,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.164: 예약의 지정 계정(QueueOp::Reserve.account·TaskReservation.account). 구판 예약은 자동 선택.
 // 1.165: coordinator hook의 inbox 알림 조회 `inbox_hook_notice`(t-1627). 옛 host는 모르는 요청으로 거절하고 agent는 조용히 넘긴다.
 // 1.166: 자동 답은 이력 대신 question_answered(id·complete)를 반환한다. 구판 CLI에는 done을 보낸다.
-pub const FRONT_API: Version = Version { major: 1, minor: 166 };
+// 1.167: 계정 목록의 Codex 인증 만료 예정·마지막 갱신·이어진 갱신 실패(AccountView.token_expires_ms·refreshed_ms·refresh_failure,
+//        선택, t-1688). 옛 웹은 버린다. AGENT_LINK·SESSION_IPC는 유지한다: AccountRefreshed.status·code 선택 필드는 옛 agent·session이
+//        버리고 503을 쓴다.
+pub const FRONT_API: Version = Version { major: 1, minor: 167 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

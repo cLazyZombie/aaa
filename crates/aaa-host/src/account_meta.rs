@@ -1,6 +1,8 @@
 //! 계정 메일·plan·인증 시각·상태(관리 GUI W5a, plan §8.351). 금고 파일 모양은 바꾸지 않고 host DB meta `account-meta:<이름>`에
 //! 둔다(키 관리는 별도 일이다). 메일·plan은 조작 기기와 host의 세션 밖 CLI에만 보인다: 감사 기록·알림함·로그에는 별칭만 남긴다.
-//! 「끊김」은 제공자가 Codex 인증 갱신을 거부했거나 알려진 만료 시각이 지난 것뿐이다. 제공자에게 따로 묻지 않는다.
+//! 「끊김」은 제공자가 Codex 인증 갱신을 거부했거나 알려진 만료 시각이 지난 것뿐이다. 상태를 보려고 제공자에게 따로 묻지 않는다.
+//! Codex 금고 인증은 access token 만료 하루 전에 host가 미리 갱신하고(t-1688), 그 결과도 같은 판정에 쓴다.
+//! 이어진 갱신 실패는 원인(aaa 안·망·제공자 상태와 오류 코드)과 멈춘 thread를 기록해 알리고, 회복하면 멈췄던 thread를 알린다.
 use std::path::Path;
 
 use aaa_common::util;
@@ -12,6 +14,12 @@ use crate::Host;
 
 /// 만료 이만큼 전부터 「곧 만료」
 pub(crate) const EXPIRING_MS: u64 = 7 * 24 * 3600 * 1000;
+/// Codex access token 만료 이만큼 전에 host가 미리 갱신한다(t-1688 답 1B)
+pub(crate) const REFRESH_LEAD_MS: u64 = 24 * 3600 * 1000;
+/// 선제 갱신이 실패하면 이만큼 뒤에 다시 한다(CLIProxyAPI auto_refresh_loop와 같은 5분)
+pub(crate) const REFRESH_RETRY_MS: u64 = 5 * 60 * 1000;
+/// pane이 멈추지 않은 갱신 실패는 이만큼 이어지면 알린다(한 번의 일시 실패는 다음 시도가 덮는다)
+const REFRESH_ALERT_ATTEMPTS: u32 = 3;
 /// 공식 CLI 결과에서 읽는 파일 상한(설정 파일이다)
 const MAX_FILE: u64 = 1 << 20;
 
@@ -35,6 +43,21 @@ pub(crate) struct AccountMeta {
     /// 알림함에 낸 상태(같은 상태를 두 번 내지 않는다)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alerted: Option<AccountHealth>,
+    /// Codex 금고 인증의 access token 만료 시각(JWT `exp`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_expires_ms: Option<u64>,
+    /// host가 제공자에게서 새 인증을 받은 마지막 시각
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refreshed_ms: Option<u64>,
+    /// 이어진 갱신 실패(thread 목록은 `stalled`에 둔다). 갱신·로그인이 성공하면 지운다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_failure: Option<aaa_proto::AccountRefreshFailure>,
+    /// 갱신 실패로 멈춘 thread. 회복을 알린 뒤 지운다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stalled: Vec<String>,
+    /// 갱신 실패 알림을 냈다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub refresh_alerted: bool,
 }
 
 /// 로그인 결과에서 읽은 것(인증값은 담지 않는다)
@@ -55,6 +78,32 @@ pub(crate) fn health(m: &AccountMeta, now: u64) -> AccountHealth {
     } else {
         AccountHealth::Ok
     }
+}
+
+/// 알림할 갱신 실패인가: 제공자 거부(끊김)는 상태 알림이 맡는다. pane이 멈췄거나 실패가 이어지면 알린다
+fn refresh_alert(m: &AccountMeta) -> bool {
+    m.refresh_failure
+        .as_ref()
+        .is_some_and(|f| !f.relogin && (!m.stalled.is_empty() || f.attempts >= REFRESH_ALERT_ATTEMPTS))
+}
+
+/// Codex auth.json의 `tokens.access_token`(JWT) `exp`(초)를 ms로. JWT가 아니거나 `exp`가 없으면 없음(서명은 보지 않는다)
+pub(crate) fn access_expires_ms(auth: &str) -> Option<u64> {
+    let auth: serde_json::Value = serde_json::from_str(auth).ok()?;
+    let jwt = auth.get("tokens")?.get("access_token")?.as_str()?;
+    let body = jwt.split('.').nth(1)?.trim_end_matches('=');
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    claims.get("exp")?.as_u64()?.checked_mul(1000)
+}
+
+/// thread 이름 몇 개(나머지는 수)
+fn thread_list(threads: &[String]) -> String {
+    let mut out = threads.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+    if threads.len() > 5 {
+        out.push_str(&format!(" 외 {}개", threads.len() - 5));
+    }
+    out
 }
 
 /// 메일 꼴만 받는다(공백·제어 문자·지나친 길이 없음)
@@ -307,6 +356,12 @@ impl Host {
             v.first_auth_ms = m.first_auth_ms;
             v.last_auth_ms = m.last_auth_ms;
             v.expires_ms = m.expires_ms;
+            v.token_expires_ms = m.token_expires_ms;
+            v.refreshed_ms = m.refreshed_ms;
+            v.refresh_failure = m.refresh_failure.clone().map(|mut f| {
+                f.threads = m.stalled.clone();
+                f
+            });
         }
         if !show_email {
             hide_email(&mut out);
@@ -337,20 +392,47 @@ impl Host {
         m.last_auth_ms = Some(now);
         m.expires_ms = id.expires_ms;
         m.rejected_ms = None;
+        // 새 인증이다: 옛 갱신 실패는 지우고(멈춘 thread는 회복 알림에 남긴다) 만료 예정을 새 인증에서 읽는다
+        m.refresh_failure = None;
+        m.token_expires_ms = self.accounts.credential(name).ok().and_then(|c| access_expires_ms(&c.secret.0));
         self.store_account_meta(name, &m)?;
         drop(gate);
         self.account_health_pass();
         Ok(())
     }
 
-    /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김을 지우고 plan·비어 있는 메일을 새 id_token에서 채운다
-    /// `version`은 갱신을 청한 판이다: 거부는 기록하는 지금도 금고가 그 판일 때만 끊김이다(그 사이 다시 로그인했으면 옛 인증의 거부다)
-    pub(crate) fn account_refresh_seen(&self, name: &str, outcome: crate::accounts::RefreshOutcome, version: u64) {
+    /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김·갱신 실패를 지우고 plan·비어 있는 메일을 새 id_token에서 채운다.
+    /// `version`은 갱신을 청한 판이다: 실패는 기록하는 지금도 금고가 그 판일 때만 이 계정의 실패다(그 사이 다시 로그인했으면 옛 인증의 것이다).
+    /// `thread`는 갱신을 청한 pane의 thread(pane 요청일 때). 실패면 그 pane은 멈춘다
+    pub(crate) fn account_refresh_seen(
+        &self,
+        name: &str,
+        outcome: &crate::accounts::RefreshOutcome,
+        version: u64,
+        thread: Option<&str>,
+    ) {
         use crate::accounts::RefreshOutcome;
         let gate = self.account_meta_gate.lock().unwrap();
         let mut m = self.account_meta(name);
+        let before = m.clone();
+        let now = util::now_ms();
         match outcome {
-            RefreshOutcome::Rejected => {
+            RefreshOutcome::Served => return,
+            RefreshOutcome::Renewed => {
+                let credential = self.accounts.credential(name).ok();
+                let id = credential.as_ref().map(|c| codex_identity(&c.secret.0)).unwrap_or_default();
+                m.rejected_ms = None;
+                m.refresh_failure = None;
+                m.refreshed_ms = Some(now);
+                m.token_expires_ms = credential.as_ref().and_then(|c| access_expires_ms(&c.secret.0));
+                if m.email.is_none() {
+                    m.email = id.email;
+                }
+                if id.plan.is_some() {
+                    m.plan = id.plan;
+                }
+            }
+            RefreshOutcome::Rejected(f) | RefreshOutcome::Failed(f) => {
                 let current = self
                     .accounts
                     .list()
@@ -359,31 +441,87 @@ impl Host {
                     })
                     .ok()
                     .and_then(|l| l.into_iter().find(|a| a.name == name));
-                if m.rejected_ms.is_some() || current.is_none_or(|a| a.version != version) {
+                if current.is_none_or(|a| a.version != version) {
                     return;
                 }
-                tracing::warn!(account = %name, "제공자가 계정 인증 갱신을 거부했다: 끊김");
-                m.rejected_ms = Some(util::now_ms());
+                let rejected = matches!(outcome, RefreshOutcome::Rejected(_));
+                if rejected && m.rejected_ms.is_none() {
+                    tracing::warn!(account = %name, "제공자가 계정 인증 갱신을 거부했다: 끊김");
+                    m.rejected_ms = Some(now);
+                }
+                let mut failure = m.refresh_failure.take().unwrap_or_else(|| aaa_proto::AccountRefreshFailure {
+                    cause: String::new(),
+                    stage: String::new(),
+                    status: None,
+                    code: None,
+                    relogin: false,
+                    since_ms: now,
+                    last_ms: now,
+                    attempts: 0,
+                    threads: Vec::new(),
+                });
+                failure.cause = f.cause.into();
+                failure.stage = f.stage.into();
+                failure.status = f.status;
+                failure.code = f.code.clone();
+                failure.relogin = rejected;
+                failure.last_ms = now;
+                failure.attempts = failure.attempts.saturating_add(1);
+                m.refresh_failure = Some(failure);
+                let label = thread.map(|t| if t.starts_with("c-") { "coordinator" } else { t });
+                if let Some(t) = label.filter(|t| !m.stalled.iter().any(|s| s == t)) {
+                    m.stalled.push(t.to_string());
+                }
             }
-            RefreshOutcome::Renewed => {
-                let id = self.accounts.credential(name).map(|c| codex_identity(&c.secret.0)).unwrap_or_default();
-                let before = m.clone();
-                m.rejected_ms = None;
-                if m.email.is_none() {
-                    m.email = id.email;
-                }
-                if id.plan.is_some() {
-                    m.plan = id.plan;
-                }
-                if m == before {
-                    return;
-                }
-            }
-            RefreshOutcome::Served | RefreshOutcome::Failed => return,
+        }
+        if m == before {
+            return;
         }
         self.save_account_meta(name, &m);
         drop(gate);
         self.account_health_pass();
+    }
+
+    /// host 선제 갱신(t-1688 답 1B): Codex 금고 인증의 access token 만료가 하루 안이면 host가 미리 갱신한다. 그러면 도는 pane은
+    /// 자기 token 만료 5분 전 갱신 요청에서 제공자에게 묻지 않고 새 인증을 받는다. 실패하면 5분 뒤 다시 하고, 제공자가 거부하면
+    /// 다시 로그인할 때까지 멈춘다(CLIProxyAPI auto_refresh_loop의 일정·멈춤 규칙을 따른다). 목록의 만료 예정도 여기서 맞춘다
+    pub(crate) fn account_refresh_pass(self: &std::sync::Arc<Self>) {
+        let Ok(list) = self
+            .accounts
+            .list()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
+        let now = util::now_ms();
+        for a in list.into_iter().filter(|a| a.harness == "codex") {
+            let expires = self.accounts.credential(&a.name).ok().and_then(|c| access_expires_ms(&c.secret.0));
+            let m = {
+                let _gate = self.account_meta_gate.lock().unwrap();
+                let mut m = self.account_meta(&a.name);
+                if m.token_expires_ms != expires {
+                    m.token_expires_ms = expires;
+                    self.save_account_meta(&a.name, &m);
+                }
+                m
+            };
+            let Some(expires) = expires else { continue };
+            if m.rejected_ms.is_some()
+                || expires.saturating_sub(REFRESH_LEAD_MS) > now
+                || m.refresh_failure.as_ref().is_some_and(|f| now < f.last_ms.saturating_add(REFRESH_RETRY_MS))
+                || !self.watch_claim("account-refresh", &a.name, std::time::Duration::ZERO)
+            {
+                continue;
+            }
+            let host = self.clone();
+            let name = a.name;
+            tokio::spawn(async move {
+                let _account_read = host.account_rename_gate.read().await;
+                let (version, outcome) = host.accounts.renew_current(&name).await;
+                host.account_refresh_seen(&name, &outcome, version, None);
+                host.watch_finished("account-refresh", &name);
+            });
+        }
     }
 
     pub(crate) fn account_meta_remove(&self, name: &str) {
@@ -451,28 +589,76 @@ impl Host {
             let mut m = self.account_meta(&a.name);
             let h = health(&m, now);
             let want = (h != AccountHealth::Ok).then_some(h);
-            if m.alerted == want {
+            let want_refresh = refresh_alert(&m);
+            let failing = m.rejected_ms.is_some() || m.refresh_failure.is_some();
+            if m.alerted == want && m.refresh_alerted == want_refresh {
+                // 알리기 전에 회복했다: 멈춘 thread 기록만 지운다
+                if !failing && !m.stalled.is_empty() {
+                    m.stalled.clear();
+                    self.save_account_meta(&a.name, &m);
+                }
                 continue;
             }
-            if let Some(p) = &project {
-                self.inbox_finish_where(p, |i| i.item_kind == "account" && i.subject == a.name);
-                if let Some(h) = want {
-                    let (event, why) = match h {
-                        AccountHealth::Expiring => ("곧 만료", "인증 만료가 7일 안이다"),
-                        AccountHealth::Expired => ("끊김", "인증 만료 시각이 지났다"),
-                        _ => ("끊김", "제공자가 인증 갱신을 거부했다"),
-                    };
-                    let summary = format!(
-                        "확인 필요: 계정 {}({}) {why}. 웹 설정 → 계정에서 「다시 로그인」하거나 `aaa account login {} --harness {}`",
-                        a.name, a.harness, a.name, a.harness
-                    );
-                    self.inbox_add(p, "account", &a.name, event, &summary);
-                }
-            } else if want.is_some() {
+            let Some(p) = &project else {
                 // 알릴 프로젝트가 없으면 다음 pass에 다시 본다
                 continue;
+            };
+            let was_failing = m.refresh_alerted || m.alerted == Some(AccountHealth::Rejected);
+            self.inbox_finish_where(p, |i| i.item_kind == "account" && i.subject == a.name);
+            let login = format!(
+                "웹 설정 → 계정에서 「다시 로그인」하거나 `aaa account login {} --harness {}`",
+                a.name, a.harness
+            );
+            let threads = if m.stalled.is_empty() {
+                String::new()
+            } else {
+                format!(" 멈춘 thread: {}.", thread_list(&m.stalled))
+            };
+            if let Some(h) = want {
+                let (event, why) = match h {
+                    AccountHealth::Expiring => ("곧 만료", "인증 만료가 7일 안이다".to_string()),
+                    AccountHealth::Expired => ("끊김", "인증 만료 시각이 지났다".to_string()),
+                    _ => (
+                        "끊김",
+                        match &m.refresh_failure {
+                            Some(f) => format!("제공자가 인증 갱신을 거부했다({})", f.reason()),
+                            None => "제공자가 인증 갱신을 거부했다".to_string(),
+                        },
+                    ),
+                };
+                let summary = format!("확인 필요: 계정 {}({}) {why}. {login}.{threads}", a.name, a.harness);
+                self.inbox_add(p, "account", &a.name, event, &summary);
+            }
+            if want_refresh && let Some(f) = &m.refresh_failure {
+                let todo = if f.cause == "aaa" {
+                    "다시 로그인으로 풀리지 않을 수 있다. host.log의 「계정 인증 갱신 실패」를 본다"
+                } else {
+                    "aaa가 5분마다 다시 시도한다. 이어지면 망·OpenAI 상태를 본다"
+                };
+                let summary = format!(
+                    "확인 필요: 계정 {}({}) 인증 갱신 실패: {}, {}번째. {todo}.{threads}",
+                    a.name,
+                    a.harness,
+                    f.reason(),
+                    f.attempts
+                );
+                self.inbox_add(p, "account", &a.name, "갱신 실패", &summary);
+            }
+            if want.is_none() && !want_refresh && !failing {
+                if was_failing && !m.stalled.is_empty() {
+                    // 회복 뒤 이어 보내기는 coordinator가 한다(t-1688 답 2A): aaa는 멈췄던 thread만 알린다
+                    let summary = format!(
+                        "회복: 계정 {}({}) 인증이 회복됐다. 인증 실패로 멈췄던 thread: {}. 「이어서」를 보내면 이어 간다",
+                        a.name,
+                        a.harness,
+                        thread_list(&m.stalled)
+                    );
+                    self.inbox_add(p, "account", &a.name, "회복", &summary);
+                }
+                m.stalled.clear();
             }
             m.alerted = want;
+            m.refresh_alerted = want_refresh;
             self.save_account_meta(&a.name, &m);
         }
     }

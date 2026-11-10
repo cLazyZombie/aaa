@@ -83,7 +83,9 @@ if 'resume' in sys.argv:
     try:
         urllib.request.urlopen(urllib.request.Request(url,data=json.dumps(dict(grant_type='refresh_token')).encode()),timeout=25)
         raise AssertionError('expired refresh accepted')
-    except urllib.error.HTTPError as e: assert e.code==503
+    except urllib.error.HTTPError as e:
+        # 제공자 거부는 상태·오류 코드 그대로 돌려받아 Codex가 재로그인 안내를 고른다(t-1688)
+        assert e.code==401 and json.load(e)=={'error':'refresh_token_reused'}
     subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','codex',json.dumps({'type':'agent-turn-complete','thread-id':hook_sid})],check=True,stdout=subprocess.PIPE)
     s=gate(3,dict(token=digest(auth['tokens']['access_token']),refresh=digest(auth['tokens']['refresh_token']),home=str(home)))
     assert s.recv(1)==b'X'
@@ -297,6 +299,21 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let claude_file = w.scripts.join("import.token");
     std::fs::write(&claude_file, &claude).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&claude_file)]);
+    // 11-09 운영 회귀(t-1688): 같은 host에 Claude 조회 인증(JSON)이 있으면 링크 가림이 Codex 갱신 요청 본문의
+    // `"refresh_token"` 글까지 가려 갱신이 503으로 끝났다. 아래 갱신 물결이 이 조합에서도 그대로 돌아야 한다.
+    let (usage_access, usage_access_hex) = canary("usage-access");
+    let (usage_refresh, usage_refresh_hex) = canary("usage-refresh");
+    install_login_fixture(
+        &w,
+        &gate,
+        &serde_json::json!({
+            "claude_json":{"oauthAccount":{"emailAddress":"me@example.com"}},
+            "claude_auth":{"claudeAiOauth":{"accessToken":usage_access,"refreshToken":usage_refresh,"expiresAt":aaa_common::util::now_ms()+3_600_000,"scopes":["user:profile","user:inference"]}},
+        }),
+    );
+    let usage = w.h.ok(&["account", "usage-login", "token", "--email", "me@example.com"]);
+    Gate::release(gate.take(1, 8), b'1');
+    login_result(&w, usage["login"]["id"].as_str().unwrap(), "succeeded");
     // 기본·profile 인증 경로를 격리한다. 자동 배정은 E2E81이 검사한다.
     for account in ["work", "token"] {
         w.h.ok(&["account", "pool", "remove", account]);
@@ -363,6 +380,8 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     Gate::release(resumed, b'X');
     w.wait_show("재개 종료", id, |v| v["agent"]["activity"] == "exited");
     let mut find = needles(&claude, &claude_hex);
+    find.extend(needles(&usage_access, &usage_access_hex));
+    find.extend(needles(&usage_refresh, &usage_refresh_hex));
     for (a, r) in &pairs {
         find.extend(needles(&a.0, &a.1));
         find.extend(needles(&r.0, &r.1));
@@ -1232,6 +1251,77 @@ fn host_usage_login_separates_credentials_without_changing_execution() {
     assert!(w.lab.wait_exit("host", T).success());
     let leak = hits(&[w.h.state.clone(), w.projects.clone(), w.lab.root.join("host.log")], &find, &|_| false);
     assert!(leak.is_empty(), "조회 인증 비밀이 남은 경로: {leak:?}");
+}
+
+// 필요: 만료 하루 전 host 선제 갱신(t-1688 답 1B)과 제공자 거부 원인 알림을 실제 tick·금고·가짜 제공자로 잇는다.
+// 거부된 계정은 다시 로그인할 때까지 다시 묻지 않는다.
+#[test]
+fn host_renews_codex_auth_a_day_before_expiry_and_reports_the_provider_reason() {
+    use base64::Engine;
+    let exp = aaa_common::util::now_ms() / 1000 + 3600;
+    // 서명 자리에 canary를 둔 JWT: 누출 검사가 그 조각을 찾는다
+    let jwt = |sig: &str| {
+        let claims = serde_json::json!({"exp": exp});
+        format!("e30.{}.{sig}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string()))
+    };
+    let canaries: Vec<_> =
+        ["renew-access0", "renew-refresh0", "renew-access1", "renew-refresh1", "stale-access", "stale-refresh"]
+            .map(canary)
+            .into_iter()
+            .collect();
+    let value = |i: usize| canaries[i].0.clone();
+    let upstream = Upstream::new(vec![(jwt(&value(0)), value(1)), (value(2), value(3))]);
+    let gate = Gate::new();
+    let (legacy, legacy_hex) = canary("renew-legacy");
+    let w = world(&format!("http://{}", upstream.addr), &gate, &legacy, POLICY_HARNESS);
+    let list = |name: &str| -> Value {
+        let listed = w.h.ok(&["account", "list"]);
+        listed["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name).cloned().unwrap_or_default()
+    };
+    let import = |name: &str, access: String, refresh: String| {
+        let file = w.scripts.join(format!("{name}.json"));
+        std::fs::write(
+            &file,
+            serde_json::json!({"tokens":{"access_token":access,"refresh_token":refresh}}).to_string(),
+        )
+        .unwrap();
+        w.h.ok(&["account", "import", name, "--harness", "codex", "--file", path_str(&file)]);
+    };
+    import("work", jwt(&value(0)), value(1));
+    w.h.ticks(1);
+    let work = wait_for("선제 갱신", T, || Some(list("work")).filter(|a| a["version"] == 2));
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
+    assert!(work["refreshed_ms"].is_u64() && work.get("refresh_failure").is_none(), "{work}");
+    assert!(work.get("token_expires_ms").is_none(), "새 access token은 JWT가 아니라 만료를 모른다: {work}");
+    import("stale", jwt(&value(4)), value(5));
+    w.h.ticks(1);
+    let stale = wait_for("제공자 거부", T, || Some(list("stale")).filter(|a| a["health"] == "rejected"));
+    assert_eq!(stale["token_expires_ms"], exp * 1000, "{stale}");
+    let f = &stale["refresh_failure"];
+    assert_eq!(
+        (&f["cause"], &f["status"], &f["code"], &f["relogin"]),
+        (&"provider".into(), &401.into(), &"refresh_token_reused".into(), &true.into()),
+        "{stale}"
+    );
+    w.h.ticks(1);
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 2, "거부된 계정은 다시 로그인할 때까지 묻지 않는다");
+    let alerts: Vec<_> = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["item_kind"] == "account" && i["done"] != true)
+        .map(|i| (i["subject"].as_str().unwrap().to_string(), i["summary"].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert!(alerts[0].0 == "stale" && alerts[0].1.contains("OpenAI 응답 401 refresh_token_reused"), "{alerts:?}");
+    let text = String::from_utf8(w.h.run(&["account", "list"]).stdout).unwrap();
+    assert!(text.contains("갱신 실패(OpenAI 응답 401 refresh_token_reused)"), "{text}");
+    let mut find = needles(&legacy, &legacy_hex);
+    for (v, hex) in &canaries {
+        find.extend(needles(v, hex));
+    }
+    let leak = hits(&[w.h.state.clone(), w.lab.root.join("host.log")], &find, &|_| false);
+    assert!(leak.is_empty(), "비밀이 남은 경로: {leak:?}");
 }
 
 /// 관리 GUI W5a(plan §8.351): host 로그인은 공식 CLI가 알린 메일·plan·유효 기간과 인증 날짜를 남기고, 다시 로그인에 다른 메일이

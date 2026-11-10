@@ -57,6 +57,9 @@ impl Sealed {
             last_auth_ms: None,
             expires_ms: None,
             health: None,
+            token_expires_ms: None,
+            refreshed_ms: None,
+            refresh_failure: None,
         }
     }
 }
@@ -260,16 +263,55 @@ impl Store {
     }
 }
 
-/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.351). 제공자가 거부한 것(400·401)만 끊김이다: 망·시한·5xx는 모른다
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.351). 제공자가 refresh token을 거부한 것만 끊김이다: 망·시한·5xx·
+/// 그 밖의 400은 모른다. 거부 판정은 Codex 0.167 `classify_refresh_token_failure`와 같다([`permanent`])
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RefreshOutcome {
     /// 제공자가 새 인증을 줬다
     Renewed,
     /// 옛 판 요청에 금고의 더 새 판을 줬다(제공자에게 묻지 않았다: 상태를 바꾸지 않는다)
     Served,
-    /// 제공자가 지금 금고 판의 갱신을 거부했다
-    Rejected,
-    Failed,
+    /// 제공자가 지금 금고 판의 갱신을 거부했다(400·401)
+    Rejected(RefreshFailure),
+    /// 그 밖의 실패
+    Failed(RefreshFailure),
+}
+impl RefreshOutcome {
+    pub(crate) fn failure(&self) -> Option<&RefreshFailure> {
+        match self {
+            RefreshOutcome::Rejected(f) | RefreshOutcome::Failed(f) => Some(f),
+            RefreshOutcome::Renewed | RefreshOutcome::Served => None,
+        }
+    }
+}
+
+/// 갱신이 실패한 까닭(값·본문 없음, t-1688). 알림·계정 목록·pane 중계가 쓴다
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RefreshFailure {
+    /// `aaa`(aaa 안), `network`(host가 제공자에 닿지 못함), `provider`(제공자가 200이 아닌 상태)
+    pub cause: &'static str,
+    pub stage: &'static str,
+    pub status: Option<u16>,
+    pub code: Option<String>,
+}
+impl RefreshFailure {
+    pub(crate) fn aaa(stage: &'static str) -> Self {
+        Self { cause: "aaa", stage, status: None, code: None }
+    }
+    pub(crate) fn network(stage: &'static str) -> Self {
+        Self { cause: "network", stage, status: None, code: None }
+    }
+    pub(crate) fn provider(status: u16, code: Option<String>) -> Self {
+        Self { cause: "provider", stage: "provider", status: Some(status), code }
+    }
+    /// pane 중계가 돌려줄 HTTP 상태와 오류 코드: 제공자 것 그대로, 망은 502. aaa 안의 실패는 없음(중계가 503을 쓴다)
+    fn relay(&self) -> (Option<u16>, Option<String>) {
+        match self.cause {
+            "provider" => (self.status, self.code.clone()),
+            "network" => (Some(502), Some("aaa_provider_unreachable".into())),
+            _ => (None, None),
+        }
+    }
 }
 
 pub struct Accounts {
@@ -421,44 +463,95 @@ impl Accounts {
     ) -> (AccountRefreshed, RefreshOutcome) {
         let gate = self.gates.lock().unwrap().entry(name.into()).or_default().clone();
         let _guard = gate.lock().await;
-        let mut outcome = RefreshOutcome::Failed;
-        let result = self.refresh_inner(name, version, request, &mut outcome).await;
-        match result {
-            Ok((version, response)) => {
-                (AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) }, outcome)
+        match self.refresh_inner(name, version, request).await {
+            Ok((version, response, outcome)) => (
+                AccountRefreshed {
+                    id: String::new(),
+                    version,
+                    response: Some(SecretText(response)),
+                    status: None,
+                    code: None,
+                },
+                outcome,
+            ),
+            Err(outcome) => {
+                let (status, code) = outcome.failure().map(RefreshFailure::relay).unwrap_or_default();
+                let reply = AccountRefreshed { id: String::new(), version, response: None, status, code };
+                (reply, outcome)
             }
-            Err(source_error) => {
-                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
-                (AccountRefreshed { id: String::new(), version, response: None }, outcome)
+        }
+    }
+    /// host 선제 갱신(t-1688): 금고의 지금 판을 제공자에게 갱신한다. pane 요청과 같은 계정 관문을 쓰므로 겹치지 않는다.
+    /// 돌려주는 판은 끝난 뒤 금고 판이다
+    pub(crate) async fn renew_current(&self, name: &str) -> (u64, RefreshOutcome) {
+        let gate = self.gates.lock().unwrap().entry(name.into()).or_default().clone();
+        let _guard = gate.lock().await;
+        let (version, auth) = match self.codex_auth(name) {
+            Ok((c, auth)) => (c.version, auth),
+            Err(outcome) => {
+                let version = self.store.lock().unwrap().record(name).map(|r| r.version).unwrap_or_default();
+                return (version, outcome);
             }
+        };
+        match self.renew(name, version, auth).await {
+            Ok((version, _, outcome)) => (version, outcome),
+            Err(outcome) => (version, outcome),
         }
     }
     #[cfg(test)]
     pub(crate) fn refresh_gate_for_test(&self, name: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.gates.lock().unwrap().entry(name.into()).or_default().clone()
     }
+    fn codex_auth(&self, name: &str) -> Result<(AccountCredential, serde_json::Value), RefreshOutcome> {
+        let c = self.credential(name).map_err(|e| failed(name, RefreshFailure::aaa("vault_read"), &e.message))?;
+        if c.harness != "codex" {
+            return Err(failed(name, RefreshFailure::aaa("harness"), "Codex 계정이 아니다"));
+        }
+        let auth =
+            serde_json::from_str(&c.secret.0).map_err(|e| failed(name, RefreshFailure::aaa("vault_format"), e))?;
+        Ok((c, auth))
+    }
+    /// 금고의 지금 판을 준다(제공자에게 묻지 않는다)
+    fn serve(&self, name: &str) -> Result<(u64, String, RefreshOutcome), RefreshOutcome> {
+        let (c, auth) = self.codex_auth(name)?;
+        let response =
+            token_response(&auth).map_err(|e| failed(name, RefreshFailure::aaa("vault_format"), &e.message))?;
+        Ok((c.version, response, RefreshOutcome::Served))
+    }
     async fn refresh_inner(
         &self,
         name: &str,
         version: u64,
         request: &SecretText,
-        outcome: &mut RefreshOutcome,
-    ) -> Result<(u64, String), ErrorBody> {
-        let c = self.credential(name)?;
-        if c.harness != "codex" || version > c.version {
-            return Err(fail());
+    ) -> Result<(u64, String, RefreshOutcome), RefreshOutcome> {
+        let (c, auth) = self.codex_auth(name)?;
+        if version > c.version {
+            return Err(failed(
+                name,
+                RefreshFailure::aaa("version"),
+                format_args!("요청 판 {version} > 금고 판 {}", c.version),
+            ));
         }
-        let mut auth: serde_json::Value = serde_json::from_str(&c.secret.0)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
-        let req: serde_json::Value = serde_json::from_str(&request.0)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
-        if req.get("grant_type").and_then(|v| v.as_str()) != Some("refresh_token") {
-            return Err(fail());
-        }
+        // 옛 판 요청에는 금고의 최신 인증을 준다. 이 pane은 이미 이 계정 인증을 받은 실행이라 본문보다 판을 먼저 본다:
+        // 다시 로그인하거나 host가 먼저 갱신한 뒤 도는 pane이 재시작 없이 새 인증을 받는다(t-1688)
         if version < c.version {
-            *outcome = RefreshOutcome::Served;
-            return Ok((c.version, token_response(&auth)?));
+            return self.serve(name);
         }
+        let req: serde_json::Value =
+            serde_json::from_str(&request.0).map_err(|e| failed(name, RefreshFailure::aaa("request_format"), e))?;
+        if req.get("grant_type").and_then(|v| v.as_str()) != Some("refresh_token") {
+            return Err(failed(name, RefreshFailure::aaa("request_grant"), "grant_type이 refresh_token이 아니다"));
+        }
+        self.renew(name, version, auth).await
+    }
+    /// 금고 판 `version`의 refresh token으로 제공자에게 새 인증을 받아 다음 판으로 저장한다
+    async fn renew(
+        &self,
+        name: &str,
+        version: u64,
+        mut auth: serde_json::Value,
+    ) -> Result<(u64, String, RefreshOutcome), RefreshOutcome> {
+        let current = || self.store.lock().unwrap().record(name).map(|r| r.version).ok();
         // 주소는 production에서 고정한다. 가짜 서버는 debug 실험실의 loopback에만 허용한다.
         let mut url = "https://auth.openai.com/oauth/token".to_string();
         if cfg!(debug_assertions)
@@ -467,27 +560,40 @@ impl Accounts {
         {
             url = format!("{}/oauth/token", origin.trim_end_matches('/'));
         }
-        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|e| failed(name, RefreshFailure::aaa("request_build"), e))?;
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             crate::http::request("POST", &url, &[("Content-Type", "application/json".into())], &body, MAX),
         )
         .await
-        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
-        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        .map_err(|e| failed(name, RefreshFailure::network("provider_timeout"), e))?
+        .map_err(|e| failed(name, RefreshFailure::network("provider_connect"), e))?;
         redact::remember_auth("codex", &String::from_utf8_lossy(&response.body));
         if response.status != 200 {
-            // 묻는 사이 다시 로그인해 금고 판이 올랐으면 거부는 옛 인증의 것이다(끊김이 아니다)
-            if matches!(response.status, 400 | 401) && self.store.lock().unwrap().record(name)?.version == version {
-                *outcome = RefreshOutcome::Rejected;
-            }
-            return Err(fail());
+            // 본문은 남기지 않는다(제공자가 인증 조각을 되돌려 줄 수 있다). 상태와 오류 코드만
+            let failure = RefreshFailure::provider(response.status, provider_code(&response.body));
+            tracing::warn!(
+                account = name,
+                stage = failure.stage,
+                status = response.status,
+                code = failure.code.as_deref().unwrap_or("-"),
+                "제공자가 계정 인증 갱신을 받지 않았다"
+            );
+            // 묻는 사이 다시 로그인해 금고 판이 올랐으면 거부는 옛 인증의 것이다(끊김이 아니다): 새 판을 준다
+            return match current() {
+                Some(v) if v != version => self.serve(name),
+                _ if permanent(response.status, failure.code.as_deref()) => Err(RefreshOutcome::Rejected(failure)),
+                _ => Err(RefreshOutcome::Failed(failure)),
+            };
         }
         let tokens: serde_json::Value = serde_json::from_slice(&response.body)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+            .map_err(|e| failed(name, RefreshFailure::aaa("provider_response"), e))?;
         for k in ["access_token", "refresh_token"] {
             if let Some(v) = tokens.get(k).filter(|v| !v.is_null()) {
-                let v = v.as_str().filter(|s| s.len() >= 12).ok_or_else(fail)?;
+                let v = v
+                    .as_str()
+                    .filter(|s| s.len() >= 12)
+                    .ok_or_else(|| failed(name, RefreshFailure::aaa("provider_response"), format_args!("{k} 형식")))?;
                 auth["tokens"][k] = v.into();
             }
         }
@@ -495,20 +601,52 @@ impl Accounts {
             auth["tokens"]["id_token"] = v.into();
         }
         auth["last_refresh"] = util::utc_iso(util::now_ms()).into();
-        let value = serde_json::to_string(&auth)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let value = serde_json::to_string(&auth).map_err(|e| failed(name, RefreshFailure::aaa("vault_format"), e))?;
         redact::remember_auth("codex", &value);
+        let response =
+            token_response(&auth).map_err(|e| failed(name, RefreshFailure::aaa("vault_format"), &e.message))?;
         let s = self.store.lock().unwrap();
-        if s.record(name)?.version != version {
-            return Err(fail());
+        let record = s.record(name).map_err(|e| failed(name, RefreshFailure::aaa("vault_read"), &e.message))?;
+        if record.version != version {
+            // 갱신 중에 다시 로그인했다. 옛 인증으로 받은 새 인증은 버리고 새 로그인의 인증을 준다
+            drop(s);
+            return self.serve(name);
         }
-        let v = version.checked_add(1).ok_or_else(fail)?;
-        let generation = Some(s.record(name)?.auth_generation());
-        s.write(name, "codex", v, &value, generation)?;
-        *outcome = RefreshOutcome::Renewed;
-        Ok((v, token_response(&auth)?))
+        let v = version.checked_add(1).ok_or_else(|| failed(name, RefreshFailure::aaa("version"), "판 넘침"))?;
+        s.write(name, "codex", v, &value, Some(record.auth_generation()))
+            .map_err(|e| failed(name, RefreshFailure::aaa("vault_write"), &e.message))?;
+        tracing::info!(account = name, version = v, "제공자에게서 새 계정 인증을 받아 저장했다");
+        Ok((v, response, RefreshOutcome::Renewed))
     }
 }
+/// 갱신 실패를 계정·까닭·단계·하위 오류와 함께 WARN으로 남긴다(사용자 10-23: 원인이 로그로 다 잡혀야 한다).
+/// 값·본문은 넣지 않는다. 기록은 LogWriter 가림을 한 번 더 거친다
+fn failed(account: &str, failure: RefreshFailure, detail: impl std::fmt::Display) -> RefreshOutcome {
+    tracing::warn!(account, cause = failure.cause, stage = failure.stage, error = %detail, "계정 인증 갱신 실패");
+    RefreshOutcome::Failed(failure)
+}
+
+/// 다시 로그인해야 풀리는 거부인가(Codex 0.167 manager.rs와 같은 분류): 401, 400 `invalid_grant`, refresh token의
+/// 만료·재사용·폐기 코드. 그 밖의 400(요청 형식 등)은 사람이 다시 로그인해도 풀리지 않으므로 끊김으로 보지 않는다
+fn permanent(status: u16, code: Option<&str>) -> bool {
+    status == 401
+        || (status == 400 && code.is_some_and(|c| c.eq_ignore_ascii_case("invalid_grant")))
+        || matches!(code, Some("refresh_token_expired" | "refresh_token_reused" | "refresh_token_invalidated"))
+}
+
+/// 제공자 오류 본문의 오류 코드만 읽는다(Codex `TokenErrorDetail`과 같은 자리: `error` 글, `error.code`, `code`).
+/// 설명·메시지는 읽지 않는다. 짧은 낱말 꼴이 아니면 버린다
+pub(crate) fn provider_code(body: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let code = v
+        .get("error")
+        .and_then(|e| e.as_str())
+        .or_else(|| v.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_str()))
+        .or_else(|| v.get("code").and_then(|c| c.as_str()))?;
+    (!code.is_empty() && code.len() <= 64 && code.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)))
+        .then(|| code.to_string())
+}
+
 fn token_response(auth: &serde_json::Value) -> Result<String, ErrorBody> {
     let t = auth.get("tokens").and_then(|v| v.as_object()).ok_or_else(fail)?;
     let mut out = serde_json::Map::new();
@@ -618,10 +756,21 @@ impl crate::Host {
         let mut result = match account {
             Some(a) => {
                 let (result, outcome) = self.accounts.refresh(&a, request.version, &request.request).await;
-                self.account_refresh_seen(&a, outcome, request.version);
+                // 갱신을 받지 못한 pane은 멈춘다: 알림·회복 소식에 그 thread를 싣는다(t-1688)
+                let thread = request.run.split_once('/').map(|(_, t)| t);
+                self.account_refresh_seen(&a, &outcome, request.version, thread);
                 result
             }
-            None => AccountRefreshed { id: String::new(), version: request.version, response: None },
+            None => {
+                tracing::warn!(machine = %mid, run = %request.run, "인증 갱신 요청의 계정 연결을 찾지 못했다");
+                AccountRefreshed {
+                    id: String::new(),
+                    version: request.version,
+                    response: None,
+                    status: None,
+                    code: None,
+                }
+            }
         };
         result.id = request.id;
         if let Ok(conn) = self.live_conn(&mid) {
@@ -750,5 +899,47 @@ mod tests {
         assert!(locked.credential("work").is_err());
         locked.import("work", "claude", &value).unwrap();
         assert_ne!(locked.generation("work").unwrap(), generation, "같은 별칭 삭제·재등록도 새 세대");
+    }
+
+    // 필요: 끊김(다시 로그인·선제 갱신 멈춤·자동 배정 제외)은 Codex가 영구 실패로 보는 거부에만 쓴다. 오류 코드는
+    // 제공자 본문의 세 자리에서 짧은 낱말만 읽는다(설명·메시지는 읽지 않는다)(t-1688).
+    #[test]
+    fn only_refresh_token_rejections_are_permanent_and_only_the_code_is_read() {
+        assert!(
+            permanent(401, None)
+                && permanent(400, Some("invalid_grant"))
+                && permanent(403, Some("refresh_token_reused"))
+        );
+        assert!(!permanent(400, Some("invalid_request")) && !permanent(400, None) && !permanent(503, None));
+        let code = |body: &str| provider_code(body.as_bytes());
+        assert_eq!(code(r#"{"error":"invalid_grant","error_description":"x"}"#).as_deref(), Some("invalid_grant"));
+        assert_eq!(
+            code(r#"{"error":{"message":"m","code":"refresh_token_expired"}}"#).as_deref(),
+            Some("refresh_token_expired")
+        );
+        assert_eq!(code(r#"{"code":"rate_limited"}"#).as_deref(), Some("rate_limited"));
+        assert_eq!(code(r#"{"error":"has space"}"#), None);
+        assert_eq!(code("<html>"), None);
+    }
+
+    // 필요: 11-09 회복 경로(t-1688). 다시 로그인으로 금고 판이 오르면 옛 판 pane은 요청 본문이 깨져 있어도
+    // 제공자에게 묻지 않고 최신 인증을 받아야 한다(재시작 없이 회복). 지금 판의 깨진 본문은 거절한다.
+    #[tokio::test]
+    async fn an_old_version_is_served_before_the_request_body_is_read() {
+        let state = Temp(std::env::temp_dir().join(format!("aaa-refresh-order-{}", util::new_id())));
+        let accounts = Accounts::new(&state.0).unwrap();
+        let auth = |n: &str| {
+            serde_json::json!({"tokens":{"access_token":aaa_test_support::token(&format!("order-access-{n}")),"refresh_token":aaa_test_support::token(&format!("order-refresh-{n}"))}}).to_string()
+        };
+        accounts.import("work", "codex", &auth("1")).unwrap();
+        accounts.import("work", "codex", &auth("2")).unwrap();
+        let broken = SecretText(r#"{"client_id":"app_x","grant_type":***********}"#.into());
+        let (served, outcome) = accounts.refresh("work", 1, &broken).await;
+        assert_eq!((served.version, outcome), (2, RefreshOutcome::Served));
+        let tokens: serde_json::Value = serde_json::from_str(&served.response.unwrap().0).unwrap();
+        assert_eq!(tokens["access_token"], aaa_test_support::token("order-access-2"));
+        let (failed, outcome) = accounts.refresh("work", 2, &broken).await;
+        assert_eq!((failed.response, failed.status), (None, None), "aaa 안의 실패는 중계가 503으로 돌려준다");
+        assert_eq!(outcome, RefreshOutcome::Failed(RefreshFailure::aaa("request_format")));
     }
 }
