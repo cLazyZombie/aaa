@@ -1289,7 +1289,10 @@ fn host_renews_codex_auth_a_day_before_expiry_and_reports_the_provider_reason() 
     };
     import("work", jwt(&value(0)), value(1));
     w.h.ticks(1);
-    let work = wait_for("선제 갱신", T, || Some(list("work")).filter(|a| a["version"] == 2));
+    // 금고 판이 먼저 올라가고 갱신 결과 metadata는 뒤에 저장된다. 결과 기록까지 기다린다.
+    let work = wait_for("선제 갱신 결과 기록", T, || {
+        Some(list("work")).filter(|a| a["version"] == 2 && a["refreshed_ms"].is_u64())
+    });
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
     assert!(work["refreshed_ms"].is_u64() && work.get("refresh_failure").is_none(), "{work}");
     assert!(work.get("token_expires_ms").is_none(), "새 access token은 JWT가 아니라 만료를 모른다: {work}");

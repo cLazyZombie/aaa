@@ -5091,3 +5091,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 조건부 피드백 질문 감시 수리(t-1693): [회귀 owner와 검증 기록](testing-question-feedback-t1693.md).
 
 - [보고서 보존 설정 검증(t-1710)](testing-library-retention-t-1710.md)
+- [Codex 선제 갱신 시험 저장 경계 경합 수리](testing-codex-refresh-race-t-1731.md)
