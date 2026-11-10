@@ -7,7 +7,7 @@ use windows_sys::Win32::System::Console::*;
 
 const NAME: &str = "authorization::terminal_snapshot::native::repro::cooked_read_event_orders";
 
-fn os_version() -> (u32, u8) {
+pub(super) fn os_version() -> (u32, u8) {
     use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOEXW;
     #[link(name = "ntdll")]
     unsafe extern "system" {

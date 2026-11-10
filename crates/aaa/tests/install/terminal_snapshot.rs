@@ -313,6 +313,10 @@ fn valid_threads(threads: &[Thread]) -> bool {
 }
 
 pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
+    capture_until(pid, exe, None)
+}
+
+fn capture_until(pid: u32, exe: &Path, deadline: Option<Instant>) -> Result<Snapshot, String> {
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -348,7 +352,10 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
             .spawn()
             .map_err(|error| io_stage("snapshot_spawn", error))?;
         // 이미 정해진 60초 실패 뒤의 증거 수집만 제한한다. 성공/응답을 더 기다리지 않는다.
-        let wait = unsafe { WaitForSingleObject(child.as_raw_handle(), 5000) };
+        let remaining = deadline.map_or(5000, |deadline| {
+            u32::try_from(deadline.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(5000).min(5000)
+        });
+        let wait = unsafe { WaitForSingleObject(child.as_raw_handle(), remaining) };
         let wait_os = (wait == WAIT_FAILED).then(std::io::Error::last_os_error).and_then(|error| error.raw_os_error());
         if wait != WAIT_OBJECT_0 {
             let exit_before = child.try_wait().ok().flatten().and_then(|status| status.code());
@@ -480,9 +487,27 @@ fn io_stage(stage: &'static str, error: std::io::Error) -> &'static str {
     stage
 }
 
-pub(super) fn record(pid: u32, exe: &Path) {
+pub(super) fn record(pid: u32, exe: &Path, probe: &super::read_state_probe::Probe, failure_unix_us: u64) {
     let start = Instant::now();
-    match capture(pid, exe) {
+    let deadline = start + std::time::Duration::from_secs(5);
+    // 실패 확정 뒤 기존 5초 안에서 두 수집을 함께 진행한다. 성공·입력 대기는 다시 열지 않는다.
+    let (snapshot, read_state) = std::thread::scope(|scope| {
+        let read_state =
+            scope.spawn(|| probe.capture(pid, super::read_state_probe::Cause::PtyDeadline, failure_unix_us, deadline));
+        let snapshot = capture_until(pid, exe, Some(deadline));
+        (snapshot, read_state.join().unwrap_or_else(|_| Err("read_state_collector_panicked".into())))
+    });
+    match read_state {
+        Ok(state) => eprintln!(
+            "PTY original stdin after failure: collection_ms={} state={}",
+            start.elapsed().as_millis(),
+            serde_json::to_string(&state).unwrap()
+        ),
+        Err(stage) => {
+            eprintln!("PTY original stdin after failure: collection_ms={} error={stage}", start.elapsed().as_millis())
+        }
+    }
+    match snapshot {
         Ok(snapshot) => eprintln!(
             "PTY stack after failure: collection_ms={} snapshot={}",
             start.elapsed().as_millis(),
