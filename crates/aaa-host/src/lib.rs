@@ -1708,6 +1708,7 @@ impl Host {
                 | FrontRequest::WorkRootCheck { .. }
                 | FrontRequest::WorkRootSet { .. }
                 | FrontRequest::HookSet { .. }
+                | FrontRequest::LibraryRetentionSet { .. }
                 | FrontRequest::ModelSet { .. }
                 | FrontRequest::AutoModeSet { .. }
                 | FrontRequest::AutoDecisionReview { .. }
@@ -1721,6 +1722,8 @@ impl Host {
                 ErrorCode::Forbidden,
                 if matches!(req, FrontRequest::RoutineApprove { .. }) {
                     "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa 세션 안에서 왔다)"
+                } else if matches!(req, FrontRequest::LibraryRetentionSet { .. }) {
+                    "보고서 보존 설정은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 바꾼다"
                 } else if matches!(
                     req,
                     FrontRequest::SafetySet { .. }
@@ -2737,6 +2740,10 @@ impl Host {
             }
             FrontRequest::HookSet { machine, install } => {
                 self.codex_hook(&machine, Some(install), actor).await.map(FrontResponse::Hook)
+            }
+            FrontRequest::LibraryRetention => self.library_retention_settings().map(FrontResponse::LibraryRetention),
+            FrontRequest::LibraryRetentionSet { max_days, max_mb, expected } => {
+                self.library_retention_set(max_days, max_mb, &expected, actor).map(FrontResponse::LibraryRetention)
             }
             FrontRequest::ModelAdmin => self.model_admin().await.map(FrontResponse::ModelAdmin),
             FrontRequest::ModelSet { harness, models, enabled, expected } => {

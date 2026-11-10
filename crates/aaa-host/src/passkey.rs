@@ -114,6 +114,7 @@ pub(crate) fn needs_uv(req: &FrontRequest, device: &str) -> bool {
         | R::LibraryUploadPublish { .. }
         | R::AutomationApprove { .. }
         | R::RoutineApprove { .. }
+        | R::LibraryRetentionSet { .. }
         | R::SafetySet { .. }
         | R::ProfileApply { .. }
         | R::WorkRootSet { .. }
@@ -437,6 +438,7 @@ fn req_op(req: &FrontRequest) -> &'static str {
         R::LibraryUploadPublish { .. } => "library_upload_publish",
         R::AutomationApprove { .. } => "automation_approve",
         R::RoutineApprove { .. } => "routine_approve",
+        R::LibraryRetentionSet { .. } => "library_retention_set",
         R::SafetySet { .. } => "safety_set",
         R::ProfileApply { .. } => "profile_apply",
         R::WorkRootSet { .. } => "work_root_set",

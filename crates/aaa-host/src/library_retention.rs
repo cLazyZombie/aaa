@@ -12,6 +12,24 @@ const LAST_PASS: &str = "library_retention_last_pass";
 const OVERFLOW: &str = "library_retention_overflow";
 
 impl Host {
+    /// 잘못된 새 설정이면 정리를 거부한다. 예전 한도로 돌아가 사본을 지우지 않는다.
+    pub(crate) fn library_limits(&self) -> Result<(u64, u64), ErrorBody> {
+        let cfg = self.profile_config().map_err(|e| {
+            aaa_common::diagnostic::context(
+                e,
+                err(ErrorCode::BadRequest, "보고서 보존 설정을 읽지 못했다: aaa config check로 확인한다"),
+            )
+        })?;
+        let days = cfg.projects.library_max_days;
+        let bytes = cfg
+            .projects
+            .library_max_mb
+            .checked_mul(1024 * 1024)
+            .filter(|_| days.checked_mul(DAY_MS).is_some())
+            .ok_or_else(|| err(ErrorCode::BadRequest, "보존 값이 너무 크다"))?;
+        Ok((days, bytes))
+    }
+
     pub(crate) fn protected_copy(&self, r: &LibraryReport) -> bool {
         if let Ok(Some(version)) = self.db.report_target(&r.project, &r.name) {
             let mut source = r.clone();
@@ -137,12 +155,8 @@ impl Host {
         now: u64,
     ) -> Result<LibraryPrunePlan, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
-        self.retention_plan(
-            project,
-            days.map(u64::from).unwrap_or(self.cfg.projects.library_max_days),
-            self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
-            now,
-        )
+        let (max_days, limit) = self.library_limits()?;
+        self.retention_plan(project, days.map(u64::from).unwrap_or(max_days), limit, now)
     }
 
     /// 웹 「보고서 정리」 실행(관리 GUI W4, plan §8.343): 미리보기와 같은 판정(기한·용량)으로 다시 셈해, 후보가 사람이 본 목록
@@ -156,12 +170,8 @@ impl Host {
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
-        let plan = self.retention_plan(
-            project,
-            days.map(u64::from).unwrap_or(self.cfg.projects.library_max_days),
-            self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
-            now,
-        )?;
+        let (max_days, limit) = self.library_limits()?;
+        let plan = self.retention_plan(project, days.map(u64::from).unwrap_or(max_days), limit, now)?;
         let mut found: Vec<String> = plan.candidates.iter().map(|c| format!("{}/{}", c.project, c.name)).collect();
         let mut seen = expected.to_vec();
         found.sort();
@@ -177,6 +187,7 @@ impl Host {
 
     pub(crate) fn library_usage(&self) -> Result<FrontResponse, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
+        let (max_days, max_size) = self.library_limits()?;
         let reports = self.library_reports(None, false)?;
         let inventory = self.library_inventory()?;
         Ok(FrontResponse::LibraryUsage {
@@ -185,8 +196,8 @@ impl Host {
             reports: reports.iter().filter(|r| !r.archived).count() as u32,
             live: reports.iter().filter(|r| r.live).count() as u32,
             problems: reports.iter().filter(|r| r.problem.is_some()).count() as u32,
-            max_size: self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
-            max_days: self.cfg.projects.library_max_days,
+            max_size,
+            max_days,
             protected_size: inventory.iter().filter(|r| !r.archived && r.protected).map(|r| r.size).sum(),
         })
     }
@@ -276,12 +287,7 @@ impl Host {
 
     pub(crate) fn library_retention_pass_at(&self, now: u64) -> Result<FrontResponse, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
-        let days = self.cfg.projects.library_max_days;
-        let limit = self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024);
         let skipped = || FrontResponse::LibraryPruned { removed: Vec::new() };
-        if days == 0 && limit == 0 {
-            return Ok(skipped());
-        }
         if self
             .db
             .meta(LAST_PASS)
@@ -295,6 +301,16 @@ impl Host {
             })
             .is_some_and(|last| now >= last && now - last < EVERY_MS)
         {
+            return Ok(skipped());
+        }
+        let (days, limit) = match self.library_limits() {
+            Ok(limits) => limits,
+            Err(error) => {
+                self.db.set_meta(LAST_PASS, &now.to_string()).map_err(crate::orch::internal)?;
+                return Err(error);
+            }
+        };
+        if days == 0 && limit == 0 {
             return Ok(skipped());
         }
         // 실패도 다음 정해진 회차에 확인한다. tick 사건마다 같은 실패를 재시도하지 않는다.

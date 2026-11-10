@@ -374,6 +374,7 @@ pub fn typescript_bindings() -> String {
         LibraryReport::decl(&cfg),
         LibraryRef::decl(&cfg),
         LibraryPrunePlan::decl(&cfg),
+        LibraryRetentionView::decl(&cfg),
         LibraryPruneEntry::decl(&cfg),
         LibrarySkip::decl(&cfg),
         FileKind::decl(&cfg),

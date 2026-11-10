@@ -590,6 +590,7 @@ fn save_error(e: file_rev::SaveError<ErrorBody>) -> ErrorBody {
     }
 }
 
+mod library;
 mod models;
 
 #[cfg(test)]

@@ -8587,3 +8587,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **끊김 판정.** 제공자 거부 중 다시 로그인해야 풀리는 것만 끊김이다(401, 400 `invalid_grant`, `refresh_token_*`: Codex 0.167 분류).
   §8.351의 「400·401」을 좁힌다: 선제 갱신이 그 밖의 400을 받아 하루 일찍 끊김·자동 배정 제외로 가지 않게 한다.
 - 검증 경계는 [Codex 인증 갱신 검증](testing-codex-refresh-t-1688.md)에 기록한다.
+
+
+### 8.563 보고서 보존 설정(t-1710)
+
+- 웹 설정 「보고서」는 기존 host.toml `[projects].library_max_days`·`library_max_mb`를 조작 기기에서 고친다. host 전체 공간을 함께 쓰므로 프로젝트별 설정은 만들지 않는다. 기본 30일·20480MiB, 0은 각 제한 끄기다.
+- FRONT_API 1.168의 `library_retention`·`library_retention_set`을 더하고 AGENT_LINK는 유지한다. 본 파일 판이 달라지면 conflict, host.local.toml이 덮으면 웹 저장을 거부한다. 세션 내부 agent는 바꾸지 못한다.
+- 저장 때 삭제하지 않고 다음 예정된 회차에서 새 한도를 읽는다. 보호·보관 제외·기한 우선·오래된 순 용량 정리·수동 prune·공유 링크 수명은 기존 규칙이다. 검증 기록은 [보존 설정 검증](testing-library-retention-t-1710.md)에 둔다.

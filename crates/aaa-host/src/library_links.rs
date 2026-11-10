@@ -1003,6 +1003,62 @@ mod tests {
         assert!(lab.h.library_prune_at(None, 0, u64::MAX, "test").is_err());
     }
 
+    /// 웹에서 줄인 한도는 저장 때 지우지 않고 다음 회차에 기한→용량 순으로 적용하며 보호 사본을 남긴다.
+    #[tokio::test]
+    async fn changed_retention_limits_apply_on_the_next_pass_and_preserve_protected_reports() {
+        let lab = Lab::new();
+        let config = lab.state.join("config");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::write(config.join("host.toml"), "schema = 1\n").unwrap();
+        lab.h.config_dir.set(config.clone()).unwrap();
+        let day = 86_400_000;
+        let old = retention_report(&lab, "copy-0001", 4, RETENTION_NOW - 2 * day, false);
+        let middle = retention_report(&lab, "copy-0002", 700_000, RETENTION_NOW - 1, false);
+        let newest = retention_report(&lab, "copy-0003", 700_000, RETENTION_NOW, false);
+        let active = retention_report(&lab, "t-0001", 4, 1, true);
+        let completed = retention_report(&lab, "t-0002", 4, 1, false);
+        let archived = retention_report(&lab, "copy-0004", 1_100_000, 1, false);
+        lab.h.db.library_archive_set(&[("demo".into(), "copy-0004".into())], true).unwrap();
+        let link = lab.issue("copy-0001");
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(old.exists());
+        let before = lab.h.library_retention_settings().unwrap();
+        lab.h.library_retention_set(1, 1, &before.rev, "device:test").unwrap();
+        assert!(old.exists() && middle.exists(), "저장은 삭제를 실행하지 않는다");
+        let preview = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
+        assert_eq!((preview.max_days, preview.max_size), (1, 1_048_576));
+        assert_eq!(
+            preview.candidates.iter().map(|r| (r.name.as_str(), r.reason.as_str())).collect::<Vec<_>>(),
+            [("copy-0001", "기한"), ("copy-0002", "용량")]
+        );
+        let FrontResponse::LibraryUsage { max_days, max_size, .. } = lab.h.library_usage().unwrap() else { panic!() };
+        assert_eq!((max_days, max_size), (1, 1_048_576));
+        lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000 - 1).unwrap();
+        assert!(old.exists() && middle.exists(), "기존 회차를 앞당기지 않는다");
+        lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
+        assert!(!old.exists() && !middle.exists());
+        assert!(newest.exists() && active.exists() && completed.exists() && archived.exists());
+        assert!(lab.h.db.library_link_get(&link.id).unwrap().unwrap().revoked);
+        let saved = lab.h.library_retention_settings().unwrap();
+        lab.h.library_retention_set(0, 0, &saved.rev, "device:test").unwrap();
+        let reopened = Host::open(lab.h.cfg.clone(), lab.state.clone()).unwrap();
+        reopened.config_dir.set(config).unwrap();
+        assert_eq!(reopened.library_limits().unwrap(), (0, 0));
+        reopened.library_retention_pass_at(RETENTION_NOW + 100 * day).unwrap();
+        assert!(newest.exists());
+        std::fs::write(
+            reopened.config_dir.get().unwrap().join("host.toml"),
+            "schema = 1\n[projects]\nlibrary_max_days = -1\n",
+        )
+        .unwrap();
+        assert!(reopened.library_retention_pass_at(RETENTION_NOW + 101 * day).is_err());
+        assert!(newest.exists(), "잘못된 설정에서 기본값으로 대신 정리하지 않는다");
+        assert!(
+            reopened.library_retention_pass_at(RETENTION_NOW + 101 * day + 1).is_ok(),
+            "실패도 다음 회차까지 기다린다"
+        );
+    }
+
     // 실제 사본·DB 상태·서명 HTTP 경계로 정리 계약을 본다. 시각과 상한만 주입한다.
     fn retention_report(lab: &Lab, name: &str, size: usize, updated: u64, active: bool) -> PathBuf {
         let root = lab.report(name, &[("index.html", &vec![b'x'; size], false)]);
