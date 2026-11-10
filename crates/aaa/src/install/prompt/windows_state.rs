@@ -76,6 +76,7 @@ fn registry() -> Option<Current> {
 pub(super) struct ReadGuard {
     current: Current,
     state: Arc<ReadState>,
+    call_event: Option<OwnedHandle>,
 }
 impl ReadGuard {
     pub(super) fn register(input: HANDLE, id: u64) -> Option<Self> {
@@ -94,10 +95,21 @@ impl ReadGuard {
         let thread = unsafe { OwnedHandle::from_raw_handle(thread) };
         let state = Arc::new(ReadState { input: input as usize, thread, id, tid, phase: AtomicU8::new(0) });
         *current.lock().unwrap() = Some(state.clone());
-        Some(Self { current, state })
+        // 통제 시험만 쓰는 경계다. 이름은 부모가 만든 임의의 event이며 private IPC 설정이 없으면 열지 않는다.
+        let call_event = std::env::var_os("AAA_TEST_INSTALL_READ_CALL_EVENT").and_then(|name| {
+            use std::os::windows::ffi::OsStrExt;
+            let name: Vec<_> = name.encode_wide().chain(Some(0)).collect();
+            let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
+            (!event.is_null()).then(|| unsafe { OwnedHandle::from_raw_handle(event) })
+        });
+        Some(Self { current, state, call_event })
     }
     pub(super) fn call(&self) {
         self.state.phase.store(1, Ordering::Release);
+        // 호출자의 마지막 로그 I/O가 반환한 뒤다. 성공 경로에서는 이 신호와 ReadConsoleW 사이에 I/O가 없다.
+        if let Some(event) = &self.call_event {
+            unsafe { SetEvent(event.as_raw_handle()) };
+        }
     }
     pub(super) fn returned(&self) {
         self.state.phase.store(2, Ordering::Release);

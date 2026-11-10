@@ -23,15 +23,43 @@ fn take(probe: &Probe, pid: u32, phase: Phase, wait: u32, pending: bool) -> Stri
     let reply = probe
         .capture(pid, Cause::ControlledFixture, read_state_probe::unix_us(), Instant::now() + Duration::from_secs(5))
         .unwrap();
+    let encoded = serde_json::to_string(&reply).unwrap();
+    eprintln!("Controlled original stdin read state: {encoded}");
     let Outcome::OriginalStdin { sample } = &reply.outcome else {
         panic!("활성 read 표본이 필요하다: {reply:?}");
     };
     assert_eq!((sample.phase_before, sample.phase_after), (phase, phase));
     assert!(matches!(sample.original_stdin_wait, Api::Ok { value } if value == wait));
     assert!(matches!(sample.reader_io_pending, Api::Ok { value } if value == pending));
-    let encoded = serde_json::to_string(&reply).unwrap();
-    eprintln!("Controlled original stdin read state: {encoded}");
     encoded
+}
+
+struct CallEvent {
+    name: String,
+    handle: OwnedHandle,
+}
+impl CallEvent {
+    fn new() -> Self {
+        let name = format!("Local\\aaa-test-read-call-{}", aaa_common::util::new_id());
+        let wide: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
+        let handle = unsafe { CreateEventW(std::ptr::null(), 1, 0, wide.as_ptr()) };
+        assert!(!handle.is_null());
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        assert_ne!(unsafe { GetLastError() }, ERROR_ALREADY_EXISTS);
+        Self { name, handle }
+    }
+    fn wait(&self, deadline: Instant) {
+        assert_eq!(
+            unsafe {
+                WaitForSingleObject(
+                    self.handle.as_raw_handle(),
+                    deadline.saturating_duration_since(Instant::now()).as_millis() as u32,
+                )
+            },
+            WAIT_OBJECT_0,
+            "읽기 직전 로그 I/O 반환 사건"
+        );
+    }
 }
 
 #[test]
@@ -49,6 +77,8 @@ fn original_stdin_probe_observes_the_owned_cli_read_and_preserves_real_approval(
     }
     command.env("AAA_LOG", "aaa::install::prompt=debug");
     command.env("AAA_TEST_INSTALL_CONSOLE_TRACE", "1");
+    let call_event = CallEvent::new();
+    command.env("AAA_TEST_INSTALL_READ_CALL_EVENT", &call_event.name);
     command.args(&args);
     let mut captured = false;
     let (code, text) = run(command, &[("[console-read-call]", "yes\r")], Path::new(BIN), |child, text, probe| {
@@ -69,6 +99,8 @@ fn original_stdin_probe_observes_the_owned_cli_read_and_preserves_real_approval(
         let thread = unsafe { OwnedHandle::from_raw_handle(thread) };
         assert_eq!(unsafe { GetProcessIdOfThread(thread.as_raw_handle()) }, child.process_id().unwrap());
         let deadline = Instant::now() + Duration::from_secs(5);
+        // thread의 pending에는 로그 출력도 포함된다. 그 출력이 끝난 뒤의 pending만 read로 판정한다.
+        call_event.wait(deadline);
         loop {
             let mut pending = 0;
             assert_ne!(unsafe { GetThreadIOPendingFlag(thread.as_raw_handle(), &mut pending) }, 0);
@@ -102,15 +134,22 @@ fn original_stdin_probe_does_not_consume_prequeued_input_or_change_mode() {
         return;
     }
     for case in ["queued", "pending"] {
+        let call_event = CallEvent::new();
         let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
         command.args(["--exact", FIXTURE, "--nocapture"]);
         command.env("AAA_TEST_READ_STATE_FIXTURE", case);
         command.env("AAA_TEST_INSTALL_CONSOLE_TRACE", "1");
+        command.env("AAA_TEST_INSTALL_READ_CALL_EVENT", &call_event.name);
         let steps = [(if case == "queued" { "[queue-input]" } else { "[state-ready]" }, "fixture-value\r")];
         let mut captured = false;
         let (code, text) = run(command, &steps, &std::env::current_exe().unwrap(), |child, text, probe| {
             if captured || !text.contains("[state-ready]") {
                 return;
+            }
+            if case == "queued" {
+                assert_eq!(unsafe { WaitForSingleObject(call_event.handle.as_raw_handle(), 0) }, WAIT_TIMEOUT);
+            } else {
+                call_event.wait(Instant::now() + Duration::from_secs(5));
             }
             let encoded = take(
                 probe,
@@ -127,6 +166,7 @@ fn original_stdin_probe_does_not_consume_prequeued_input_or_change_mode() {
         assert_eq!(code, 0, "case={case}: {}", redact_private(&text));
         assert!(captured && text.contains("read_state_fixture_complete"));
         assert!(terminal_fixture_succeeded(&text));
+        assert_eq!(unsafe { WaitForSingleObject(call_event.handle.as_raw_handle(), 0) }, WAIT_OBJECT_0);
     }
 }
 
