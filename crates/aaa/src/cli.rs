@@ -5636,6 +5636,10 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Done => s.push_str("완료\n"),
+        FrontResponse::QuestionAnswered { id, complete } => {
+            let _ =
+                writeln!(s, "{id} 답 기록 완료 · {}", if *complete { "묶음 답 처리 완료" } else { "나머지 답 기다림" });
+        }
         FrontResponse::Projects { projects } => {
             if projects.is_empty() {
                 let _ = writeln!(s, "프로젝트가 없다(`aaa project create <이름>`)");

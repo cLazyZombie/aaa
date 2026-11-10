@@ -22,6 +22,17 @@ pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) ->
     res_frame_within(id, result, MAX_FRAME)
 }
 
+/// 자동 답의 작은 새 응답을 모르는 CLI도 성공을 성공으로 읽는다. 처리 오류는 그대로 보낸다.
+fn response_for_version(
+    result: Result<FrontResponse, ErrorBody>,
+    proto: aaa_proto::Version,
+) -> Result<FrontResponse, ErrorBody> {
+    match result {
+        Ok(FrontResponse::QuestionAnswered { .. }) if (proto.major, proto.minor) < (1, 166) => Ok(FrontResponse::Done),
+        other => other,
+    }
+}
+
 /// frame 길이는 종류 byte까지 센다(`write_frame`: payload + 1 > max면 거부). payload가 `max`와 같으면 이미 넘는다(t-0340 감사 D2).
 pub(crate) fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: usize) -> Vec<u8> {
     // library는 웹 파일 전송과 같은 저장 bytes다. binary·이미 가린 사본을 다시 치환하지 않는다.
@@ -447,7 +458,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
                         aaa_common::diagnostic::ignored(
-                            tx.control(res_frame(id, result)).await,
+                            tx.control(res_frame(id, response_for_version(result, proto))).await,
                             "수신자가 끝난 뒤에도 현재 작업은 마친다",
                         );
                     });
@@ -796,6 +807,19 @@ mod tests {
         }
         assert!(read_req(b"not json").is_err());
         assert!(read_req(br#"{"t":"req","body":{"op":"nope"}}"#).is_err());
+    }
+
+    /// 구판 CLI는 모르는 응답 enum 대신 기존 done을 읽고, 오류는 어느 판에도 그대로 전달된다.
+    #[test]
+    fn automatic_reply_ack_is_compatible_with_old_cli() {
+        let ack = FrontResponse::QuestionAnswered { id: "q-0001".into(), complete: true };
+        let old = aaa_proto::Version { major: 1, minor: 165 };
+        let current = aaa_proto::Version { major: 1, minor: 166 };
+        assert_eq!(response_for_version(Ok(ack.clone()), old), Ok(FrontResponse::Done));
+        assert_eq!(response_for_version(Ok(ack.clone()), current), Ok(ack));
+        let error = ErrorBody::new(ErrorCode::BadRequest, "실제 답 처리 실패");
+        assert_eq!(response_for_version(Err(error.clone()), old), Err(error.clone()));
+        assert_eq!(response_for_version(Err(error.clone()), current), Err(error));
     }
 
     /// frame 상한을 넘는 응답은 연결을 닫는 대신 `too_large` 오류로 답한다(t-0334 pilot 결함 2)

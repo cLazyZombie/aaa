@@ -95,8 +95,10 @@ export default async function () {
     ids = asks.requests[0].questions.items.map(q => q.id);
     fs.writeFileSync(`${root}/auto-reason.txt`, "실측에서 WebGL 보정으로 거칠기가 사라졌고 스크롤 성능도 유지됐다.");
     const result = await run(["question", "answer", ids[0], "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
-    assert.equal(result.auto_decisions[0].choice, "B");
-    assert.equal(result.auto_decisions[0].decided_by, "coordinator(auto)");
+    assert.deepEqual(result, { kind: "question_answered", id: ids[0], complete: false });
+    const decisions = (await call(desktop, { op: "auto_decisions", project: "demo" })).ok.decisions;
+    assert.equal(decisions[0].choice, "B");
+    assert.equal(decisions[0].decided_by, "coordinator(auto)");
     const denied = await run(["question", "answer", ids[1], "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
     assert.match(JSON.stringify(denied), /사용자 전용/);
     assert.equal((await call(desktop, { op: "asks" })).ok.requests.length, 1);
@@ -172,7 +174,10 @@ export default async function () {
     fs.writeFileSync(`${root}/auto-clear.md`, "## Questions\n### 1. 지울 결정 하나\n- A 먼저\n- B 나중\n### 2. 지울 결정 둘\n- A 먼저\n- B 나중\n");
     await run(["post", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "지우기 준비", "--body-file", `${root}/auto-clear.md`]);
     const clearing = (await call(desktop, { op: "asks" })).ok.requests.find(r => r.title === "지우기 준비");
-    for (const q of clearing.questions.items) await run(["question", "answer", q.id, "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
+    for (const [n, q] of clearing.questions.items.entries()) {
+      const reply = await run(["question", "answer", q.id, "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
+      assert.deepEqual(reply, { kind: "question_answered", id: q.id, complete: n === clearing.questions.items.length - 1 });
+    }
     const rows = p => p.evaluate(() => [...document.querySelectorAll('[data-testid="auto-line"]')].map(r => r.dataset.id));
     const before = (await call(desktop, { op: "asks" })).ok;
     const autoQ = new Set(before.auto_decisions.map(d => d.question.id).filter(Boolean));

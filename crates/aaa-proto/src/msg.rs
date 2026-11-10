@@ -4109,6 +4109,11 @@ pub enum FrontResponse {
         decisions: Vec<crate::AutoDecision>,
         next: Option<String>,
     },
+    /// 자동 답 처리 결과(FRONT_API 1.166). ok는 이 질문의 답 저장 성공, complete는 묶음 답 처리 완료다.
+    QuestionAnswered {
+        id: String,
+        complete: bool,
+    },
     Asks {
         #[serde(default)]
         auto_mode: crate::AutoMode,

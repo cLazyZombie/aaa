@@ -466,6 +466,22 @@ impl Host {
         comments: Vec<Option<String>>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.ask_answer_apply(project, item, body_hash, picks, text, comments, actor)?;
+        self.asks_view(project)
+    }
+
+    /// 답 저장·알림까지의 실제 처리 결과. 자동 답은 뒤의 목록 조회 실패와 구분한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ask_answer_apply(
+        &self,
+        project: &str,
+        item: &str,
+        body_hash: &str,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+        comments: Vec<Option<String>>,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
         let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
         let i = open
             .iter()
@@ -587,7 +603,7 @@ impl Host {
         self.inbox_finish_publish(&done, &by, false);
         self.inbox_publish(&notice);
         self.db.audit(actor, "ask_answer", &format!("{project}/{item}"));
-        self.asks_view(project)
+        Ok(())
     }
 
     /// coordinator가 미리 publish한 `library/<이름>/<파일>`만 복사한다. 외부·symlink는 열지 않는다.

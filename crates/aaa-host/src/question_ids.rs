@@ -371,7 +371,11 @@ impl Host {
                 &format!("{id} 질문에 일부 답함({}): {}", answer.by, answer.summary),
                 answer.text.as_deref().unwrap_or_default(),
             );
-            return Ok(FrontResponse::Done);
+            return Ok(if auto {
+                FrontResponse::QuestionAnswered { id: id.into(), complete: false }
+            } else {
+                FrontResponse::Done
+            });
         }
         let draft = self.question_draft(project, &items).ok_or_else(|| err(ErrorCode::Internal, "답 기록이 없다"))?;
         let result = if target.kind == "thread" {
@@ -379,6 +383,9 @@ impl Host {
                 .await
                 .map(Box::new)
                 .map(FrontResponse::Thread)
+        } else if auto {
+            self.ask_answer_apply(project, &target.subject, &hash, draft.picks, draft.text, draft.comments, actor)
+                .map(|()| FrontResponse::Done)
         } else {
             self.ask_answer(project, &target.subject, &hash, draft.picks, draft.text, draft.comments, actor)
         };
@@ -389,7 +396,11 @@ impl Host {
         {
             self.db.question_set_draft(&target, target.draft.as_ref()).map_err(internal)?;
         }
-        result
+        result.map(
+            |response| {
+                if auto { FrontResponse::QuestionAnswered { id: id.into(), complete: true } } else { response }
+            },
+        )
     }
 }
 

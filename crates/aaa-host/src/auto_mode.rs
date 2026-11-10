@@ -268,8 +268,7 @@ impl Host {
         )?;
         let result = self.reply_by_id_inner(project, id, choice.as_deref(), text, actor, true).await;
         self.auto_finish(project, &decision_id, result.as_ref().err().map(|e| e.message.clone()))?;
-        result?;
-        self.asks_view(project)
+        result
     }
     pub(crate) fn auto_decision_review(
         &self,
