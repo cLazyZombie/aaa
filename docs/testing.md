@@ -1,3 +1,4 @@
+- t-1728: [coordinator 계정 예약분 검증](testing-coordinator-account-reserve-t-1728.md)
 - t-1699: [Windows 설치 PTY의 signaled Enter와 마지막 PATH 읽기 정체](testing-win-pty-signaled-enter-t1699.md) · [제품 수명의 사건 행렬](testing-win-pty-product-lifetimes-t1699.md) · [자연 실패의 원래 stdin·reader 수집](testing-win-pty-natural-read-state-t1699.md)
 - t-1688: [Codex 인증 갱신 실패 수리·선제 갱신·원인 알림](testing-codex-refresh-t-1688.md)
 - t-1659: [WebKit 화면 복귀 초기 앞 기록 대기 수리](testing-pane-return-history-t-1659.md)
