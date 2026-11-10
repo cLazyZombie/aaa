@@ -1,3 +1,4 @@
+- t-1734: [Windows 원래 stdin 관측의 읽기 진입 경계](testing-win-stdin-read-entry-t-1734.md)
 - t-1732: [이미지 원장 1024건 경계와 읽기 비용](testing-image-ledger-limit-t-1732.md)
 - t-1728: [coordinator 계정 예약분 검증](testing-coordinator-account-reserve-t-1728.md)
 - t-1699: [Windows 설치 PTY의 signaled Enter와 마지막 PATH 읽기 정체](testing-win-pty-signaled-enter-t1699.md) · [제품 수명의 사건 행렬](testing-win-pty-product-lifetimes-t1699.md) · [자연 실패의 원래 stdin·reader 수집](testing-win-pty-natural-read-state-t1699.md)
