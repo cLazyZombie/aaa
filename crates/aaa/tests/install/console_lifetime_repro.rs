@@ -348,6 +348,11 @@ fn cooked_read_product_lifetimes() {
                         let mut terminal = aaa_vt::Vt::new(36, 120);
                         terminal.feed(text.as_bytes());
                         let screen = terminal.unwrapped_all();
+                        // 성공 행도 read별 사건을 남긴다. fixture의 숫자·불리언 사건 줄만 내보낸다.
+                        for line in screen.lines().filter(|line| line.starts_with("lifetime_event ")) {
+                            assert!(line.chars().all(|c| c.is_ascii_alphanumeric() || " _=".contains(c)));
+                            eprintln!("lifetime_row_event order={order} observer={observer} output={output} {line}");
+                        }
                         let completed = (1..=14).all(|id| {
                             screen.contains(&format!(
                                 "lifetime_event read_id={id} read_returned=true mode_restored=true thread_same=true"
