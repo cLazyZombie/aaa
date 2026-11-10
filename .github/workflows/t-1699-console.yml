@@ -3,7 +3,7 @@ name: t-1699 Windows console lifetimes
 
 on:
   push:
-    branches: ["diagnostic/t-1699-console-lifetimes"]
+    branches: ["diagnostic/t-1699-console-lifetimes-native"]
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ env:
 
 jobs:
   console:
-    if: github.ref == 'refs/heads/diagnostic/t-1699-console-lifetimes'
+    if: github.ref == 'refs/heads/diagnostic/t-1699-console-lifetimes-native'
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -26,7 +26,7 @@ jobs:
       - name: 실패와 같은 OS·이미지·conhost 판 확인
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path scratch/console-diagnostic | Out-Null
+          New-Item -ItemType Directory -Path target/console-diagnostic | Out-Null
           $os = Get-CimInstance Win32_OperatingSystem
           $path = Join-Path $env:SystemRoot 'System32/conhost.exe'
           $file = (Get-Item $path).VersionInfo
@@ -56,7 +56,7 @@ jobs:
             run_id = $env:GITHUB_RUN_ID
             attempt = $env:GITHUB_RUN_ATTEMPT
           }
-          $metadata | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 scratch/console-diagnostic/environment.json
+          $metadata | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 target/console-diagnostic/environment.json
           $metadata | ConvertTo-Json -Depth 4
           if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw '재실행으로 행렬을 반복하지 않는다' }
           if ($os.BuildNumber -ne '26100' -or [int]$os.ProductType -ne 3 -or $env:ImageVersion -ne '20261103.298.1' -or $version -ne '10.0.26100.33648') { throw '실패와 같은 OS·이미지·conhost 판이 아니다' }
@@ -88,39 +88,51 @@ jobs:
         timeout-minutes: 15
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          cargo test --profile verify --locked -p aaa --test install --bin aaa --no-run 2>&1 | Tee-Object scratch/console-diagnostic/build.log
+          cargo test --profile verify --locked -p aaa --test install --bin aaa --no-run 2>&1 | Tee-Object target/console-diagnostic/build.log
           exit $LASTEXITCODE
+      - name: 검증 실행기를 Cargo 출력 밖 사본으로 고정
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sourceHash = (Get-FileHash -Algorithm SHA256 target/verify/aaa.exe).Hash
+          Copy-Item target/verify/aaa.exe target/console-diagnostic/verify-runner.exe
+          $copyHash = (Get-FileHash -Algorithm SHA256 target/console-diagnostic/verify-runner.exe).Hash
+          if ($sourceHash -ne $copyHash) { throw '검증 실행기 사본의 해시가 다르다' }
+          @{ source_sha256 = $sourceHash.ToLowerInvariant(); copy_sha256 = $copyHash.ToLowerInvariant() } | ConvertTo-Json | Set-Content -Encoding utf8 target/console-diagnostic/runner-hash.json
       - name: Windows native strict Clippy
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          & target/verify/aaa.exe verify -- cargo clippy --profile verify --locked -p aaa --all-targets -- -D warnings 2>&1 | Tee-Object scratch/console-diagnostic/clippy.log
+          & target/console-diagnostic/verify-runner.exe verify -- cargo clippy --profile verify --locked -p aaa --all-targets -- -D warnings 2>&1 | Tee-Object target/console-diagnostic/clippy.log
           exit $LASTEXITCODE
       - name: 제품 수명 사건 행렬 열여섯 조건 한 번
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization::terminal_snapshot::native::lifetime_repro::cooked_read_product_lifetimes -- --exact --ignored --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/lifetime.log
+          & target/console-diagnostic/verify-runner.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization::terminal_snapshot::native::lifetime_repro::cooked_read_product_lifetimes -- --exact --ignored --nocapture 2>&1 | Tee-Object target/console-diagnostic/lifetime.log
           exit $LASTEXITCODE
       - name: 콘솔·실제 승인 owner 한 번
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/authorization.log
+          & target/console-diagnostic/verify-runner.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object target/console-diagnostic/authorization.log
           exit $LASTEXITCODE
       - name: 두 wizard와 명시 CLI 계획 owner 한 번
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install wizard:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/wizard.log
+          & target/console-diagnostic/verify-runner.exe verify -- cargo test --profile verify --locked -p aaa --test install wizard:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object target/console-diagnostic/wizard.log
           exit $LASTEXITCODE
       - name: 사건·실패 원문 보존
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: console-t1699-${{ github.run_id }}-${{ github.run_attempt }}
-          path: scratch/console-diagnostic/
+          path: |
+            target/console-diagnostic/*.log
+            target/console-diagnostic/environment.json
+            target/console-diagnostic/runner-hash.json
           retention-days: 14
