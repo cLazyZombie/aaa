@@ -274,6 +274,11 @@ impl Host {
         crate::account_plan::weight(harness, meta.plan_override.as_deref(), meta.plan.as_deref())
     }
 
+    pub(crate) fn account_coordinator_reserve(&self, name: &str, harness: &str) -> f64 {
+        let meta = self.account_meta(name);
+        crate::account_plan::coordinator_reserve(harness, meta.plan_override.as_deref(), meta.plan.as_deref())
+    }
+
     pub(crate) fn account_meta(&self, name: &str) -> AccountMeta {
         self.db
             .meta(&key(name))

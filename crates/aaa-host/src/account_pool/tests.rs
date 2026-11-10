@@ -76,6 +76,7 @@ fn candidate(name: &str, five: f64, week: f64) -> Candidate {
         generation: format!("generation-{name}"),
         last_quota: None,
         weight: None,
+        coordinator_reserve: 0.0,
         quota: Some(AccountQuota {
             session_limit: None,
             input_missing: None,
@@ -1048,4 +1049,142 @@ fn reserved_account_waits_for_auth_and_limit_but_query_failure_is_not_auth_failu
     assert!(l.h.check_reserved_account("work", &profile).unwrap_err().message.contains("인증 잠김"));
     std::fs::rename(root.join("held.key"), root.join("secrets.key")).unwrap();
     assert!(l.h.check_reserved_account("work", &profile).is_ok());
+}
+
+// 필요: coordinator 몫으로 실제 선택이 바뀌며, 마지막 관측·0 하한·명시 계정에도 일관되게 적용한다.
+#[test]
+fn coordinator_reserve_changes_ranking_and_records_effective_weekly_quota() {
+    let l = Lab::new();
+    for (reserve, effective) in [(5.0, "35.0%"), (10.0, "30.0%")] {
+        let mut coordinator = weekly("coordinator", Some(2.0), 40.0, 20);
+        coordinator.coordinator_reserve = reserve;
+        let mut p = input(&l, vec![coordinator, weekly("other", Some(2.0), 38.0, 20)]);
+        assert_eq!(choose(&l, &p).unwrap().0, "other");
+        p.candidates.pop();
+        let (_, allocation) = choose(&l, &p).unwrap();
+        assert!(allocation.selection.reason.contains("최신 관측 잔량 40.0%"));
+        assert!(allocation.selection.reason.contains(&format!("배정 잔량 {effective}")));
+        let c = &mut p.candidates[0];
+        c.last_quota = c.quota.take();
+        let (_, allocation) = choose(&l, &p).unwrap();
+        assert!(allocation.selection.reason.contains("마지막 관측으로 판단 잔량 40.0%"));
+        assert!(allocation.selection.reason.contains(&format!("배정 잔량 {effective}")));
+        p.candidates[0].last_quota.as_mut().unwrap().windows[0].window.used_percent = 98.0;
+        let (_, allocation) = choose(&l, &p).unwrap();
+        assert!(allocation.selection.reason.contains("배정 잔량 0.0%"));
+        assert!(allocation.selection.reason.contains("시간당 0.00"));
+        // 주간 공용 창이 아닌 보조 모델 창에는 주간 예약분을 빼지 않는다.
+        p.candidates[0].last_quota.as_mut().unwrap().windows[0].window.scope = Some("model-a".into());
+        let (_, allocation) = choose(&l, &p).unwrap();
+        assert!(!allocation.selection.reason.contains("coordinator 몫"));
+        assert!(allocation.selection.reason.contains("시간당 0.20"));
+        p.auto = false;
+        assert_eq!(choose(&l, &p).unwrap().1.selection.reason, "명시한 계정");
+    }
+}
+
+// 필요: 현재 기본 계정이 아닌 실행 인증을 읽고, 여러 프로젝트·중복 coordinator·종료·원격·사람 셸을 구분한다.
+#[tokio::test]
+async fn allocation_reserves_each_running_coordinator_account_across_projects_once() {
+    let l = Lab::new();
+    // 현재 새 프로젝트 생성은 host당 하나로 제한한다. 이미 있는 여러 프로젝트 폴더의 읽기 계약을 구성한다.
+    let second = l.h.project_dir("demo").unwrap().parent().unwrap().join("second");
+    std::fs::create_dir(&second).unwrap();
+    std::fs::copy(l.h.project_dir("demo").unwrap().join("PROJECT.md"), second.join("PROJECT.md")).unwrap();
+    for (name, plan) in [("large", "pro_200"), ("small", "pro_100"), ("other", "pro_200")] {
+        l.h.register_account(name, "codex", &codex_auth()).unwrap();
+        l.h.account_plan(name, Some(plan), "local:cli").unwrap();
+    }
+    l.h.set_default_account("codex", Some("other")).unwrap();
+    for (id, local) in [("host", true), ("remote", false)] {
+        l.h.inner.lock().unwrap().machines.insert(
+            id.into(),
+            crate::MachineRt {
+                name: id.into(),
+                local,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: None,
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                identity: None,
+                agent_pid: None,
+                colors: None,
+                build: Default::default(),
+            },
+        );
+    }
+    for (pane, project, account, machine, role, harness, state) in [
+        ("large-1", "demo", "large", "host", Some(Role::Coordinator), Some("codex"), SessionState::Running),
+        ("large-2", "second", "large", "host", Some(Role::Coordinator), Some("codex"), SessionState::Running),
+        ("small", "second", "small", "host", None, Some("codex"), SessionState::Running),
+        ("shell", "demo", "other", "host", None, None, SessionState::Running),
+        ("remote", "demo", "other", "remote", Some(Role::Coordinator), Some("codex"), SessionState::Running),
+        (
+            "exited",
+            "demo",
+            "other",
+            "host",
+            Some(Role::Coordinator),
+            Some("codex"),
+            SessionState::Exited { code: Some(0) },
+        ),
+    ] {
+        l.h.on_session(
+            machine,
+            SessionInfo {
+                responsibility: None,
+                id: pane.into(),
+                name: pane.into(),
+                argv: vec![harness.unwrap_or("sh").into()],
+                cwd: Some(l.h.project_dir(project).unwrap().display().to_string()),
+                pid: None,
+                started_at_ms: NOW,
+                boot_id: "boot".into(),
+                cols: 80,
+                rows: 24,
+                state,
+                role,
+                label: None,
+                harness: harness.map(str::to_owned),
+            },
+            false,
+        );
+        l.h.save_account_run(&crate::account_policy::PaneAccount {
+            run: format!("{project}/c-{pane}"),
+            account: account.into(),
+            harness: "codex".into(),
+            machine: machine.into(),
+            pane: Some(pane.into()),
+            profile: None,
+        })
+        .unwrap();
+    }
+    let mut p =
+        l.h.account_selection_input("demo", &codex_profile(), None, AccountTaskSize::Medium).await.unwrap().unwrap();
+    for c in &mut p.candidates {
+        let (reserve, remaining) = match c.member.account.as_str() {
+            "large" => (5.0, 40.0),
+            "small" => (10.0, 40.0),
+            "other" => (0.0, 38.0),
+            _ => unreachable!(),
+        };
+        assert_eq!(c.coordinator_reserve, reserve, "{}", c.member.account);
+        c.quota = weekly(&c.member.account, None, remaining, 20).quota;
+    }
+    assert_eq!(choose(&l, &p).unwrap().0, "other");
+    p.candidates.retain(|c| c.member.account != "other");
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "large");
+    assert!(allocation.selection.reason.contains("coordinator 몫 5.0%p 제외 → 배정 잔량 35.0%"));
+    for id in ["large-1", "large-2"] {
+        l.h.inner.lock().unwrap().panes.get_mut(id).unwrap().info.state = SessionState::Exited { code: Some(0) };
+    }
+    let p =
+        l.h.account_selection_input("demo", &codex_profile(), None, AccountTaskSize::Medium).await.unwrap().unwrap();
+    assert_eq!(p.candidates.iter().find(|c| c.member.account == "large").unwrap().coordinator_reserve, 0.0);
+    assert_eq!(p.candidates.iter().find(|c| c.member.account == "small").unwrap().coordinator_reserve, 10.0);
 }

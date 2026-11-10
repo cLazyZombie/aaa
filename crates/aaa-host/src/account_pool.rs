@@ -48,6 +48,8 @@ pub(crate) struct Candidate {
     last_quota: Option<AccountQuota>,
     /// 요금제 배수(월 금액 ÷ 100). None은 미확인이며 1배로 본다.
     weight: Option<f64>,
+    /// 실행 중 coordinator가 쓰는 계정의 주간 예약분(%p).
+    coordinator_reserve: f64,
 }
 
 pub(crate) struct SelectionInput {
@@ -285,6 +287,14 @@ impl Host {
             required_account: None,
             minimum: [None, None],
         };
+        // 기본 계정·profile args는 다음 실행의 설정이다. 현재 pane에 전달한 계정 기록을 쓴다.
+        // 같은 계정을 여러 coordinator가 써도 계정별 예약분은 한 번만 뺀다. 연결 단절 중에도 보존한다.
+        let coordinator_accounts: std::collections::HashSet<_> = self
+            .pane_views(DeviceRole::Local)
+            .into_iter()
+            .filter(|p| p.state.is_running() && p.coordinator_project.is_some())
+            .filter_map(|p| p.account)
+            .collect();
         for member in pool.members {
             if !auto && Some(member.account.as_str()) != account {
                 continue;
@@ -310,6 +320,11 @@ impl Host {
                 quota: report.accounts.iter().find(|a| a.account == name).cloned(),
                 last_quota: cached.iter().find(|(_, q)| q.account == name).map(|(_, q)| q.clone()),
                 weight: self.account_plan_weight(&name, &profile.harness),
+                coordinator_reserve: if coordinator_accounts.contains(&name) {
+                    self.account_coordinator_reserve(&name, &profile.harness)
+                } else {
+                    0.0
+                },
                 member,
             });
         }
@@ -736,14 +751,15 @@ impl SelectionInput {
                 }
             });
             // 곧 막힐 계정은 점수와 관계없이 뒤로 둔다: 주간 잔량 5% 미만, 현재 5시간 창 잔량 10% 미만.
-            let behind = if remaining.as_ref().is_some_and(|r| r.percent < LOW_WEEKLY) {
+            let behind = if remaining.as_ref().is_some_and(|r| r.available(c.coordinator_reserve) < LOW_WEEKLY) {
                 Some("주간 잔량 5% 미만이라 뒤로")
             } else if quota.is_some_and(|q| low_session(q, self.model.as_deref(), now)) {
                 Some("5시간 잔량 10% 미만이라 뒤로")
             } else {
                 None
             };
-            let urgency = remaining.as_ref().map(|r| r.percent * c.weight.unwrap_or(1.0) / r.hours);
+            let urgency =
+                remaining.as_ref().map(|r| r.available(c.coordinator_reserve) * c.weight.unwrap_or(1.0) / r.hours);
             candidates.push((c, active, last, unobserved, remaining, behind, urgency));
         }
         candidates.sort_by(|a, b| {
@@ -757,8 +773,17 @@ impl SelectionInput {
         if let Some((c, active, _, unobserved, remaining, behind, urgency)) = candidates.first() {
             let reason = if let (Some(r), Some(urgency)) = (remaining, urgency) {
                 let weight = c.weight.map_or_else(|| "요금제 미확인 ×1".to_string(), |w| format!("요금제 ×{w}"));
+                let reserve = if r.weekly && c.coordinator_reserve > 0.0 {
+                    format!(
+                        " · coordinator 몫 {:.1}%p 제외 → 배정 잔량 {:.1}%",
+                        c.coordinator_reserve,
+                        r.available(c.coordinator_reserve)
+                    )
+                } else {
+                    String::new()
+                };
                 format!(
-                    "{} 잔량 {:.1}% · {weight} · 초기화 {:.1}시간 뒤 · 시간당 {urgency:.2} 큰 계정",
+                    "{} 잔량 {:.1}%{reserve} · {weight} · 초기화 {:.1}시간 뒤 · 시간당 {urgency:.2} 큰 계정",
                     if *unobserved { "마지막 관측으로 판단" } else { "최신 관측" },
                     r.percent,
                     r.hours,
@@ -808,8 +833,15 @@ const WEEK_MS: u64 = 10080 * 60_000;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Remaining {
     pub percent: f64,
+    weekly: bool,
     pub observed_at_ms: u64,
     pub hours: f64,
+}
+
+impl Remaining {
+    fn available(&self, coordinator_reserve: f64) -> f64 {
+        (self.percent - if self.weekly { coordinator_reserve } else { 0.0 }).max(0.0)
+    }
 }
 
 /// 다음 초기화까지 시간. 지난 리셋은 창 길이만큼 다음 리셋을 잇고, 리셋을 모르면 창 한 길이로 본다.
@@ -858,6 +890,7 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
                 };
             Remaining {
                 percent: remaining,
+                weekly: w.window.duration_mins == Some(10080) && w.window.scope.is_none(),
                 observed_at_ms: w.window.observed_at_ms,
                 hours: hours_to_reset(&w.window, now),
             }
