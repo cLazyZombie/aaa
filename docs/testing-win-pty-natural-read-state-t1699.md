@@ -2,7 +2,7 @@
 
 ## 범위
 
-q-3296 1A에 따라 [제품 수명 진단](testing-win-pty-product-lifetimes-t1699.md)의 후속 수집을 구현한다.
+q-3296 1A에 따라 [제품 수명 진단](testing-win-pty-product-lifetimes-t1699.md)의 후속 수집을 구현·검증했다.
 원래 정체의 원인 수리가 아니라 다음 자연 실패의 관측 경계를 넓히는 변경이다.
 기존 PTY의 60초 실패 판정·질문·입력·승인 조건을 유지한다. 수집 때문에 성공 대기를 다시 시작하지 않는다.
 
@@ -60,7 +60,7 @@ PDB와 원시 public 목록은 작업 scratch에만 두고 공개 문서·보고
 따라서 이번 변경은 서버 내부 세 단계를 구분한다고 약속하지 않는다.
 ETW session 시작·메모리 dump·debugger attach·conhost thread 정지는 추가하지 않는다.
 
-## 회귀와 검증 계획
+## 회귀와 검증 결과
 
 실제 CLI의 입력 없는 read를 I/O pending 사건으로 확인한 뒤 원래 stdin wait=unsignaled·reader pending=true를 받는다.
 그 뒤 실제 yes 승인이 성공하고 plan hash가 출력에 남는 것을 확인한다.
@@ -69,5 +69,41 @@ ETW session 시작·메모리 dump·debugger attach·conhost thread 정지는 �
 별도 pending fixture도 실제 I/O pending 사건 뒤 수집하고 같은 응답을 받는다.
 통제 fixture의 응답은 자연 실패로 표시하지 않는다. 수집 성공을 위해 정한 시간을 자지 않는다.
 
-정규 전체 ci-local과 실제 Windows 설치 owner·native strict Clippy, 필요한 cross 검사를 수행한 뒤 결과를 기록한다.
-새 원격 진단 branch의 CI만 허용하며 main·기존 진단 branch·tag·force push·착지는 하지 않는다.
+정규 전체 ci-local과 실제 Windows 설치 owner·native strict Clippy, Windows 교차 strict Clippy를 통과했다.
+검증은 `aaa verify`를 거쳤다. 정규 전체 실행 중에는 커밋·추적 파일 변경을 하지 않았다.
+
+| 범위 | 결과 |
+| --- | --- |
+| 정규 전체 ci-local | web·fmt·build·test·e2e·public 모두 통과, 전체 291초 |
+| Rust 실행 owner | 343개 작업 모두 exit 0 |
+| Python | 88개, 기존 2개 무시, 통과 |
+| 웹 E2E | 선택 범위를 줄이지 않은 전체 실행 통과 |
+| 관련 macOS native strict Clippy | CLI·설치 통합 owner 통과 |
+| 관련 Windows 교차 strict Clippy | CLI·설치 통합 owner 통과 |
+| 실제 Server 2025 native strict Clippy | aaa all-targets 통과 |
+| 실제 Windows 설치 owner 전체 | 43통과·기존 수동/격리 입구 3무시, 83.10초 |
+
+실제 Windows는 [진단 CI](https://github.com/cLazyZombie/aaa/actions/runs/42751265917), attempt 1이다.
+OS 10.0.26100·product type 3, image 20261103.298.1, conhost 10.0.26100.33648을 확인했다.
+서버 provider 목록 조회는 성공했으나 그 시점에 `Microsoft.Windows.Console.Host` 이름은 없었다.
+이 결과를 다른 시점·다른 provider의 부재로 확대하지 않는다. ETW 수집은 켜지 않았다.
+
+job 전체와 artifact에서 아래 세 표본이 일치했다. 모두 controlled_fixture 출처다.
+
+| 실제 경계 | read ID | phase 전후 | 원래 stdin wait | reader I/O pending |
+| --- | --- | --- | --- | --- |
+| 선입력 fixture | 41 | prepared → prepared | 0(signaled) | false |
+| 읽기 대기 fixture | 41 | call → call | 258(unsignaled) | true |
+| 실제 승인 CLI | 1 | call → call | 258(unsignaled) | true |
+
+선입력 전체 반환·모드 보존과 실제 승인 발급·plan hash 대조까지 통과했다.
+표본 JSON에는 입력·handle 값·경로가 없고 별도 CONIN$ 필드와 혼동하지 않는다.
+이는 다음 자연 실패에서 원래 handle을 수집할 수 있는 경로 검증이며 정체 원인 확정·CI 회복 증거는 아니다.
+실제 60초 실패를 만들려고 시간을 자거나 시한을 줄여 강제로 발생시키지는 않았다.
+
+개발 중 shared wire 모듈을 두 번 포함한 Clippy 오류는 같은 모듈을 참조하도록 고쳐 해결했다.
+시험을 재실행해 실패를 통과로 바꾸거나 기대값·시한을 바꾼 일은 없다.
+정규 전체와 실제 Windows 실행은 각각 한 번 수행했다.
+
+새 원격 진단 branch만 만들었고 main·기존 진단 branch·tag·force push·착지는 하지 않았다.
+진단 workflow는 개발 후보와 분리했다. main 착지는 별도 승인 대상이다.
