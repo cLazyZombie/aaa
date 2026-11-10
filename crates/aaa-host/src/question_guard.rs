@@ -189,6 +189,9 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
     static CONDITIONAL: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|보신 뒤|보시고 정해|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
+    static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+    });
     static CHOICE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?\*{0,2}\s+\S").unwrap());
     if let Some(m) = QUESTION.find(text) {
@@ -197,6 +200,9 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
     // 조건부 제안은 실제 질문 어미와 분리한다. 한 문장의 제안이 다음 문장의 요청을 가리지 않는다.
     let mut line = 0;
     for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
+        // 피드백 구절만 지운다. 같은 문장의 별개 승인·선택 요청까지 면제하지 않는다.
+        let actionable = OPTIONAL_FEEDBACK.replace_all(sentence, "");
+        let sentence = actionable.as_ref();
         let future_permission = sentence.contains("해도 되면") && text.contains("여쭙겠습니다");
         if !CONDITIONAL.is_match(sentence) && !future_permission {
             if let Some(ask) = ASK.find(sentence) {

@@ -53,6 +53,41 @@ fn decisions_are_distinct_from_instructions_optional_offers_and_completed_lists(
     }
 }
 
+/// 선택적인 피드백 한 구절이 같은 문장의 별개 승인·선택 요청을 가리지 않아야 한다.
+#[test]
+fn conditional_feedback_does_not_require_an_answer_or_hide_a_decision() {
+    let cards = cards();
+    for text in [
+        "필요하면 말씀해 주세요.",
+        "지우려면 따로 말씀해 주세요.",
+        "수정을 마쳤습니다. 아직 안 움직이는 경우가 있으면 말씀해 주세요.",
+        "필요하다면 알려 주십시오.",
+        "오류가 있으면 따로 알려 주세요.",
+        "말씀해 주세요, 필요하면.",
+    ] {
+        let result = inspect(text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+    }
+    for text in [
+        "지금 배포해도 되면 말씀해 주세요.",
+        "필요하면 지금 배포할지 알려 주세요.",
+        "지우려면 승인 여부를 말씀해 주세요.",
+        "아직 안 움직이는 경우가 있으면 복구와 삭제 중 하나를 골라 주세요.",
+        "필요하면 말씀해 주세요, 지금 배포 여부를 알려 주세요.",
+        "지금 배포 여부를 알려 주세요, 필요하면 말씀해 주세요.",
+        "필요하면 말씀해 주세요. 지금 배포할까요?",
+        "필요하면 말씀해 주세요.\n- A 배포 (추천)\n- B 보류",
+        "필요하면 배포할까요?",
+        "지우려면 어느 안으로 할까요?",
+        "승인하셨으면 알려 주세요.",
+        "승인 여부를 말씀해 주세요, 필요하면.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+    let evidence = inspect("필요하면 말씀해 주세요.\n\n승인 여부를 알려 주세요.", &cards).missing.unwrap();
+    assert_eq!(evidence.line, 3);
+}
+
 /// 링크와 요청 사이의 빈 줄을 허용하되 별개 승인 요청까지 면제하지 않는다.
 #[test]
 fn card_links_follow_the_topic_and_preserve_separate_new_requests() {
