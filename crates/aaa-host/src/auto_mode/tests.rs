@@ -161,6 +161,74 @@ async fn automatic_reply_keeps_the_source_letter_on_reordered_choices() {
     assert_eq!(records[0].question.choices[0].letter.as_deref(), Some("B"));
     assert_eq!(records[0].outcome, "answered");
 }
+
+/// 답 전달은 끝났는데 이력을 응답에 붙여 1MiB frame에서 실패하던 경계를 실제 직렬화로 본다.
+#[tokio::test]
+async fn automatic_reply_returns_a_small_ack_with_large_answer_history() {
+    let (h, _lab) = coordinator_host();
+    h.auto_mode_set("demo", true, "local:cli").unwrap();
+    let first = question(&h, 1, "## Questions\n### 1. 자리\n- A 아래\n- B 위\n").remove(0);
+    answer(&h, &first, COORD).await.unwrap();
+    let mut record = h.db.ask_list("demo").unwrap().remove(0);
+    record.body = Some("지난 질문의 근거\n".repeat(2048));
+    for n in 0..40 {
+        record.id = format!("history-{n}");
+        h.db.ask_put("demo", &record).unwrap();
+    }
+    assert!(serde_json::to_vec(&h.asks_view("demo").unwrap()).unwrap().len() > aaa_proto::MAX_FRAME);
+    let ids = question(&h, 2, "## Questions\n### 1. 자리\n- A 아래\n- B 위\n### 2. 색\n- A 파랑\n- B 회색\n");
+    for (n, id) in ids.iter().enumerate() {
+        let result = answer(&h, id, COORD).await;
+        let bytes = crate::front::res_frame(format!("reply-{n}"), result);
+        assert!(bytes.len() < 1024, "이력 크기와 무관한 처리 결과만 보낸다");
+        let aaa_proto::FrontMsg::Res { result, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!() };
+        let response = result.into_result().unwrap();
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "kind": "question_answered", "id": id, "complete": n == 1,
+            })
+        );
+        assert_eq!(h.user_requests("demo").unwrap().is_empty(), n == 1);
+        assert_eq!(h.auto_decisions("demo").unwrap()[0].outcome, "answered");
+        assert!(answer(&h, id, COORD).await.is_err(), "성공한 답을 다시 보내지 않는다");
+    }
+    assert_eq!(h.db.ask_list("demo").unwrap().len(), 42);
+    let notices = h.db.inbox_list(Some("demo"), true).unwrap();
+    assert_eq!(notices.iter().filter(|i| i.event == "question answered" && i.body.contains("1B 2B")).count(), 1);
+    // 사람이 웹에서 쓰는 목록·페이지 응답은 같은 형식을 유지한다.
+    let FrontResponse::Asks { done_index, done_next, .. } = h.asks_view_mode("demo", true).unwrap() else { panic!() };
+    assert_eq!(done_index.unwrap().len(), 42);
+    assert!(done_next.is_some());
+}
+
+/// 실제 전달 거절은 작은 성공 응답으로 바꾸지 않고 원장에도 같은 오류로 남긴다.
+#[tokio::test]
+async fn automatic_reply_preserves_delivery_failure_and_releases_the_draft() {
+    let (h, _lab) = coordinator_host();
+    h.auto_mode_set("demo", true, "local:cli").unwrap();
+    let mut rec =
+        crate::orch::ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, aaa_proto::ThreadKind::Dir, 1);
+    rec.id = "t-0001".into();
+    rec.status = aaa_proto::ThreadStatus::Open;
+    rec.brief = aaa_proto::BriefState::Delivered;
+    rec.report_hash = Some("hash".into());
+    rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 아래\n- B 위\n");
+    h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    let id = h.thread_show("demo", &rec.id).unwrap().questions.unwrap().items[0].id.clone().unwrap();
+    let bytes = crate::front::res_frame("failure".into(), answer(&h, &id, COORD).await);
+    let aaa_proto::FrontMsg::Res { result, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!() };
+    let error = result.into_result().unwrap_err();
+    assert!(error.message.contains("thread 세션이 없다"));
+    let decisions = h.auto_decisions("demo").unwrap();
+    assert_eq!(decisions[0].outcome, "failed");
+    assert_eq!(decisions[0].error.as_deref(), Some(error.message.as_str()));
+    assert_eq!(h.auto_mode("demo").unwrap().decisions, 0);
+    assert!(h.db.question_target(Some("demo"), &id).unwrap().unwrap().draft.is_none());
+    assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
+    assert!(h.db.ask_list("demo").unwrap().is_empty());
+    assert!(answer(&h, &id, COORD).await.unwrap_err().message.contains("이미 자동 답을 시도"));
+}
 #[tokio::test]
 async fn mixed_questions_keep_human_exceptions_open_and_harness_aliases_cannot_be_auto_answered() {
     let (h, _lab) = coordinator_host();
