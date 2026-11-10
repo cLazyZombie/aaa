@@ -90,6 +90,7 @@ pub fn typescript_bindings() -> String {
         WorkspaceDashboard::decl(&cfg),
         SecretText::decl(&cfg),
         AccountView::decl(&cfg),
+        AccountRefreshFailure::decl(&cfg),
         QuotaSource::decl(&cfg),
         QuotaProblem::decl(&cfg),
         QuotaFreshness::decl(&cfg),

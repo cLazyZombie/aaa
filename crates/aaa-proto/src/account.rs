@@ -50,6 +50,66 @@ pub struct AccountView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub health: Option<AccountHealth>,
+    /// Codex 금고 인증의 access token 만료 시각(ms, JWT `exp`). host는 이보다 하루 전에 미리 갱신한다(FRONT_API 1.166). 모르면 생략
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub token_expires_ms: Option<u64>,
+    /// host가 제공자에게서 새 인증을 받은 마지막 시각(ms, FRONT_API 1.166). 모르면 생략
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub refreshed_ms: Option<u64>,
+    /// 이어진 인증 갱신 실패(FRONT_API 1.166). 갱신·로그인이 성공하면 생략
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub refresh_failure: Option<AccountRefreshFailure>,
+}
+
+/// 이어진 Codex 인증 갱신 실패(FRONT_API 1.166). 토큰·제공자 본문은 담지 않는다: 원인 종류·단계·HTTP 상태·제공자 오류 코드만
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountRefreshFailure {
+    /// `aaa`(aaa 안: 금고·요청 형식·저장), `network`(host가 제공자에 닿지 못함·시한), `provider`(제공자가 200이 아닌 상태)
+    pub cause: String,
+    /// 실패한 단계(고정 낱말, 예: `request_format`·`provider_connect`·`provider`)
+    pub stage: String,
+    /// 제공자 HTTP 상태
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub status: Option<u16>,
+    /// 제공자 오류 코드(예: `refresh_token_expired`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub code: Option<String>,
+    /// 사람이 다시 로그인해야 풀린다(제공자가 거부했다)
+    pub relogin: bool,
+    /// 이번 실패가 처음 난 시각(ms)
+    #[ts(type = "number")]
+    pub since_ms: u64,
+    /// 마지막 실패 시각(ms)
+    #[ts(type = "number")]
+    pub last_ms: u64,
+    /// 이어진 실패 횟수
+    pub attempts: u32,
+    /// 이 실패로 갱신을 받지 못한 thread(`t-NNNN`, coordinator는 `coordinator`). 없으면 생략
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub threads: Vec<String>,
+}
+
+impl AccountRefreshFailure {
+    /// 사람이 읽는 원인(알림·CLI 목록. 웹 `refreshReason`과 같은 글)
+    pub fn reason(&self) -> String {
+        match self.cause.as_str() {
+            "provider" => {
+                let status = self.status.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+                match &self.code {
+                    Some(code) => format!("OpenAI 응답 {status} {code}"),
+                    None => format!("OpenAI 응답 {status}"),
+                }
+            }
+            "network" => format!("host가 OpenAI에 닿지 못함({})", self.stage),
+            _ => format!("aaa 안 오류({})", self.stage),
+        }
+    }
 }
 
 /// host가 관리하는 공급자별 요금제 목록. 금액·창 정책은 공식 자료 확인 뒤 갱신한다.
@@ -111,6 +171,13 @@ pub struct AccountRefreshed {
     pub id: String,
     pub version: u64,
     pub response: Option<SecretText>,
+    /// 실패 때 pane 중계가 돌려줄 HTTP 상태: 제공자 상태 그대로, host가 제공자에 닿지 못했으면 502. 없으면 aaa 안의 실패(503).
+    /// 옛 agent·session은 버리고 503을 쓴다(t-1688)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    /// 제공자 오류 코드만(본문 없음). Codex가 이 코드로 재로그인 안내를 고른다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 /// 인증값을 포함하지 않는 harness별 기본 설정.

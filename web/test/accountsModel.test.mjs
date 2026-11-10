@@ -2,7 +2,7 @@
 // (account_meta/tests.rs, m13 `host_relogin_checks_the_email_and_asks_before_switching`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { renewalAccounts, canAccounts, day, groupAccounts, healthWord, loginText, validAlias } from "../src/accountsModel.ts";
+import { renewalAccounts, canAccounts, day, dayTime, groupAccounts, healthWord, loginText, refreshFailureText, refreshReason, validAlias } from "../src/accountsModel.ts";
 
 describe("계정", () => {
   it("웹 로그인·기본 변경은 1.79 이상 host만", () => {
@@ -21,6 +21,16 @@ describe("계정", () => {
     assert.deepEqual(healthWord("rejected", undefined, now), { text: "끊김(갱신 거부)", tone: "bad" });
     // 옛 host는 상태를 주지 않는다: 배지를 그리지 않는다
     assert.deepEqual(healthWord(undefined, undefined, now), { text: "", tone: "none" });
+  });
+  it("갱신 실패는 host와 같은 원인 글에 횟수·처음 실패·멈춘 thread를 붙인다(t-1688)", () => {
+    const base = { stage: "provider", relogin: false, since_ms: Date.UTC(2026, 10, 9, 14, 50), last_ms: 0, attempts: 3 };
+    assert.equal(refreshReason({ ...base, cause: "provider", status: 401, code: "refresh_token_expired" }), "OpenAI 응답 401 refresh_token_expired");
+    assert.equal(refreshReason({ ...base, cause: "provider", status: 503 }), "OpenAI 응답 503");
+    assert.equal(refreshReason({ ...base, cause: "network", stage: "provider_connect" }), "host가 OpenAI에 닿지 못함(provider_connect)");
+    assert.equal(refreshReason({ ...base, cause: "aaa", stage: "request_format" }), "aaa 안 오류(request_format)");
+    const text = refreshFailureText({ ...base, cause: "aaa", stage: "request_format", threads: ["t-0007", "coordinator"] });
+    assert.match(text, /^aaa 안 오류\(request_format\) · 3번 · 처음 2026-11-(09|10) \d\d:50 · 멈춘 thread t-0007, coordinator$/);
+    assert.equal(dayTime(undefined), "모름");
   });
   it("날짜만 보이고 모르면 「모름」", () => {
     assert.equal(day(undefined), "모름");

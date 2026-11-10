@@ -1,7 +1,7 @@
 // 설정 「계정」의 순수 규칙(관리 GUI W5a, plan §8.351): host 계정 목록·상태 낱말·로그인 진행 글.
 // 판정의 정본은 host다(웹 조작 기기·세션 밖 CLI만 로그인·기본 변경, 메일은 그 둘에만 실린다). 인증 주소·토큰은 화면에 없다.
 import { apiAtLeast } from "./automationModel.ts";
-import type { AccountDefault, AccountHealth, AccountLoginView, AccountView } from "./gen/proto";
+import type { AccountDefault, AccountHealth, AccountLoginView, AccountRefreshFailure, AccountView } from "./gen/proto";
 
 /** 웹 로그인·기본 변경·메일·상태는 1.79 이상 host만 안다(옛 host는 목록만 준다) */
 export const canAccounts = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 79);
@@ -18,6 +18,33 @@ export function day(ms: number | undefined | null): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 날짜와 분(이 기기의 시간대). 모르면 「모름」 */
+export function dayTime(ms: number | undefined | null): string {
+  if (ms === undefined || ms === null) return "모름";
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${day(ms)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 이어진 Codex 인증 갱신 실패의 원인(host `AccountRefreshFailure::reason`과 같은 글, FRONT_API 1.166) */
+export function refreshReason(f: AccountRefreshFailure): string {
+  switch (f.cause) {
+    case "provider":
+      return f.code ? `OpenAI 응답 ${f.status ?? "-"} ${f.code}` : `OpenAI 응답 ${f.status ?? "-"}`;
+    case "network":
+      return `host가 OpenAI에 닿지 못함(${f.stage})`;
+    default:
+      return `aaa 안 오류(${f.stage})`;
+  }
+}
+
+/** 갱신 실패 한 줄: 원인·횟수·처음 실패·멈춘 thread */
+export function refreshFailureText(f: AccountRefreshFailure): string {
+  const parts = [refreshReason(f), `${f.attempts}번`, `처음 ${dayTime(f.since_ms)}`];
+  if (f.threads?.length) parts.push(`멈춘 thread ${f.threads.join(", ")}`);
+  return parts.join(" · ");
 }
 
 export type Tone = "ok" | "warn" | "bad" | "none";

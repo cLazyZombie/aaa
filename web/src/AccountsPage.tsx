@@ -14,7 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { AccountDefault, AccountLoginView, AccountView, AccountPlanOption, DeviceRole } from "./gen/proto";
 import { ApiError, call, me, onAccountsChanged } from "./api";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
-import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, loginText, validAlias } from "./accountsModel.ts";
+import { canAccounts, day, dayTime, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, loginText, refreshFailureText, validAlias } from "./accountsModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
@@ -153,6 +153,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                         <span className="acct-name">{a.name}</span>
                         {a.isDefault && <span className="acct-badge is-default">기본</span>}
                         {h.text && <span className={`acct-badge is-${h.tone}`} data-testid="account-health">{h.text}</span>}
+                        {a.refresh_failure && !a.refresh_failure.relogin && <span className="acct-badge is-warn" data-testid="account-refresh-badge">갱신 실패</span>}
                       </div>
                       {data.full && (
                         <dl className="acct-facts">
@@ -176,6 +177,24 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             <>
                               <dt>만료</dt>
                               <dd>{day(a.expires_ms)}</dd>
+                            </>
+                          )}
+                          {a.token_expires_ms !== undefined && (
+                            <>
+                              <dt>인증 만료 예정</dt>
+                              <dd data-testid="account-token-expiry">{dayTime(a.token_expires_ms)}</dd>
+                            </>
+                          )}
+                          {a.refreshed_ms !== undefined && (
+                            <>
+                              <dt>마지막 갱신</dt>
+                              <dd data-testid="account-refreshed">{dayTime(a.refreshed_ms)}</dd>
+                            </>
+                          )}
+                          {a.refresh_failure && (
+                            <>
+                              <dt>갱신 실패</dt>
+                              <dd data-testid="account-refresh-failure">{refreshFailureText(a.refresh_failure)}</dd>
                             </>
                           )}
                         </dl>

@@ -1,5 +1,12 @@
 use super::*;
-use crate::accounts::RefreshOutcome;
+use crate::accounts::{RefreshFailure, RefreshOutcome};
+
+fn rejected() -> RefreshOutcome {
+    RefreshOutcome::Rejected(RefreshFailure::provider(401, Some("refresh_token_expired".into())))
+}
+fn network() -> RefreshOutcome {
+    RefreshOutcome::Failed(RefreshFailure::network("provider_connect"))
+}
 use aaa_proto::{ErrorCode, FrontRequest, FrontResponse};
 use std::sync::Arc;
 
@@ -150,10 +157,10 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
     h.account_logged_in("work", &codex_identity(&codex_auth("work@example.com", "plus")), false).unwrap();
     assert!(account_items(h).is_empty(), "정상은 알리지 않는다");
     // 제공자가 갱신을 거부했다 → 끊김 한 번. 망 실패는 끊김이 아니다
-    h.account_refresh_seen("work", RefreshOutcome::Failed, 1);
+    h.account_refresh_seen("work", &network(), 1, None);
     assert!(account_items(h).is_empty());
-    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
-    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
+    h.account_refresh_seen("work", &rejected(), 1, None);
+    h.account_refresh_seen("work", &rejected(), 1, None);
     h.account_health_pass();
     let items = account_items(h);
     assert_eq!(items.len(), 1, "{items:?}");
@@ -203,6 +210,70 @@ fn a_switched_email_restarts_the_first_auth_date() {
     assert!(m.first_auth_ms.unwrap() > 5 && m.first_auth_ms == m.last_auth_ms);
 }
 
+// 필요: 갱신 실패를 원인과 함께 알리고(한 번의 일시 실패는 알리지 않는다) 회복하면 멈췄던 thread를 알리는 계약(t-1688 답 1B·2A).
+// 일시 실패는 끊김이 아니어서 자동 배정을 막지 않는다. 제공자 거부는 끊김 알림 하나에 오류 코드와 다시 로그인 명령을 싣는다.
+#[test]
+fn refresh_failures_alert_with_the_cause_and_recovery_names_stalled_threads() {
+    let lab = lab(true);
+    let h = &lab.h;
+    h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
+    let open = |h: &Host| -> Vec<aaa_proto::InboxItem> { account_items(h).into_iter().filter(|i| !i.done).collect() };
+    h.account_refresh_seen("work", &network(), 1, None);
+    h.account_refresh_seen("work", &network(), 1, None);
+    assert!(account_items(h).is_empty(), "선제 갱신의 일시 실패 두 번은 다음 시도가 덮는다");
+    let inner = RefreshOutcome::Failed(RefreshFailure::aaa("request_format"));
+    h.account_refresh_seen("work", &inner, 1, Some("t-0007"));
+    h.account_refresh_seen("work", &inner, 1, Some("t-0007"));
+    h.account_refresh_seen("work", &inner, 1, Some("c-01abc"));
+    let items = open(h);
+    // 첫 pane 실패에 알리고 같은 실패가 이어지는 동안 다시 내지 않는다. 지금 횟수·thread 전체는 계정 목록과 회복 알림에 있다
+    assert_eq!(
+        items.iter().map(|i| i.event.as_str()).collect::<Vec<_>>(),
+        ["갱신 실패"],
+        "pane이 멈추면 바로 한 번 알린다"
+    );
+    assert!(
+        items[0].summary.contains("aaa 안 오류(request_format), 3번째")
+            && items[0].summary.contains("멈춘 thread: t-0007."),
+        "{}",
+        items[0].summary
+    );
+    let view = h.account_views(false).unwrap().into_iter().find(|v| v.name == "work").unwrap();
+    assert_eq!(view.health, Some(AccountHealth::Ok), "일시 실패는 끊김이 아니다");
+    let f = view.refresh_failure.unwrap();
+    assert_eq!(
+        (f.cause.as_str(), f.stage.as_str(), f.attempts, f.relogin, f.threads),
+        ("aaa", "request_format", 5, false, vec!["t-0007".to_string(), "coordinator".into()])
+    );
+    h.account_refresh_seen("work", &RefreshOutcome::Renewed, 1, None);
+    let items = open(h);
+    assert_eq!(
+        items.iter().map(|i| i.event.as_str()).collect::<Vec<_>>(),
+        ["회복"],
+        "실패 항목을 끝내고 회복을 알린다"
+    );
+    assert!(items[0].summary.contains("멈췄던 thread: t-0007, coordinator."), "{}", items[0].summary);
+    let m = h.account_meta("work");
+    assert!(m.refresh_failure.is_none() && m.stalled.is_empty() && m.refreshed_ms.is_some(), "{m:?}");
+    h.account_health_pass();
+    assert_eq!(open(h).len(), 1, "회복 알림은 한 번");
+    h.account_refresh_seen("work", &rejected(), 1, Some("t-0008"));
+    let items = open(h);
+    assert_eq!(items.iter().map(|i| i.event.as_str()).collect::<Vec<_>>(), ["끊김"]);
+    for want in
+        ["OpenAI 응답 401 refresh_token_expired", "`aaa account login work --harness codex`", "멈춘 thread: t-0008."]
+    {
+        assert!(items[0].summary.contains(want), "{want}: {}", items[0].summary);
+    }
+    // 다시 로그인하면 끊김을 끝내고 멈췄던 thread를 알린다
+    h.account_logged_in("work", &Identity::default(), false).unwrap();
+    let items = open(h);
+    assert_eq!(
+        items.iter().map(|i| (i.event.as_str(), i.summary.contains("t-0008"))).collect::<Vec<_>>(),
+        [("회복", true)]
+    );
+}
+
 #[tokio::test]
 async fn an_old_version_served_from_the_vault_does_not_clear_a_rejection() {
     let lab = lab(true);
@@ -210,14 +281,14 @@ async fn an_old_version_served_from_the_vault_does_not_clear_a_rejection() {
     h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
     h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
     // 옛 판(1)의 거부는 그 사이 다시 로그인한 판 2를 끊김으로 만들지 않는다
-    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
+    h.account_refresh_seen("work", &rejected(), 1, None);
     assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Ok);
-    h.account_refresh_seen("work", RefreshOutcome::Rejected, 2);
+    h.account_refresh_seen("work", &rejected(), 2, None);
     // 옛 판(1) 요청에는 제공자에게 묻지 않고 금고의 판 2를 준다: 거부된 인증이 다시 살아난 것이 아니다
     let request = aaa_proto::SecretText(r#"{"grant_type":"refresh_token"}"#.into());
     let (served, outcome) = h.accounts.refresh("work", 1, &request).await;
-    assert_eq!((served.version, outcome), (2, RefreshOutcome::Served));
-    h.account_refresh_seen("work", outcome, 1);
+    assert_eq!((served.version, &outcome), (2, &RefreshOutcome::Served));
+    h.account_refresh_seen("work", &outcome, 1, None);
     assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Rejected);
     assert_eq!(account_items(h).iter().filter(|i| !i.done).count(), 1, "끊김 항목이 그대로 하나");
 }
@@ -291,8 +362,10 @@ fn automatic_refresh_preserves_the_edited_email() {
     h.account_meta_backfill();
     h.account_email("work", "corrected@example.com", "local:cli").unwrap();
     let before = h.account_meta("work");
-    h.account_refresh_seen("work", RefreshOutcome::Renewed, 1);
-    assert_eq!(h.account_meta("work"), before);
+    h.account_refresh_seen("work", &RefreshOutcome::Renewed, 1, None);
+    let after = h.account_meta("work");
+    assert!(after.refreshed_ms.is_some(), "갱신 시각만 남긴다");
+    assert_eq!(AccountMeta { refreshed_ms: None, ..after }, before);
 }
 
 // 필요: 로그인 갱신이 사람의 선택을 덮거나 다른 제공자의 요금제로 창을 끄는 회귀를 막는다.

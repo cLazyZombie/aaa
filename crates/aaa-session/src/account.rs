@@ -276,15 +276,42 @@ async fn serve(
             *current = r.version;
             let b = r.response.unwrap().0;
             aaa_common::redact::remember_auth("codex", &b);
-            ("200 OK", b)
+            ("200 OK".to_string(), b)
         }
-        _ => ("503 Service Unavailable", "{\"error\":\"credential_refresh_unavailable\"}".into()),
+        Ok(Ok(r)) => failure_reply(r.status, r.code.as_deref()),
+        // host가 답하지 않았다(연결 끊김·시한). Codex 화면에 「504 Gateway Timeout」으로 보인다
+        _ => ("504 Gateway Timeout".into(), "{\"error\":\"aaa_host_unreachable\"}".into()),
     };
     stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).await?;
     stream.write_all(body.as_bytes()).await?;
     stream.shutdown().await?;
     Ok(())
 }
+/// 갱신 실패 응답(t-1688). 제공자가 준 상태와 오류 코드를 그대로 돌려 Codex가 자기 안내(「refresh token 만료, 다시 로그인」 등)를
+/// 고르게 한다. host가 제공자에 닿지 못했으면 502, aaa 안의 실패는 503이다. 오류 코드는 짧은 낱말만 싣는다(본문 없음)
+fn failure_reply(status: Option<u16>, code: Option<&str>) -> (String, String) {
+    let Some(status) = status.filter(|s| (400..=599).contains(s)) else {
+        return ("503 Service Unavailable".into(), "{\"error\":\"credential_refresh_unavailable\"}".into());
+    };
+    let reason = match status {
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "Error",
+    };
+    let code = code
+        .filter(|c| {
+            c.len() <= 64 && !c.is_empty() && c.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+        })
+        .unwrap_or("provider_error");
+    (format!("{status} {reason}"), serde_json::json!({ "error": code }).to_string())
+}
+
 async fn read_http(stream: &mut tokio::net::TcpStream, token: &str) -> Result<String> {
     let mut buf = Vec::new();
     let mut chunk = [0; 4096];
@@ -374,6 +401,23 @@ mod tests {
             trust_cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
             auth_generation: None,
         }
+    }
+
+    // 필요: pane 화면이 갱신 실패 원인을 정확히 보이는 계약(t-1688). 제공자 상태·오류 코드는 그대로, 코드 꼴이 아니면 버리고,
+    // aaa 안의 실패는 503이다.
+    #[test]
+    fn refresh_failures_keep_only_the_provider_status_and_code() {
+        let reply = |s, c| failure_reply(s, c);
+        assert_eq!(
+            reply(Some(401), Some("refresh_token_expired")),
+            ("401 Unauthorized".into(), r#"{"error":"refresh_token_expired"}"#.into())
+        );
+        assert_eq!(reply(Some(502), Some("aaa_provider_unreachable")).0, "502 Bad Gateway");
+        assert_eq!(reply(Some(400), Some("bad code\"}")).1, r#"{"error":"provider_error"}"#);
+        let unavailable =
+            ("503 Service Unavailable".to_string(), r#"{"error":"credential_refresh_unavailable"}"#.to_string());
+        assert_eq!(reply(None, None), unavailable);
+        assert_eq!(reply(Some(200), None), unavailable);
     }
 
     #[tokio::test]

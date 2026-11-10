@@ -75,7 +75,57 @@ expires_ms?: number,
 /**
  * 인증 상태. 옛 host는 생략한다
  */
-health?: AccountHealth, };
+health?: AccountHealth,
+/**
+ * Codex 금고 인증의 access token 만료 시각(ms, JWT `exp`). host는 이보다 하루 전에 미리 갱신한다(FRONT_API 1.166). 모르면 생략
+ */
+token_expires_ms?: number,
+/**
+ * host가 제공자에게서 새 인증을 받은 마지막 시각(ms, FRONT_API 1.166). 모르면 생략
+ */
+refreshed_ms?: number,
+/**
+ * 이어진 인증 갱신 실패(FRONT_API 1.166). 갱신·로그인이 성공하면 생략
+ */
+refresh_failure?: AccountRefreshFailure, };
+
+export type AccountRefreshFailure = {
+/**
+ * `aaa`(aaa 안: 금고·요청 형식·저장), `network`(host가 제공자에 닿지 못함·시한), `provider`(제공자가 200이 아닌 상태)
+ */
+cause: string,
+/**
+ * 실패한 단계(고정 낱말, 예: `request_format`·`provider_connect`·`provider`)
+ */
+stage: string,
+/**
+ * 제공자 HTTP 상태
+ */
+status?: number,
+/**
+ * 제공자 오류 코드(예: `refresh_token_expired`)
+ */
+code?: string,
+/**
+ * 사람이 다시 로그인해야 풀린다(제공자가 거부했다)
+ */
+relogin: boolean,
+/**
+ * 이번 실패가 처음 난 시각(ms)
+ */
+since_ms: number,
+/**
+ * 마지막 실패 시각(ms)
+ */
+last_ms: number,
+/**
+ * 이어진 실패 횟수
+ */
+attempts: number,
+/**
+ * 이 실패로 갱신을 받지 못한 thread(`t-NNNN`, coordinator는 `coordinator`). 없으면 생략
+ */
+threads?: Array<string>, };
 
 export type QuotaSource = "codex_rpc" | "claude_statusline" | "claude_oauth";
 

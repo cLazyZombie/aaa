@@ -169,7 +169,7 @@ async fn proxy(h: &Arc<Host>, job: &Job, version: u64) -> Result<(Proxy, String)
                     {
                         return (StatusCode::UNAUTHORIZED, "{}".into());
                     }
-                    h.account_refresh_seen(&account, outcome, *version);
+                    h.account_refresh_seen(&account, &outcome, *version, None);
                     if let Some(response) = result.response {
                         *version = result.version;
                         (StatusCode::OK, response.0)

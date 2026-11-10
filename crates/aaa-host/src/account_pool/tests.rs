@@ -224,7 +224,12 @@ async fn real_auth_failures_still_block_and_old_rejections_do_not_poison_a_new_l
     let original_generation = l.h.accounts.generation("work").unwrap();
     let profile = codex_profile();
     let prepare = || l.h.account_selection_input("demo", &profile, None, AccountTaskSize::Medium);
-    l.h.account_refresh_seen("work", crate::accounts::RefreshOutcome::Rejected, first.version);
+    l.h.account_refresh_seen(
+        "work",
+        &crate::accounts::RefreshOutcome::Rejected(crate::accounts::RefreshFailure::provider(401, None)),
+        first.version,
+        None,
+    );
     let input = prepare().await.unwrap().unwrap();
     assert!(choose(&l, &input).unwrap_err().to_string().contains("인증 끊김"));
     l.h.db.set_meta("account-meta:work", &serde_json::json!({"expires_ms": 1}).to_string()).unwrap();
@@ -236,7 +241,12 @@ async fn real_auth_failures_still_block_and_old_rejections_do_not_poison_a_new_l
     std::fs::rename(root.join("held.key"), root.join("secrets.key")).unwrap();
     assert!(choose(&l, &locked).unwrap_err().to_string().contains("인증 잠김·없음"));
     l.h.register_account("work", "codex", &codex_auth()).unwrap();
-    l.h.account_refresh_seen("work", crate::accounts::RefreshOutcome::Rejected, first.version);
+    l.h.account_refresh_seen(
+        "work",
+        &crate::accounts::RefreshOutcome::Rejected(crate::accounts::RefreshFailure::provider(401, None)),
+        first.version,
+        None,
+    );
     let input = prepare().await.unwrap().unwrap();
     let (_, allocation) = choose(&l, &input).unwrap();
     assert_ne!(allocation.generation, original_generation);

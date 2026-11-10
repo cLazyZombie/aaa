@@ -150,7 +150,7 @@ DB 확정 전에는 원래 상태로, 확정 뒤에는 새 상태로 복구한 �
 `aaa account list`와 웹 설정 「계정」은 계정마다 별칭·harness·판에 더해 메일·plan·최초 인증일·최근 인증된 날·상태를 보인다:
 
 ```text
-work	codex	판 2	work@example.com	plus	최초 2026-10-21	최근 2026-10-21	정상
+work	codex	판 2	work@example.com	plus	최초 2026-10-21	최근 2026-10-21	정상	인증 만료 2026-10-31 14:55Z	갱신 2026-10-30 14:55Z
 ci	claude	판 1	ci@example.com	-	최초 2026-10-21	최근 2026-10-21	곧 만료(2026-10-24)
 ```
 
@@ -161,11 +161,20 @@ ci	claude	판 1	ci@example.com	-	최초 2026-10-21	최근 2026-10-21	곧 만료(
 - **최초 인증일**은 aaa가 처음 기록한 로그인, **최근 인증된 날**은 마지막 로그인 성공이다(날짜만, CLI는 UTC·웹은 그 기기 시간대).
   이 기록 전에 등록한 계정은 「모름」이며 「다시 로그인」하면 채운다. Codex 갱신은 날짜를 바꾸지 않는다.
 - **상태**: `정상`, `곧 만료`(알려진 만료 7일 전부터), `끊김(만료)`, `끊김(갱신 거부)`. 판정은 실제 쓰임과 알려진 만료 시각뿐이다:
-  Codex 갱신을 제공자가 400·401로 거부하면 끊김이고(망·시한·5xx는 끊김이 아니다), 갱신이 다시 성공하거나 로그인하면 지운다.
-  만료 시각은 `claude setup-token`이 알린 유효 기간뿐이다(Codex는 갱신으로 이어 가 만료를 모른다). 제공자에게 따로 묻지 않으므로
+  제공자가 Codex refresh token을 거부하면(401, 400 `invalid_grant`, `refresh_token_expired`·`reused`·`invalidated`: Codex 0.167과
+  같은 분류) 끊김이고(망·시한·5xx·그 밖의 400은 끊김이 아니다), 갱신이 다시 성공하거나 로그인하면 지운다.
+  `곧 만료`·`끊김(만료)`의 만료 시각은 `claude setup-token`이 알린 유효 기간뿐이다. Codex access token은 host가 이어서 갱신하므로
+  그 만료 예정은 상태가 아니라 아래 「인증 만료 예정」으로 보인다. 제공자에게 따로 묻지 않으므로
   Claude 토큰이 만료 전에 취소되면 쓰기 전까지 모른다.
 - 상태가 `곧 만료`·`끊김`으로 바뀌면 알림함에 「확인 필요」 항목(`account`)을 한 번 낸다. 다시 정상이 되면 끝낸다. 항목에는 별칭·
-  harness만 싣는다.
+  harness만 싣는다. 갱신 거부 항목에는 제공자의 HTTP 상태·오류 코드와 그 실패로 멈춘 thread를 함께 싣는다.
+- **Codex 인증 만료 예정·마지막 갱신·갱신 실패**(FRONT_API 1.166, t-1688): 금고 인증의 access token 만료 시각(JWT `exp`)과
+  host가 새 인증을 받은 마지막 시각을 보인다. host는 만료 24시간 전에 [아래](#codex-선제-갱신)처럼 미리 갱신한다.
+  갱신이 실패하면 원인을 기록해 목록(`갱신 실패(…)`)과 알림함에 보인다. 원인은 `aaa 안 오류(단계)`, `host가 OpenAI에 닿지 못함(단계)`,
+  `OpenAI 응답 <상태> <오류 코드>` 중 하나다. 제공자 거부가 아닌 실패는 끊김이 아니므로 자동 배정을 막지 않는다.
+  pane이 갱신을 받지 못해 멈췄거나 실패가 세 번 이어지면 「갱신 실패」 항목을 한 번 낸다. 갱신·로그인이 성공하면 실패 항목을
+  끝내고, 그 실패로 멈췄던 thread가 있으면 「회복」 항목에 thread 목록을 싣는다. 멈춘 Codex는 실패한 턴을 끝내고 기다리므로
+  coordinator가 「이어서」를 보낸다(aaa가 대신 입력하지 않는다). 다시 띄울 필요는 없다: 도는 pane은 다음 갱신 요청에서 새 인증을 받는다.
 - 메일·plan은 웹 조작 기기와 host의 aaa 세션 밖 CLI에만 싣는다. 보기 전용 기기와 pane 안 agent에는 별칭·상태만 간다.
   감사 기록·알림함·로그·외부 푸시에는 메일을 쓰지 않는다. 기록은 host DB(`account-meta:<별칭>`)에 두며 금고 파일은 그대로다.
 
@@ -205,8 +214,19 @@ profile의 실행 옵션과 aaa hook을 유지하며 기존 홈·인증·설정 
 사본 동시 갱신 경고를 피하려고 갱신을 중앙에 모았다. [Claude 환경 변수](https://code.claude.com/docs/en/env-vars)와
 [Codex file 인증](https://learn.chatgpt.com/docs/auth)을 함께 참고했다.
 
-host가 끊기거나 제공자가 거부하면 갱신은 실패한다. 직접 제공자로 우회하거나 자동 재시도하지
-않는다. 제공자의 회전 성공과 host 저장 사이에 host가 죽으면 재로그인·재등록이 필요할 수 있다.
+host가 끊기거나 제공자가 거부하면 갱신은 실패한다. 직접 제공자로 우회하지 않는다. pane 중계는 실패 원인을 HTTP 상태로
+돌려준다: 제공자가 준 상태와 오류 코드(`{"error":"refresh_token_expired"}` 꼴, 설명 본문 없음)는 그대로여서 Codex가 자기
+재로그인 안내를 고른다. host가 제공자에 닿지 못하면 502, host가 답하지 않으면 504, aaa 안의 실패는 503이다
+(Codex 화면은 `Failed to refresh token: <상태>`). host 로그에는 계정·원인·단계·HTTP 상태·오류 코드를 WARN으로 남긴다.
+제공자의 회전 성공과 host 저장 사이에 host가 죽으면 재로그인·재등록이 필요할 수 있다.
+
+### Codex 선제 갱신
+
+host는 tick마다 Codex 계정 금고의 access token 만료 시각(JWT `exp`)을 읽는다. 만료가 24시간 안이면 pane 요청을 기다리지 않고
+같은 계정 관문으로 미리 갱신한다. 도는 pane은 자기 token 만료 5분 전 갱신 요청에서 「옛 판 → 최신 인증」으로 새 인증을 받는다
+(제공자에게 다시 묻지 않는다). 실패하면 5분 뒤 다시 하고, 제공자가 거부하면 다시 로그인할 때까지 멈춘다.
+`exp`가 없는 인증은 선제 갱신하지 않는다. 일정·멈춤 규칙은 [CLIProxyAPI auto_refresh_loop](https://github.com/router-for-me/CLIProxyAPI/blob/681ce41b6e44/sdk/cliproxy/auth/auto_refresh_loop.go)(MIT)를,
+5분 전 갱신·실패 분류는 [Codex manager.rs](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/login/src/auth/manager.rs)(Apache-2.0)를 따랐다. 코드는 가져오지 않았다.
 영속 갱신 의도 기록, 회전 결과 회수, 비정상 종료 뒤 임시 auth 청소는 다음 단계다.
 작업 실행권·계정 lease로 동시 작업을 막지 않는다.
 
