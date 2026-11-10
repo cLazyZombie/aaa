@@ -13,6 +13,10 @@ use std::{
 };
 
 const PREFIX: &str = "image-job:";
+const MAX_RETAINED_JOBS: usize = 1024;
+
+#[cfg(test)]
+mod tests;
 // 구독 소비율의 환산값이 아닌, 기존 small 작업과 같은 초기 배정 정책이다.
 // 51% 잔량 - 안전 여유 10%p에서 새 관측 없이도 시안 8건(40%p)을 배정한다.
 pub(crate) const RESERVE: u8 = 5;
@@ -57,6 +61,21 @@ fn valid_id(id: &str) -> bool {
 }
 fn key(id: &str) -> String {
     format!("{PREFIX}{id}")
+}
+fn list_reason(reason: &str) -> String {
+    // 1024건·결과 각 5개도 1MiB agent frame 안에 둔다. JSON escape도 예산에 센다.
+    let mut bytes = 0;
+    reason
+        .chars()
+        .take_while(|c| {
+            bytes += match c {
+                '"' | '\\' | '\n' | '\r' | '\t' | '\u{08}' | '\u{0c}' => 2,
+                '\0'..='\u{1f}' => 6,
+                c => c.len_utf8(),
+            };
+            bytes <= 200
+        })
+        .collect()
 }
 pub(crate) fn sha(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -158,7 +177,7 @@ impl Host {
                 })
                 .map(|j| {
                     let mut view = j.view;
-                    view.reason = view.reason.chars().take(200).collect();
+                    view.reason = list_reason(&view.reason);
                     view
                 })
                 .collect();
@@ -202,9 +221,9 @@ impl Host {
                 })
                 .filter(|j| j.view.state != ImageState::Forgotten)
                 .count()
-                >= 256
+                >= MAX_RETAINED_JOBS
             {
-                return Err(bad("host 이미지 원장 한도(256건)에 도달했다"));
+                return Err(bad(&format!("host 이미지 원장 한도({MAX_RETAINED_JOBS}건)에 도달했다")));
             }
             let own = ids
                 .iter()
