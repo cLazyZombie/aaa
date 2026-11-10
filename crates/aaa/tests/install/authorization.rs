@@ -97,6 +97,15 @@ enum TerminalEvent {
     ReaderDone,
     ChildExited(std::io::Result<()>),
 }
+#[cfg(windows)]
+#[path = "../support/read_state_probe.rs"]
+mod read_state_probe;
+#[cfg(windows)]
+#[path = "../../src/install/prompt/windows_state.rs"]
+mod read_state_product;
+#[cfg(windows)]
+#[path = "read_state_tests.rs"]
+mod read_state_tests;
 #[path = "terminal_exit.rs"]
 mod terminal_exit;
 #[cfg(windows)]
@@ -148,8 +157,28 @@ fn drive_terminal_on(
     pair: portable_pty::PtyPair,
     command: CommandBuilder,
     steps: &[(&str, &str)],
+    observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    image: &Path,
+) -> (u32, String) {
+    #[cfg(windows)]
+    let probe = read_state_probe::Probe::new();
+    #[cfg(windows)]
+    {
+        let mut command = command;
+        probe.configure(&mut command);
+        drive_terminal_inner(pair, command, steps, observe, image, &probe)
+    }
+    #[cfg(not(windows))]
+    drive_terminal_inner(pair, command, steps, observe, image)
+}
+
+fn drive_terminal_inner(
+    pair: portable_pty::PtyPair,
+    command: CommandBuilder,
+    steps: &[(&str, &str)],
     mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
     _snapshot_image: &Path,
+    #[cfg(windows)] probe: &read_state_probe::Probe,
 ) -> (u32, String) {
     struct OwnedChild {
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -258,6 +287,8 @@ fn drive_terminal_on(
                     .map(portable_pty::ExitStatus::exit_code)
                     .or_else(|| child.child.try_wait().unwrap().map(|status| status.exit_code()));
                 let failed_after = started.elapsed();
+                #[cfg(windows)]
+                let failure_unix_us = read_state_probe::unix_us();
                 eprintln!(
                     "PTY failure decided: elapsed={failed_after:?}, input_writes(step,before_us,flushed_us,utc_us)={input_writes:?}"
                 );
@@ -266,7 +297,7 @@ fn drive_terminal_on(
                 );
                 #[cfg(windows)]
                 if child_exit.is_none() {
-                    terminal_snapshot::record(pid, _snapshot_image);
+                    terminal_snapshot::record(pid, _snapshot_image, probe, failure_unix_us);
                 }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();

@@ -58,6 +58,8 @@ mod unix {
     }
 }
 #[cfg(windows)]
+mod windows_state;
+#[cfg(windows)]
 mod windows_trace;
 #[cfg(windows)]
 mod windows {
@@ -99,6 +101,7 @@ mod windows {
         static READ_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let read_id = READ_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let read_thread = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        let read_state = super::windows_state::ReadGuard::register(handle, read_id);
         let observation = super::windows_trace::Observation::start(handle, read_id);
         // 질문·입력 원문은 남기지 않는다. 입력 준비와 실제 API 반환을 구별한다.
         tracing::debug!(
@@ -111,9 +114,15 @@ mod windows {
         show(question)?;
         tracing::debug!(read_id, read_thread, "install_console_read_call thread_id={read_thread} [console-read-call]");
         let started = std::time::Instant::now();
+        if let Some(state) = &read_state {
+            state.call();
+        }
         let ok = unsafe { ReadConsoleW(handle, value.as_mut_ptr().cast(), value.len() as u32, &mut count, &control) };
         // 로그 출력이 Win32의 thread-local 오류 번호를 바꾸기 전에 수집한다.
         let os_error = (ok == 0).then(std::io::Error::last_os_error);
+        if let Some(state) = &read_state {
+            state.returned();
+        }
         let elapsed_ms = started.elapsed().as_millis();
         tracing::debug!(
             read_id,
