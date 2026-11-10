@@ -88,6 +88,58 @@ fn conditional_feedback_does_not_require_an_answer_or_hide_a_decision() {
     assert_eq!(evidence.line, 3);
 }
 
+/// 뜻을 바로잡는 안내만 제외하며 같은 문장의 승인·선택 요청은 보존한다.
+#[test]
+fn meaning_corrections_are_optional_without_hiding_decisions() {
+    let cards = cards();
+    for feedback in ["다르게 생각하신 거라면 말씀해 주세요.", "다른 작업을 뜻하셨다면 말씀해 주세요."]
+    {
+        let result = inspect(feedback, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{feedback}");
+        for text in [
+            format!("{feedback}\n\n지금 배포할까요?"),
+            format!("{}, 지금 배포 여부를 알려 주세요.", feedback.trim_end_matches('.')),
+            format!("승인 여부를 알려 주세요, {feedback}"),
+            format!("{feedback}\n- A 배포 (추천)\n- B 보류"),
+        ] {
+            assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        }
+    }
+    for text in [
+        "다르게 생각하신 거라면 배포 승인 여부를 말씀해 주세요.",
+        "다른 작업을 뜻하셨다면 복구와 삭제 중 하나를 골라 주세요.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+}
+
+/// 완료 설명의 '별도로'는 뒤의 기존 카드 연결을 막지 않으며 새 요청은 계속 분리한다.
+#[test]
+fn completed_handoff_keeps_existing_card_choices_linked() {
+    let mut cards = cards();
+    cards.insert("q-3346".into(), CardState::Open);
+    // 기록의 짧은 완료 문구와 q-ID를 쓰고, 공개되지 않은 선택지 본문은 재구성한다.
+    let explanation = "별도로 정할 일로 넘겼습니다.\n- A 지금 구현 (추천)\n- B 할 일로 만들기\n- C 폐기";
+    let linked = format!("{explanation}\n\n[질문](#question=q-3346)에서 답합니다.");
+    let result = inspect(&linked, &cards);
+    assert!(result.missing.is_none() && result.stale.is_none());
+    for text in [
+        explanation.to_owned(),
+        linked.replace("q-3346", "q-9999"),
+        format!("{explanation}\n\n**다른 작업**\nq-3346에서 답합니다."),
+        format!("{linked}\n\n별도로 배포할까요?"),
+        "q-3346에서 답해 주세요. 별도로 승인 여부를 알려 주세요.".to_owned(),
+        "q-3346에서 답해 주세요. 별도로 배포할까요? 별도로 정할 일로 넘겼습니다.".to_owned(),
+        "별도로 정할 일로 넘겼습니다. 별도로 승인 여부를 알려 주세요.\n\nq-3346에서 답합니다.".to_owned(),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    }
+    cards.insert("q-3346".into(), CardState::Closed);
+    let result = inspect(&linked, &cards);
+    assert!(result.missing.is_none());
+    assert_eq!(result.stale.unwrap().refs, [("q-3346".into(), CardState::Closed)]);
+}
+
 /// 링크와 요청 사이의 빈 줄을 허용하되 별개 승인 요청까지 면제하지 않는다.
 #[test]
 fn card_links_follow_the_topic_and_preserve_separate_new_requests() {
