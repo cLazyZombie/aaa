@@ -1,0 +1,126 @@
+# 진단 branch 전용이다. 이 workflow는 main 착지 후보에 포함하지 않는다.
+name: t-1699 Windows console lifetimes
+
+on:
+  push:
+    branches: ["diagnostic/t-1699-console-lifetimes"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  console:
+    if: github.ref == 'refs/heads/diagnostic/t-1699-console-lifetimes'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: 실패와 같은 OS·이미지·conhost 판 확인
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path scratch/console-diagnostic | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $path = Join-Path $env:SystemRoot 'System32/conhost.exe'
+          $file = (Get-Item $path).VersionInfo
+          $version = '{0}.{1}.{2}.{3}' -f $file.FileMajorPart, $file.FileMinorPart, $file.FileBuildPart, $file.FilePrivatePart
+          $providerFound = $false
+          try { $providerFound = $null -ne (Get-WinEvent -ListProvider 'Microsoft-Windows-Console' -ErrorAction Stop) } catch { }
+          $symbols = @{ status = 'tool_unavailable'; pdb_loaded = $false }
+          $llvm = 'C:\Program Files\LLVM\bin\llvm-readobj.exe'
+          if (Test-Path $llvm) {
+            $debug = (& $llvm --coff-debug-directory $path) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and $debug -match 'PDBGUID: (\{[A-Fa-f0-9-]+\})') {
+              $symbols.status = 'codeview_found'
+              $symbols.guid = $Matches[1]
+              if ($debug -match 'PDBAge: (\d+)') { $symbols.age = [int]$Matches[1] }
+            } else { $symbols.status = 'codeview_unavailable' }
+          }
+          $metadata = @{
+            os_version = $os.Version
+            product_type = [int]$os.ProductType
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+            conhost_file_version = $version
+            conhost_disk_sha256 = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+            console_provider_found = $providerFound
+            conhost_symbols = $symbols
+            source_sha = $env:GITHUB_SHA
+            run_id = $env:GITHUB_RUN_ID
+            attempt = $env:GITHUB_RUN_ATTEMPT
+          }
+          $metadata | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 scratch/console-diagnostic/environment.json
+          $metadata | ConvertTo-Json -Depth 4
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw '재실행으로 행렬을 반복하지 않는다' }
+          if ($os.BuildNumber -ne '26100' -or [int]$os.ProductType -ne 3 -or $env:ImageVersion -ne '20261103.298.1' -or $version -ne '10.0.26100.33648') { throw '실패와 같은 OS·이미지·conhost 판이 아니다' }
+          $tmp = Join-Path $env:RUNNER_TEMP 't-1699-console'
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          "TEMP=$tmp" >> $env:GITHUB_ENV
+          "TMP=$tmp" >> $env:GITHUB_ENV
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "rustc=$((rustc -V).Split(' ')[1])" >> $env:GITHUB_OUTPUT
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: console-t1699-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            console-t1658-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-
+            cargo-v1-rust-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-
+      - name: 관련 실행 파일·시험 빌드
+        id: build
+        timeout-minutes: 15
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo test --profile verify --locked -p aaa --test install --bin aaa --no-run 2>&1 | Tee-Object scratch/console-diagnostic/build.log
+          exit $LASTEXITCODE
+      - name: Windows native strict Clippy
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          & target/verify/aaa.exe verify -- cargo clippy --profile verify --locked -p aaa --all-targets -- -D warnings 2>&1 | Tee-Object scratch/console-diagnostic/clippy.log
+          exit $LASTEXITCODE
+      - name: 제품 수명 사건 행렬 열여섯 조건 한 번
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization::terminal_snapshot::native::lifetime_repro::cooked_read_product_lifetimes -- --exact --ignored --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/lifetime.log
+          exit $LASTEXITCODE
+      - name: 콘솔·실제 승인 owner 한 번
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install authorization:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/authorization.log
+          exit $LASTEXITCODE
+      - name: 두 wizard와 명시 CLI 계획 owner 한 번
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          & target/verify/aaa.exe verify -- cargo test --profile verify --locked -p aaa --test install wizard:: -- --test-threads=1 --nocapture 2>&1 | Tee-Object scratch/console-diagnostic/wizard.log
+          exit $LASTEXITCODE
+      - name: 사건·실패 원문 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: console-t1699-${{ github.run_id }}-${{ github.run_attempt }}
+          path: scratch/console-diagnostic/
+          retention-days: 14
