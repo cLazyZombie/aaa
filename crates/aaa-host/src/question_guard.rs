@@ -170,7 +170,10 @@ fn blocks(text: &str) -> Vec<Block> {
 fn fresh_tail(text: &str) -> Option<&str> {
     ["추가로", "별도로", "새 질문", "새로운 질문", "추가 질문", "함께 정할", "재승인", "다시 배포", "다시 승인"]
         .iter()
-        .filter_map(|marker| text.rfind(marker))
+        .flat_map(|&marker| text.match_indices(marker))
+        // 알려진 완료 설명만 제외한다. 앞뒤의 실제 별도 요청 표지는 그대로 남긴다.
+        .filter(|(at, marker)| *marker != "별도로" || !text[*at..].starts_with("별도로 정할 일로 넘겼습니다."))
+        .map(|(at, _)| at)
         .max()
         .map(|at| &text[at..])
 }
@@ -190,7 +193,7 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
         Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|보신 뒤|보시고 정해|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|다르게 생각하신 거라면|다른 작업을 뜻하셨다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
     });
     static CHOICE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?\*{0,2}\s+\S").unwrap());
