@@ -508,3 +508,74 @@ async fn disabled_models_stay_listed_and_block_only_profile_model() {
     lab.call(set(&["gpt-new"], true, &rev)).await.unwrap();
     assert!(lab.host_toml().contains("disabled = [\"gpt-old\"]"), "{}", lab.host_toml());
 }
+
+/// 보존 설정은 기존 host.toml 키에 저장하며, 같은 host의 다음 조회부터 보인다. safety·주석은 보존한다.
+#[tokio::test]
+async fn library_retention_settings_validate_persist_and_reject_stale_or_shadowed_writes() {
+    let lab = bare("schema = 1 # 주석\n[safety.default]\nyolo = false\n");
+    let read = || lab.h.library_retention_settings().unwrap();
+    let initial = read();
+    assert_eq!((initial.max_days, initial.max_mb, initial.editable), (30, 20480, true));
+    let request = |max_days, max_mb, expected: &str| FrontRequest::LibraryRetentionSet {
+        max_days,
+        max_mb,
+        expected: expected.into(),
+    };
+    for (days, mb) in [(u64::MAX, 1), (1, u64::MAX)] {
+        assert_eq!(lab.call(request(days, mb, &initial.rev)).await.unwrap_err().code, ErrorCode::BadRequest);
+    }
+    for (days, mb) in [(1, 1), (0, 0), (90, 51200)] {
+        let before = read();
+        let FrontResponse::LibraryRetention(v) = lab.call(request(days, mb, &before.rev)).await.unwrap() else {
+            panic!()
+        };
+        assert_eq!((v.max_days, v.max_mb), (days, mb));
+        assert_eq!(lab.h.library_limits().unwrap(), (days, mb * 1024 * 1024));
+        assert_eq!(read(), v);
+        assert!(lab.host_toml().contains("# 주석"));
+        assert!(lab.host_toml().contains("yolo = false"));
+    }
+    let before = lab.host_toml();
+    assert_eq!(lab.call(request(2, 2, &initial.rev)).await.unwrap_err().code, ErrorCode::Conflict);
+    assert_eq!(lab.host_toml(), before);
+    std::fs::write(lab.root.join("c/host.local.toml"), "schema = 1\n[projects]\nlibrary_max_days = 7\n").unwrap();
+    let local = read();
+    assert_eq!((local.max_days, local.max_mb, local.editable), (7, 51200, false));
+    assert_eq!(lab.call(request(2, 2, &local.rev)).await.unwrap_err().code, ErrorCode::Forbidden);
+    assert_eq!(lab.host_toml(), before);
+    for value in ["-1", "0.5", "\"bad\""] {
+        std::fs::write(
+            lab.root.join("c/host.local.toml"),
+            format!("schema = 1\n[projects]\nlibrary_max_mb = {value}\n"),
+        )
+        .unwrap();
+        assert!(lab.h.library_limits().is_err(), "잘못된 설정에서 예전 상한을 쓰지 않는다");
+    }
+    for value in ["-1", "0.5"] {
+        let wire = format!(r#"{{"op":"library_retention_set","max_days":{value},"max_mb":1,"expected":"x"}}"#);
+        assert!(serde_json::from_str::<FrontRequest>(&wire).is_err());
+    }
+}
+
+/// 보존 설정은 읽기 전용 기기나 agent 세션이 사용자 대신 바꾸지 못한다.
+#[tokio::test]
+async fn library_retention_settings_require_a_human_controller() {
+    let lab = bare("schema = 1\n");
+    let v = lab.h.library_retention_settings().unwrap();
+    for (role, actor) in [
+        (DeviceRole::Reader, "device:r"),
+        (DeviceRole::Local, "local:cli@fixture"),
+        (DeviceRole::Local, "worker:fixture"),
+        (DeviceRole::Local, "evaluator:fixture"),
+        (DeviceRole::Local, "detached:fixture"),
+    ] {
+        let req = FrontRequest::LibraryRetentionSet { max_days: 1, max_mb: 1, expected: v.rev.clone() };
+        assert!(crate::passkey::needs_uv(&req, "fixture"));
+        assert_eq!(lab.h.call(role, actor, req).await.unwrap_err().code, ErrorCode::Forbidden, "{actor}");
+    }
+    assert_eq!(
+        lab.h.call(DeviceRole::Reader, "device:r", FrontRequest::LibraryRetention).await.unwrap_err().code,
+        ErrorCode::Forbidden
+    );
+    assert_eq!(lab.host_toml(), "schema = 1\n");
+}

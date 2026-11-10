@@ -5088,3 +5088,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - 자동 답의 작은 처리 결과·실제 실패 표시·구판 CLI 호환: [t-1692 검증 기록](testing-auto-answer-ack-t1692.md).
 - 조건부 피드백 질문 감시 수리(t-1693): [회귀 owner와 검증 기록](testing-question-feedback-t1693.md).
+
+- [보고서 보존 설정 검증(t-1710)](testing-library-retention-t-1710.md)

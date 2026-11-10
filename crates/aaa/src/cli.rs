@@ -6078,6 +6078,15 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::LibraryRotated => {
             s.push_str("보고서 키를 교체했다. 옛 공유 링크는 모두 끝났다. pairing은 그대로다.\n")
         }
+        FrontResponse::LibraryRetention(v) => {
+            let _ = writeln!(
+                s,
+                "보존: {}일 · {}MiB{}",
+                v.max_days,
+                v.max_mb,
+                if v.editable { "" } else { " (host.local.toml)" }
+            );
+        }
         FrontResponse::LibraryUsage {
             size,
             reports,

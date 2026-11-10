@@ -3231,6 +3231,16 @@ pub enum FrontRequest {
         cap: String,
     },
     LibraryUsage,
+    /// FRONT_API 1.168. host 전체 보고서 보존 설정(조작 권한).
+    LibraryRetention,
+    /// FRONT_API 1.168. 사람이 본 host.toml 판에만 저장한다. 저장 자체는 삭제하지 않는다.
+    LibraryRetentionSet {
+        #[ts(type = "number")]
+        max_days: u64,
+        #[ts(type = "number")]
+        max_mb: u64,
+        expected: String,
+    },
     /// 지금 보고를 확인했다
     ThreadAck {
         #[serde(default)]
@@ -4428,6 +4438,7 @@ pub enum FrontResponse {
     },
     LibraryPrunePreview(LibraryPrunePlan),
     LibraryRotated,
+    LibraryRetention(LibraryRetentionView),
     LibraryUsage {
         /// FRONT_API 1.114. size·max_size에서 제외한 보관함 용량.
         #[serde(default)]
@@ -4459,6 +4470,17 @@ pub enum FrontResponse {
     },
     Evaluation(Box<EvaluationView>),
     Preferences(SharedPreferences),
+}
+
+/// host 전체 사본 보존 설정. host.local.toml이 덮으면 웹 고치기는 막는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryRetentionView {
+    #[ts(type = "number")]
+    pub max_days: u64,
+    #[ts(type = "number")]
+    pub max_mb: u64,
+    pub rev: String,
+    pub editable: bool,
 }
 
 /// 이 host의 모든 웹 화면이 함께 쓰는 것: 기기에 기대지 않는 설정과 고정(herdr-web-ui `shared/preferences.ts` `SharedPreferences`).
