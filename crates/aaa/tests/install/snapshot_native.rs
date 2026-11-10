@@ -2,6 +2,8 @@
 use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Measurement, Snapshot, Thread, WaitNode};
 #[path = "snapshot_console.rs"]
 mod console;
+#[path = "console_lifetime_repro.rs"]
+mod lifetime_repro;
 #[path = "console_repro.rs"]
 mod repro;
 use std::ffi::{OsStr, OsString};
