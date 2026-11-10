@@ -21,6 +21,8 @@ const call = (p, data) => p.evaluate(async data => (await fetch("/api/v1/call", 
 
 function draftScenario(engine, width, label) {
   let t, page, errors, current;
+  const trace = [], requests = [];
+  const record = (kind, value) => trace.push({ at: Date.now(), kind, value });
   const card = () => page.getByTestId(`thread-ask-${t.id}`);
   const write = async (note, content = questions) => {
     const count = [...content.matchAll(/^### /gm)].length;
@@ -31,6 +33,7 @@ function draftScenario(engine, width, label) {
       const v = aaa("thread", "show", t.id);
       return v.report_hash === hash && v.questions && v.questions;
     });
+    record("report", { hash, questions: current });
     if (page) await domIs(page, "새 질문 ID 반영", id =>
       document.querySelector('.thread-ask-card h3 code')?.textContent === id, current.items[0].id);
   };
@@ -38,14 +41,51 @@ function draftScenario(engine, width, label) {
     assert.equal(await card().getByTestId(`thread-ask-pick-${pick}`).getAttribute("aria-checked"), "true", `${label}: 선택 보존`);
     assert.equal(await card().getByTestId("thread-ask-text-2").inputValue(), text, `${label}: 직접 답 보존`);
   };
-  return {
+  const scenario = {
     prepare: async () => {
       fs.writeFileSync(`${root}/draft-task.md`, "질문 입력 보존 시험\n");
       t = aaa("thread", "start", "demo", "--title", `입력 보존 ${label}`, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/draft-task.md`);
       await until("처음 보고", () => aaa("thread", "show", t.id).report_hash);
       fs.copyFileSync(`${root}/pic.png`, `${t.work_dir}/library/draft.png`);
       await write("첫 보고");
-      ({ page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { hash: `#question=${t.id}`, serviceWorkers: "block" }));
+      ({ page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { hash: `#question=${t.id}`, serviceWorkers: "block",
+        // 새로고침 전후의 실제 DOM·입력·저장소를 관측한다. 제품 state나 입력은 바꾸지 않는다.
+        init: () => {
+          const state = () => ({ ids: [...document.querySelectorAll('.thread-ask-card h3 code')].map(n => n.textContent),
+            picks: [...document.querySelectorAll('.thread-ask-card [aria-checked="true"]')].map(n => n.dataset.testid),
+            values: [...document.querySelectorAll('.thread-ask-card textarea')].map(n => n.value),
+            saved: Object.fromEntries(Object.keys(localStorage).filter(k => k.startsWith("aaa:question-draft:")).map(k => [k, localStorage.getItem(k)])) });
+          const emit = detail => console.log("draft-trace:" + JSON.stringify({ at: performance.now(), ...detail, ...state() }));
+          for (const event of ["pointerdown", "pointerup", "click", "input"])
+            for (const capture of [true, false]) addEventListener(event, e => {
+              if (e.target.closest?.('.thread-ask-card')) emit({ event, capture,
+                target: e.target.closest('[data-testid]')?.dataset.testid });
+            }, capture);
+          let before;
+          new MutationObserver(() => {
+            const next = JSON.stringify(state());
+            if (next !== before) emit({ event: "render" });
+            before = next;
+          }).observe(document, { childList: true, subtree: true, attributes: true });
+        },
+        onPage: p => {
+          p.on("console", msg => { if (msg.text().startsWith("draft-trace:")) record("browser", JSON.parse(msg.text().slice(12))); });
+          p.on("request", r => {
+            if (r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "thread_answer") {
+              requests.push(r.postDataJSON());
+              record("request", r.postDataJSON());
+            }
+          });
+          p.on("response", async r => {
+            if (r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "thread_answer") record("response", await r.json().catch(String));
+          });
+          p.on("websocket", ws => ws.on("framereceived", ({ payload }) => {
+            if (!ws.url().endsWith("/api/v1/events")) return;
+            const ev = JSON.parse(payload);
+            if (ev.ev === "thread" && ev.id === t.id) record("thread", ev);
+          }));
+        },
+      }));
       await card().getByTestId("thread-ask-pick-1B").click();
       await card().getByTestId("thread-ask-text-2").fill("직접 쓴 답\n원래 색 유지");
       await check();
@@ -133,14 +173,26 @@ function draftScenario(engine, width, label) {
       assert.equal(await card().getByTestId("thread-ask-text-2").inputValue(), "");
     },
     send: async () => {
+      const from = requests.length;
+      const revision = current.report_hash;
       await card().getByTestId("thread-ask-pick-1B").click();
       await card().getByTestId("thread-ask-text-2").fill("새 질문 답");
+      const replied = page.waitForResponse(r => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "thread_answer");
+      replied.catch(() => {}); // 누름 자체가 실패해도 진단·정리 전에 unhandled rejection을 내지 않는다.
       await card().getByTestId("thread-ask-send").click();
       await waitOutput(t.pane, "2번 직접 쓴 답: 새 질문 답");
       const answer = await until("답 저장", () => aaa("thread", "show", t.id).questions?.answer);
       assert.deepEqual(answer.picks, [1, null]);
       assert.deepEqual(answer.comments, [null, "새 질문 답"]);
+      const response = await (await replied).json();
+      record("send-success", response);
+      assert.equal(response.ok?.questions?.report_hash, revision, "성공 회신도 현재 보고를 가리킨다");
+      assert.deepEqual(response.ok?.questions?.answer?.picks, [1, null]);
       await until("성공한 답 초안 삭제", () => page.evaluate(id => localStorage.getItem(`aaa:question-draft:${JSON.stringify(["question", "demo", id])}`) === null, t.id));
+      assert.deepEqual(requests.slice(from), [{ op: "thread_answer", project: "demo", thread: t.id,
+        report_hash: revision, picks: [1, null], text: null, comments: [null, "새 질문 답"] }],
+        "현재 보고의 대상·선택·직접 답을 한 번만 전송한다");
+      record("settled", { revision, answer });
     },
     single: async () => {
       const single = questions.slice(0, questions.indexOf("### 2.")).replace("단추 자리", "다음 화면 단추 자리");
@@ -180,6 +232,21 @@ function draftScenario(engine, width, label) {
       aaa("thread", "resolve", t.id);
     },
   };
+  return Object.fromEntries(Object.entries(scenario).map(([name, run]) => [name, async () => {
+    record("step", name);
+    try { await run(); }
+    catch (error) {
+      try {
+        const dir = `${root}/diagnostics`;
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(`${dir}/draft-${label.replaceAll(" ", "-")}.json`, JSON.stringify({ label, width, name,
+          stack: error.stack, actual: error.actual, expected: error.expected, trace, current,
+          host: t && aaa("thread", "show", t.id), errors,
+          dom: page && await card().evaluate(n => n.outerHTML).catch(String) }, null, 2));
+      } catch (diagnostic) { console.log(`초안 실패 진단 저장 오류: ${diagnostic}`); }
+      throw error;
+    }
+  }]));
 }
 
 export default async function () {
