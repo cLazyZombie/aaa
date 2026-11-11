@@ -5099,3 +5099,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [질문 초안 Safari 전송 실패 진단(t-1746)](testing-question-drafts-diagnostics-t1746.md): 원본 선택 불일치·원인 미확정·사건 기록 후보와 관련 검증.
 
 - [profile 입력 유실 수리(t-1746)](testing-profile-input-t1746.md): 기준 main과 입력 사건 대조, 이름·다른 필드 보존 및 미리보기 요청 회귀.
+
+- [첫 접속·질문 답 응답 시간(t-1767)](testing-web-response-time-t-1767.md): 운영·실험실 측정, 답한 카드 바로 표시·API gzip·조작 답 축소의 전후와 owner.
