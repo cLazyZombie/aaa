@@ -18,7 +18,7 @@ async function reopen(page, name) {
 }
 const row = (settings, id) => settings.getByTestId("models-codex").locator(`li[data-model="${id}"]`);
 
-async function check(page, phone) {
+async function checkBody(page, phone) {
   let settings = await reopen(page, "모델");
   const codex = settings.getByTestId("models-codex");
   await row(settings, "gpt-a").waitFor();
@@ -38,12 +38,20 @@ async function check(page, phone) {
   settings = await reopen(page, "profile");
   await settings.getByTestId("profile-add").click();
   const dialog = page.getByRole("dialog", { name: "profile 더하기" });
-  await dialog.getByTestId("profile-name").fill(`m${phone ? "p" : "c"}`);
+  await armProfileTrace(page, phone);
+  const name = `m${phone ? "p" : "c"}`;
+  await dialog.getByTestId("profile-name").fill(name);
+  assert.equal(await dialog.getByTestId("profile-name").inputValue(), name, "다른 필드 갱신도 입력 중인 이름을 보존한다");
+  assert.equal(await dialog.getByTestId("profile-harness").inputValue(), "codex", "이름 입력도 함께 바꾼 harness를 되돌리지 않는다");
+  assert.deepEqual(await page.evaluate(() => window.__profileInterleavings),
+    [{ before: name, after: name, same: true }], "input capture 사이 실제 harness 변경을 한 번 검사한다");
   await dialog.getByTestId("profile-harness").selectOption("codex");
   // 켜진 모델만 후보다
   await dialog.locator('#profile-model-choices option[value="gpt-a"]').waitFor({ state: "attached" });
   assert.equal(await dialog.locator('#profile-model-choices option[value="gpt-b"]').count(), 0);
   await dialog.getByTestId("profile-model").fill("gpt-b");
+  assert.equal(await dialog.getByTestId("profile-name").inputValue(), name);
+  assert.equal(await dialog.getByTestId("profile-model").inputValue(), "gpt-b");
   await dialog.getByTestId("profile-preview").click();
   await dialog.getByRole("alert").filter({ hasText: "꺼져 있다" }).waitFor();
   await dialog.getByRole("button", { name: "닫기", exact: true }).click();
@@ -58,6 +66,70 @@ async function check(page, phone) {
   await bulk.filter({ hasText: "모두 끄기" }).waitFor();
   assert.equal(await codex2.locator('li[data-enabled="off"]').count(), 0);
   assert.ok(!hostToml().includes("[models"), "모두 켜면 표가 빠진다");
+}
+
+async function armProfileTrace(page, phone) {
+  await page.evaluate(name => {
+    window.__profileInterleavings = [];
+    window.__profileTrace = [];
+    const snapshot = () => {
+      const name = document.querySelector('[data-testid="profile-name"]');
+      return { at: performance.now(), name: name?.value, nameDisabled: name?.disabled,
+        harness: document.querySelector('[data-testid="profile-harness"]')?.value,
+        model: document.querySelector('[data-testid="profile-model"]')?.value,
+        disabled: document.querySelector('[data-testid="profile-preview"]')?.disabled };
+    };
+    const input = event => {
+      const element = event.target;
+      if (element.dataset?.testid !== "profile-name" || element.value !== name || window.__profileInterleavings.length) return;
+      const before = element.value;
+      const harness = document.querySelector('[data-testid="profile-harness"]');
+      harness.value = "codex";
+      harness.dispatchEvent(new Event("change", { bubbles: true }));
+      window.__profileInterleavings.push({ before, after: element.value,
+        same: element === document.querySelector('[data-testid="profile-name"]') });
+    };
+    const root = document; // AdminDialog는 body portal에 그린다.
+    root.addEventListener("input", input, true);
+    let before;
+    const observer = new MutationObserver(() => {
+      const value = snapshot();
+      const key = JSON.stringify({ ...value, at: 0 });
+      if (key !== before) window.__profileTrace.push(value);
+      before = key;
+    });
+    observer.observe(document, { subtree: true, attributes: true, childList: true });
+    window.__stopProfileTrace = () => { root.removeEventListener("input", input, true); observer.disconnect(); };
+  }, `m${phone ? "p" : "c"}`);
+}
+
+// native input과 React bubble 사이에 같은 폼의 실제 harness 변경을 끼운다.
+// 이름·React state를 대신 채우거나 실패한 이름 입력을 다시 넣지 않는다.
+async function check(page, phone) {
+  const requests = [];
+  const onRequest = request => {
+    if (request.url().endsWith("/api/v1/call") && request.postDataJSON()?.op === "profile_plan") requests.push(request.postDataJSON());
+  };
+  page.on("request", onRequest);
+  try {
+    await checkBody(page, phone);
+    assert.deepEqual(requests.map(r => [r.change.name, r.change.harness, r.change.model]),
+      [[`m${phone ? "p" : "c"}`, "codex", "gpt-b"]], "입력한 이름과 꺼진 모델의 미리보기를 한 번 요청한다");
+  } catch (error) {
+    try {
+      const dir = `${root}/diagnostics`;
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(`${dir}/profile-input-${phone ? "phone" : "pc"}.json`, JSON.stringify({
+        error: { message: error.message, stack: error.stack, actual: error.actual, expected: error.expected }, requests,
+        dom: await page.evaluate(() => ({ interleavings: window.__profileInterleavings, trace: window.__profileTrace,
+          dialog: document.querySelector('[aria-label="profile 더하기"]')?.outerHTML })).catch(String),
+      }, null, 2));
+    } catch (diagnostic) { console.log(`profile 입력 실패 진단 저장 오류: ${diagnostic}`); }
+    throw error;
+  } finally {
+    page.off("request", onRequest);
+    await page.evaluate(() => window.__stopProfileTrace?.()).catch(() => {});
+  }
 }
 
 export default async function ({ ctl, page }) {
