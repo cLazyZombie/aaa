@@ -2,8 +2,10 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { root, aaa, until, step, browser, webkit, waitOutput, shot } from "../lib/harness.mjs";
+import assert from "node:assert/strict";
+import { root, aaa, until, step, browser, webkit, waitOutput, shot, pairPage, domIs } from "../lib/harness.mjs";
 import { questionReplyScenario } from "../lib/question-reply.mjs";
+import { responseGate } from "../lib/bulk-actions.mjs";
 
 const pictures = (p, sel) =>
   p.evaluate((sel) => {
@@ -48,7 +50,12 @@ export default async function ({ page }) {
     await card.getByTestId("thread-ask-pick-2B").click();
     await card.getByTestId("thread-ask-text-1").fill("E: TowerControl\n원래 픽셀 밀도 유지");
     await card.getByTestId("thread-ask-text-2").fill("선택한 B에 색만 더한다");
-    await card.getByTestId("thread-ask-send").click();
+    // 답한 카드는 host의 답 기록 사건으로 바로 뜬다(t-1767). Follow-ups·inbox는 thread 전달 뒤에 남으므로 이 답 요청의 완료를 관측한다.
+    const answerDone = page.waitForResponse(response => response.url().endsWith("/api/v1/call")
+      && response.request().postDataJSON()?.op === "thread_answer"
+      && response.request().postDataJSON()?.thread === t.id).then(response => response.json());
+    const [reply] = await Promise.all([answerDone, card.getByTestId("thread-ask-send").click()]);
+    if (!reply.ok) throw new Error(`답 API 응답: ${JSON.stringify(reply)}`);
     await waitOutput(t.pane, "1번 직접 쓴 답: E: TowerControl");
     await waitOutput(t.pane, "2번 직접 쓴 답(의견): 선택한 B에 색만 더한다");
     await until("답한 아이콘 카드", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-card"] .ask-after')) === 2);
@@ -137,6 +144,67 @@ export default async function ({ page }) {
     await shot(page, "53-answer-lines-done");
     await page.setViewportSize({ width: 1280, height: 800 });
     aaa("thread", "resolve", t.id);
+  });
+
+  await step("답하면 「답한 것」 기록을 다시 읽기 전에도 답한 카드가 바로 뜨고 host 기록으로 이어진다(t-1767)", async () => {
+    if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task-answer-now.md`, "답한 카드 바로 보기 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "답한 카드 바로 보기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-answer-now.md`);
+    await until("첫 보고", () => aaa("thread", "show", t.id).report_hash);
+    const body = "[결정 필요] 질문 1개: 자리\n\n## Questions\n### 1. 자리를 이대로 둘까\n- A 그대로 (추천)\n- B 고친다\n";
+    fs.writeFileSync(`${t.work_dir}/report.md`, body);
+    const hash = createHash("sha256").update(body).digest("hex");
+    await until("질문 카드", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions; });
+    const gate = responseGate();
+    const { page: phone, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, {
+      hash: `#question=${t.id}`, serviceWorkers: "block", setup: gate.setup,
+      init: () => {
+        window.__asksReads = 0;
+        const fetch = window.fetch;
+        window.fetch = async function (input, init) {
+          const response = await fetch.call(this, input, init);
+          try { if (JSON.parse(init?.body).op === "asks") window.__asksReads += 1; } catch {}
+          return response;
+        };
+      },
+    });
+    let held;
+    try {
+      const card = phone.getByTestId(`thread-ask-${t.id}`);
+      await card.getByTestId("thread-ask-pick-1A").click();
+      // 연결할 때의 첫 조회는 지나 보낸다(붙잡는 것은 답 뒤의 다시 읽기다)
+      await domIs(phone, "첫 답할 것 읽기", () => window.__asksReads > 0);
+      // 누른 뒤 한 번이라도 「찾을 수 없다」·「답할 것이 없다」 안내가 그려지면 남긴다
+      await phone.evaluate(() => {
+        window.__askNotices = 0;
+        new MutationObserver(() => { if (document.querySelector('[data-testid="asks-missing"],[data-testid="asks-empty"]')) window.__askNotices += 1; })
+          .observe(document, { subtree: true, childList: true });
+      });
+      // host가 답을 기록하고 보낸 `asks` 사건의 다시 읽기를 붙잡는다: 기록 원문은 아직 이 화면에 없다
+      held = gate.arm((req) => req.op === "asks");
+      await card.getByTestId("thread-ask-send").click();
+      await held.arrived;
+      const done = phone.getByTestId("ask-done-card");
+      await done.waitFor();
+      assert.match(await done.getByTestId("ask-done-picked").innerText(), /그대로/);
+      assert.match(await done.getByTestId("ask-done-when").innerText(), /^답한 때/, "물은 때는 host 기록에만 있다");
+      assert.equal(await done.getByTestId("ask-forget").count(), 0, "지우기는 host 기록이 온 뒤에만");
+      assert.equal(await phone.getByTestId(`thread-ask-${t.id}`).count(), 0);
+      await done.evaluate((node) => { window.__askDoneNode = node; });
+      await waitOutput(t.pane, "보고의 질문에 대한 사용자 답(1A)");
+      held.release();
+      await domIs(phone, "host 기록으로 이어진 카드", () => !!document.querySelector('[data-testid="ask-done-card"] [data-testid="ask-forget"]'));
+      assert.match(await done.getByTestId("ask-done-when").innerText(), /^물은 때/);
+      assert.equal(await done.evaluate((node) => node === window.__askDoneNode), true, "같은 카드를 다시 만들지 않는다");
+      assert.equal(await phone.evaluate(() => window.__askNotices), 0, "답한 뒤 「찾을 수 없다」 안내를 그리지 않는다");
+      assert.deepEqual(errors, []);
+    } finally {
+      held?.release();
+      gate.clear();
+      await phone.context().unrouteAll({ behavior: "wait" });
+      await phone.context().close();
+      aaa("thread", "resolve", t.id);
+    }
   });
 
   await step("근거가 Questions 위에만: thread 카드는 근거 경고·보고서 열기 r-ID(PC·휴대폰 폭), thread pane에 고칠 방법, post는 거절", async () => {

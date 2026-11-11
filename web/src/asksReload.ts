@@ -14,12 +14,21 @@ export class AsksReload<T> {
 
   invalidate(): void { ++this.revision; }
   close(): void { this.closed = true; this.invalidate(); }
+  /** 바뀜 사건: 지금 읽는 것은 바뀌기 전 것일 수 있어 적용하지 않고 다시 읽는다. */
   refresh(): Promise<void> {
+    this.invalidate();
+    return this.follow();
+  }
+  /**
+   * 조작 응답 뒤(t-1767): 지금 읽는 것은 그대로 적용하고 끝나면 한 번 더 읽는다. host는 조작을 마치고 `asks` 사건을 먼저 보내므로
+   * 그 사건이 시작한 읽기는 이미 조작 뒤의 상태다. 그 읽기를 버리면 같은 목록을 한 번 더 기다린다. 사건 연결이 끊겨 지금 읽는 것이
+   * 조작보다 앞선 것이어도 뒤 읽기가 바로잡는다. 읽는 것이 없으면 지금 읽는다.
+   */
+  follow(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.dirty = true;
-    this.invalidate();
     if (this.active) return this.active;
-    this.active = this.run().finally(() => { this.active = null; if (this.dirty && !this.closed) void this.refresh(); });
+    this.active = this.run().finally(() => { this.active = null; if (this.dirty && !this.closed) void this.follow(); });
     return this.active;
   }
   private async run(): Promise<void> {

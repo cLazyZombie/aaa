@@ -8594,3 +8594,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 웹 설정 「보고서」는 기존 host.toml `[projects].library_max_days`·`library_max_mb`를 조작 기기에서 고친다. host 전체 공간을 함께 쓰므로 프로젝트별 설정은 만들지 않는다. 기본 30일·20480MiB, 0은 각 제한 끄기다.
 - FRONT_API 1.168의 `library_retention`·`library_retention_set`을 더하고 AGENT_LINK는 유지한다. 본 파일 판이 달라지면 conflict, host.local.toml이 덮으면 웹 저장을 거부한다. 세션 내부 agent는 바꾸지 못한다.
 - 저장 때 삭제하지 않고 다음 예정된 회차에서 새 한도를 읽는다. 보호·보관 제외·기한 우선·오래된 순 용량 정리·수동 prune·공유 링크 수명은 기존 규칙이다. 검증 기록은 [보존 설정 검증](testing-library-retention-t-1710.md)에 둔다.
+
+
+### 8.564 첫 접속·질문 답 응답 시간(t-1767)
+
+- 질문 카드에 답하면 host가 thread에 답을 기록한 사건으로 「답한 것」 카드를 바로 그린다. host 기록(답할 때의 사본)을 다시 읽으면 같은 카드가 그 기록으로 이어지고, 그 전에는 「지우기」와 물은 때가 없다. 응답은 전처럼 thread 전달 뒤에 온다(전달 순서·실패 처리·붙여넣기 간격은 그대로).
+- `/api/v1/call`의 1 KiB 이상 답은 정적 자산과 같은 협상으로 gzip이다. 조작(답함 표시·post 답·지우기·자동 모드) 뒤의 답은 쪽 있는 「답할 것」이다: 웹은 그 본문을 쓰지 않고, 쪽 없는 전체는 front socket frame 상한을 넘었다. FRONT_API는 그대로다.
+- 웹은 thread 목록을 host 상한(200개)씩 읽고, 조작 응답이 그 조작의 사건이 시작한 조회를 버리지 않는다. 측정 방법·전후·owner는 [응답 시간 기록](testing-web-response-time-t-1767.md)에 둔다.

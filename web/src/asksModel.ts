@@ -65,6 +65,22 @@ const latest = <T extends AskBrief>(done: T[], kind: AskRecord["kind"], subject:
 /** thread의 가장 최근 답한 질문 기록(대화 칩·`#question=` 주소가 새 보고 뒤에도 「답함」을 본다) */
 export const lastAnswer = <T extends AskBrief>(done: T[], thread: string): T | null => latest(done, "question", thread);
 
+/**
+ * 방금 답한 질문(t-1767): host가 thread에 답을 기록하면(thread 사건) 「답한 것」 기록을 다시 읽기 전에도 그 질문과 답으로 같은 모양의
+ * 기록을 만든다. host 기록이 오면 그것으로 바뀐다. 물은 때와 지우기는 host 기록에만 있다(`asked_ms` 0은 모름이다).
+ */
+export function answeredNow(t: ThreadView): AskRecord | null {
+  const q = t.questions;
+  if (!q?.answer) return null;
+  return {
+    id: `now:${t.project}/${t.id}`, kind: "question", subject: t.id, title: t.title, report_id: t.report_id,
+    asked_ms: 0, done_ms: q.answer.at_ms, by: q.answer.by, summary: q.answer.summary, items: q.items, answer: q.answer, files_base: q.files_base,
+  };
+}
+
+/** 답한 것 카드의 React key: 방금 답한 것(`answeredNow`)과 뒤에 온 host 기록이 같은 카드로 이어진다 */
+export const doneCardKey = (r: AskRecord): string => (r.kind === "question" && r.answer ? `q:${r.subject}:${r.done_ms}` : r.id);
+
 const KEY_KIND: Record<string, AskRecord["kind"] | undefined> = { "q:": "question", "r:": "request", "t:": "task" };
 
 /** 답할 것 열쇠(`q:`·`r:`·`t:`)가 답해서 목록에서 빠졌으면 그때 남긴 기록(카드가 그 기록으로 바뀐다) */

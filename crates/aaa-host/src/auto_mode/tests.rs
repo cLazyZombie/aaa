@@ -175,7 +175,7 @@ async fn automatic_reply_returns_a_small_ack_with_large_answer_history() {
         record.id = format!("history-{n}");
         h.db.ask_put("demo", &record).unwrap();
     }
-    assert!(serde_json::to_vec(&h.asks_view("demo").unwrap()).unwrap().len() > aaa_proto::MAX_FRAME);
+    assert!(serde_json::to_vec(&h.asks_view_mode("demo", false).unwrap()).unwrap().len() > aaa_proto::MAX_FRAME);
     let ids = question(&h, 2, "## Questions\n### 1. 자리\n- A 아래\n- B 위\n### 2. 색\n- A 파랑\n- B 회색\n");
     for (n, id) in ids.iter().enumerate() {
         let result = answer(&h, id, COORD).await;
@@ -362,7 +362,7 @@ async fn long_running_mode_pages_records_and_can_review_an_older_decision() {
         before = next;
     }
     assert_eq!(seen.len(), 75);
-    assert!(serde_json::to_vec(&h.asks_view("demo").unwrap()).unwrap().len() < aaa_proto::MAX_FRAME);
+    assert!(serde_json::to_vec(&h.asks_view_mode("demo", false).unwrap()).unwrap().len() < aaa_proto::MAX_FRAME);
     let r = h.auto_decision_review("demo", "auto-q-0000", Some("B".into()), "device:phone").unwrap();
     let FrontResponse::AutoDecisions { decisions, .. } = r else { panic!() };
     assert_eq!(decisions.len(), 1);
