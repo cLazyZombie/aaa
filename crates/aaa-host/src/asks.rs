@@ -1408,7 +1408,9 @@ mod tests {
         assert_eq!(h.user_request_count(), 1);
         h.ask_handle("demo", &open[0].id, "device:phone").unwrap();
         assert!(seen.has_changed().unwrap());
-        let FrontResponse::Asks { requests, done, keep_days, .. } = h.asks_view_mode("demo", false).unwrap() else { panic!() };
+        let FrontResponse::Asks { requests, done, keep_days, .. } = h.asks_view_mode("demo", false).unwrap() else {
+            panic!()
+        };
         assert_eq!((requests.len(), done.len(), keep_days), (0, 1, ASK_KEEP_DAYS));
         assert_eq!(
             (done[0].kind, done[0].summary.as_str(), done[0].by.as_str()),
