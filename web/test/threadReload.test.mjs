@@ -12,6 +12,7 @@ it("모든 페이지를 읽는 동안 받은 새 사건을 보존하고 다른 �
   let calls = 0;
   const snapshot = await readThreadPages(async request => {
     assert.equal(request.details, true); // 질문·보류 상세를 잃지 않는다
+    assert.equal(request.limit, 200); // host 상한까지 청해 차례 읽기의 왕복 수를 줄인다
     if (++calls === 1) {
       assert.equal(request.after, undefined);
       return { kind: "threads", threads: [old], next_after: "cursor" };

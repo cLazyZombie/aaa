@@ -18,13 +18,14 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
 import { mergeQuestionDraft, questionDrafts, questionIdentity, type QuestionDraft } from "./questionDraft";
 import { AnswerField } from "./AnswerField";
 import { addAnswerImage, answerBody, answerImages, removeAnswerImage, withAnswerBody } from "./answerImages";
+import { uploadsBase } from "./tasksModel";
 export { withRecommended } from "./questionAnswer";
 
 const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
@@ -150,7 +151,9 @@ export function AsksPanel({
 
 // ───────────── 본문 ─────────────
 
-export type AskSelection = { kind: "auto"; decision: AutoDecision } | { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "loading"; error?: string | null; retry?: () => void } | { kind: "none" };
+/** `now`: host 기록을 다시 읽기 전, thread에 기록된 답으로 그린 「답한 것」(asksModel `answeredNow`)의 프로젝트.
+ * 답에 붙인 그림은 아직 기록 사본이 없어 프로젝트 uploads/에서 읽는다 */
+export type AskSelection = { kind: "auto"; decision: AutoDecision } | { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord; now?: { project: string } } | { kind: "missing"; id: string } | { kind: "loading"; error?: string | null; retry?: () => void } | { kind: "none" };
 
 export function AsksView({
   shown,
@@ -245,7 +248,8 @@ export function AsksView({
           )}
           {selection.kind === "auto" && <AutoDecisionCard key={selection.decision.id} decision={selection.decision} />}
           {selection.kind === "done" && (
-            <DoneCard key={selection.record.id} r={selection.record} canControl={canControl} onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread} />
+            <DoneCard key={doneCardKey(selection.record)} r={selection.record} canControl={canControl && !selection.now} uploads={selection.now && uploadsBase(selection.now.project)}
+              onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread} />
           )}
         </div>
       </div>
@@ -592,11 +596,12 @@ function RequestCard({ questionId, title, body, at, canControl, onHandle, onRepl
 }
 
 /** 답한 카드의 직접 쓴 답: 줄바꿈 그대로, 끝의 그림 줄은 썸네일(누르면 크게)로. 그림은 host가 답 사본 폴더에 둔 사본
- * (`<files_base>uploads/<이름>`)이다: 웹이 받는 사본 주소는 기기별 읽기 경로라 프로젝트를 알 수 없다 */
-function DoneAnswer({ text, base, testId, onZoom }: { text: string; base: string | null | undefined; testId: string; onZoom: (z: { src: string; alt: string }) => void }) {
+ * (`<files_base>uploads/<이름>`)이다: 웹이 받는 사본 주소는 기기별 읽기 경로라 프로젝트를 알 수 없다.
+ * `uploads`는 그 주소의 앞부분이다. 방금 답한 것(사본을 읽기 전)만 프로젝트 uploads/다 */
+function DoneAnswer({ text, uploads, testId, onZoom }: { text: string; uploads: string | null; testId: string; onZoom: (z: { src: string; alt: string }) => void }) {
   const body = answerBody(text).trim();
-  const images = base ? answerImages(text) : [];
-  const src = (target: string) => `${base}uploads/${encodeURIComponent(target.replace(/^uploads\//, ""))}`;
+  const images = uploads ? answerImages(text) : [];
+  const src = (target: string) => `${uploads}${encodeURIComponent(target.replace(/^uploads\//, ""))}`;
   return (
     <>
       <p className="ask-done-text" data-testid={testId}><span className="muted">직접 쓴 답</span> <strong>{images.length === 0 ? text : body}</strong></p>
@@ -615,12 +620,13 @@ function DoneAnswer({ text, base, testId, onZoom }: { text: string; base: string
   );
 }
 
-function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
-  r: AskRecord; canControl: boolean; onForget: () => Promise<void>; onZoom: (z: { src: string; alt: string }) => void; onThread: (id: string) => void;
+function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThread }: {
+  r: AskRecord; canControl: boolean; uploads?: string | false; onForget: () => Promise<void>; onZoom: (z: { src: string; alt: string }) => void; onThread: (id: string) => void;
 }) {
   const [report, setReport] = useState<string | null | "loading" | "missing">(null);
   const [confirm, setConfirm] = useState(false);
   const base = r.files_base;
+  const uploads = uploadsNow || (base ? `${base}uploads/` : null);
   const toggleReport = () => {
     if (report !== null) return setReport(null);
     if (!base) return setReport("missing");
@@ -641,7 +647,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
       </header>
       <QuestionReports items={r.items} body={r.body} reportId={r.report_id} base={base} />
       {r.kind !== "question" && <h2 className="ask-card-title">{r.items.length === 0 && r.question_id && <code>{r.question_id} </code>}{r.title}</h2>}
-      <p className="ask-done-when" data-testid="ask-done-when">물은 때 {when(r.asked_ms)} · {r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
+      <p className="ask-done-when" data-testid="ask-done-when">{r.asked_ms > 0 && <>물은 때 {when(r.asked_ms)} · </>}{r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
       {r.items.map((item, n) => {
         const pick = r.answer?.picks[n];
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
@@ -672,12 +678,12 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
               })}
             </div>
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
-            {r.answer?.comments?.[n] ? <DoneAnswer text={r.answer.comments[n]} base={base} testId={`ask-done-text-${item.source_number ?? n + 1}`} onZoom={onZoom} />
+            {r.answer?.comments?.[n] ? <DoneAnswer text={r.answer.comments[n]} uploads={uploads} testId={`ask-done-text-${item.source_number ?? n + 1}`} onZoom={onZoom} />
               : pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );
       })}
-      {r.answer?.text && <DoneAnswer text={r.answer.text} base={base} testId="ask-done-text" onZoom={onZoom} />}
+      {r.answer?.text && <DoneAnswer text={r.answer.text} uploads={uploads} testId="ask-done-text" onZoom={onZoom} />}
       {r.kind !== "question" && r.items.length === 0 && r.body && <AskMarkdown base={base}>{r.body}</AskMarkdown>}
       {report !== null && (
         <div className="ask-report" data-testid="ask-report">
@@ -731,9 +737,10 @@ export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) 
   }, []);
   const put = useCallback((r: FrontResponse) => {
     if (r.kind === "asks" && reloader.current) {
-      // 조작 응답의 전체 사본은 전송 중 더 낡아질 수 있다. 새 사건 목록을 덮지 않고 최신 조회로 잇는다.
+      // 조작 응답의 사본은 전송 중 더 낡아질 수 있다. 새 사건 목록을 덮지 않고 조회로 잇는다. 그 조작의 사건이 이미
+      // 시작한 조회는 버리지 않는다(asksReload `follow`).
       ++seq.current;
-      void reloader.current.refresh();
+      void reloader.current.follow();
     } else accept(r);
   }, [accept]);
   const moreAuto = useCallback(async () => {
@@ -772,7 +779,8 @@ export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) 
 }
 
 /** 열쇠 → 본문에 그릴 것 */
-export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRecord[], auto: AutoDecision[] = []): AskSelection {
+/** `threads`: 지금의 thread들(`project/id` → thread). 보던 질문 카드의 thread에 답이 기록됐는지 본다 */
+export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRecord[], auto: AutoDecision[] = [], threads?: ReadonlyMap<string, ThreadView>): AskSelection {
   const previous = useRef<{ key: string | null; ask: OpenAsk } | null>(null);
   const selection = useMemo<AskSelection>(() => {
     if (key?.startsWith("a:")) {
@@ -797,13 +805,20 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
       const repost = open.find(x => x.kind === "question" && x.key === old.key && x.thread.project === old.thread.project
         && questionIdentity(x.thread.questions) === questionIdentity(old.thread.questions));
       if (repost) return { kind: "open", ask: repost };
+      // 보던 질문 카드에 host가 답을 기록했다(thread 사건): 「답한 것」 기록을 다시 읽을 때까지 그 답을 바로 보인다(t-1767).
+      // 같은 보고의 답일 때만이다. 기록을 지웠거나 기한이 지난 옛 답을 되살리지 않게, 보던 카드에서 이어질 때만 쓴다.
+      const now = threads?.get(`${old.thread.project}/${old.thread.id}`);
+      const record = now && now.questions?.report_hash === old.thread.questions.report_hash ? answeredNow(now) : null;
+      if (record) return { kind: "done", record, now: { project: old.thread.project } };
     }
     // 영속 ID 링크가 닫혔거나 지워졌어도 다른 질문을 그 ID의 카드처럼 열지 않는다.
     if (/^q:(?:[a-z0-9_][a-z0-9_-]{0,47}\/)?[qt]-\d+$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
     return open[0] ? { kind: "open", ask: open[0] } : { kind: "none" };
-  }, [key, open, done, auto]);
+  }, [key, open, done, auto, threads]);
   useLayoutEffect(() => {
-    previous.current = selection.kind === "open" ? { key, ask: selection.ask } : null;
+    // 방금 답한 것을 보이는 동안은 보던 카드를 기억해 둔다(다음 그림에서도 같은 판정)
+    if (selection.kind === "open") previous.current = { key, ask: selection.ask };
+    else if (!(selection.kind === "done" && selection.now)) previous.current = null;
   }, [key, selection]);
   return selection;
 }

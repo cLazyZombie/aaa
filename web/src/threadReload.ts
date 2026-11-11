@@ -60,7 +60,8 @@ export async function readThreadPages(
   const seen = new Set<string>();
   let after: string | undefined;
   for (;;) {
-    const r = await call({ op: "threads", project: null, role: null, details: true, after, ...(options.open ? { open: true } : {}) });
+    // 쪽은 차례로 읽는다: host 상한(200개·바이트 한도)까지 청해 왕복 수를 줄인다(t-1767)
+    const r = await call({ op: "threads", project: null, role: null, details: true, limit: 200, after, ...(options.open ? { open: true } : {}) });
     if (r.kind !== "threads") throw new Error("thread 목록 응답이 아니다");
     threads.push(...r.threads);
     options.page?.(threads);

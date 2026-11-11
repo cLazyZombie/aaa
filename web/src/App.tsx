@@ -1348,7 +1348,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       ? (questionKey(sel.slice("question:".length), askThreads, asksIndex, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
-  const selectedAsk = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
+  const selectedAsk = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions, threads);
   const historySelection = askKey && !askList.some(a => a.key === askKey)
     ? (askKey.startsWith("d:") ? asksIndex.find(r => r.id === askKey.slice(2)) : doneOf(askKey, asksIndex)) : null;
   const missingDone = historySelection && !asksDone.some(r => r.id === historySelection.id) ? historySelection.id : null;
@@ -1765,7 +1765,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               if (r.kind !== "task_board") throw new Error(`예상하지 못한 응답: ${r.kind}`);
               const { kind: _kind, ...board } = r;
               taskBoard.replace(board);
-              putAsks(await call({ op: "asks" }));
+              putAsks(await call({ op: "asks", paged: true }));
             }}
             onOpenTask={(title) => {
               goSel("tasks:");

@@ -2,12 +2,30 @@
 // 질문·답할 것 열쇠는 답한 뒤에도 그때 남긴 기록으로 이어진다(새 보고 뒤의 칩·「답함으로 표시」 뒤의 카드).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { askFileUrl, choicePicture, doneOf, freshAuto, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
+import { answeredNow, askFileUrl, choicePicture, doneCardKey, doneOf, freshAuto, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
 
 const BASE = "/api/v1/projects/demo/questions/t-1/abc/";
 const thread = (id, questions) => ({ id, title: id, updated_at_ms: 1, questions });
 const open = { report_hash: "abc", items: [{ text: "자리", choices: [] }], answer: null };
 const rec = (id, kind, subject, done_ms) => ({ id, kind, subject, title: subject, asked_ms: 0, done_ms, by: "Mac · Chrome", summary: "1A", items: [] });
+
+// 방금 답한 질문(t-1767): host가 thread에 기록한 답으로 「답한 것」 모양을 만들고, 뒤에 온 host 기록과 같은 카드로 이어진다.
+it("방금 답한 thread는 host 기록을 읽기 전에도 답한 것 모양이 되고 같은 카드로 이어진다", () => {
+  const answer = { picks: [0], comments: [], text: null, summary: "1A", by: "iPhone · Safari", at_ms: 1234 };
+  const t = { ...thread("t-1", { ...open, answer, files_base: BASE }), project: "demo", title: "자리 정하기", report_id: "r-0001" };
+  assert.equal(answeredNow(thread("t-1", open)), null, "답이 없으면 만들지 않는다");
+  assert.equal(answeredNow(thread("t-1", null)), null);
+  const now = answeredNow(t);
+  assert.deepEqual(now, {
+    id: "now:demo/t-1", kind: "question", subject: "t-1", title: "자리 정하기", report_id: "r-0001",
+    asked_ms: 0, done_ms: 1234, by: "iPhone · Safari", summary: "1A", items: open.items, answer, files_base: BASE,
+  });
+  const host = { ...rec("01HOSTRECORD", "question", "t-1", 1234), answer };
+  assert.equal(doneCardKey(now), doneCardKey(host), "host 기록이 와도 카드를 새로 만들지 않는다");
+  assert.notEqual(doneCardKey(now), doneCardKey({ ...host, done_ms: 2000 }), "다음 답은 다른 카드");
+  assert.equal(doneCardKey(rec("post", "request", "item", 1234)), "post");
+  assert.equal(doneCardKey(rec("closed", "question", "t-1", 1234)), "closed", "답 없이 닫힌 질문 기록은 제 ID");
+});
 
 it("q 칩은 현재 질문과 지난 답을 ID로 구별하고 기록 삭제 뒤 중립으로 돌아온다", () => {
   const current = thread("t-1", { ...open, items: [{ id: "q-1001" }] });
