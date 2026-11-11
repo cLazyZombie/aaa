@@ -5097,3 +5097,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [Codex 선제 갱신 시험 저장 경계 경합 수리](testing-codex-refresh-race-t-1731.md)
 
 - [질문 초안 Safari 전송 실패 진단(t-1746)](testing-question-drafts-diagnostics-t1746.md): 원본 선택 불일치·원인 미확정·사건 기록 후보와 관련 검증.
+
+- [profile 입력 유실 수리(t-1746)](testing-profile-input-t1746.md): 기준 main과 입력 사건 대조, 이름·다른 필드 보존 및 미리보기 요청 회귀.

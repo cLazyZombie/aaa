@@ -6,7 +6,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 import "./ThreadActions.css";
 import "./AdminPages.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DeviceRole, HookView, MachineView, ModelAdminView, ProfileAdminRow, ProfileAdminView, ProfileChangeReq, ProfilePlanView, SafetyView, SettingsScope, WorkRootView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { AdminDialog } from "./AdminPages";
@@ -566,12 +566,33 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const choices = enabledModels(useModelList(), d.harness);
-  const put = (k: keyof ProfileDraft) => (e: { target: { value: string } }) => setD({ ...d, [k]: e.target.value });
+  const form = useRef<HTMLFormElement>(null);
+  const edit = useCallback((key: keyof ProfileDraft, value: string) => {
+    setD(before => before[key] === value ? before : { ...before, [key]: value });
+  }, []);
+  const put = (key: keyof ProfileDraft) => (event: { target: { value: string } }) => edit(key, event.target.value);
+  useLayoutEffect(() => {
+    if (busy) return;
+    const view = form.current?.ownerDocument.defaultView;
+    if (!view) return;
+    // 다른 필드·모델 목록 갱신이 React capture에서 commit하기 전에 새 글을 받는다.
+    // 대화·직접 답과 같은 경계이며, 이 폼의 현재 초안에 해당 필드만 합친다.
+    const input = (event: Event) => {
+      const element = event.target;
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement)
+        || element.form !== form.current) return;
+      const key = (["name", "harness", "model", "effort", "description", "args"] as const).find(key => key === element.name);
+      if (key) edit(key, element.value);
+    };
+    view.addEventListener("input", input, true);
+    return () => view.removeEventListener("input", input, true);
+  }, [busy, edit]);
   const efforts = effortValues(d.harness);
   const nameOk = before !== null || profileNameOk(d.name.trim());
   return (
     <AdminDialog label={before ? `${before.name} 고치기` : "profile 더하기"} busy={busy} onClose={onClose}>
       <form
+        ref={form}
         onSubmit={(e) => {
           e.preventDefault();
           if (!nameOk) return;
@@ -588,12 +609,12 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
           {!before && (
             <label className="op-field">
               <span>이름</span>
-              <input autoFocus value={d.name} onChange={put("name")} disabled={busy} data-testid="profile-name" />
+              <input name="name" autoFocus value={d.name} onChange={put("name")} disabled={busy} data-testid="profile-name" />
             </label>
           )}
           <label className="op-field">
             <span>harness</span>
-            <select value={d.harness} onChange={put("harness")} disabled={busy} data-testid="profile-harness">
+            <select name="harness" value={d.harness} onChange={put("harness")} disabled={busy} data-testid="profile-harness">
               {WEB_HARNESSES.map((h) => (
                 <option key={h} value={h}>
                   {h}
@@ -604,7 +625,7 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
           {hasModel(d.harness) && (
             <label className="op-field">
               <span>model(비우면 harness 기본)</span>
-              <input value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" list="profile-model-choices" />
+              <input name="model" value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" list="profile-model-choices" />
               <datalist id="profile-model-choices">
                 {choices.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -617,7 +638,7 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
           {efforts.length > 0 && (
             <label className="op-field">
               <span>effort</span>
-              <select value={d.effort} onChange={put("effort")} disabled={busy}>
+              <select name="effort" value={d.effort} onChange={put("effort")} disabled={busy}>
                 <option value="">기본</option>
                 {efforts.map((v) => (
                   <option key={v} value={v}>
@@ -629,11 +650,11 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
           )}
           <label className="op-field">
             <span>설명</span>
-            <input value={d.description} onChange={put("description")} disabled={busy} />
+            <input name="description" value={d.description} onChange={put("description")} disabled={busy} />
           </label>
           <label className="op-field">
             <span>인자(줄마다 하나)</span>
-            <textarea rows={3} value={d.args} onChange={put("args")} disabled={busy} className="mono" data-testid="profile-args" />
+            <textarea name="args" rows={3} value={d.args} onChange={put("args")} disabled={busy} className="mono" data-testid="profile-args" />
           </label>
           {!nameOk && d.name !== "" && <p className="op-warn">이름은 영문·숫자·. _ -로 40자까지 쓴다(-·.로 시작하지 않는다).</p>}
           {error && (
