@@ -378,8 +378,11 @@ impl Host {
         self.db.inbox_list(None, false).map(|v| v.iter().filter(|i| is_user_request(i)).count() as u32).unwrap_or(0)
     }
 
-    pub(crate) fn asks_view(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
-        self.asks_view_mode(project, false)
+    /// 조작(답함 표시·답·지우기·자동 모드) 뒤의 답: 쪽 있는 「답할 것」(원문 첫 쪽과 가벼운 색인)이다(t-1767).
+    /// 웹은 이 본문을 쓰지 않고 `asks` 사건으로 다시 읽는다. 쪽 없는 전체 기록은 기록이 쌓이면 수 MiB라 휴대폰이 받아 버리고,
+    /// front socket의 frame 상한도 넘어 CLI가 처리 뒤에 오류를 받았다.
+    pub(crate) fn asks_after(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
+        self.asks_view_mode(project, true)
     }
 
     pub(crate) fn asks_view_mode(&self, project: &str, paged: bool) -> Result<FrontResponse, ErrorBody> {
@@ -451,7 +454,7 @@ impl Host {
             Some(format!("사용자가 확인 필요 post를 답함으로 표시했다({by}): 「{title}」. 답이 채팅에 없으면 다시 묻지 말고 처리된 것으로 본다"))
         }).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
-        self.asks_view(project)
+        self.asks_after(project)
     }
 
     /// 같은 질문 검증·답 조합 규칙을 쓰되 coordinator inbox로 전한다. 한 트랜잭션으로 답 기록과 요청 종료를 묶는다.
@@ -467,7 +470,7 @@ impl Host {
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         self.ask_answer_apply(project, item, body_hash, picks, text, comments, actor)?;
-        self.asks_view(project)
+        self.asks_after(project)
     }
 
     /// 답 저장·알림까지의 실제 처리 결과. 자동 답은 뒤의 목록 조회 실패와 구분한다.
@@ -652,7 +655,7 @@ impl Host {
         if !gone.is_empty() {
             self.asks_bump();
         }
-        self.asks_view(project)
+        self.asks_after(project)
     }
 
     /// 답한 지 오래된 기록과 그 사본을 지운다(ticker)
@@ -1021,7 +1024,7 @@ mod tests {
         assert!(h.ask_history("other", None, Some("record-0000")).is_err(), "다른 프로젝트 접근 거부");
         assert!(h.ask_history("demo", Some("bad"), None).is_err());
         assert!(h.ask_history("demo", Some("1:1"), Some("record-0000")).is_err());
-        let FrontResponse::Asks { done, done_index, .. } = h.asks_view("demo").unwrap() else { panic!() };
+        let FrontResponse::Asks { done, done_index, .. } = h.asks_view_mode("demo", false).unwrap() else { panic!() };
         assert_eq!(done.len(), 120);
         assert!(done_index.is_none(), "구판 전체 조회 유지");
         for r in &original {
@@ -1032,6 +1035,28 @@ mod tests {
         let (small, next) = h.db.ask_page("other", None, None).unwrap();
         assert_eq!(small.len(), 50, "작은 기록은 개수 상한");
         assert!(next.is_some());
+    }
+
+    /// 조작 뒤의 답은 쪽 있는 꼴이다(t-1767): 기록이 쌓여 쪽 없는 전체가 frame 상한(1MiB)을 넘어도 지우기 응답은 그 절반 안에 든다.
+    #[test]
+    fn operation_answers_stay_paged_with_large_history() {
+        let (h, _lab) = host();
+        for i in 0..121 {
+            let record: AskRecord = serde_json::from_value(serde_json::json!({
+                "id": format!("record-{i:04}"), "kind": "request", "subject": format!("item-{i}"), "title": "이력",
+                "asked_ms": 1, "done_ms": 100 + i, "by": "시험", "summary": "답함", "items": [], "body": "본문".repeat(2000)
+            }))
+            .unwrap();
+            h.db.ask_put("demo", &record).unwrap();
+        }
+        assert!(serde_json::to_vec(&h.asks_view_mode("demo", false).unwrap()).unwrap().len() > 1 << 20);
+        let after = h.ask_forget("demo", &["record-0000".to_string()], false, "test");
+        let bytes = crate::front::res_frame("forget".into(), after);
+        assert!(bytes.len() < 1 << 19, "{}", bytes.len());
+        let aaa_proto::FrontMsg::Res { result, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!() };
+        let FrontResponse::Asks { done, done_index, done_next, .. } = result.into_result().unwrap() else { panic!() };
+        assert_eq!(done_index.unwrap().len(), 120, "색인은 남은 기록 전부");
+        assert!(done.len() < 50 && done_next.is_some(), "원문은 첫 쪽만");
     }
 
     /// 두 경로 모두 같은 열린 post를 읽은 뒤 종료하도록 고정해 E2E53의 경합을 재현한다.
@@ -1383,7 +1408,7 @@ mod tests {
         assert_eq!(h.user_request_count(), 1);
         h.ask_handle("demo", &open[0].id, "device:phone").unwrap();
         assert!(seen.has_changed().unwrap());
-        let FrontResponse::Asks { requests, done, keep_days, .. } = h.asks_view("demo").unwrap() else { panic!() };
+        let FrontResponse::Asks { requests, done, keep_days, .. } = h.asks_view_mode("demo", false).unwrap() else { panic!() };
         assert_eq!((requests.len(), done.len(), keep_days), (0, 1, ASK_KEEP_DAYS));
         assert_eq!(
             (done[0].kind, done[0].summary.as_str(), done[0].by.as_str()),

@@ -994,7 +994,39 @@ async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json
         attachment_views(&host, &id, &mut response);
         response
     });
-    Json(Outcome::from(result)).into_response()
+    api_json(&headers, &Outcome::from(result))
+}
+
+/// 이보다 작은 API 답은 압축하지 않는다(조작 답은 대부분 작고, 압축 머리가 득보다 크다).
+const API_GZIP_MIN: usize = 1024;
+
+/// API 답 JSON. 큰 답(thread·답할 것·할 일 목록은 수백 KB~수 MB)은 브라우저가 받는다고 한 gzip으로 보낸다(t-1767).
+/// 정적 자산·보고서 보기와 같은 협상이다. 압축하지 못하면 원문으로 답한다.
+fn api_json<T: serde::Serialize>(headers: &HeaderMap, value: &T) -> Response {
+    use std::io::Write as _;
+    let bytes = match serde_json::to_vec(value) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            aaa_common::diagnostic::observe(&error, "API 답 직렬화 실패는 기존 오류 응답을 따른다");
+            return Json(value).into_response();
+        }
+    };
+    let json = [(header::CONTENT_TYPE, "application/json")];
+    if bytes.len() < API_GZIP_MIN {
+        return (json, bytes).into_response();
+    }
+    let vary = [(header::VARY, "Accept-Encoding")];
+    if !assets::accepts_gzip(headers) {
+        return (json, vary, bytes).into_response();
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::with_capacity(bytes.len() / 4), flate2::Compression::fast());
+    match encoder.write_all(&bytes).and_then(|()| encoder.finish()) {
+        Ok(body) => (json, vary, [(header::CONTENT_ENCODING, "gzip")], body).into_response(),
+        Err(error) => {
+            aaa_common::diagnostic::observe(&error, "API 답 gzip 실패 뒤 원문으로 답한다");
+            (json, vary, bytes).into_response()
+        }
+    }
 }
 
 /// 인증한 웹 기기에만 질문/hash·답한 사본에 묶인 짧은 읽기 경로를 발급한다.
@@ -3121,6 +3153,60 @@ mod guard_tests {
         );
         let planted = format!("aaa=junk; __Host-aaa={t}");
         assert_eq!(code(&l.0, "GET", "/api/v1/me", PUBLIC, &[("cookie", planted.as_str())]).await, StatusCode::OK);
+    }
+
+    /// 큰 API 답만, 받는다고 한 브라우저에만 gzip으로 보낸다. 푼 글은 원문과 같고 저장 금지·UTF-8 표지는 그대로다(t-1767)
+    #[tokio::test]
+    async fn large_api_answers_are_gzipped_only_when_accepted() {
+        use std::io::Read as _;
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let t = token(&l.0);
+        // 고정 40개(51바이트씩)로 `preferences` 답을 문턱(1024) 위인 2000바이트 남짓으로 올린다
+        let pins: Vec<String> = (0..40).map(|n| format!("mac-a:{n:02}-{}", "가".repeat(14))).collect();
+        let call = |body: String, accept: Option<&'static str>| {
+            let h = l.0.clone();
+            let cookie = format!("{}={t}", cookie_name(false));
+            async move {
+                let mut req = Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/call")
+                    .header(header::HOST, LOOP)
+                    .header(header::ORIGIN, "http://127.0.0.1:7000")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("cookie", cookie);
+                if let Some(accept) = accept {
+                    req = req.header(header::ACCEPT_ENCODING, accept);
+                }
+                let res = router(h).oneshot(req.body(Body::from(body)).unwrap()).await.unwrap();
+                let headers = res.headers().clone();
+                (headers, axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap())
+            }
+        };
+        let set = serde_json::json!({ "op": "preferences_set", "settings": {}, "pins": pins }).to_string();
+        let (_, saved) = call(set, None).await;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&saved).unwrap()["ok"]["kind"], "preferences");
+        let read = || r#"{"op":"preferences"}"#.to_string();
+        let (plain_headers, plain) = call(read(), None).await;
+        assert!(plain.len() >= 2000 && !plain_headers.contains_key(header::CONTENT_ENCODING), "{}", plain.len());
+        assert_eq!(plain_headers[header::VARY], "Accept-Encoding", "큰 답은 원문으로 보내도 협상 결과다");
+        let (refused_headers, refused) = call(read(), Some("gzip;q=0, br")).await;
+        assert!(!refused_headers.contains_key(header::CONTENT_ENCODING));
+        assert_eq!(refused, plain);
+        let (headers, packed) = call(read(), Some("gzip, deflate, br")).await;
+        assert_eq!(headers[header::CONTENT_ENCODING], "gzip");
+        assert_eq!(headers[header::VARY], "Accept-Encoding");
+        assert_eq!(headers[header::CONTENT_TYPE], "application/json; charset=utf-8");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        assert!(packed.len() < plain.len() / 4, "{} / {}", packed.len(), plain.len());
+        let mut text = Vec::new();
+        flate2::read::GzDecoder::new(&packed[..]).read_to_end(&mut text).unwrap();
+        assert_eq!(text, plain);
+        // 작은 답은 받는다고 해도 그대로 보낸다
+        let (small_headers, small) = call(r#"{"op":"questions","all":false}"#.to_string(), Some("gzip")).await;
+        assert!(small.len() < 1024 && !small_headers.contains_key(header::CONTENT_ENCODING));
+        assert!(!small_headers.contains_key(header::VARY));
+        assert_eq!(small_headers[header::CONTENT_TYPE], "application/json; charset=utf-8");
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&small).unwrap()["ok"]["kind"], "questions");
     }
 
     #[tokio::test]

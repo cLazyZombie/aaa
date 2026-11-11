@@ -109,7 +109,7 @@ impl Host {
             );
             self.asks_bump();
         }
-        self.asks_view(project)
+        self.asks_after(project)
     }
     fn auto_authorize(&self, project: &str, actor: &str) -> Result<(), ErrorBody> {
         if self.coordinator_project_of_actor(actor).as_deref() != Some(project) {
@@ -323,11 +323,11 @@ impl Host {
         }
         let gone = self.auto_decision_remove(project, |r| all || ids.contains(&r.id))?;
         if gone == 0 {
-            return self.asks_view(project);
+            return self.asks_after(project);
         }
         self.db.audit(actor, "auto_decision_forget", &format!("{project} {gone}"));
         self.asks_bump();
-        self.asks_view(project)
+        self.asks_after(project)
     }
     /// 결정한 지 [`ASK_KEEP_DAYS`]일이 지난 자동 결정을 지우고(ticker, 「답한 것」과 같은 기준), 질문이 닫혀 더는 자동 답을 받을 수
     /// 없는 `forgotten` ID를 뺀다.

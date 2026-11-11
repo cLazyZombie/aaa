@@ -848,7 +848,7 @@ mod attention_answer_tests {
                 lab.h.call(DeviceRole::Controller, "device:user", req).await.unwrap_err().code,
                 ErrorCode::Conflict
             );
-            let FrontResponse::Asks { done, .. } = lab.h.asks_view("demo").unwrap() else {
+            let FrontResponse::Asks { done, .. } = lab.h.asks_view_mode("demo", false).unwrap() else {
                 panic!("asks");
             };
             assert_eq!(done.len(), 1);
