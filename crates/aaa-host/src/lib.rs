@@ -1422,7 +1422,7 @@ impl Host {
                 })
                 .ok()
                 .flatten()
-                .map(|a| a.account);
+                .map(|a| a.account_label.unwrap_or(a.account));
         }
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
@@ -1441,7 +1441,7 @@ impl Host {
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .flatten()
-            .map(|a| a.account);
+            .map(|a| a.account_label.unwrap_or(a.account));
         Some(view)
     }
 

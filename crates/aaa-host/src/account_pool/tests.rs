@@ -1156,6 +1156,7 @@ async fn allocation_reserves_each_running_coordinator_account_across_projects_on
         l.h.save_account_run(&crate::account_policy::PaneAccount {
             run: format!("{project}/c-{pane}"),
             account: account.into(),
+            account_label: Some("previous-name".into()),
             harness: "codex".into(),
             machine: machine.into(),
             pane: Some(pane.into()),

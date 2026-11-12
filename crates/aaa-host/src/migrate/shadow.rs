@@ -147,6 +147,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         launch_existing_slot: false,
         legacy: Default::default(),
         account: None,
+        account_label: None,
         holds: vec![],
         started_by: None,
         automation: None,

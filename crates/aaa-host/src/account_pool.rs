@@ -293,7 +293,11 @@ impl Host {
             .pane_views(DeviceRole::Local)
             .into_iter()
             .filter(|p| p.state.is_running() && p.coordinator_project.is_some())
-            .filter_map(|p| p.account)
+            .map(|p| self.pane_account(&p.id))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .map(|p| p.account)
             .collect();
         for member in pool.members {
             if !auto && Some(member.account.as_str()) != account {

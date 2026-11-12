@@ -45,6 +45,9 @@ pub(crate) struct ThreadRec {
     pub profile: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// 이름 변경 전 시작한 작업의 표시 이름. 인증·배정은 account의 현재 이름으로 찾는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
     #[serde(default)]
     pub role: Role,
     #[serde(default)]
@@ -222,6 +225,7 @@ impl ThreadRec {
             machine_id: machine_id.to_string(),
             profile: profile.to_string(),
             account: None,
+            account_label: None,
             role,
             kind,
             holds: vec![],
@@ -1054,7 +1058,7 @@ impl Host {
             title: r.title.clone(),
             machine: self.machine_name(&r.machine_id),
             profile: r.profile.clone(),
-            account: r.account.clone(),
+            account: r.account_label.clone().or_else(|| r.account.clone()),
             role: r.role,
             thread_kind: r.kind,
             holds: r.holds.clone(),
@@ -3403,6 +3407,7 @@ mod tests {
             account_allocation: None,
             legacy: Default::default(),
             account: None,
+            account_label: None,
             holds: vec![],
             started_by: None,
             over_limit: None,
