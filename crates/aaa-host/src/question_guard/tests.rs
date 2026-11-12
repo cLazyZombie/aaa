@@ -184,3 +184,69 @@ fn diagnostics_keep_rule_and_source_line_without_copying_the_reply() {
     assert!(!diagnostic.contains("비공개"));
     assert!(evidence.summary(REMINDER).contains("답변 3행 · 질문 어미"));
 }
+
+/// 간접 인용과 같은 줄의 카드 안내를 분리해 열림·답함·교체 상태까지 전달한다.
+#[test]
+fn reported_explanations_keep_card_links_and_states() {
+    let cards = cards();
+    for (id, state) in [("q-1001", CardState::Open), ("q-1002", CardState::Answered), ("q-1003", CardState::Closed)] {
+        for text in [
+            format!(
+                "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침"
+            ),
+            format!(
+                "그림은 아직 검수를 받지 않았다고 적었습니다, [질문](#question={id})에서 고릅니다.\n\nA 통과(추천)\nB 더 고침"
+            ),
+            format!(
+                "[질문](#question={id})에서 고릅니다. 그림은 아직 검수를 받지 않았다고 적었습니다.\n\nA 통과(추천)\nB 더 고침"
+            ),
+            format!("그림은 아직 검수를 받지 않았다고 적었습니다. {id}에서 고릅니다. 카드에서 답해 주세요."),
+            format!("별도로 정할지 물었다고 적었습니다. {id}에서 고릅니다.\nA 통과(추천)\nB 더 고침"),
+        ] {
+            let result = inspect(&text, &cards);
+            assert!(result.missing.is_none(), "{text}");
+            if state == CardState::Closed {
+                assert_eq!(result.stale.unwrap().refs, [(id.into(), state)], "{text}");
+            } else {
+                assert!(result.stale.is_none(), "{text}");
+            }
+        }
+    }
+}
+
+/// 설명의 인용·옛 번호·다른 주제는 실제 새 요청의 카드가 될 수 없다.
+#[test]
+fn reported_explanations_do_not_hide_unlinked_requests() {
+    let cards = cards();
+    let explanation = "그림은 아직 검수를 받지 않았다고 적었습니다.";
+    for text in [
+        format!("{explanation} 지금 배포할까요?"),
+        format!("지금 배포할까요? {explanation}"),
+        format!("{explanation}, 승인 여부를 알려 주세요."),
+        format!("승인 여부를 알려 주세요, {explanation}"),
+        format!("{explanation} q-1001에서 고릅니다. 추가로 배포할까요?"),
+        format!("{explanation} q-1001에서 고릅니다. 별도로 승인 여부를 알려 주세요."),
+        format!("{explanation} q-1001에서 고릅니다. 배포할까요?"),
+        format!("q-1001에서 고릅니다. {explanation} 승인 여부를 알려 주세요."),
+        format!("{explanation} q-1001 카드에서 답해 주세요. 배포 승인 여부를 알려 주세요."),
+        format!("{explanation} q-1001에서 진행할까요? 배포할까요?"),
+        format!("{explanation} q-9999에서 고릅니다.\nA 통과(추천)\nB 더 고침"),
+        format!("{explanation} q-1001에서 고릅니다.\n\n## 배포\nA 배포(추천)\nB 보류"),
+        "q-1001에서 고르라고 적었습니다.\nA 통과(추천)\nB 더 고침".to_owned(),
+        "보고: 「q-1001에서 진행할까요?」\nA 통과(추천)\nB 더 고침".to_owned(),
+        "예시: q-1001에서 진행할까요?\nA 통과(추천)\nB 더 고침".to_owned(),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    }
+    for text in [
+        "진행할까요?라고 물었다는 보고입니다.",
+        "어느 안으로 할까요?라고 적었습니다.",
+        "배포해 달라고 적었습니다.",
+        "보고: 「q-1001에서 진행할까요?」",
+    ] {
+        let result = inspect(text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+    }
+    let text = format!("{explanation}\n\n승인 여부를 알려 주세요.");
+    assert_eq!(inspect(&text, &cards).missing.unwrap().line, 3);
+}
