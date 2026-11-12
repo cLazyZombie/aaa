@@ -111,7 +111,11 @@ export default async function ({ page }) {
       const file = `${root}/linked-${n}.md`; fs.writeFileSync(file, "기존 카드에서 답한다");
       aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `기존 질문 ${n} aaa:question/${target}`, "--body-file", file);
     }
-    if (JSON.stringify(aaa("question", "list").questions.map(q => q.id)) !== JSON.stringify(before)) throw new Error("연결 알림이 별개 카드를 만들었다");
+    // catalog는 연결 post도 같은 q-ID로 싣는다. 새 질문 여부는 번호와 실제 요청 소유권으로 확인한다.
+    const linkedIds = [...new Set(aaa("question", "list").questions.map(q => q.id))].sort();
+    if (JSON.stringify(linkedIds) !== JSON.stringify([...new Set(before)].sort())) throw new Error("연결 알림이 새 질문 번호를 만들었다");
+    const linked = (await call(page, { op: "asks" })).ok.requests.filter(r => r.title.startsWith("기존 질문 "));
+    if (linked.length !== 2 || linked.some(r => r.questions != null || r.question_id !== q.items[0].id)) throw new Error(`기존 카드 연결 소유권: ${JSON.stringify(linked)}`);
     const preview = `${root}/preview`; fs.mkdirSync(preview);
     fs.writeFileSync(`${preview}/card.svg`, svg);
     aaa("library", "publish", preview, "--name", "preview");

@@ -21,7 +21,7 @@
 - `post::tests::plain_user_requests_link_only_one_current_thread_question`: t-ID·현재 q-ID 자동 연결과 명시적 접미사를 받는다. 옛 판·다른 프로젝트·부분 문자열·여러 대상·잘못된 접미사·답한 카드·끝난 thread를 거절한다. 기존 카드 접미사와 새 질문을 섞어 기존 질문을 가리는 조합도 거절한다.
 - `post::tests::linked_request_keeps_its_question_ownership_when_the_report_closes_during_receipt`: barrier로 연결 검사 완료와 저장 사이에 보고가 질문을 비우는 사건을 넣는다. 기존 thread 소유권과 번호를 유지하며 독립 post 질문 번호를 만들지 않는지 확인한다.
 - `asks`·`question_ids`: 구판에서 이미 받은 평문·카드 없는 접미사 기록은 시험에서 원장을 직접 준비한다. 과거 답이 독립 요청을 닫지 않는 계약과 기록 보존을 유지한다. 새 요청 fixture는 두 선택지로 바꿨다. 질문 본문 보존과 푸시 이동 대상의 기대도 새 fixture의 실제 원문·q-ID로 검사한다.
-- 웹 E2E 69: 실제 CLI→host에서 평문·없는 접미사·선택지 하나의 거절 메시지와 카드 수 보존을 검사한다. thread·현재 q-ID 접미사가 별개 카드를 만들지 않는지 확인한다. 두 선택지 본문의 카드·답·다른 기기 동기화도 확인한다.
+- 웹 E2E 69: 실제 CLI→host에서 평문·없는 접미사·선택지 하나의 거절 메시지와 카드 수 보존을 검사한다. thread·현재 q-ID 접미사는 새 번호를 만들지 않고 실제 요청의 소유권이 기존 카드로 남는지 확인한다. catalog는 연결 알림을 같은 q-ID로도 싣기 때문에 행 수를 카드 수로 해석하지 않는다. 두 선택지 본문의 카드·답·다른 기기 동기화도 확인한다.
 - 웹 E2E 129와 일괄 처리 공용 fixture는 새 요청을 두 선택지로 준비한다. 지연 응답과 기록 사본 보존의 기존 단언은 유지한다.
 
 시간을 자는 대신 기존 CLI 완료·host 사건·DOM 조건과 barrier를 사용한다. 운영 host의 post·질문 기록은 읽거나 수정하지 않는다.
@@ -40,3 +40,5 @@
 ## 관련 owner 결과
 
 고정한 최종 소스에서 `aaa verify -- nice -n 15 python3 scripts/verify.py develop --base HEAD --package aaa-host`로 902개 통과·실패 없음·기존 제외 2개를 확인했다. 같은 실행의 strict Clippy와 공개 검사도 통과했다. 선택지 검사를 제거한 변이는 새 평문 거절 회귀에서 종료 101로 실패했고 원문을 복원했다. 정규 전체 gate의 후보 SHA·결과·실행 확인은 t-1795 보고의 상세 기록에 남긴다. 착지 창에서는 최종 통합 SHA의 gate를 별도로 수행한다.
+
+E2E 69의 새 단언은 첫 전체 실행에서 catalog의 같은 q-ID 중복 행을 새 카드로 오판했다. 보존 실험실 DB에서 thread 소유 번호만 있는 것을 확인하고, 고유 번호 집합과 실제 요청 소유권으로 검사했다. `UserRequestView.questions`는 `None`이면 JSON에서 생략되므로 생략·null 양쪽에서 새 질문 본문이 없음을 확인한다. 수정한 69의 실제 CLI·Chromium·WebKit 전체 단계와 공개 검사는 통과했다. 독립 재검토에서도 이 단언이 연결 계약을 직접 검사함을 확인했다.
