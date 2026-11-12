@@ -120,7 +120,7 @@ export default async function () {
         const dialog = page.getByRole("alertdialog");
         await clickDialogButton(dialog.getByRole("button", { name: "지우기", exact: true }));
         await inTime(held.promise, 20000, "서버가 처리한 이전 삭제 응답 보류");
-        await coordinatorPost({ request: true, title: "늦은 응답 사이 새 확인", body: "다음 단계 진행 여부를 확인해 주세요." });
+        await coordinatorPost({ request: true, title: "늦은 응답 사이 새 확인", body: "## Questions\n### 1. 다음 단계\n- A 진행\n- B 보류\n" });
         await domIs(page, "새 확인 사건 표시", () => [...document.querySelectorAll('[data-testid="ask-row"]')].some(e => e.textContent.includes("늦은 응답 사이 새 확인")));
         release.resolve();
         await oldResponse;

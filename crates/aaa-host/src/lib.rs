@@ -633,6 +633,8 @@ pub struct Host {
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub(crate) post_gate: std::sync::Mutex<()>,
+    #[cfg(test)]
+    post_link_barrier: Mutex<Option<Arc<std::sync::Barrier>>>,
     deployment_gate: std::sync::Mutex<()>,
     rollout_gate: tokio::sync::Mutex<()>,
     rollout_wake: tokio::sync::Notify,
@@ -916,6 +918,8 @@ impl Host {
             collect_locks: Mutex::new(HashMap::new()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
+            #[cfg(test)]
+            post_link_barrier: Mutex::new(None),
             deployment_gate: std::sync::Mutex::new(()),
             rollout_gate: tokio::sync::Mutex::new(()),
             rollout_wake: tokio::sync::Notify::new(),

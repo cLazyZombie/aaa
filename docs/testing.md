@@ -5105,3 +5105,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [첫 접속·질문 답 응답 시간(t-1767)](testing-web-response-time-t-1767.md): 운영·실험실 측정, 답한 카드 바로 표시·API gzip·조작 답 축소의 전후와 owner.
 
 - [Codex 이름 변경의 이미지 결과 불명 정리(t-1787)](testing-account-image-rename-t-1787.md)
+
+- [t-1795: 선택지 없는 사용자 요청 수신 거절](testing-post-question-choices-t-1795.md): 열린 thread 카드 연결·현재 q-ID 경계·선택지 검사·보고 교체 경합·구판 기록 호환과 실제 CLI/웹 회귀.
