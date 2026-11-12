@@ -1585,6 +1585,46 @@ mod tests {
         assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
     }
 
+    /// 인용 설명과 카드 링크가 섞여도 실제 완료 사건에서 누락과 교체 안내를 구별한다.
+    #[tokio::test]
+    async fn question_guard_keeps_reported_card_links_through_replacement() {
+        let (h, _lab) = coordinator_host();
+        let mut rec =
+            crate::orch::ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, aaa_proto::ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.status = aaa_proto::ThreadStatus::Open;
+        assert!(
+            h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap()
+        );
+        let body = "## Questions\n### 1. 그림\n- A 통과 (추천)\n- B 더 고침\n";
+        let now = util::now_ms();
+        let mut previous = None;
+        for (n, revision) in ["first", "replacement"].into_iter().enumerate() {
+            rec.report_hash = Some(revision.into());
+            rec.questions =
+                h.identify_questions("demo", "thread", &rec.id, revision, &aaa_proto::report_questions(body)).unwrap();
+            h.save(&mut rec);
+            let current = rec.questions[0].id.clone().unwrap();
+            assert!(h.question_catalog(false).unwrap().iter().any(|q| q.id == current));
+            let id = previous.as_ref().unwrap_or(&current);
+            let text = format!(
+                "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침"
+            );
+            h.on_harness("m", completed_reply("codex", now, now + n as u64, &text));
+            let items = h.db.inbox_list(Some("demo"), true).unwrap();
+            assert!(!items.iter().any(|i| i.event == crate::question_guard::EVENT));
+            let stale = items.iter().find(|i| i.event == crate::question_guard::STALE_EVENT);
+            if n == 0 {
+                assert!(stale.is_none(), "열린 카드 안내는 경고하지 않는다");
+            } else {
+                let stale = stale.unwrap();
+                assert!(stale.summary.contains(id));
+                assert!(stale.summary.contains(&format!("현재 카드: {current}")));
+            }
+            previous = Some(current);
+        }
+    }
+
     /// q-2677 꼴: 그림을 Questions 위에만 두면 카드가 비므로 접수하지 않고 고칠 곳을 알린다.
     #[tokio::test]
     async fn user_question_posts_with_evidence_only_above_questions_are_refused() {

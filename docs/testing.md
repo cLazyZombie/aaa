@@ -1,3 +1,4 @@
+- t-1774: [질문 감시의 인용 설명·카드 번호 연결](testing-question-guard-quotes-t1774.md)
 - t-1741: [질문 감시의 의미 확인·기존 카드 안내 경계](testing-question-guard-boundaries-t1741.md)
 - t-1734: [Windows 원래 stdin 관측의 읽기 진입 경계](testing-win-stdin-read-entry-t-1734.md)
 - t-1732: [이미지 원장 1024건 경계와 읽기 비용](testing-image-ledger-limit-t-1732.md)

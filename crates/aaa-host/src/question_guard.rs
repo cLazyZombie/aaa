@@ -96,13 +96,22 @@ fn ids(text: &str) -> Vec<String> {
         })
 }
 
-/// Markdown 전체를 해석하지 않는다. 인용·코드를 제외하고 제목과 문단의 연결만 보존한다.
-fn blocks(text: &str) -> Vec<Block> {
+/// 간접 인용은 보고한 구절만 지운다. 같은 줄의 카드 안내·새 요청까지 지우지 않는다.
+fn prose(line: &str) -> String {
     static QUOTES: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"`[^`\n]*`|「[^」]*」|“[^”]*”|"[^"\n]*"|'[^'\n]*'"#).unwrap());
     static INDIRECT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:라고|라는|다고|냐고).*(?:보고|요약|물었|적었|썼|기록)|(?:예시|인용|질문 예)\s*[:：]").unwrap()
+        Regex::new(
+            r"(^|[.!?？。;,，])[^.!?？。;,，\n]*[?？]?(?:라고|라는|다고|냐고)[^.!?？。;,，\n]*?(?:보고|요약|물었|적었|썼|기록)[가-힣]*|(?:예시|인용|질문 예)\s*[:：][^.!?？。;,，\n]*[?？]?",
+        )
+        .unwrap()
     });
+    let unquoted = QUOTES.replace_all(line, "");
+    INDIRECT.replace_all(&unquoted, "$1").into_owned()
+}
+
+/// Markdown 전체를 해석하지 않는다. 인용·코드를 제외하고 제목과 문단의 연결만 보존한다.
+fn blocks(text: &str) -> Vec<Block> {
     let mut out: Vec<Block> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut section = 0;
@@ -124,12 +133,13 @@ fn blocks(text: &str) -> Vec<Block> {
             separated = true;
             continue;
         }
-        if t.is_empty()
-            || t.starts_with('>')
-            || line.starts_with("    ")
-            || line.starts_with('\t')
-            || INDIRECT.is_match(t)
-        {
+        if t.is_empty() || t.starts_with('>') || line.starts_with("    ") || line.starts_with('\t') {
+            separated = true;
+            continue;
+        }
+        let clean = prose(line);
+        let t = clean.trim_start();
+        if t.trim_matches(|c: char| c.is_whitespace() || ".!?？。;,，".contains(c)).is_empty() {
             separated = true;
             continue;
         }
@@ -154,9 +164,8 @@ fn blocks(text: &str) -> Vec<Block> {
                 separated = true;
             }
         }
-        let clean = QUOTES.replace_all(line, "");
         if separated || out.is_empty() {
-            out.push(Block { text: clean.into_owned(), line: index + 1, section, question_group });
+            out.push(Block { text: clean, line: index + 1, section, question_group });
         } else {
             let last = out.last_mut().unwrap();
             last.text.push('\n');
@@ -182,7 +191,7 @@ fn fresh_request(text: &str) -> bool {
     fresh_tail(text).is_some()
 }
 
-fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
+fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
     static QUESTION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)[^\n.!?。;]*?(?:[가-힣]+까요|[가-힣]+나요|하시겠|원하시|어느|어떤|무엇|어떻게|해도 될|진행해도)[^\n.!?。;]*[?？]|\b(?:shall i|should i|can i|would you like|do you want|which .{0,100}prefer)\b[^\n]*[?？]").unwrap()
     });
@@ -197,24 +206,22 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
     });
     static CHOICE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?\*{0,2}\s+\S").unwrap());
-    if let Some(m) = QUESTION.find(text) {
-        return Some(("question", text[..m.start()].bytes().filter(|b| *b == b'\n').count()));
-    }
+    let mut out = QUESTION.find_iter(text).map(|m| ("question", m.start())).collect::<Vec<_>>();
     // 조건부 제안은 실제 질문 어미와 분리한다. 한 문장의 제안이 다음 문장의 요청을 가리지 않는다.
-    let mut line = 0;
+    let mut offset = 0;
     for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
         // 피드백 구절만 지운다. 같은 문장의 별개 승인·선택 요청까지 면제하지 않는다.
-        let actionable = OPTIONAL_FEEDBACK.replace_all(sentence, "");
+        let actionable = OPTIONAL_FEEDBACK.replace_all(sentence, |m: &regex::Captures<'_>| " ".repeat(m[0].len()));
         let sentence = actionable.as_ref();
         let future_permission = sentence.contains("해도 되면") && text.contains("여쭙겠습니다");
         if !CONDITIONAL.is_match(sentence) && !future_permission {
-            if let Some(ask) = ASK.find(sentence) {
+            for ask in ASK.find_iter(sentence) {
                 let verification = ask.as_str().starts_with("확인해")
                     && !["할지", "될지", "여부", "맞는지", "괜찮은지", "승인", "결정"]
                         .iter()
                         .any(|s| sentence.contains(s));
                 if !verification {
-                    return Some(("request", line));
+                    out.push(("request", offset + ask.start()));
                 }
             }
             if (sentence.contains("알려 주시면 좋은")
@@ -222,10 +229,10 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
                 || required && ["답해 주시면", "알려 주시면", "정해 주시면"].iter().any(|s| sentence.contains(s)))
                 && !sentence.contains("나중")
             {
-                return Some(("required_information", line));
+                out.push(("required_information", offset));
             }
         }
-        line += sentence.bytes().filter(|b| *b == b'\n').count();
+        offset += sentence.len();
     }
     let choices = CHOICE.find_iter(text).count();
     if choices >= 2
@@ -234,9 +241,9 @@ fn request(text: &str, required: bool) -> Option<(&'static str, usize)> {
             || text.contains("고를 것")
             || text.lines().all(|l| l.chars().count() < 24 && !l.contains(['.', ':'])))
     {
-        return Some(("choices", 0));
+        out.push(("choices", 0));
     }
-    None
+    out
 }
 
 fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
@@ -248,86 +255,99 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
                 .iter()
                 .any(|marker| b.text.contains(marker))
         });
-        let Some((rule, line)) = request(&block.text, required) else { continue };
-        let own_ids = ids(fresh_tail(&block.text).unwrap_or(&block.text));
-        let fresh = fresh_request(&block.text);
-        let unresolved = own_ids.iter().any(|id| !cards.contains_key(id));
-        let own = own_ids.iter().filter_map(|id| cards.get(id).map(|state| (id.clone(), *state))).collect::<Vec<_>>();
-        // 새 요청이 같은 문단의 옛 q-ID 뒤에 붙어도 옛 카드로 가리지 않는다.
-        let mut linked = if unresolved { Vec::new() } else { own };
-        if linked.is_empty() && !fresh && !unresolved {
-            // 요청 뒤 목록·설명을 지나 같은 주제의 카드 링크를 찾는다.
-            linked = blocks[index + 1..]
-                .iter()
-                .take_while(|next| next.section == block.section)
-                .flat_map(|next| ids(&next.text))
-                .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
-                .collect();
-            // 질문 1·2를 따로 묻고 링크를 뒤에 모았으면 같은 카드 하나로 둘을 면제하지 않는다.
-            if let Some(group) = block.question_group {
-                let groups = blocks
+        for (rule, offset) in requests(&block.text, required) {
+            // 앞 문장의 카드 안내가 같은 줄의 별개 질문까지 면제하지 않는다.
+            let start = block.text[..offset]
+                .rfind(['.', '!', '?', '？', '。', ';', '\n'])
+                .map_or(0, |at| at + block.text[at..].chars().next().unwrap().len_utf8());
+            let own_ids = ids(fresh_tail(&block.text).unwrap_or(&block.text[start..]));
+            let fresh = fresh_request(&block.text);
+            let unresolved = own_ids.iter().any(|id| !cards.contains_key(id));
+            let own =
+                own_ids.iter().filter_map(|id| cards.get(id).map(|state| (id.clone(), *state))).collect::<Vec<_>>();
+            // 새 요청이 같은 문단의 옛 q-ID 뒤에 붙어도 옛 카드로 가리지 않는다.
+            let mut linked = if unresolved { Vec::new() } else { own };
+            if linked.is_empty() && !fresh && !unresolved {
+                // 요청 뒤 목록·설명을 지나 같은 주제의 카드 링크를 찾는다.
+                linked = blocks[index + 1..]
                     .iter()
-                    .filter(|b| b.section == block.section)
-                    .filter_map(|b| b.question_group)
-                    .fold(Vec::new(), |mut groups, group| {
-                        if !groups.contains(&group) {
-                            groups.push(group);
-                        }
-                        groups
-                    });
-                if groups.len() > 1 {
-                    let unique = linked.into_iter().fold(Vec::new(), |mut refs, item| {
-                        if !refs.iter().any(|(id, _)| id == &item.0) {
-                            refs.push(item);
-                        }
-                        refs
-                    });
-                    linked = groups
+                    .take_while(|next| next.section == block.section)
+                    .flat_map(|next| ids(&next.text))
+                    .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
+                    .collect();
+                // 질문 1·2를 따로 묻고 링크를 뒤에 모았으면 같은 카드 하나로 둘을 면제하지 않는다.
+                if let Some(group) = block.question_group {
+                    let groups = blocks
                         .iter()
-                        .position(|g| *g == group)
-                        .and_then(|i| unique.get(i))
-                        .cloned()
+                        .filter(|b| b.section == block.section)
+                        .filter_map(|b| b.question_group)
+                        .fold(Vec::new(), |mut groups, group| {
+                            if !groups.contains(&group) {
+                                groups.push(group);
+                            }
+                            groups
+                        });
+                    if groups.len() > 1 {
+                        let unique = linked.into_iter().fold(Vec::new(), |mut refs, item| {
+                            if !refs.iter().any(|(id, _)| id == &item.0) {
+                                refs.push(item);
+                            }
+                            refs
+                        });
+                        linked = groups
+                            .iter()
+                            .position(|g| *g == group)
+                            .and_then(|i| unique.get(i))
+                            .cloned()
+                            .into_iter()
+                            .collect();
+                    }
+                }
+                // 카드 아래의 선택지 목록은 같은 안내다. 일반 새 질문은 앞 카드로 면제하지 않는다.
+                if linked.is_empty()
+                    && (rule == "choices"
+                        || rule == "request"
+                            && ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
+                                .iter()
+                                .any(|s| block.text[start..].contains(s)))
+                {
+                    linked = ids(&block.text[..start])
                         .into_iter()
+                        .chain(
+                            blocks[..index]
+                                .iter()
+                                .rev()
+                                .take_while(|prev| prev.section == block.section)
+                                .flat_map(|prev| ids(&prev.text)),
+                        )
+                        .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
                         .collect();
                 }
             }
-            // 카드 아래의 선택지 목록은 같은 안내다. 일반 새 질문은 앞 카드로 면제하지 않는다.
+            // 첫 문단의 일반 카드 안내는 뒤의 여러 주제 카드 목록을 가리킬 수 있다.
             if linked.is_empty()
-                && (rule == "choices"
-                    || rule == "request"
-                        && ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
-                            .iter()
-                            .any(|s| block.text.contains(s)))
-            {
-                linked = blocks[..index]
+                && !fresh
+                && !unresolved
+                && rule == "request"
+                && ["카드를 확인", "아래 질문", "아래 새 카드", "새 카드로 답", "새 번호로 답"]
                     .iter()
-                    .rev()
-                    .take_while(|prev| prev.section == block.section)
-                    .flat_map(|prev| ids(&prev.text))
+                    .any(|s| block.text[start..].contains(s))
+            {
+                linked = blocks
+                    .iter()
+                    .flat_map(|b| ids(&b.text))
                     .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
                     .collect();
             }
-        }
-        // 첫 문단의 일반 카드 안내는 뒤의 여러 주제 카드 목록을 가리킬 수 있다.
-        if linked.is_empty()
-            && !fresh
-            && !unresolved
-            && rule == "request"
-            && ["카드를 확인", "아래 질문", "아래 새 카드", "새 카드로 답", "새 번호로 답"]
-                .iter()
-                .any(|s| block.text.contains(s))
-        {
-            linked = blocks
-                .iter()
-                .flat_map(|b| ids(&b.text))
-                .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
-                .collect();
-        }
-        let evidence = Evidence { rule, line: block.line + line, refs: linked, fresh };
-        if evidence.refs.is_empty() {
-            result.missing.get_or_insert(evidence);
-        } else if evidence.refs.iter().any(|(_, state)| *state == CardState::Closed) {
-            result.stale.get_or_insert(evidence);
+            let line = block.line + block.text[..offset].bytes().filter(|b| *b == b'\n').count();
+            let evidence = Evidence { rule, line, refs: linked, fresh };
+            if evidence.refs.is_empty() {
+                if result.missing.as_ref().is_none_or(|previous| evidence.fresh && !previous.fresh) {
+                    result.missing = Some(evidence);
+                }
+            } else if evidence.refs.iter().any(|(_, state)| *state == CardState::Closed) {
+                result.stale.get_or_insert(evidence);
+            }
         }
     }
     result
