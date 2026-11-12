@@ -1543,13 +1543,17 @@ while True:
     });
 }
 
-/// 별칭 변경 뒤 다시 로그인 없이 같은 인증이 실제 agent/session 자식까지 가야 한다.
+/// 실행 중 이름 변경·옛 이름 재등록 뒤에도 같은 run의 갱신과 재개가 원래 계정을 사용한다.
 #[test]
-fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running() {
+fn renamed_running_account_refreshes_and_resumes_without_rebinding_to_reused_name() {
     let (token, _) = canary("rename-access");
     let (refresh, _) = canary("rename-refresh");
+    let renewed = aaa_test_support::token("rename-renewed-access");
+    let renewed_refresh = aaa_test_support::token("rename-renewed-refresh");
+    let upstream = Upstream::new(vec![(token.clone(), refresh.clone()), (renewed.clone(), renewed_refresh)]);
     let gate = Gate::new();
-    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), POLICY_HARNESS);
+    let mut w =
+        world(&format!("http://{}", upstream.addr), &gate, &aaa_test_support::token("local-auth"), POLICY_HARNESS);
     let auth = w.scripts.join("rename-auth.json");
     std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
         .unwrap();
@@ -1563,14 +1567,39 @@ fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_run
     assert_eq!(started["account"], "after");
     let first = gate.take(1, 0);
     assert_eq!(first[0].1["token"], sha(&token));
-    let e = w.h.json(&["account", "rename", "after", "again"]).expect_err("실행 중 별칭 변경");
-    assert!(e.contains("열린 thread") || e.contains("처리 중"), "{e}");
-    assert!(w.h.state.join("host/accounts/after.json").exists());
-    Gate::release(first, b'1');
+    w.h.ok(&["account", "rename", "after", "again"]);
+    let id = started["id"].as_str().unwrap();
+    assert_eq!(w.show(id)["account"], "after");
+    assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "again");
+    let home = first[0].1["home"].clone();
+    let other = aaa_test_support::token("rename-reused-name-access");
+    std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":other,"refresh_token":other}}).to_string())
+        .unwrap();
+    w.h.ok(&["account", "import", "after", "--harness", "codex", "--file", path_str(&auth)]);
+    w.lab.kill("host");
+    w.lab.spawn_env(
+        "rename-host2",
+        &w.h,
+        &["host"],
+        &[("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", &format!("http://{}", upstream.addr)), ("AAA_LOG", "trace")],
+    );
+    wait_for("이름 변경 뒤 host 재접속", T, || w.h.connected("labA").then_some(()));
+    assert_eq!(w.show(id)["account"], "after");
+    Gate::release(first, b'R');
     let last = gate.take(1, 1);
-    assert_eq!(last[0].1["token"], sha(&token));
+    assert_eq!(last[0].1["token"], sha(&renewed));
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
     Gate::release(last, b'X');
-    w.wait_show("변경 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    w.wait_show("변경 계정 작업 종료", id, |v| v["agent"]["activity"] == "exited");
+    w.h.ok(&["thread", "restart", "demo", id, "--resume"]);
+    let resumed = gate.take(1, 0);
+    assert_eq!(resumed[0].1["token"], sha(&renewed));
+    assert_eq!(resumed[0].1["home"], home, "기록 홈을 유지한다");
+    assert_eq!(resumed[0].1["resume"], true);
+    assert_eq!(w.show(id)["account"], "after");
+    Gate::release(resumed, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("재개 작업 종료", id, |v| v["agent"]["activity"] == "exited");
 }
 
 /// 필요: 사용량 인증 오류가 남아도 재시작한 host가 마지막 잔량으로 골라 자식에게 해당 인증을 전달한다.

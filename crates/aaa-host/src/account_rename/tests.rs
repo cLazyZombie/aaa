@@ -105,6 +105,7 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     let binding = crate::account_policy::PaneAccount {
         run: "demo/t-0001".into(),
         account: "work".into(),
+        account_label: None,
         harness: "codex".into(),
         machine: "m".into(),
         pane: Some("ended".into()),
@@ -154,8 +155,12 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     assert_ne!(pool.revision, "before");
     let rec = h.load("demo", "t-0001").unwrap();
     assert_eq!(rec.account.as_deref(), Some("renamed"));
+    assert_eq!(rec.account_label.as_deref(), Some("work"));
+    assert_eq!(h.thread_view(&rec).account.as_deref(), Some("work"));
+    assert_eq!(h.parked_account_pane("demo/t-0001", "renamed", "codex").unwrap(), "ended");
     assert_eq!(rec.profile, "work");
     assert_eq!(h.account_run("demo/t-0001").unwrap().unwrap().account, "renamed");
+    assert_eq!(h.account_run("demo/t-0001").unwrap().unwrap().account_label.as_deref(), Some("work"));
     assert_eq!(h.account_run("demo/t-0001").unwrap().unwrap().profile.as_deref(), Some("work"));
     let job: serde_json::Value =
         serde_json::from_str(&h.db.meta("account-job:demo:fixture").unwrap().unwrap()).unwrap();
@@ -190,7 +195,55 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
 }
 
 #[tokio::test]
-async fn rename_rejects_agents_collisions_and_running_bindings_without_changes() {
+async fn running_rename_preserves_original_labels_after_multiple_renames_reuse_and_restart() {
+    let l = Lab::new();
+    let h = &l.h;
+    let mut rec = crate::orch::ThreadRec::starting(
+        "demo",
+        "실행 중",
+        "m",
+        "codex",
+        aaa_proto::Role::Worker,
+        aaa_proto::ThreadKind::Dir,
+        0,
+    );
+    rec.id = "t-0001".into();
+    rec.account = Some("work".into());
+    rec.status = aaa_proto::ThreadStatus::Open;
+    h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    h.save_account_run(&crate::account_policy::PaneAccount {
+        run: "demo/t-0001".into(),
+        account: "work".into(),
+        account_label: None,
+        harness: "codex".into(),
+        machine: "m".into(),
+        pane: Some("live".into()),
+        profile: None,
+    })
+    .unwrap();
+    h.call(DeviceRole::Controller, "device:phone", request("middle")).await.unwrap();
+    h.call(
+        DeviceRole::Controller,
+        "device:phone",
+        FrontRequest::AccountRename { name: "middle".into(), to: "final".into() },
+    )
+    .await
+    .unwrap();
+    // 옛 이름으로 새 계정을 등록하고 다시 바꿔도 실행 중인 인증 참조를 빼앗지 않는다.
+    h.accounts.import("work", "codex", &auth()).unwrap();
+    h.call(DeviceRole::Controller, "device:phone", request("other")).await.unwrap();
+    let reopened = Host::open(h.cfg.clone(), h.state.clone()).unwrap();
+    let rec = reopened.load("demo", "t-0001").unwrap();
+    assert_eq!(rec.account.as_deref(), Some("final"));
+    assert_eq!(reopened.thread_view(&rec).account.as_deref(), Some("work"));
+    let binding = reopened.account_run("demo/t-0001").unwrap().unwrap();
+    assert_eq!(binding.account, "final");
+    assert_eq!(binding.account_label.as_deref(), Some("work"));
+    assert_eq!(binding.pane.as_deref(), Some("live"));
+}
+
+#[tokio::test]
+async fn rename_rejects_agents_collisions_and_preparing_bindings_without_changes() {
     let l = Lab::new();
     let h = &l.h;
     for (role, actor) in [
@@ -213,6 +266,7 @@ async fn rename_rejects_agents_collisions_and_running_bindings_without_changes()
     let binding = crate::account_policy::PaneAccount {
         run: "demo/t-0002".into(),
         account: "work".into(),
+        account_label: None,
         harness: "codex".into(),
         machine: "m".into(),
         pane: None,

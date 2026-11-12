@@ -98,7 +98,14 @@ pub(crate) fn recover(db: &crate::db::Db, state: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 구조화된 계정 칸만 바꾼다. profile 이름·한도 그룹·명령·보고·과거 감사는 다른 신원이다.
+/// 이미 시작한 작업의 이름은 첫 변경 때만 고정한다. 두 번째 변경·옛 이름 재등록에도 유지한다.
+pub(crate) fn preserve_label(v: &mut serde_json::Value, from: &str) {
+    if v["account"] == from && v.get("account_label").is_none_or(serde_json::Value::is_null) {
+        v["account_label"] = from.into();
+    }
+}
+
+/// 구조화된 계정 칸만 바꾼다. account_label·profile·명령·보고·과거 감사는 보존한다.
 pub(crate) fn json(v: &mut serde_json::Value, from: &str, to: &str) {
     match v {
         serde_json::Value::Object(map) => {
@@ -242,20 +249,12 @@ impl Host {
         let mut thread_guards = Vec::new();
         for r in records.iter().filter(|r| r.account.as_deref() == Some(from)) {
             thread_guards.push(self.claim_thread(&r.project, &r.id)?);
-            if r.holds_slot() {
-                return Err(conflict("이 계정을 쓰는 열린 thread가 있다. 작업을 보류하거나 완료한 뒤 이름을 바꾼다"));
-            }
         }
-        // coordinator·thread의 인증 중계는 실행 당시 별칭을 쓴다. 살아 있거나 시작 중인 binding은 옮기지 않는다.
+        // 실행 인증은 run/session으로 찾는다. 현재 금고 참조만 옮기며 준비가 불명확한 실행은 보호한다.
         for (_, text) in self.db.account_rename_bindings().map_err(internal)? {
             let binding: crate::account_policy::PaneAccount = serde_json::from_str(&text).map_err(internal)?;
-            if binding.account == from
-                && binding
-                    .pane
-                    .as_ref()
-                    .is_none_or(|p| self.inner.lock().unwrap().panes.get(p).is_some_and(|p| p.info.state.is_running()))
-            {
-                return Err(conflict("이 계정의 pane이 실행·준비 중이다. 종료한 뒤 이름을 바꾼다"));
+            if binding.account == from && binding.pane.is_none() {
+                return Err(conflict("이 계정의 pane이 준비 중이다. 준비가 끝난 뒤 이름을 바꾼다"));
             }
         }
         for text in self.db.account_rename_images().map_err(internal)? {

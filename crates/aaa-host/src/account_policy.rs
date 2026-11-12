@@ -14,6 +14,9 @@ fn fail() -> ErrorBody {
 pub(crate) struct PaneAccount {
     pub run: String,
     pub account: String,
+    /// 실행 당시 이름은 화면에 남기고, account는 현재 금고 이름을 따라간다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
     pub harness: String,
     pub machine: String,
     pub pane: Option<String>,
@@ -134,6 +137,10 @@ impl Host {
                 if record.profile.is_none() {
                     record.profile = old.as_ref().and_then(|r| r.profile.clone());
                 }
+                if record.account_label.is_none() {
+                    record.account_label =
+                        old.as_ref().filter(|r| r.account == record.account).and_then(|r| r.account_label.clone());
+                }
                 let text = serde_json::to_string(record)?;
                 previous = old;
                 Ok((text, vec![]))
@@ -227,6 +234,7 @@ mod tests {
         let binding = PaneAccount {
             run: format!("demo/c-{}", util::new_id()),
             account: "work".into(),
+            account_label: Some("original".into()),
             harness: "codex".into(),
             machine: "m".into(),
             pane: Some("old".into()),
@@ -298,6 +306,7 @@ mod tests {
         conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(AgentResponse::Session(info))).unwrap();
         assert_eq!(first.await.unwrap(), "new");
         assert_eq!(h.account_run(&binding.run).unwrap().unwrap().pane.as_deref(), Some("new"));
+        assert_eq!(h.account_run(&binding.run).unwrap().unwrap().account_label.as_deref(), Some("original"));
         assert!(h.parked_account_pane(&binding.run, "work", "codex").is_err(), "남은 pane은 회수하지 않는다");
         assert!(
             h.spawn_account_on("m", spec, credential, "test", Some("old")).await.is_err(),

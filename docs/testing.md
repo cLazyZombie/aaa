@@ -1,3 +1,4 @@
+- t-1786: [실행 중 계정 이름 변경과 저장 오류 표시](testing-account-rename-t-1786.md)
 - t-1774: [질문 감시의 인용 설명·카드 번호 연결](testing-question-guard-quotes-t1774.md)
 - t-1741: [질문 감시의 의미 확인·기존 카드 안내 경계](testing-question-guard-boundaries-t1741.md)
 - t-1734: [Windows 원래 stdin 관측의 읽기 진입 경계](testing-win-stdin-read-entry-t-1734.md)

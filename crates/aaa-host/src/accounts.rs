@@ -696,6 +696,7 @@ impl crate::Host {
         let mut binding = crate::account_policy::PaneAccount {
             run: credential.run.clone(),
             account: credential.account.clone(),
+            account_label: None,
             harness: credential.harness.clone(),
             machine: mid.into(),
             pane: None,

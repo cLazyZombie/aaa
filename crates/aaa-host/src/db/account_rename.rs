@@ -31,6 +31,9 @@ impl Db {
             for (row, text) in rows {
                 let mut value: serde_json::Value = serde_json::from_str(&text)?;
                 let before = value.clone();
+                if table == "threads" {
+                    crate::account_rename::preserve_label(&mut value, from);
+                }
                 crate::account_rename::json(&mut value, from, to);
                 if table == "inbox" && value["item_kind"] == "account" && value["subject"] == from {
                     value["subject"] = to.into();
@@ -66,6 +69,9 @@ impl Db {
                 || ["account-run:", "account-job:", "image-job:"].iter().any(|p| key.starts_with(p))
             {
                 let mut value: serde_json::Value = serde_json::from_str(&text)?;
+                if key.starts_with("account-run:") {
+                    crate::account_rename::preserve_label(&mut value, from);
+                }
                 crate::account_rename::json(&mut value, from, to);
                 if matches!(key.as_str(), "account-pool-v1" | "account-pool-v2") {
                     value["revision"] = aaa_common::util::new_id().into();

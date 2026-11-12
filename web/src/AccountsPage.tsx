@@ -80,8 +80,23 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const renameInput = useRef<HTMLInputElement>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameErrorElement = useRef<HTMLParagraphElement>(null);
   const [renamed, setRenamed] = useState<{ from: string; to: string } | null>(null);
   const [harness, setHarness] = useState<string>("claude");
+  useLayoutEffect(() => {
+    if (!renameError) return;
+    const element = renameErrorElement.current;
+    const list = element?.closest(".acct-list");
+    if (!element || !list) return;
+    const show = () => element.scrollIntoView({ block: "nearest" });
+    show();
+    // 목록 삽입 뒤 사용량·풀 응답이 각 행의 높이를 바꿔도 오류를 화면 안에 둔다.
+    const observer = new ResizeObserver(show);
+    observer.observe(list);
+    for (const row of list.children) observer.observe(row);
+    return () => observer.disconnect();
+  }, [renameError, data?.accounts]);
   useLayoutEffect(() => {
     if (!renaming || busy || role === "reader") return;
     const element = renameInput.current;
@@ -98,13 +113,13 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const now = Date.now();
   if (!data) return error ? <p className="op-warn">{error}</p> : <p className="op-muted">읽는 중…</p>;
   const canEdit = role !== "reader" && data.full;
-  const run = async (work: () => Promise<unknown>) => {
+  const run = async (work: () => Promise<unknown>, onError = setMsg) => {
     setBusy(true);
     setMsg(null);
     try {
       await work();
     } catch (e) {
-      setMsg(say(e));
+      onError(say(e));
     } finally {
       setBusy(false);
     }
@@ -205,7 +220,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                         <div className="op-buttons acct-actions">
                           {data.usageLogin && a.harness === "claude" && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 사용량 조회 로그인`} onClick={() => openAccountLogin(a.name, a.harness, true, a.email)}>조회 로그인</button>}
                           {data.emailEdit && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 메일 수정`} onClick={() => { setEditingEmail(a.name); setMsg(null); }}>메일 수정</button>}
-                          {data.rename && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 이름 바꾸기`} onClick={() => { setRenaming(a.name); setNewName(a.name); setMsg(null); setRenamed(null); }}>이름 바꾸기</button>}
+                          {data.rename && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 이름 바꾸기`} onClick={() => { setRenaming(a.name); setNewName(a.name); setMsg(null); setRenameError(null); setRenamed(null); }}>이름 바꾸기</button>}
                           <button type="button" className="btn small" disabled={busy || !!active} onClick={() => void start(a.name, a.harness)} aria-label={`${a.name} 다시 로그인`}>
                             다시 로그인
                           </button>
@@ -231,25 +246,27 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                           e.preventDefault();
                           const to = newName.trim();
                           if (!validAlias(to) || to === a.name || data.accounts.some((x) => x.name === to)) return;
+                          setRenameError(null);
                           void run(async () => {
                             await call({ op: "account_rename", name: a.name, to });
                             setRenaming(null);
                             setRenamed({ from: a.name, to });
                             reload();
-                          });
+                          }, setRenameError);
                         }}>
                           <label className="op-field">
                             <span>새 이름</span>
-                            <input ref={renameInput} aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
+                            <input ref={renameInput} aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby={renameError ? "account-rename-note account-rename-error" : "account-rename-note"} />
                           </label>
                           {(!validAlias(newName.trim()) || data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name)) && (
                             <p id="account-rename-note" className="op-muted">
                               {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : "이미 쓰는 계정 이름입니다."}
                             </p>
                           )}
+                          {renameError && <p ref={renameErrorElement} id="account-rename-error" className="op-warn" role="alert">{renameError}</p>}
                           <div className="op-buttons">
                             <button type="submit" className="btn btn-primary" disabled={busy || !validAlias(newName.trim()) || newName.trim() === a.name || data.accounts.some((x) => x.name === newName.trim())}>이름 저장</button>
-                            <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); }}>취소</button>
+                            <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); setRenameError(null); }}>취소</button>
                           </div>
                         </form>
                       )}
