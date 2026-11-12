@@ -2,6 +2,18 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// 이름 변경을 막는 이미지 작업. 인증·프롬프트·실제 머신 경로는 싣지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountImageJob {
+    pub id: String,
+    pub project: String,
+    pub owner: String,
+    pub state: String,
+    pub reason: String,
+    #[ts(type = "number | null")]
+    pub selected_at_ms: Option<u64>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(type = "string")]
 pub struct SecretText(pub String);

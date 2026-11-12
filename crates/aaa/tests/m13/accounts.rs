@@ -1557,7 +1557,10 @@ fn renamed_running_account_refreshes_and_resumes_without_rebinding_to_reused_nam
     let auth = w.scripts.join("rename-auth.json");
     std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
         .unwrap();
-    w.h.ok(&["account", "import", "before", "--harness", "codex", "--file", path_str(&auth)]);
+    for _ in 0..3 {
+        w.h.ok(&["account", "import", "before", "--harness", "codex", "--file", path_str(&auth)]);
+    }
+    assert_eq!(w.h.ok(&["account", "list"])["accounts"][0]["version"], 3);
     w.h.ok(&["account", "default", "codex", "before"]);
     w.h.ok(&["account", "rename", "before", "after"]);
     assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "after");
@@ -1728,4 +1731,51 @@ for phase,payload in enumerate(payloads):
     );
     Gate::release(third, b'X');
     w.wait_show("진단용 가짜 pane 종료", id, |v| v["agent"]["activity"] == "exited");
+}
+
+/// 이름 변경 뒤 새 기본·자동 배정이 새 이름과 다시 로그인한 Codex 인증을 사용한다.
+#[test]
+fn renamed_codex_default_auto_assignment_and_relogin_use_the_new_name() {
+    let gate = Gate::new();
+    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("unused-profile"), POLICY_HARNESS);
+    let auth = w.scripts.join("rename-relogin.json");
+    let original = aaa_test_support::token("codex-before-relogin");
+    let fresh = aaa_test_support::token("codex-after-relogin");
+    std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":original,"refresh_token":original,"id_token":id_token("work@example.com", "plus")}}).to_string()).unwrap();
+    for _ in 0..3 {
+        w.h.ok(&["account", "import", "before", "--harness", "codex", "--file", path_str(&auth)]);
+    }
+    w.h.ok(&["account", "default", "codex", "before"]);
+    w.h.ok(&["account", "rename", "before", "after"]);
+    // 기본 계정은 자동 배정에서 잠시 빼도 새 이름을 유지한다.
+    w.h.ok(&["account", "pool", "remove", "after"]);
+    let task = w.task("renamed-default.txt", "새 이름 기본 인증");
+    let started = w.start(&["--title", "새 기본", "--profile", "file", "--task-file", &task]);
+    assert_eq!(started["account"], "after");
+    let first = gate.take(1, 0);
+    assert_eq!(first[0].1["token"], sha(&original));
+    Gate::release(first, b'X');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("기본 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    install_login_fixture(
+        &w,
+        &gate,
+        &serde_json::json!({"codex":{"tokens":{"access_token":fresh,"refresh_token":fresh,"id_token":id_token("work@example.com", "plus")}}}),
+    );
+    let login = w.h.ok(&["account", "login", "after", "--harness", "codex"]);
+    assert_eq!(login["login"]["expect_email"], "work@example.com");
+    Gate::release(gate.take(1, 8), b'1');
+    login_result(&w, login["login"]["id"].as_str().unwrap(), "succeeded");
+    assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "after");
+    assert!(!w.h.state.join("host/accounts/before.json").exists());
+    w.h.ok(&["account", "pool", "add", "after"]);
+    // 관측이 없는 계정도 기존 정책의 1건 시험 배정으로 실제 실행 인증을 확인한다.
+    let started = w.start(&["--title", "재로그인 자동 배정", "--profile", "file", "--task-file", &task]);
+    let assigned =
+        w.wait_show("이름 변경 계정 자동 배정", started["id"].as_str().unwrap(), |v| v["account"] == "after");
+    assert_eq!(assigned["account"], "after");
+    let first = gate.take(1, 0);
+    assert_eq!(first[0].1["token"], sha(&fresh));
+    Gate::release(first, b'X');
+    Gate::release(gate.take(1, 1), b'X');
 }

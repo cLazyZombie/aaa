@@ -262,9 +262,15 @@ impl Host {
             if image["view"]["account"] == from
                 && matches!(image["view"]["state"].as_str(), Some("running" | "unknown"))
             {
-                return Err(conflict(
-                    "이 계정의 이미지 생성이 실행 중이거나 종료가 불명확하다. 끝내거나 정리한 뒤 이름을 바꾼다",
-                ));
+                return Err(conflict(&format!(
+                    "이미지 작업 {}: {}. 계정의 이미지 작업에서 확인한다",
+                    image["view"]["id"].as_str().unwrap_or("ID 모름"),
+                    if image["view"]["state"] == "running" {
+                        "생성 중 · 완료 뒤 이름 변경 가능"
+                    } else {
+                        "결과 불명 · 확인 후 정리하면 이름 변경 가능"
+                    }
+                )));
             }
         }
         let _meta = self.account_meta_gate.lock().unwrap();

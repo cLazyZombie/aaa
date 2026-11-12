@@ -2110,6 +2110,15 @@ pub enum FrontRequest {
         name: String,
         to: String,
     },
+    /// FRONT_API 1.169. 사람만 계정 이름 변경을 막는 이미지 작업을 확인한다.
+    AccountImageJobs {
+        name: String,
+    },
+    /// 결과 불명 기록을 사람이 확인하여 정리한다. 재생성·사용량 예약 해제는 하지 않는다.
+    AccountImageDismiss {
+        name: String,
+        id: String,
+    },
     /// 등록 메일 저장·수정. 조작 기기와 세션 밖 CLI만 허용한다.
     AccountEmail {
         name: String,
@@ -4027,6 +4036,9 @@ pub enum FrontResponse {
     },
     Accounts {
         accounts: Vec<crate::AccountView>,
+    },
+    AccountImageJobs {
+        jobs: Vec<crate::AccountImageJob>,
     },
     AccountDefaults {
         defaults: Vec<crate::AccountDefault>,

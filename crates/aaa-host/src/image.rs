@@ -103,6 +103,52 @@ fn regular(path: &Path) -> Result<std::fs::Metadata, ErrorBody> {
 }
 
 impl Host {
+    pub(crate) fn account_image_jobs(&self, name: &str) -> Result<FrontResponse, ErrorBody> {
+        // 존재하지 않는 계정·잘못된 이름으로 원장을 조회하지 않는다.
+        self.accounts.generation(name)?;
+        let mut jobs = Vec::new();
+        for id in self.db.meta_suffixes(PREFIX).map_err(io_error)? {
+            let job = self.image_load(&id)?;
+            if job.view.account.as_deref() == Some(name)
+                && matches!(job.view.state, ImageState::Running | ImageState::Unknown)
+            {
+                jobs.push(AccountImageJob {
+                    id,
+                    project: job.project,
+                    owner: job.owner.strip_prefix("thread:").unwrap_or(&job.owner).into(),
+                    state: if job.view.state == ImageState::Running { "running" } else { "unknown" }.into(),
+                    reason: list_reason(&job.view.reason),
+                    selected_at_ms: job.allocation.as_ref().map(|a| a.selection.selected_at_ms),
+                });
+            }
+        }
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.selected_at_ms));
+        Ok(FrontResponse::AccountImageJobs { jobs })
+    }
+
+    pub(crate) async fn account_image_dismiss(
+        &self,
+        name: &str,
+        id: &str,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.accounts.generation(name)?;
+        let _guard = self.thread_op_lock("image", id).lock_owned().await;
+        let mut job = self.image_load(id)?;
+        if job.view.account.as_deref() != Some(name) {
+            return Err(err(ErrorCode::Conflict, "이미지 작업의 계정이 바뀌었다. 목록을 다시 읽는다"));
+        }
+        if job.view.state != ImageState::Unknown {
+            return Err(err(ErrorCode::Conflict, "결과 불명인 이미지 작업만 확인 후 정리한다"));
+        }
+        // 성공·실패를 추측하지 않는다. 파일·중복 방지 영수증·불명 사용량 예약은 그대로 보존한다.
+        job.view.state = ImageState::Forgotten;
+        job.view.reason = "사람이 결과 불명 기록을 확인하고 정리함 · 재생성 없음 · 사용량 예약 보존".into();
+        self.image_save(&job)?;
+        self.db.audit(actor, "image_unknown_dismiss", id);
+        Ok(FrontResponse::Done)
+    }
+
     pub(crate) fn image_dir(&self, id: &str) -> Result<PathBuf, ErrorBody> {
         if !valid_id(id) {
             return Err(bad("이미지 작업 ID는 26자리 영문 대문자·숫자다"));

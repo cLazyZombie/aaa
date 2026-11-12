@@ -1,3 +1,4 @@
+import { AccountImageJobs } from "./AccountImageJobs";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 // 설정 창 「계정」(관리 GUI W5a, plan §8.351): host 계정을 harness마다 보이고(별칭·메일·plan·최초 인증일·최근 인증된 날·상태·기본),
 // 조작 기기는 로그인·다시 로그인·취소·기본 지정/해제를 한다. FRONT_API 1.151부터 접속 기기의 공통 인증 창을 연다.
@@ -18,7 +19,7 @@ import { canAccounts, day, dayTime, groupAccounts, HARNESS_LABEL, HARNESSES, hea
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { plans: AccountPlanOption[] | null; emailEdit: boolean; usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
+type Loaded = { plans: AccountPlanOption[] | null; emailEdit: boolean; usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean; imageJobs: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -54,6 +55,7 @@ function useAccounts(loginId: string | null) {
         quota: apiAtLeast(m?.front_api, 1, 83),
         pool: apiAtLeast(m?.front_api, 1, 129),
         rename: apiAtLeast(m?.front_api, 1, 128),
+        imageJobs: apiAtLeast(m?.front_api, 1, 169),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
       else if (status?.kind === "account_login") setLogin(status.login);
@@ -264,6 +266,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             </p>
                           )}
                           {renameError && <p ref={renameErrorElement} id="account-rename-error" className="op-warn" role="alert">{renameError}</p>}
+                          {data.imageJobs && a.harness === "codex" && <AccountImageJobs name={a.name} changed={() => { setRenameError(null); void reload(); }} />}
                           <div className="op-buttons">
                             <button type="submit" className="btn btn-primary" disabled={busy || !validAlias(newName.trim()) || newName.trim() === a.name || data.accounts.some((x) => x.name === newName.trim())}>이름 저장</button>
                             <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); setRenameError(null); }}>취소</button>
