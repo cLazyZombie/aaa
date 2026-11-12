@@ -109,7 +109,16 @@ export default async function ({ page }) {
       dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "", { type: "image/png" }));
       el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     }, png.toString("base64"));
-    await until("붙인 그림 썸네일", async () => (await pictures(page, `[data-testid="thread-ask-${t.id}"] [data-testid="thread-ask-text-field"]`)) === 1);
+    // pending blob 썸네일은 서버 업로드 전에 보인다. 최종 첨부와 부모의 uploading 해제를 함께 기다린다.
+    const attached = card.getByTestId("thread-ask-text-image");
+    await attached.waitFor();
+    assert.equal(await attached.getAttribute("data-path"), `uploads/${name}`);
+    await attached.locator("img").evaluate(image => image.decode());
+    await domIs(page, "직접 답 그림 첨부 뒤 보내기 활성", () => {
+      const field = document.querySelector('[data-testid="thread-ask-text-field"]');
+      return field && !field.querySelector('[data-testid="thread-ask-text-image-pending"]')
+        && !field.closest(".thread-ask-card").querySelector('[data-testid="thread-ask-send"]').disabled;
+    });
     if ((await text.inputValue()).includes("uploads/") || (await page.getByTestId("ask-done-card").count()) !== 0) throw new Error("그림 줄이 입력칸에 보이거나 조합 중에 보냈다");
     await shot(page, "53-answer-lines-desktop");
     await page.setViewportSize({ width: 390, height: 844 });
