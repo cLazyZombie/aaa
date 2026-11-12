@@ -6281,6 +6281,11 @@ fn render_front(r: &FrontResponse) -> String {
             }
             let _ = writeln!(s, "{} · 판 {}", note.idea.short_id, note.rev);
         }
+        FrontResponse::AccountImageJobs { jobs } => {
+            for job in jobs {
+                let _ = writeln!(s, "{}\t{}\t{}\t{}", job.id, job.owner, job.state, job.reason);
+            }
+        }
         FrontResponse::Accounts { accounts } => {
             for a in accounts {
                 let _ = write!(s, "{}\t{}\t판 {}", a.name, a.harness, a.version);

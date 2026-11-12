@@ -41,3 +41,11 @@
 
 .acct-facts select { max-width: 100%; min-height: 32px; }
 .acct-quota details > summary { color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer; }
+
+.acct-image-jobs { margin-block: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.acct-image-jobs > ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.acct-image-jobs > ul > li { padding-block: 10px; border-top: 1px solid var(--border); }
+.acct-image-job-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.acct-image-jobs code { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.acct-image-jobs p { margin-block: 6px; }
+.acct-image-confirm { margin-top: 8px; }

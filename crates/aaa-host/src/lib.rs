@@ -1604,6 +1604,8 @@ impl Host {
             FrontRequest::AccountPlan { .. }
                 | FrontRequest::AccountEmail { .. }
                 | FrontRequest::AccountRename { .. }
+                | FrontRequest::AccountImageJobs { .. }
+                | FrontRequest::AccountImageDismiss { .. }
                 | FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountPoolMember { .. }
                 | FrontRequest::AccountPoolProject { .. }
@@ -1631,6 +1633,8 @@ impl Host {
                 | FrontRequest::AccountEmail { .. }
                 | FrontRequest::AccountPlan { .. }
                 | FrontRequest::AccountList
+                | FrontRequest::AccountImageJobs { .. }
+                | FrontRequest::AccountImageDismiss { .. }
                 | FrontRequest::AccountDefaults
                 | FrontRequest::AccountPool
                 | FrontRequest::AccountDefault { .. }
@@ -1863,6 +1867,8 @@ impl Host {
             FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id, actor).await,
             FrontRequest::AccountLoginConfirm { id, switch } => self.account_login_confirm(&id, switch, actor),
             FrontRequest::AccountRename { name, to } => self.account_rename(&name, &to, actor).await,
+            FrontRequest::AccountImageJobs { name } => self.account_image_jobs(&name),
+            FrontRequest::AccountImageDismiss { name, id } => self.account_image_dismiss(&name, &id, actor).await,
             FrontRequest::AccountRemove { name } => {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
