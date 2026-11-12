@@ -201,7 +201,7 @@ thread 보고의 `[완료]`는 맡긴 일 전체의 끝, `[결정 필요]`·`[�
 아니다). coordinator는 보고 파일로 알림을 만들지 않는다.
 - 사용자에게 묻거나 사람 전용 단계를 남기고 멈추기 전에 `aaa report --unknown --activity 'Waiting for you'`로 알리고, 필요한
   행동과 까닭을 파일에 쓴 뒤 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를
-  보낸다. 별개 질문만 본문을 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다(질문·선택지·그림·영상 문법은 `aaa guide questions`).
+  보낸다. 새 질문은 선택지 2개 이상인 `## Questions`로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다(질문·선택지·그림·영상 문법은 `aaa guide questions`).
 - 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를
   한 번 보낸다.
 - post 제목은 외부 알림에 실린다: 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
@@ -303,7 +303,8 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 예: `![시안](library/preview/a.png)`, `![시안 영상](library/preview/a.mp4)`, `r-0001`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 r-NNNN과 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
 그림·영상은 `![시안](library/preview/a.png)`·`![시안 영상](library/preview/a.mp4)`처럼 설명이 있는 alt를 권장한다. 빈 alt인 `![](library/preview/a.png)`·`![](library/preview/a.mp4)`도 그림·영상으로 표시한다.
 영상은 링크만 두지 말고 위 `![시안 영상](library/preview/a.mp4)` 문법으로 질문 안에 넣는다. 카드·보고 본문의 재생 단추를 한 번 누르면 그 자리에서 재생한다(controls·muted·playsinline, 자동 재생 없음). 기존 `[영상](library/preview/a.mp4)`도 재생기로 표시한다. H.264 MP4(yuv420p·faststart)를 권장하며 짧은 시안은 5~10초·10 MiB 이하를 목표로 한다. 긴 영상은 나누고 길이·용량·설명을 함께 쓴다. WebM도 표시하지만 Safari용 MP4를 우선한다.
-선택지가 없는 기존 평문 post도 그대로 쓸 수 있다. post 본문에는 비밀값을 쓰지 않는다.
+열린 thread 질문에 연결되지 않은 평문 요청은 host가 거절한다. 본문은 질문마다 선택지 2개 이상이어야 하며, 형식 오류도 고쳐 새 post ID로 다시 보낸다.
+인증·터미널 승인·GUI 조작처럼 사람이 직접 할 행동도 「A 완료했다 / B 보류한다」 선택지로 확인한다. 일반 알림은 기존 `--notice --topic task-complete`(전체 완료) 또는 `--notice --topic report`(보고서)를 쓰며 답할 것에는 올라가지 않는다. post 본문에는 비밀값을 쓰지 않는다.
 
 ## 제목
 이 제목은 가려진 채 외부 알림 본문에 실린다(본문은 싣지 않는다): 사용자가 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
@@ -315,7 +316,8 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 별도 질문 카드를 만들지 않는다. 확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙이고 본문에 새 `## Questions`·선택지를 쓰지 않는다.
 연결을 빠뜨린 평문 post가 같은 프로젝트의 미답변 thread 질문 하나를 제목·본문의 t-ID나 현재 q-ID로 가리키면 host가 자동 연결한다.
 여러 thread 질문을 가리키면 거부하므로 제목 끝에 연결 대상을 명시한다. 정당한 별개 질문은 본문에 새 `## Questions`로 쓴다.
-현재 thread 카드가 없으면 독립 q-ID의 요청으로 남긴다. 과거 답이나 이후 thread 보고로 닫지 않는다.
+평문 post의 접미사가 현재 미답변 thread 카드를 가리키지 않으면 거절한다(없는 thread·답한 카드·끝난 thread·옛 q-ID·다른 프로젝트 포함). 현재 q-ID 접미사도 같은 thread 카드로 연결한다.
+별개 질문을 새로 만들려면 접미사를 빼고 본문에 선택지 2개 이상의 `## Questions`를 쓴다. 구판에서 이미 접수한 독립 평문 요청은 유지하며 과거 답이나 이후 thread 보고로 닫지 않는다.
 질문 선택지·추천은 thread 보고의 카드를 정본으로 삼는다. post에만 새 C안을 만들어 선택지가 갈라지게 하지 않는다.
 새 안을 제안하려면 thread 보고를 먼저 고친다. 사용자가 채팅으로 답하면 카드에 있는 선택은 `aaa thread answer <thread> 1A`처럼
 기록하고, 카드에 없는 C나 직접 쓴 답은 `aaa thread answer <thread> --text '1 C: 사용자 답 원문'`으로 그대로 전한다.

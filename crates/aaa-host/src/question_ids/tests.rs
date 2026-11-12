@@ -11,7 +11,7 @@ struct Lab {
 #[test]
 fn structured_post_comments_are_persisted_and_delivered_per_question() {
     let lab = Lab::new();
-    let (_, request) = lab.post(1, "## Questions\n### 1. 자리\n- A 오른쪽\n### 2. 색\n- A 단색\n");
+    let (_, request) = lab.post(1, "## Questions\n### 1. 자리\n- A 오른쪽\n- B 왼쪽\n### 2. 색\n- A 단색\n- B 두 색\n");
     let hash = &request.questions.as_ref().unwrap().report_hash;
     let comments = vec![Some("간격 유지\n색만 변경".into()), Some("두 색 사용".into())];
     lab.h.ask_answer("demo", &request.id, hash, vec![Some(0), None], None, comments.clone(), "device:phone").unwrap();
@@ -40,7 +40,13 @@ impl Lab {
     fn post(&self, n: u32, body: &str) -> (String, aaa_proto::UserRequestView) {
         self.post_title(n, &format!("진행 안 {n}"), body)
     }
+    fn legacy_post(&self, n: u32, body: &str) -> (String, aaa_proto::UserRequestView) {
+        self.post_fixture(n, &format!("진행 안 {n}"), body, true)
+    }
     fn post_title(&self, n: u32, title: &str, body: &str) -> (String, aaa_proto::UserRequestView) {
+        self.post_fixture(n, title, body, false)
+    }
+    fn post_fixture(&self, n: u32, title: &str, body: &str, legacy: bool) -> (String, aaa_proto::UserRequestView) {
         // 확인 필요 post는 가리키는 프로젝트 library 파일이 있어야 받는다.
         let dir = self.h.project_dir("demo").unwrap().join("library");
         for rel in aaa_proto::library_paths(body) {
@@ -50,23 +56,21 @@ impl Lab {
                 std::fs::write(path, b"png").unwrap();
             }
         }
-        let result = self
-            .h
-            .front_post(
-                "demo",
-                PostInput {
-                    post_id: format!("{n:032x}"),
-                    to: "user".into(),
-                    post_type: PostType::Request,
-                    topic: "user-action".into(),
-                    title: title.into(),
-                    body: body.into(),
-                    needs_user: true,
-                    refs: vec![],
-                },
-                "local:cli@coord",
-            )
-            .unwrap();
+        let input = PostInput {
+            post_id: format!("{n:032x}"),
+            to: "user".into(),
+            post_type: PostType::Request,
+            topic: "user-action".into(),
+            title: title.into(),
+            body: body.into(),
+            needs_user: true,
+            refs: vec![],
+        };
+        let result = if legacy {
+            self.h.seed_legacy_user_post("demo", input)
+        } else {
+            self.h.front_post("demo", input, "local:cli@coord").unwrap()
+        };
         let PostResult::Accepted { id } = result else { panic!("{result:?}") };
         let item = self.h.db.post_inbox("demo", &id).unwrap().unwrap();
         let r = self.h.user_requests("demo").unwrap().into_iter().find(|r| r.id == item.id).unwrap();
@@ -103,7 +107,7 @@ fn orphan_thread_reference_stays_a_coordinator_question_across_reports_and_recon
     rec.report_hash = Some("no-questions".into());
     rec.report_changed_ms = Some(3);
     h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
-    let (post, request) = lab.post_title(1, "실제 확인 aaa:question/t-0001", BODY);
+    let (post, request) = lab.post_fixture(1, "실제 확인 aaa:question/t-0001", BODY, true);
     let ids: Vec<_> = request.questions.as_ref().unwrap().items.iter().map(|q| q.id.clone().unwrap()).collect();
     h.reconcile_question_requests("demo").unwrap();
     assert!(!h.db.post_inbox("demo", &post).unwrap().unwrap().done, "과거 답이 새 요청을 닫으면 안 된다");
@@ -135,7 +139,7 @@ fn inbox_cleanup_preserves_unanswered_coordinator_questions_until_explicit_handl
     let lab = Lab::new();
     let h = &lab.h;
     let (structured_post, structured) = lab.post(1, BODY);
-    let (plain_post, plain) = lab.post(2, "직접 확인해 주세요");
+    let (plain_post, plain) = lab.legacy_post(2, "직접 확인해 주세요");
     h.inbox_add("demo", "thread-state", "t-0001", "new report", "새 보고");
     let (n, remaining) = h.inbox_done("demo", &[], true, "local:cli").unwrap();
     assert_eq!(n, 1, "일반 알림만 정리한다");
@@ -290,7 +294,7 @@ fn two_devices_submit_one_answer_and_plain_chat_handling_keeps_the_alias() {
         h.post_status_view("demo", &post, "local:cli").unwrap(),
         FrontResponse::Post { handled: Some(true), .. }
     ));
-    let (plain, r) = lab.post(2, "평문 요청");
+    let (plain, r) = lab.legacy_post(2, "평문 요청");
     assert!(r.questions.is_none());
     assert_eq!(r.question_id.as_deref(), Some("q-1002"));
     h.post_handled("demo", "q-1002", "local:cli").unwrap();

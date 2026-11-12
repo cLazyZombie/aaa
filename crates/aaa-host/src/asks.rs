@@ -1075,7 +1075,6 @@ mod tests {
             by: "웹".into(),
             at_ms: 5,
         };
-        rec.question_answer = Some(answer.clone());
         h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
         for n in 1..=2 {
             let input = PostInput {
@@ -1090,6 +1089,8 @@ mod tests {
             };
             assert!(matches!(h.front_post("demo", input, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
         }
+        rec.question_answer = Some(answer.clone());
+        h.save(&mut rec);
         let requests = h.question_requests("demo", &rec.id).unwrap();
         assert_eq!(requests.len(), 2);
         h.record_answer(&rec, &answer);
@@ -1280,23 +1281,21 @@ mod tests {
         h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
         h.record_answer(&rec, &answer);
         let post = |n| {
-            let result = h
-                .front_post(
-                    "demo",
-                    PostInput {
-                        post_id: format!("{n:032x}"),
-                        to: "user".into(),
-                        post_type: PostType::Request,
-                        topic: "user-action".into(),
-                        title: format!("질문 알림 {n} aaa:question/t-0001"),
-                        body: "카드에서 답한다".into(),
-                        needs_user: true,
-                        refs: vec![],
-                    },
-                    "local:cli",
-                )
-                .unwrap();
+            let result = h.seed_legacy_user_post(
+                "demo",
+                PostInput {
+                    post_id: format!("{n:032x}"),
+                    to: "user".into(),
+                    post_type: PostType::Request,
+                    topic: "user-action".into(),
+                    title: format!("질문 알림 {n} aaa:question/t-0001"),
+                    body: "카드에서 답한다".into(),
+                    needs_user: true,
+                    refs: vec![],
+                },
+            );
             let PostResult::Accepted { id } = result else { panic!("{result:?}") };
+            h.reconcile_question_requests("demo").unwrap();
             h.db.post_inbox("demo", &id).unwrap().unwrap()
         };
         assert!(post(1).done, "이미 답한 카드에 뒤늦게 보낸 알림");
@@ -1322,8 +1321,13 @@ mod tests {
                 to: "user".into(),
                 post_type: PostType::Request,
                 topic: "user-action".into(),
-                title: title.into(),
-                body: "카드에서 답한다".into(),
+                title: if n >= 4 { title.split(" aaa:question/").next().unwrap() } else { title }.into(),
+                body: if n >= 4 {
+                    "## Questions\n### 1. 별개 확인\n- A 진행\n- B 보류\n"
+                } else {
+                    "카드에서 답한다"
+                }
+                .into(),
                 needs_user: true,
                 refs: vec![],
             };
@@ -1395,7 +1399,8 @@ mod tests {
             post_type: PostType::Request,
             topic: "user-action".into(),
             title: "배포 승인 필요".into(),
-            body: "main **검증 통과**. 승인하면 tag를 만든다".into(),
+            body: "## Questions\n### 1. 배포 승인\nmain **검증 통과**. 승인하면 tag를 만든다\n- A 승인\n- B 보류\n"
+                .into(),
             needs_user: true,
             refs: vec![],
         };
@@ -1416,7 +1421,10 @@ mod tests {
             (done[0].kind, done[0].summary.as_str(), done[0].by.as_str()),
             (AskKind::Request, "답함으로 표시", "웹")
         );
-        assert_eq!(done[0].body.as_deref(), Some("main **검증 통과**. 승인하면 tag를 만든다"));
+        assert_eq!(
+            done[0].body.as_deref(),
+            Some("## Questions\n### 1. 배포 승인\nmain **검증 통과**. 승인하면 tag를 만든다\n- A 승인\n- B 보류\n")
+        );
         let inbox = h.db.inbox_list(Some("demo"), false).unwrap();
         assert!(
             inbox.iter().any(|i| i.event == "request handled" && i.summary.contains("배포 승인 필요")),

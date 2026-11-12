@@ -92,12 +92,15 @@ pub(crate) fn app_ref(word: &str) -> Option<(&str, &str)> {
 }
 
 /// coordinator 사용자 post 제목이 가리키는 thread 질문(누르면 그 질문 카드를 연다)
+pub(crate) fn question_ref(word: &str) -> Option<&str> {
+    app_ref(word.trim_end_matches('」')).filter(|(kind, _)| *kind == "question").map(|(_, target)| target)
+}
+
+/// inbox의 제목 봉투를 벗겨 수신 검사와 같은 규칙으로 질문 참조를 읽는다.
 pub(crate) fn request_question(i: &InboxItem) -> Option<String> {
     request_title(i)?;
     let title = i.summary.split_once(": 「")?.1;
-    title
-        .split_whitespace()
-        .find_map(|w| app_ref(w.trim_end_matches('」')).filter(|(k, _)| *k == "question").map(|(_, t)| t.to_string()))
+    title.split_whitespace().find_map(|w| question_ref(w).map(str::to_string))
 }
 
 /// 알림에 싣는 글 한 줄. 공개 검사와 같은 종류의 경로·주소·키를 자르기 전에 가린다(잘린 token 조각도 보내지 않음).

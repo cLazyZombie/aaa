@@ -112,7 +112,7 @@ async function answeredAfterDialog(page, label, width) {
     return reply.ok;
   };
   const title = `늦은 답 ${label} ${width}`;
-  const body = "## Questions\n### 1. 늦게 생긴 답\n확인창 뒤에 생성한 원문이다.\n![그림](library/later-pixel.png)\n- A 확인 (추천)\n";
+  const body = "## Questions\n### 1. 늦게 생긴 답\n확인창 뒤에 생성한 원문이다.\n![그림](library/later-pixel.png)\n- A 확인 (추천)\n- B 보류\n";
   fs.mkdirSync(`${dir()}/library`, { recursive: true });
   fs.writeFileSync(`${dir()}/library/later-pixel.png`, png);
   const posted = await call({ op: "post", project: "demo", input: {

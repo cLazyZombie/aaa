@@ -1,5 +1,5 @@
 import { listIds } from "../lib/list-ids.mjs";
-// coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 평문 호환을 본다.
+// coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 요청 수신 경계를 본다.
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA, drawerSettled } from "../lib/harness.mjs";
@@ -92,6 +92,26 @@ export default async function ({ page }) {
     let body = fs.readFileSync(`${t.work_dir}/report.md`, "utf8").replaceAll("pic.png", "card.svg");
     fs.writeFileSync(`${t.work_dir}/report.md`, body);
     q = await until("새 보고의 그림과 ID", () => { const q = aaa("thread", "show", "demo", t.id).questions; return q?.items[0].body?.includes("card.svg") && q; });
+    // 실제 CLI→host 거절: 카드·q-ID 없이 끝나고 고칠 형식을 돌려준다.
+    const before = aaa("question", "list").questions.map(q => q.id);
+    for (const [n, title, text] of [
+      [1, "병합 승인", "병합을 승인해 주세요"],
+      [2, "없는 카드 aaa:question/t-9999", "기존 질문에서 답한다"],
+      [3, "선택지 하나", "## Questions\n### 1. 승인\n- A 진행\n"],
+      [4, `별개 확인 aaa:question/${t.id}」`, "## Questions\n### 1. 승인\n- A 진행\n- B 보류\n"],
+    ]) {
+      const file = `${root}/refused-${n}.md`; fs.writeFileSync(file, text);
+      let error = "";
+      try { aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", title, "--body-file", file); }
+      catch (e) { error = e.message; }
+      if (!["## Questions", "- A 진행", "- B 보류"].every(s => error.includes(s))) throw new Error(`요청 거절 안내: ${error}`);
+    }
+    if (JSON.stringify(aaa("question", "list").questions.map(q => q.id)) !== JSON.stringify(before)) throw new Error("거절이 질문 카드를 만들었다");
+    for (const [n, target] of [[1, t.id], [2, q.items[0].id]]) {
+      const file = `${root}/linked-${n}.md`; fs.writeFileSync(file, "기존 카드에서 답한다");
+      aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `기존 질문 ${n} aaa:question/${target}`, "--body-file", file);
+    }
+    if (JSON.stringify(aaa("question", "list").questions.map(q => q.id)) !== JSON.stringify(before)) throw new Error("연결 알림이 별개 카드를 만들었다");
     const preview = `${root}/preview`; fs.mkdirSync(preview);
     fs.writeFileSync(`${preview}/card.svg`, svg);
     aaa("library", "publish", preview, "--name", "preview");
@@ -208,7 +228,7 @@ export default async function ({ page }) {
     await listIds(page, '[data-testid="asks-panel"] .ask-row.is-done', req.questions.items.map((q) => q.id), "ids-question-answered");
     await shot(page, "69-coordinator-answered");
   });
-  await step("채팅 ID 답: thread answer q-ID A와 question answer q-ID B, post handled q-ID는 평문·구조화 post를 닫는다", async () => {
+  await step("채팅 ID 답: thread answer q-ID A와 question answer q-ID B, post handled q-ID는 구조화 post를 닫는다", async () => {
     await chipState(page, q.items.map((q) => q.id), "ask");
     aaa("thread", "answer", q.items[0].id, "A");
     const partial = aaa("thread", "show", "demo", t.id).questions;
@@ -216,7 +236,7 @@ export default async function ({ page }) {
     aaa("question", "answer", q.items[1].id, "B");
     await until("thread에 답 전달", () => aaa("thread", "show", "demo", t.id).questions?.answer?.summary === "1A 2B");
     await chipState(page, q.items.map((q) => q.id), "done");
-    for (const [n, body] of [[1,"평문 요청"], [2,"## Questions\n### 1. 다음 진행\n- A 진행 (추천)\n- B 보류\n"]]) {
+    for (const [n, body] of [[1,"## Questions\n### 1. 인증\n- A 완료했다\n- B 보류한다\n"], [2,"## Questions\n### 1. 다음 진행\n- A 진행 (추천)\n- B 보류\n"]]) {
       const file = `${root}/handled-${n}.md`; fs.writeFileSync(file, body);
       const p = aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `채팅 답 ${n}`, "--body-file", file);
       const r = (await call(page, { op: "asks" })).ok.requests.find((r) => r.title === `채팅 답 ${n}`);
