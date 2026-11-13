@@ -375,6 +375,13 @@ CLI에서는 `aaa library show r-NNNN`·`aaa library link r-NNNN`으로 확인�
 
 const THREADS: &str = r#"# thread 다루기
 
+## 멈춤 감시
+host는 작업 의도가 남은 idle thread가 새 보고·진행 보고·질문 없이 90초 머물면 inbox `thread stalled`를 한 번 낸다.
+`host.toml [projects] thread_stall_secs`로 시간을 바꾸며 0은 감시·자동 재개 끔이다. 마지막 결과의 일시 연결 오류는 빈 입력창을
+다시 확인한 뒤 「이어서 계속하라」를 한 번 보내고 `thread resumed`에 전달 결과를 남긴다. 최근 10분간 최대 3회이며 그다음
+멈춤은 알림만 낸다. 전달 불명(unknown)은 다시 보내지 않는다. 사용량 한도·rate limit·인증 거부·panic은 원인을 확인한다.
+진행 표시·배경 셸·subagent 대기, 검수·결정·완료 보고, 병합 준비·보류·끝난 thread는 재개하지 않는다.
+
 ## 시작과 동시 한도
 - 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
@@ -480,6 +487,8 @@ const PROMPTS: &str = r#"# thread pane의 확인창
 
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게
 처리한다(`trust_screens = user`인 신뢰 창은 빼고). inbox에는 30초 넘게 뜬 확인창이 `blocked on a prompt`로 온다.
+`thread stalled`는 확인창과 다른 알림이다. 먼저 `aaa thread read <id>`와 보고를 읽는다. 일시 오류의 자동 재개 결과는
+`thread resumed`에 있으며, 전달 불명(unknown)은 중복 전송하지 않는다. 사용량 한도·panic·재개 횟수 초과는 원인을 확인한다.
 거기서 명령이 실패할 때만 사용자를 pane으로 보낸다.
 1. `aaa thread read <id>`가 pane이 보이는 것을 보인다(`--lines N`이면 기록 끝 N줄).
 2. 아래 규칙으로 정한다.
