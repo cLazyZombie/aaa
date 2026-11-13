@@ -8,6 +8,83 @@ fn cards() -> HashMap<String, CardState> {
     ])
 }
 
+/// t-1809의 관측 발췌와 같은 구절 앞뒤의 별개 요청을 함께 보존한다.
+#[test]
+fn observed_negative_and_optional_feedback_do_not_hide_real_requests() {
+    let cards = cards();
+    let mut unexpected = Vec::new();
+    for feedback in [
+        "지금 정해 주실 것은 없습니다.",
+        "지금 정해 주실 것은 없고 기록을 확인합니다.",
+        "혹시 시험 자체를 지우라는 뜻이셨다면 말씀해 주세요.",
+        "화면에 뜬 오류 문구가 있었다면 알려 주세요.",
+    ] {
+        let result = inspect(feedback, &cards);
+        if result.missing.is_some() || result.stale.is_some() {
+            unexpected.push(feedback);
+        }
+        for text in [
+            format!("{feedback}\n\n지금 배포할까요?"),
+            format!("{}, 배포 승인 여부를 알려 주세요.", feedback.trim_end_matches('.')),
+            format!("승인 여부를 알려 주세요, {feedback}"),
+            format!("{feedback}\n- A 배포 (추천)\n- B 보류"),
+            format!("{feedback}\n\n정해 주실 것은 배포 방식입니다."),
+        ] {
+            assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        }
+    }
+    for text in [
+        "정해 주실 것은 없습니다만 배포 방식은 정해 주세요.",
+        "혹시 시험 자체를 지우라는 뜻이셨다면 배포 승인 여부를 말씀해 주세요.",
+        "오류 문구가 있었다면 복구와 삭제 중 하나를 골라 주세요.",
+        "화면에 뜬 오류 문구가 있었다면 알려 주세요, 승인 여부도 알려 주세요.",
+        "알려 주시면 좋은 것은 오류 문구입니다.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+    assert!(unexpected.is_empty(), "불필요한 경고: {unexpected:?}");
+    let evidence = inspect("지금 정해 주실 것은 없습니다.\n\n승인 여부를 알려 주세요.", &cards).missing.unwrap();
+    assert_eq!(evidence.line, 3);
+}
+
+/// t-1809에서 실제 카드로 이어진 두 발췌는 정상 경고로 유지한다.
+#[test]
+fn observed_work_and_visual_choices_still_require_cards() {
+    for text in ["만들려면 저에게 말씀해 주세요.", "다음 시안 때 함께 골라 주세요."] {
+        assert_eq!(inspect(text, &cards()).missing.unwrap().rule, "request", "{text}");
+    }
+}
+
+/// i-24655의 링크와 답변 방법 안내를 재구성한다. 주소·선택지 본문은 넣지 않는다.
+#[test]
+fn card_or_chat_reply_instructions_link_only_to_the_existing_topic() {
+    let mut cards = cards();
+    for state in [CardState::Open, CardState::Answered, CardState::Closed] {
+        cards.insert("q-3563".into(), state);
+        for text in [
+            "[q-3563 질문](#question=q-3563)을 열었습니다. 카드나 채팅(「1B」 등)으로 답해 주세요.",
+            "[q-3563 질문](#question=q-3563)을 열었습니다.\n\n카드나 채팅(「1B」 등)으로 답해 주세요.",
+        ] {
+            let result = inspect(text, &cards);
+            assert!(result.missing.is_none(), "{text}");
+            if state == CardState::Closed {
+                assert_eq!(result.stale.unwrap().refs, [("q-3563".into(), state)], "{text}");
+            } else {
+                assert!(result.stale.is_none(), "{text}");
+            }
+        }
+    }
+    for text in [
+        "[q-9999 질문](#question=q-9999)을 열었습니다. 카드나 채팅으로 답해 주세요.",
+        "q-1001에서 고릅니다.\n\n## 다른 작업\n카드나 채팅으로 답해 주세요.",
+        "q-1001에서 고릅니다. 추가로 카드나 채팅으로 답해 주세요.",
+        "q-1001에서 고릅니다. 배포 승인 여부를 채팅으로 답해 주세요.",
+        "q-1001에서 고릅니다. 카드나 채팅으로 배포 승인 여부를 답해 주세요.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+}
+
 /// 기록의 오탐 형태와 실제 승인·정보 요청을 함께 고정한다. 원문 개인정보는 넣지 않는다.
 #[test]
 fn decisions_are_distinct_from_instructions_optional_offers_and_completed_lists() {
