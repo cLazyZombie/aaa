@@ -117,6 +117,7 @@ mod task_repo;
 mod tasks;
 mod text;
 mod thread_read;
+mod thread_stall;
 mod transitions;
 mod trust_screen;
 pub mod usage;

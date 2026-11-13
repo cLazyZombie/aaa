@@ -400,6 +400,8 @@ pub struct ProjectsSection {
     /// brief를 보낸 뒤 새 보고가 오기 전까지 thread를 작업 중으로 치는 시간(초). 방금 일을 받은 agent는 아직 쉼으로 읽혀서다
     /// (herdr-projects ticker는 안내를 보낸 tick을 작업 중으로 두고 다음 tick(`TICK` 15초)에 센다, plan §8.85). 시험에서 줄인다.
     pub delivered_working_secs: u64,
+    /// 작업 의도가 남은 idle thread를 멈춤으로 알릴 시간(초). 0이면 감시·자동 재개를 끈다.
+    pub thread_stall_secs: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
@@ -433,6 +435,7 @@ impl Default for ProjectsSection {
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
             delivered_working_secs: 15,
+            thread_stall_secs: 90,
             auto_resolve_day_secs: 86_400,
             inbox_done_days: 30,
             routine_commands: Vec::new(),

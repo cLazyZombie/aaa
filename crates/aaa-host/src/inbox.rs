@@ -567,6 +567,7 @@ impl Host {
                 self.inbox_once(&p.name, "config-error", "missions", "conversion pending", &e.message);
             }
             self.usage_limit_pass(&p.name).await;
+            self.thread_stall_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
             self.idea_rest_pass(&p.name).await;

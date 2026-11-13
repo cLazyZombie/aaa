@@ -5109,3 +5109,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - [t-1795: 선택지 없는 사용자 요청 수신 거절](testing-post-question-choices-t-1795.md): 열린 thread 카드 연결·현재 q-ID 경계·선택지 검사·보고 교체 경합·구판 기록 호환과 실제 CLI/웹 회귀.
 - [질문 감시 부정문·선택적 피드백·기존 카드 안내(t-1812)](testing-question-guard-t1812.md): 관측 오탐 네 건·정상 경고 두 건·혼합 승인 요청과 실제 Host·DB 회귀.
+- thread 멈춤 감시·일시 오류 재개(t-1827): [판정 사례와 검증](testing-thread-stall-t-1827.md).

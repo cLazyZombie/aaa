@@ -200,6 +200,8 @@ fn phrase(i: &InboxItem) -> Option<&'static str> {
         ("idea", "updated") => "아이디어 노트 갱신",
         ("thread-state", "new report") => "보고 준비",
         ("thread-state", "blocked on a prompt") => "확인창 응답 기다림",
+        ("thread-state", "thread stalled") => "작업 멈춤 확인 필요",
+        ("thread-state", "thread resumed") => "일시 오류 자동 재개 시도",
         ("thread-state", "waiting on you") => "확인 필요",
         ("thread-state", "pane closed") => "pane 닫힘",
         ("thread-state", "agent gone") => "agent 없음",

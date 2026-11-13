@@ -462,3 +462,23 @@ thread 메시지는 m-ID로 연결되고, 진단에는 본문의 길이·해시�
 기존 카드 알림은 제목 끝에 `aaa:question/<thread 또는 현재 q-ID>`를 붙입니다. 제목·본문의 t-ID나 현재 q-ID가 열린 thread 하나만 가리키면 자동 연결합니다. 없는 카드·답한 카드·끝난 thread·옛 q-ID·다른 프로젝트를 가리키는 평문 요청은 새 카드로 만들지 않습니다. 별개 질문은 접미사를 빼고 `## Questions`로 씁니다. 구판에서 받은 평문 요청과 답 기록은 계속 읽고 처리할 수 있습니다.
 
 사람 전용 행동은 질문에 행동과 까닭을 쓰고 `- A 완료했다`·`- B 보류한다`로 확인합니다. 전체 완료 알림은 `--notice --topic task-complete`, 보고서 알림은 `--notice --topic report`를 쓰며 답할 것에 올리지 않습니다. 질문·자료의 전체 형식은 `aaa guide questions`에서 확인합니다.
+
+## thread 멈춤 감시와 일시 오류 재개
+
+host ticker는 작업 의도가 남았는데 harness가 idle인 thread를 감시한다. 기본 90초 동안 새 보고·진행 보고·질문·확인창이
+없으면 inbox `thread stalled`에 thread와 마지막 화면 최대 6줄의 요약을 한 번 남긴다. 아직 첫 보고가 없는 thread도 감시하며,
+진행 보고의 작업 중 유효 시간이 지나도 결과 없이 idle인 상태를 놓치지 않는다. 상태 목록을 강제로 바꾸지는 않는다.
+`host.toml`의 `[projects] thread_stall_secs`로 시간을 바꾸며 0은 감시와 자동 재개를 모두 끈다. 적용은 통상 host 배포·재시작
+절차를 따른다. host를 다시 띄우면 대기 시간은 그때부터도 재고, 이미 알린 idle과 최근 재개 예산은 DB에서 잇는다.
+
+마지막 입력창 앞 결과가 Claude의 `API Error`·`Connection lost`, Codex의 `at capacity`·`stream disconnected`·`stream error`·
+`Reconnecting`·`error sending request`·`unexpected status`·`Conversation interrupted`이면, 빈 입력창을 다시 확인한 뒤
+고정 문장 「이어서 계속하라」를 한 번 보낸다. 화면 본문은 지시로 보내지 않는다. inbox `thread resumed`와 흐름 사건
+`thread_stall_resume`에 수락·실패·전달 불명 결과를 남긴다. 실패·불명도 시도로 세며 자동으로 다시 보내지 않는다.
+한 thread에서 최근 10분간 최대 3회 시도한다. 그다음 멈춤은 알림만 내며, 같은 idle은 시간이 지나도 다시 보내지 않는다.
+다음 실제 턴이 끝나 새 멈춤이 생겼을 때 10분 밖의 시도만 예산에서 빠진다.
+
+사용량·rate limit·인증 거부·`panicked`는 알림만 낸다. 작업 중 표시, 잘린 Codex 추론 제목, 배경 셸·subagent 대기,
+사용자 응답 대기, 검수·결정·완료 보고, 병합 준비 보고, 보류·끝난 thread는 자동 재개하지 않는다. 확인창은 기존
+`blocked on a prompt` 경로를 따른다. 예전 오류 뒤 새 응답·사용자 입력이 있으면 그 오류를 재개 근거로 쓰지 않는다.
+입력창에 초안이 있거나 화면을 확인할 수 없으면 글을 치지 않는다. 모르는 화면의 오류는 자동 복구보다 알림·보류를 택한다.
