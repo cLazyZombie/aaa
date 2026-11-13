@@ -1762,6 +1762,41 @@ mod tests {
         assert!(began.elapsed() < std::time::Duration::from_secs(5));
     }
 
+    /// 관측 오탐과 이전 턴 카드의 답변 방법 안내를 실제 완료 사건·DB로 확인한다.
+    #[tokio::test]
+    async fn question_guard_accepts_optional_feedback_and_existing_card_reply_methods() {
+        let (h, _lab) = coordinator_host();
+        let mut card = input(994);
+        card.to = "user".into();
+        card.topic = "user-action".into();
+        card.body = "## Questions\n### 1. 진행 여부\n- A 진행\n- B 보류".into();
+        assert!(matches!(h.front_post("demo", card, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        let request = h.user_requests("demo").unwrap().remove(0);
+        let qid = request.question_id.unwrap();
+        // 같은 턴에 post했다는 면제 대신 실제 열린 카드 연결을 거친다.
+        let start = request.created_ms + 1;
+        let end = start.max(util::now_ms());
+        for (n, text) in [
+            "지금 정해 주실 것은 없습니다.".to_owned(),
+            "혹시 시험 자체를 지우라는 뜻이셨다면 말씀해 주세요.".to_owned(),
+            "화면에 뜬 오류 문구가 있었다면 알려 주세요.".to_owned(),
+            format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n카드나 채팅(「1B」 등)으로 답해 주세요."),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            h.on_harness("m", completed_reply("codex", start, end + n as u64, &text));
+            assert!(
+                !h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| {
+                    matches!(i.event.as_str(), crate::question_guard::EVENT | crate::question_guard::STALE_EVENT)
+                }),
+                "{text}"
+            );
+        }
+        h.on_harness("m", completed_reply("codex", start, end + 4, "지금 정해 주실 것은 없습니다. 별도로 배포할까요?"));
+        assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
+    }
+
     /// i-19078처럼 접수 뒤 빠르게 답해도 그 턴의 접수 증거는 남는다.
     #[tokio::test]
     async fn question_guard_keeps_accepted_post_evidence_after_a_fast_answer() {

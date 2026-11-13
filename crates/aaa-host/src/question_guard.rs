@@ -202,7 +202,13 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|보신 뒤|보시고 정해|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|다르게 생각하신 거라면|다른 작업을 뜻하셨다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|다르게 생각하신 거라면|다른 작업을 뜻하셨다면|뜻이셨다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+    });
+    static NO_INFORMATION_NEEDED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?:정해\s*주실\s*것|알려\s*주시면\s*좋은\s*것)(?:은|이|도)?\s*없(?:습니다|어요|고|으며|지만|는데|다)",
+        )
+        .unwrap()
     });
     static CHOICE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?\*{0,2}\s+\S").unwrap());
@@ -212,6 +218,8 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
     for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
         // 피드백 구절만 지운다. 같은 문장의 별개 승인·선택 요청까지 면제하지 않는다.
         let actionable = OPTIONAL_FEEDBACK.replace_all(sentence, |m: &regex::Captures<'_>| " ".repeat(m[0].len()));
+        let actionable =
+            NO_INFORMATION_NEEDED.replace_all(&actionable, |m: &regex::Captures<'_>| " ".repeat(m[0].len()));
         let sentence = actionable.as_ref();
         let future_permission = sentence.contains("해도 되면") && text.contains("여쭙겠습니다");
         if !CONDITIONAL.is_match(sentence) && !future_permission {
@@ -244,6 +252,14 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         out.push(("choices", 0));
     }
     out
+}
+
+/// 답변 방법만 적힌 구절은 앞선 카드를 가리킨다. 별도 결정 내용은 허용하지 않는다.
+fn reply_method_only(text: &str) -> bool {
+    static METHOD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^\s*카드나\s*채팅(?:\(\s*(?:[1-9][A-D])?\s*(?:등)?\s*\))?으로\s*답해\s*(?:주세요|주십시오)\s*[.!?？。]*\s*$").unwrap()
+    });
+    METHOD.is_match(text)
 }
 
 fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
@@ -307,9 +323,10 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
                 if linked.is_empty()
                     && (rule == "choices"
                         || rule == "request"
-                            && ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
-                                .iter()
-                                .any(|s| block.text[start..].contains(s)))
+                            && (reply_method_only(&block.text[start..])
+                                || ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
+                                    .iter()
+                                    .any(|s| block.text[start..].contains(s))))
                 {
                     linked = ids(&block.text[..start])
                         .into_iter()
