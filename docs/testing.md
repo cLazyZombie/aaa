@@ -1,4 +1,4 @@
-- t-1814: [Cargo 1.100 생성 파일 경로 시험 수리](testing-cargo-out-dir-t-1814.md)
+- t-1814: [Rust 1.100 Cargo 경로·Clippy 수리](testing-cargo-out-dir-t-1814.md)
 - t-1786: [실행 중 계정 이름 변경과 저장 오류 표시](testing-account-rename-t-1786.md)
 - t-1774: [질문 감시의 인용 설명·카드 번호 연결](testing-question-guard-quotes-t1774.md)
 - t-1741: [질문 감시의 의미 확인·기존 카드 안내 경계](testing-question-guard-boundaries-t1741.md)

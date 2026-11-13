@@ -43,6 +43,20 @@ Cargo 자체의 check는 성공했고 생성 파일도 있었다. 실제 상대 
 Clippy의 [공식 lint 설명](https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_range_loop)과
 같은 iterator 접근을 따른다.
 
+## 전체 검사에서 추가로 드러난 종료 코드 진단
+
+순회 lint 수리 뒤 Rust 1.100.0의 workspace/all-targets strict Clippy를
+네이티브·Linux cross·Windows cross에서 실행하자 세 대상 모두 동일한
+`unused_must_use` 다섯 곳을 진단했다. 기존 host 컴파일 실패 뒤 가려져 있던 CLI 코드다.
+대상은 `deployment`의 rollback/상태 출력, `rollout`의 상태 출력,
+`update`의 설치 마무리/복구 마무리다.
+
+내부 `finish`는 모든 성공 경로에서 `ExitCode::SUCCESS`만 반환하므로 `Result<()>`로 바꿨다.
+그 값을 그대로 전달하던 내부 `rollback_approved`도 `Result<()>`로 맞추고,
+실제 CLI 경계인 `rollback`에서 성공 종료 코드로 변환한다. 오류는 기존 `?`로 계속 전달한다.
+배포와 rollout 상태 출력은 출력 결과의 `Result`를 상태별 종료 코드로 `map`해 바로 반환한다.
+직렬화 오류와 실패/중단 상태의 종료 코드 1을 보존한다. lint allow나 반환값 무시는 추가하지 않았다.
+
 ## Cargo 수리와 회귀 계약
 
 기존 `--message-format=json` 출력을 한 번 파싱하고 probe의 라이브러리 artifact와

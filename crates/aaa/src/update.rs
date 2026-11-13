@@ -385,7 +385,7 @@ struct Swap<'a> {
 }
 
 /// 바꾸기와 되돌리기가 함께 쓰는 끝 단계: 보이고, 묻고, 바꾸고, 보관을 줄인다
-fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, approval: Approval) -> Result<ExitCode> {
+fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, approval: Approval) -> Result<()> {
     let Swap { what, staged, new_version, from } = swap;
     let current = match approval {
         Approval::Coordinator => self_check(&place.exe)?,
@@ -403,7 +403,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
         } else {
             println!("이미 같은 실행 파일이다(aaa {current} · sha256 {}): 바꾸지 않았다", short(&cur_sha));
         }
-        return Ok(ExitCode::SUCCESS);
+        return Ok(());
     }
     let plan = format!(
         "바꿀 실행 파일: {}\n지금: aaa {current} · sha256 {}\n새것: aaa {new_version} · sha256 {} ({})\n보관: {}/ (새것부터 {keep}개)",
@@ -423,7 +423,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
         } else {
             println!("{plan}\n검사만 했다(--dry-run): self-check·version 고정 통과, 바꾸지 않았다");
         }
-        return Ok(ExitCode::SUCCESS);
+        return Ok(());
     }
     println!("{plan}");
     if approval == Approval::Person && crate::person::ask(&format!("{what}. 계속하려면 yes를 입력: "))? != "yes"
@@ -445,7 +445,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
         }
         println!("{}. 되돌리기: `aaa{} update rollback`", restart_hint(), aaa_config::paths::instance_flag());
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 /// `aaa update [--version <판> | --from <파일>] [--dry-run]`
@@ -533,7 +533,7 @@ pub(crate) fn update_approved(
 
 /// `aaa update rollback [<이름>] [--dry-run]`: 보관한 옛 실행 파일로 되돌린다. 이름이 없으면 지금과 다른 가장 새 것
 pub fn rollback(json: bool, name: Option<String>, dry_run: bool) -> Result<ExitCode> {
-    rollback_approved(json, name, dry_run, Approval::Person, None)
+    rollback_approved(json, name, dry_run, Approval::Person, None).map(|()| ExitCode::SUCCESS)
 }
 pub(crate) fn rollback_approved(
     json: bool,
@@ -541,7 +541,7 @@ pub(crate) fn rollback_approved(
     dry_run: bool,
     approval: Approval,
     target: Option<PathBuf>,
-) -> Result<ExitCode> {
+) -> Result<()> {
     if !dry_run && approval == Approval::Person {
         crate::person::require("실행 파일 되돌리기")?;
     }

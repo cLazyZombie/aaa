@@ -169,8 +169,8 @@ async fn status_on(
             Ok(FrontResponse::Deployment { machine, job, .. }) => {
                 if !wait || !matches!(job.state, DeployState::Queued | DeployState::Running) {
                     let failed = matches!(job.state, DeployState::Failed | DeployState::Interrupted);
-                    crate::cli::front_print(json, response)?;
-                    return Ok(if failed { ExitCode::from(1) } else { ExitCode::SUCCESS });
+                    return crate::cli::front_print(json, response)
+                        .map(|_| if failed { ExitCode::from(1) } else { ExitCode::SUCCESS });
                 }
                 Some(machine.clone())
             }
