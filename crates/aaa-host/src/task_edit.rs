@@ -157,8 +157,8 @@ impl Doc {
                 let base = indent(plain(&self.lines[idx]));
                 let (mut block_end, mut sub_end) = (idx, idx);
                 let mut in_block = true;
-                for j in idx + 1..self.lines.len() {
-                    let l = plain(&self.lines[j]);
+                for (j, line) in self.lines.iter().enumerate().skip(idx + 1) {
+                    let l = plain(line);
                     if l.trim().is_empty() {
                         continue;
                     }

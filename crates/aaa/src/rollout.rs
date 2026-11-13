@@ -141,8 +141,8 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                                 }
                                 Ok(FrontResponse::Rollout { rollout }) => {
                                     let stopped = rollout.state != RolloutState::Done;
-                                    crate::cli::front_print(json, response)?;
-                                    return Ok(if stopped { ExitCode::from(1) } else { ExitCode::SUCCESS });
+                                    return crate::cli::front_print(json, response)
+                                        .map(|_| if stopped { ExitCode::from(1) } else { ExitCode::SUCCESS });
                                 }
                                 _ => return crate::cli::front_print(json, response),
                             }

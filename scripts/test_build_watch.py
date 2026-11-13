@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,8 @@ class BuildWatch(unittest.TestCase):
         (common / "Cargo.toml").write_text(
             '[package]\nname="aaa-watch-common"\nversion="0.0.0"\nedition="2021"\n')
         (common / "src/lib.rs").write_text('pub fn value() -> u8 { 1 }\n')
+        # 의존성에도 build script가 있어도 probe의 출력만 골라야 한다.
+        (common / "build.rs").write_text('fn main() {}\n')
         (package / "Cargo.toml").write_text(
             '[package]\nname="aaa-build-watch-probe"\nversion="0.0.0"\nedition="2021"\n'
             '[dependencies]\naaa-watch-common={path="../common"}\n[workspace]\n')
@@ -50,7 +53,8 @@ class BuildWatch(unittest.TestCase):
                                 cwd=package, text=True, capture_output=True,
                                 env={**os.environ, "CARGO_TARGET_DIR": str(package / "target")})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        artifacts = [message for message in map(json.loads, result.stdout.splitlines())
+        messages = list(map(json.loads, result.stdout.splitlines()))
+        artifacts = [message for message in messages
                      if message["reason"] == "compiler-artifact" and message["target"]["kind"] == ["lib"]]
         self.assertEqual(len(artifacts), 2)
         by_name = {a["target"]["name"]: a for a in artifacts}
@@ -58,7 +62,12 @@ class BuildWatch(unittest.TestCase):
         # Git 판·index가 바뀌어도 공통 backend 코드의 캐시는 보존되어야 한다.
         self.assertEqual(by_name["aaa_watch_common"]["fresh"], self.common_built, result.stderr)
         self.common_built = True
-        generated, = (package / "target/debug/build").glob("*/out/panic_build.rs")
+        # Cargo의 중간 산출물 배치는 비공개다. fresh여도 출력되는 메시지를 쓴다.
+        outputs = [message for message in messages
+                   if message["reason"] == "build-script-executed"
+                   and message["package_id"] == by_name["aaa_build_watch_probe"]["package_id"]]
+        self.assertEqual(len(outputs), 1, result.stdout + result.stderr)
+        generated = Path(outputs[0]["out_dir"]) / "panic_build.rs"
         source = generated.read_text()
         self.assertIn(self.git("rev-parse", "HEAD"), source)
         return source
@@ -74,6 +83,11 @@ class BuildWatch(unittest.TestCase):
         self.git("commit", "-qm", "next source")
         self.check(False)
         self.check(True)
+
+    def test_separate_build_directory_uses_reported_output(self):
+        with patch.dict(os.environ, {"CARGO_BUILD_BUILD_DIR": str(self.root / "intermediate")}):
+            self.check(False)
+            self.check(True)
 
     def test_packed_linked_worktree_tracks_new_loose_ref_and_detached_head(self):
         linked = self.root / "linked"
