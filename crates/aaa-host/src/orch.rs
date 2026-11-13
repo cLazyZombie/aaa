@@ -3075,6 +3075,7 @@ impl Host {
         );
         let mut notes = Vec::new();
         let mut cleanup_error = None;
+        let mut cleanup_head = None;
         if adopted {
             notes.push("폴더·branch는 그대로 둔다(데려온 폴더는 사람 것)".to_string());
         }
@@ -3107,7 +3108,7 @@ impl Host {
                     repo,
                     cwd: cwd.clone(),
                     branch: rec.branch.clone(),
-                    merged_head,
+                    merged_head: merged_head.clone(),
                     // 옛 agent는 `uncopied`를 모른다: 남기기를 함께 켜야 지우지 않는다
                     keep_worktree: opts.keep_worktree || uncopied,
                     uncopied,
@@ -3115,6 +3116,9 @@ impl Host {
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
+                    if c.worktree_removed && c.branch_deleted && !opts.keep_worktree && !uncopied {
+                        cleanup_head = merged_head;
+                    }
                     // 사람이 남기라고 한 worktree(--keep-worktree)·집에 다 오지 않아 남긴 worktree와 그 branch는 청소하지
                     // 않는다(참고 sweep `kept_worktree`, `clean` `copy_complete`)
                     let kept = opts.keep_worktree || uncopied;
@@ -3170,13 +3174,17 @@ impl Host {
         // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
         let merged_main = self.task_main_merge(&rec).await;
         // 이어진 task 완료 보관은 ticker가 한다.
-        self.update_rec(project, id, |r| {
+        let resolved = self.update_rec(project, id, |r| {
             if merged_main.is_some() {
                 r.task_clean.merged_main = merged_main.clone();
+            }
+            if let Some(head) = &cleanup_head {
+                crate::followups::resolve_cleanup(r, head);
             }
             r.resolve_pending = None;
             r.error = None;
         })?;
+        self.followup_notice(&resolved);
         self.tick_wake.notify_one();
         self.flow(
             &rec,

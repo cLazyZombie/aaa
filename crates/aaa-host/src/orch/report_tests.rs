@@ -20,6 +20,8 @@ struct Lab {
     empty_conflict: Arc<std::sync::atomic::AtomicBool>,
     report: Arc<std::sync::Mutex<&'static str>>,
     file: Arc<std::sync::Mutex<(&'static [u8], &'static [u8])>>,
+    cleanup: Arc<std::sync::Mutex<aaa_proto::Cleanup>>,
+    merged_head: Arc<std::sync::Mutex<Option<String>>>,
     fake: tokio::task::JoinHandle<()>,
     _cleanup: Cleanup,
 }
@@ -36,6 +38,20 @@ impl Drop for Cleanup {
     }
 }
 impl Lab {
+    fn cleanup_thread(&self) {
+        self.h.inner.lock().unwrap().machines.get_mut("m").unwrap().features.push("git_merged.v1".into());
+        self.h
+            .update_rec("p", "t-0001", |r| {
+                r.kind = ThreadKind::Worktree;
+                r.repo = Some("/repo".into());
+                r.cwd = Some("/work/p-t-0001".into());
+                r.branch = Some("aaa/p-t-0001".into());
+            })
+            .unwrap();
+        std::fs::write(self.h.project_dir("p").unwrap().join("TASKS.md"), "## Backlog\n- [ ] 구현 · t-0001\n").unwrap();
+        self.h.task_board("p").unwrap();
+    }
+
     async fn close(mut self) {
         self.fake.abort();
         if let Err(error) = (&mut self.fake).await {
@@ -113,6 +129,15 @@ impl Lab {
         let reply_file = file.clone();
         let empty_conflict = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reject_empty = empty_conflict.clone();
+        let cleanup = Arc::new(std::sync::Mutex::new(aaa_proto::Cleanup {
+            worktree_removed: true,
+            branch_deleted: true,
+            notes: vec![],
+        }));
+        let reply_cleanup = cleanup.clone();
+        let merged_head = Arc::new(std::sync::Mutex::new(Some("a".repeat(40))));
+        let reply_head = merged_head.clone();
+        let host = Arc::downgrade(&h);
         let fake = tokio::spawn(async move {
             let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
             while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
@@ -220,6 +245,29 @@ impl Lab {
                         Outcome::Ok(AgentResponse::Done)
                     }
                     AgentRequest::ThreadUnwatch { .. } => Outcome::Ok(AgentResponse::Done),
+                    AgentRequest::GitQuery {
+                        query: aaa_proto::GitQuery::MergedIntoMain { branch, commits }, ..
+                    } => {
+                        assert_eq!(branch.as_deref(), Some("aaa/p-t-0001"));
+                        assert!(commits.is_empty());
+                        Outcome::Ok(AgentResponse::Git(aaa_proto::GitAnswer {
+                            merged_commit: reply_head.lock().unwrap().clone(),
+                            ..Default::default()
+                        }))
+                    }
+                    AgentRequest::ThreadCleanup { merged_head, .. } => {
+                        assert_eq!(merged_head, *reply_head.lock().unwrap());
+                        let h = host.upgrade().unwrap();
+                        let rec = h.load("p", "t-0001").unwrap();
+                        assert!(rec.resolve_pending.is_some());
+                        h.followup_notice(&rec);
+                        h.task_clean_pass("p", &h.project_dir("p").unwrap());
+                        assert!(h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
+                        assert!(
+                            h.db.inbox_list(Some("p"), true).unwrap().iter().all(|i| i.event != "task needs check")
+                        );
+                        Outcome::Ok(AgentResponse::Cleanup(reply_cleanup.lock().unwrap().clone()))
+                    }
                     other => panic!("예상 밖 요청: {other:?}"),
                 };
                 if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
@@ -228,8 +276,20 @@ impl Lab {
             }
         });
         let weak = Arc::downgrade(&h);
-        let cleanup = Cleanup(root.clone(), weak);
-        Self { h, root, requests, hash_requests, empty_conflict, report, file, fake, _cleanup: cleanup }
+        let file_cleanup = Cleanup(root.clone(), weak);
+        Self {
+            h,
+            root,
+            requests,
+            hash_requests,
+            empty_conflict,
+            report,
+            file,
+            cleanup,
+            merged_head,
+            fake,
+            _cleanup: file_cleanup,
+        }
     }
 }
 
@@ -1188,4 +1248,94 @@ async fn pending_questions_invalidate_only_changed_material_even_without_report_
     assert!(missing.draft.is_none());
     assert!(missing.format_warning.unwrap().contains("a.png"));
     lab.close().await;
+}
+
+#[tokio::test]
+async fn resolve_records_cleanup_only_followup_before_exposing_resolved_task() {
+    let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n");
+    lab.cleanup_thread();
+    let view = lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+    assert_eq!(view.followups.len(), 1);
+    let receipt = &view.followups[0];
+    assert_eq!(receipt.actor.as_deref(), Some("host"));
+    assert!(receipt.handled_ms.is_some());
+    assert_eq!(
+        receipt.reason.as_deref(),
+        Some(
+            "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree /work/p-t-0001 · branch aaa/p-t-0001 · main 포함 SHA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+    );
+    assert!(lab.h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
+    lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
+    assert!(lab.h.task_board("p").unwrap().tasks.is_empty());
+    assert_eq!(lab.h.db.archive_list("p").unwrap().len(), 1);
+    let inbox = lab.h.db.inbox_list(Some("p"), true).unwrap();
+    assert!(inbox.iter().all(|i| i.event != "task needs check"), "닫힌 알림까지 포함해 깜빡임이 없어야 한다");
+    assert!(inbox.iter().any(|i| i.event == "task auto-cleaned"));
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    assert_eq!(reopened.thread_show("p", "t-0001").unwrap().followups, view.followups);
+    drop(reopened);
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn resolve_preserves_cleanup_when_other_followups_are_pending() {
+    for body in [
+        "[완료] 구현\n## Next\n- 정리: worktree와 branch를 지운다\n- 배포한다\n",
+        "[완료] 구현\n## Next\n정리: 임시 파일과 worktree와 branch를 지운다\n",
+    ] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", body);
+        lab.cleanup_thread();
+        let view =
+            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+        assert!(view.followups.iter().all(|f| f.handled_ms.is_none()));
+        lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
+        assert!(lab.h.task_board("p").unwrap().tasks[0].attention.as_deref().unwrap().contains("후속 남음"));
+        assert!(lab.h.db.archive_list("p").unwrap().is_empty());
+        assert!(lab.h.db.inbox_list(Some("p"), false).unwrap().iter().any(|i| i.event == "task needs check"));
+        lab.close().await;
+    }
+}
+
+#[tokio::test]
+async fn resolve_preserves_cleanup_followup_without_complete_deletion_evidence() {
+    for scenario in ["worktree", "branch", "main", "keep", "left"] {
+        let lab =
+            Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n- 정리: worktree와 branch를 지운다\n");
+        lab.cleanup_thread();
+        let mut opts = ResolveOpts::default();
+        match scenario {
+            "worktree" => {
+                *lab.cleanup.lock().unwrap() = aaa_proto::Cleanup {
+                    worktree_removed: false,
+                    branch_deleted: false,
+                    notes: vec!["worktree에 변경이 있다".into()],
+                }
+            }
+            "branch" => lab.cleanup.lock().unwrap().branch_deleted = false,
+            "main" => *lab.merged_head.lock().unwrap() = None,
+            "keep" => opts.keep_worktree = true,
+            "left" => {
+                lab.h
+                    .update_rec("p", "t-0001", |r| {
+                        r.left_places.push(crate::park::LeftPlace {
+                            machine_id: "other".into(),
+                            cwd: Some("/other/worktree".into()),
+                            repo: None,
+                            work_dir: None,
+                            branch: None,
+                            launch: None,
+                        })
+                    })
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let view = lab.h.thread_resolve("p", "t-0001", opts, ResolveWhy::Manual, "test").await.unwrap();
+        assert!(view.followups[0].handled_ms.is_none(), "{scenario}");
+        lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
+        assert!(lab.h.task_board("p").unwrap().tasks[0].attention.as_deref().unwrap().contains("후속 남음"));
+        assert!(lab.h.db.archive_list("p").unwrap().is_empty(), "{scenario}");
+        lab.close().await;
+    }
 }

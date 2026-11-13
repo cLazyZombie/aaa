@@ -1,4 +1,4 @@
-//! 완료 보고의 후속 원장. 보고의 교체·resolve·inbox 정리는 후속을 처리한 근거가 아니다.
+//! 완료 보고의 후속 원장. resolve가 직접 확인한 정리 외에는 명시적 처리 근거가 필요하다.
 use aaa_proto::{ErrorBody, ErrorCode, ThreadFollowup, ThreadView};
 use sha2::{Digest, Sha256};
 
@@ -10,6 +10,35 @@ use crate::{
 
 pub(crate) fn pending(rec: &ThreadRec) -> bool {
     rec.task_clean.followups.iter().any(|f| f.handled_ms.is_none())
+}
+
+/// agent의 worktree·branch 삭제 성공과 main 포함 SHA를 받은 resolve만 호출한다.
+/// `정리:`는 자유 형식이라 충분한 표지가 아니다. brief가 안내하는 한 문구만 허용한다.
+pub(crate) fn resolve_cleanup(rec: &mut ThreadRec, head: &str) {
+    if rec.kind != aaa_proto::ThreadKind::Worktree
+        || rec.task_clean.discard
+        || !rec.left_places.is_empty()
+        || !pending(rec)
+        || rec
+            .task_clean
+            .followups
+            .iter()
+            .filter(|f| f.handled_ms.is_none())
+            .any(|f| f.line != "정리: worktree와 branch를 지운다")
+    {
+        return;
+    }
+    let (Some(cwd), Some(branch)) = (rec.cwd.as_deref(), rec.branch.as_deref()) else { return };
+    let reason = format!(
+        "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree {cwd} · branch {branch} · main 포함 SHA {head}"
+    );
+    let now = aaa_common::util::now_ms();
+    for entry in rec.task_clean.followups.iter_mut().filter(|f| f.handled_ms.is_none()) {
+        entry.reason = Some(reason.clone());
+        entry.actor = Some("host".into());
+        entry.handled_ms = Some(now);
+    }
+    rec.task_clean.judged_ms = None;
 }
 
 /// 구판이 수집한 자동화 Next는 지우지 않고 다음 자동 실행의 책임으로 기록한다.
@@ -57,7 +86,7 @@ pub(crate) fn capture(rec: &mut ThreadRec, revision: &str, report: &str) {
 
 impl Host {
     pub(crate) fn followup_notice(&self, rec: &ThreadRec) {
-        if pending(rec) && rec.status != aaa_proto::ThreadStatus::Resolved {
+        if pending(rec) && (rec.status != aaa_proto::ThreadStatus::Resolved || rec.resolve_pending.is_some()) {
             // 열린 thread의 새 보고 알림은 유지한다. 다시 열어도 이미 남은 후속 알림은 닫지 않는다.
             return;
         }

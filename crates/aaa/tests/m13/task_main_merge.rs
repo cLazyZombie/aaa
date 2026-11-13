@@ -115,3 +115,43 @@ fn repo_state(repo: &Path) -> (String, String, Option<Vec<u8>>) {
         std::fs::read(repo.join(".git/FETCH_HEAD")).ok(),
     )
 }
+
+/// 실제 CLI·host·agent·Git으로 정리 전용 Next의 자동 기록과 알림 부재를 확인한다.
+#[test]
+fn resolve_cleanup_only_next_archives_task_without_needs_check_notice() {
+    let w = report_shell_world();
+    w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labA", path_str(&w.repo))]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "repo"]);
+    let board = w.projects.join("demo/TASKS.md");
+    std::fs::write(&board, "## Backlog\n- [ ] noreport 정리\n").unwrap();
+    let started =
+        w.start(&["--from-task", "noreport 정리", "--link-task", "--profile", "fake", "--repo", path_str(&w.repo)]);
+    let id = started["id"].as_str().unwrap();
+    w.wait_show("brief 받음", id, |v| v["brief"] == "delivered");
+    let cwd = PathBuf::from(started["cwd"].as_str().unwrap());
+    let work = PathBuf::from(started["work_dir"].as_str().unwrap());
+    let branch = started["branch"].as_str().unwrap();
+    git(&cwd, &["commit", "--allow-empty", "-qm", "구현"]);
+    let head = git(&cwd, &["rev-parse", "HEAD"]);
+    git(&w.repo, &["merge", "--no-ff", "-m", "병합: 시험", branch]);
+    git(&w.repo, &["push", "-q", "origin", "main"]);
+    std::fs::write(work.join("report.md"), "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n").unwrap();
+    let resolved = w.h.ok(&["thread", "resolve", "demo", id]);
+    assert!(!cwd.exists());
+    assert_eq!(git(&w.repo, &["branch", "--list", branch]), "");
+    let receipt = &resolved["followups"][0];
+    assert_eq!(receipt["actor"], "host");
+    assert!(receipt["handled_ms"].is_u64(), "{resolved}");
+    let reason = receipt["reason"].as_str().unwrap();
+    assert!(reason.starts_with("정리 완료: resolve가 worktree와 branch를 지웠다"), "{reason}");
+    assert!(reason.contains(path_str(&cwd)) && reason.contains(branch) && reason.contains(&head), "{reason}");
+    let tasks = w.h.ok(&["task", "list"]);
+    assert!(tasks["tasks"].as_array().unwrap().iter().all(|t| t["attention"].is_null()), "{tasks}");
+    w.h.ticks(1);
+    assert!(w.h.ok(&["task", "list"])["tasks"].as_array().unwrap().is_empty());
+    assert_eq!(w.h.ok(&["task", "archive"])["entries"].as_array().unwrap().len(), 1);
+    let inbox = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
+    let notices: Vec<_> = inbox["items"].as_array().unwrap().iter().filter(|i| i["subject"] == id).collect();
+    assert!(notices.iter().all(|i| i["event"] != "task needs check"), "{notices:?}");
+    assert!(notices.iter().any(|i| i["event"] == "task auto-cleaned"), "{notices:?}");
+}
