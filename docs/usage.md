@@ -330,7 +330,7 @@ host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 
 
 ### 끝난 thread의 후속
 
-끝난 thread를 resolve하기 전에 보고·요약의 Next를 확인한다. 후속이 남으면 후속 할 일을 만들고 `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 `--reason-file <파일>`로 기록한다. 후속 ID는 `aaa thread show <thread>`가 보인다. 정리만 남은 줄은 `정리:`로 구분하고 정리를 마친 사실을 사유로 기록한다. 일반 inbox 종료·완료 체크·연결 해제로는 후속이 닫히지 않는다. 자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡으므로 후속 원장에서 뺀다. 시작 출처로만 판정하며 이름·문구로 빼지 않는다.
+끝난 thread를 resolve하기 전에 보고·요약의 Next를 확인한다. 후속이 남으면 후속 할 일을 만들고 `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 `--reason-file <파일>`로 기록한다. 후속 ID는 `aaa thread show <thread>`가 보인다. 미처리 Next가 `정리: worktree와 branch를 지운다`뿐이면 resolve가 worktree·branch 삭제에 모두 성공했을 때 host가 삭제 대상과 main 포함 SHA를 「정리 완료」 사유로 자동 기록한다. 정리 중에는 확인 필요 알림을 만들지 않는다. 다른 후속이 섞였거나 worktree·branch·앞 자리가 남으면 자동 기록하지 않으며, 정리를 마친 사실을 직접 사유로 기록한다. 다른 정리 문구도 직접 기록한다. 일반 inbox 종료·완료 체크·연결 해제로는 후속이 닫히지 않는다. 자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡으므로 후속 원장에서 뺀다. 시작 출처로만 판정하며 이름·문구로 빼지 않는다.
 
 ### 프로젝트 memory
 
