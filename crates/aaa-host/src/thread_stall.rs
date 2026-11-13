@@ -39,7 +39,7 @@ fn result_kind(harness: &str, lines: &[String]) -> ResultKind {
     }
     let prompt = if harness == "codex" { '›' } else { '❯' };
     let Some(composer) = lines.iter().rposition(|l| l.trim_start().starts_with(prompt)) else {
-        return ResultKind::Active; // 현재 입력창을 모르면 감시·입력하지 않는다.
+        return ResultKind::Quiet; // 입력창을 몰라도 일반 멈춤은 알린다. 오류 재개 근거로는 쓰지 않는다.
     };
     let body: Vec<&str> = lines[..composer]
         .iter()
@@ -381,7 +381,7 @@ mod tests {
             ("codex", "■ stream error\n• 다음 구현을 생각하는…\n› ", Active),
             ("claude", "Waiting for 2 background agents\n❯ ", Active),
             ("claude", "❯ \n⏵⏵ accept edits on · 2 shells", Active),
-            ("codex", "■ stream error", Active),
+            ("codex", "■ stream error", Quiet),
         ] {
             let lines = screen.lines().map(str::to_owned).collect::<Vec<_>>();
             assert_eq!(result_kind(harness, &lines), expected, "{harness}: {screen}");
@@ -622,6 +622,17 @@ mod runtime_tests {
         h.inner.lock().unwrap().machines.get_mut("m").unwrap().conn = connection;
         h.thread_stall_pass_at("p", now + 320_000).await;
         assert_eq!(h.db.inbox_list(Some("p"), false).unwrap().len(), items.len());
+        let mut a = super::tests::agent();
+        a.since_ms = 4000;
+        h.inner.lock().unwrap().panes.get_mut("s").unwrap().agent = Some(a);
+        h.on_subscribed("s", Some(frame("■ stream error")), 0);
+        h.thread_stall_pass_at("p", now + 330_000).await;
+        h.thread_stall_pass_at("p", now + 420_000).await;
+        assert_eq!(*typed.lock().unwrap(), writes, "입력창 모름은 알림만 남긴다");
+        assert_eq!(
+            h.db.inbox_list(Some("p"), false).unwrap().iter().filter(|i| i.event == "thread stalled").count(),
+            3
+        );
         fake.abort();
         let _ = fake.await;
         drop(h);
