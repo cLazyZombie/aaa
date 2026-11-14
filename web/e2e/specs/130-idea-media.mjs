@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, base, root, step, until, shot, webkit, pairPage } from "../lib/harness.mjs";
+import { finishFixtureFollowups, aaa, base, root, step, until, shot, webkit, pairPage } from "../lib/harness.mjs";
 
 /** 단색 PNG(w×h): 화면에서 그림 자리·설명·메뉴가 실제 크기로 보이게 */
 function png(w, h, [r, g, b]) {
@@ -199,6 +199,7 @@ export default async function ({ page }) {
     await until("thread 보고", () => aaa("thread", "show", started.id).report_hash);
     const brief = fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8");
     for (const n of names) assert.ok(brief.includes(`](attachments/${n})`), `brief의 ${n}`);
+    finishFixtureFollowups(started.id);
     aaa("thread", "resolve", started.id);
   }, { diagnose: async error => {
     const dir = `${root}/diagnostics`;

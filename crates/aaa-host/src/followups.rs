@@ -12,19 +12,44 @@ pub(crate) fn pending(rec: &ThreadRec) -> bool {
     rec.task_clean.followups.iter().any(|f| f.handled_ms.is_none())
 }
 
+/// 문구 자체는 고정한다. 바깥 공백·콜론 뒤 공백·끝의 문장부호만 허용한다.
+fn is_resolve_cleanup(line: &str) -> bool {
+    let Some(rest) = line.trim().strip_prefix("정리:") else { return false };
+    rest.trim_start().trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | '。' | '!'))
+        == "worktree와 branch를 지운다"
+}
+
+/// CLI는 실행 자리를 바꾸기 전에 후속을 처리한다. 웹의 의도적인 끝내기는 기존 카드를 남긴다.
+pub(crate) fn check_cli_resolve(rec: &ThreadRec, actor: &str) -> Result<(), ErrorBody> {
+    if !actor.starts_with("local:") || rec.automation.is_some() {
+        return Ok(());
+    }
+    let pending: Vec<_> =
+        rec.task_clean.followups.iter().filter(|f| f.handled_ms.is_none() && !is_resolve_cleanup(&f.line)).collect();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut message = format!("{} 후속 남음: 먼저 후속 할 일에 잇거나 버림 사유를 기록한다", rec.id);
+    for entry in pending {
+        use std::fmt::Write;
+        let _ = write!(message, "\n{} · {}", entry.id, entry.line);
+        let _ = write!(
+            message,
+            "\naaa thread followup {} --id {} --task d-NNNN\naaa thread followup {} --id {} --reason-file <사유 파일>",
+            rec.id, entry.id, rec.id, entry.id
+        );
+    }
+    Err(err(ErrorCode::Conflict, message))
+}
+
 /// agent의 worktree·branch 삭제 성공과 main 포함 SHA를 받은 resolve만 호출한다.
-/// `정리:`는 자유 형식이라 충분한 표지가 아니다. brief가 안내하는 한 문구만 허용한다.
+/// `정리:`만으로는 충분한 표지가 아니다. 고정 문구의 공백·끝 문장부호 차이만 허용한다.
 pub(crate) fn resolve_cleanup(rec: &mut ThreadRec, head: &str) {
     if rec.kind != aaa_proto::ThreadKind::Worktree
         || rec.task_clean.discard
         || !rec.left_places.is_empty()
         || !pending(rec)
-        || rec
-            .task_clean
-            .followups
-            .iter()
-            .filter(|f| f.handled_ms.is_none())
-            .any(|f| f.line != "정리: worktree와 branch를 지운다")
+        || rec.task_clean.followups.iter().filter(|f| f.handled_ms.is_none()).any(|f| !is_resolve_cleanup(&f.line))
     {
         return;
     }
@@ -131,18 +156,22 @@ impl Host {
         let _guard = lock.lock().unwrap();
         let source = self.load(project, thread)?;
         let target = if let Some(value) = task {
-            let long = self
-                .db
-                .task_long_id(project, value.trim())
-                .map_err(internal)?
-                .ok_or_else(|| err(ErrorCode::NotFound, "같은 프로젝트의 후속 할 일 ID가 필요하다"))?;
+            let value = value.trim();
+            let long = if aaa_proto::short_id_number(value, 'd').is_some() {
+                self.db
+                    .task_long_id(project, value)
+                    .map_err(internal)?
+                    .ok_or_else(|| err(ErrorCode::NotFound, "같은 프로젝트의 후속 할 일 ID가 필요하다(예: d-0001)"))?
+            } else {
+                value.to_string()
+            };
             let text = std::fs::read_to_string(&path).map_err(internal)?;
             let active = tasks::parse(&text).into_iter().find(|t| t.id.as_deref() == Some(long.as_str()));
             let archived = self.db.archive_list(project).map_err(internal)?.into_iter().find(|a| a.task_id == long);
             let linked = active
                 .as_ref()
                 .or(archived.as_ref().map(|a| &a.task))
-                .ok_or_else(|| err(ErrorCode::NotFound, "후속 할 일이 없다"))?;
+                .ok_or_else(|| err(ErrorCode::NotFound, "같은 프로젝트의 후속 할 일이 없다(예: d-0001)"))?;
             if linked.thread.as_deref() == Some(thread) || source.task_clean.cleaned.iter().any(|s| s == &linked.title)
             {
                 return Err(err(ErrorCode::BadRequest, "원래 맡은 할 일을 자기 후속으로 잇지 않는다"));
@@ -270,6 +299,49 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn cleanup_phrase_allows_only_outer_spacing_colon_spacing_and_terminal_punctuation() {
+        for line in [
+            "정리: worktree와 branch를 지운다",
+            "정리: worktree와 branch를 지운다.",
+            "정리:worktree와 branch를 지운다。",
+            " \t정리:   worktree와 branch를 지운다! \t",
+            "정리:\tworktree와 branch를 지운다. 。 !",
+        ] {
+            assert!(is_resolve_cleanup(line), "{line:?}");
+        }
+        for line in [
+            "정리: 임시 파일과 worktree와 branch를 지운다.",
+            "정리: worktree와 branch를 지운다. 배포한다!",
+            "정리: worktree와 branch를 지운다?",
+            "정리: worktree와  branch를 지운다.",
+            "정리 : worktree와 branch를 지운다.",
+            "worktree와 branch를 지운다.",
+        ] {
+            assert!(!is_resolve_cleanup(line), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn followup_accepts_same_project_long_task_id_and_rejects_missing_or_foreign_id() {
+        let lab = Lab::new();
+        let rec = lab.report("[완료] 시안\n## Next\n구현한다\n");
+        let id = &rec.task_clean.followups[0].id;
+        let board = lab.h.task_board("demo").unwrap();
+        let target = board.tasks.iter().find(|t| t.title == "구현").unwrap();
+        // host 하나는 프로젝트 하나만 맡는다. 다른 프로젝트의 실제 할 일은 별도 host에서 만든다.
+        let other = Lab::new();
+        let foreign = other.h.task_board("demo").unwrap().tasks.remove(0);
+        for value in [foreign.id.as_deref().unwrap(), "missing", "d-9999"] {
+            let e = lab.h.thread_followup("demo", &lab.thread, id, Some(value), None, "local:cli").unwrap_err();
+            assert_eq!(e.code, ErrorCode::NotFound);
+            assert!(e.message.contains("d-0001"));
+        }
+        let result = lab.h.thread_followup("demo", &lab.thread, id, target.id.as_deref(), None, "local:cli").unwrap();
+        assert_eq!(result.followups[0].task, target.short_id);
+        assert!(result.followups[0].handled_ms.is_some());
     }
 
     #[test]

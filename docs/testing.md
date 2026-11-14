@@ -5113,3 +5113,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 정리 전용 Next의 resolve 자동 기록(t-1840): [판정·회귀 owner와 검증](testing-resolve-cleanup-t-1840.md).
 
 - [질문 감시 제목 경계·교체 이력·선택적 정정(t-1849)](testing-question-guard-t1849.md): 여섯 관측 발췌와 실제 Host·DB 연결, 독립 승인·카드 수 경계.
+- [CLI resolve의 미처리 후속 차단(t-1851)](testing-resolve-followups-t-1851.md)
+- [brief 확정 전 질문 안내 소진 수리(t-1851)](testing-question-warning-brief-t-1851.md)

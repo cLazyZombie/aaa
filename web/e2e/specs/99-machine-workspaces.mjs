@@ -1,7 +1,7 @@
 // 실제 host 권한·내구 설정과 CLI/큐/웹 자동 선택을 함께 검사한다. 고정 sleep 없이 HTTP·DOM·CLI 완료를 기다린다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aaa, step, browser, webkit, pairPage, inList, domIs, root, shot } from "../lib/harness.mjs";
+import { finishFixtureFollowups, aaa, step, browser, webkit, pairPage, inList, domIs, root, shot } from "../lib/harness.mjs";
 
 const api = (page, body) => page.evaluate(async body => {
   const res = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -81,6 +81,7 @@ export default async function () {
       aaa("machine", "workspaces", "labA", "--allow", "작업 폴더");
       const thread = aaa("thread", "start", "--from-task", task.short_id, "--link-task");
       assert.equal(thread.machine, "labA");
+      finishFixtureFollowups(thread.id);
       aaa("thread", "resolve", thread.id, "--skip-copy");
     } finally { await p.context().close(); }
   });

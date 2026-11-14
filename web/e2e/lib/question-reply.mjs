@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, aaa, until, pairPage, waitOutput } from "./harness.mjs";
+import { finishFixtureFollowups, root, aaa, until, pairPage, waitOutput } from "./harness.mjs";
 import { responseGate } from "./bulk-actions.mjs";
 
 // 이전 답은 실제 host가 처리한다. HTTP 전달만 새 보고의 입력 뒤로 미룬다.
@@ -137,6 +137,7 @@ export async function questionReplyScenario(engine, width) {
     gate.clear();
     await page.context().unrouteAll({ behavior: "wait" });
     await page.context().close();
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", t.id);
   }
 }

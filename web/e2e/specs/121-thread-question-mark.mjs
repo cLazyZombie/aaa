@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, AA, aaa, until, step, browser, webkit, pairPage, inList, domIs, shot, waitOutput, drawerSettled } from "../lib/harness.mjs";
+import { finishFixtureFollowups, root, AA, aaa, until, step, browser, webkit, pairPage, inList, domIs, shot, waitOutput, drawerSettled } from "../lib/harness.mjs";
 
 const config = `${root}/c/host.toml`;
 fs.writeFileSync(config, fs.readFileSync(config, "utf8")
@@ -79,6 +79,7 @@ async function scenario(engine, width, agent, rows) {
     assert.deepEqual(errors, []);
   } finally {
     await page.context().close();
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", t.id);
   }
 }

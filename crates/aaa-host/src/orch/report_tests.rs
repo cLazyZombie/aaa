@@ -10,6 +10,7 @@ struct BriefGate {
     confirm: tokio::sync::Notify,
     has_enter: std::sync::atomic::AtomicBool,
     hide_received: std::sync::atomic::AtomicBool,
+    inputs: std::sync::Mutex<Vec<u8>>,
 }
 
 struct Lab {
@@ -164,8 +165,8 @@ impl Lab {
                     }
                     AgentRequest::Input { data, .. } if brief.is_some() => {
                         let gate = brief.as_ref().unwrap();
-                        if data.0 == b"\r" {
-                            gate.has_enter.store(true, Ordering::SeqCst);
+                        gate.inputs.lock().unwrap().extend_from_slice(&data.0);
+                        if data.0 == b"\r" && !gate.has_enter.swap(true, Ordering::SeqCst) {
                             let tx = conn.pending.lock().unwrap().remove(&id).unwrap();
                             let gate = gate.clone();
                             tokio::spawn(async move {
@@ -538,6 +539,71 @@ async fn evidence_only_above_questions_warns_once_and_keeps_the_report_link() {
     assert!(warnings[0].body.contains("`### N.` 아래(선택지 위)로 옮긴다"), "{}", warnings[0].body);
     assert!(!warnings[0].body.contains("선택지는 A부터"), "{}", warnings[0].body);
     lab.close().await;
+}
+
+/// 첫 Enter를 처리한 agent의 응답을 보류해, 보고 수집이 brief 확정보다 먼저 끝나는 실제 경합을 고정한다.
+#[tokio::test(start_paused = true)]
+async fn evidence_warning_waits_for_brief_confirmation_then_reaches_the_pane_once() {
+    let report = "[결정 필요] 질문\n\n![시안](library/a.png)\n\n## Questions\n### 1. 어느 안\n- A 첫 안\n- B 둘째 안\n";
+    let gate = Arc::new(BriefGate::default());
+    let lab = Lab::with_brief_gate(0, b"", "unused", b"", report, Some(gate.clone()));
+    let h = &lab.h;
+    h.on_session(
+        "m",
+        aaa_proto::SessionInfo {
+            responsibility: None,
+            id: "s".into(),
+            name: "fake".into(),
+            argv: vec!["fake".into()],
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state: aaa_proto::SessionState::Running,
+            role: None,
+            label: None,
+            harness: None,
+        },
+        false,
+    );
+    h.update_rec("p", "t-0001", |r| {
+        r.pane = Some("s".into());
+        r.brief = BriefState::Pending;
+    })
+    .unwrap();
+    let report_before_confirmation = async {
+        gate.entered.notified().await;
+        h.collect("p", "t-0001", false).await.unwrap();
+        let early = h.load("p", "t-0001").unwrap();
+        gate.confirm.notify_one();
+        early
+    };
+    let (delivered, early) = tokio::join!(h.thread_brief("p", "t-0001", "test"), report_before_confirmation);
+    delivered.unwrap();
+    // 본문이 그대로여도 기존 수집 점검이 보류한 안내를 내보내고, 같은 판을 다시 보내지 않는다.
+    let copies = lab.requests.load(Ordering::SeqCst);
+    h.collect_if_changed("p", "t-0001").await;
+    h.collect_if_changed("p", "t-0001").await;
+    let final_rec = h.load("p", "t-0001").unwrap();
+    let warnings: Vec<_> = h
+        .inbox("p", true, true)
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|i| i.item_kind == "question-format-warning")
+        .collect();
+    let inputs = String::from_utf8(gate.inputs.lock().unwrap().clone()).unwrap();
+    let final_copies = lab.requests.load(Ordering::SeqCst);
+    lab.close().await;
+    assert_eq!(early.brief, BriefState::Pending);
+    assert!(early.question_warning_sent.is_none(), "brief 확정 전에는 안내를 보낸 것으로 기록하지 않는다");
+    assert_eq!(final_rec.question_warning_sent, final_rec.report_hash);
+    assert_eq!(inputs.matches("[aaa 질문 근거 확인]").count(), 1, "brief 뒤 실제 입력으로 한 번 전달한다");
+    assert_eq!(warnings.len(), 1);
+    assert!(!warnings[0].body.contains("pane 알림 전달 실패"), "{}", warnings[0].body);
+    assert_eq!(final_copies, copies, "안내를 보내려고 같은 보고를 다시 수집하지 않는다");
 }
 
 /// 질문이 그 판 host 사본에 없는 library 파일을 가리키면(이전 판 파일 등) 카드에 빠진 경로를 보이고 thread에 한 번 알린다.
@@ -1252,30 +1318,41 @@ async fn pending_questions_invalidate_only_changed_material_even_without_report_
 
 #[tokio::test]
 async fn resolve_records_cleanup_only_followup_before_exposing_resolved_task() {
-    let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n");
-    lab.cleanup_thread();
-    let view = lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
-    assert_eq!(view.followups.len(), 1);
-    let receipt = &view.followups[0];
-    assert_eq!(receipt.actor.as_deref(), Some("host"));
-    assert!(receipt.handled_ms.is_some());
-    assert_eq!(
-        receipt.reason.as_deref(),
-        Some(
-            "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree /work/p-t-0001 · branch aaa/p-t-0001 · main 포함 SHA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        )
-    );
-    assert!(lab.h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
-    lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
-    assert!(lab.h.task_board("p").unwrap().tasks.is_empty());
-    assert_eq!(lab.h.db.archive_list("p").unwrap().len(), 1);
-    let inbox = lab.h.db.inbox_list(Some("p"), true).unwrap();
-    assert!(inbox.iter().all(|i| i.event != "task needs check"), "닫힌 알림까지 포함해 깜빡임이 없어야 한다");
-    assert!(inbox.iter().any(|i| i.event == "task auto-cleaned"));
-    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
-    assert_eq!(reopened.thread_show("p", "t-0001").unwrap().followups, view.followups);
-    drop(reopened);
-    lab.close().await;
+    for report in [
+        "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n",
+        "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다.\n",
+        "[완료] 구현\n## Next\n정리:worktree와 branch를 지운다。\n",
+        "[완료] 구현\n## Next\n  정리:   worktree와 branch를 지운다!  \n",
+    ] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", report);
+        lab.cleanup_thread();
+        let view = lab
+            .h
+            .thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli@coordinator")
+            .await
+            .unwrap();
+        assert_eq!(view.followups.len(), 1);
+        let receipt = &view.followups[0];
+        assert_eq!(receipt.actor.as_deref(), Some("host"));
+        assert!(receipt.handled_ms.is_some());
+        assert_eq!(
+            receipt.reason.as_deref(),
+            Some(
+                "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree /work/p-t-0001 · branch aaa/p-t-0001 · main 포함 SHA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+        );
+        assert!(lab.h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
+        lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
+        assert!(lab.h.task_board("p").unwrap().tasks.is_empty());
+        assert_eq!(lab.h.db.archive_list("p").unwrap().len(), 1);
+        let inbox = lab.h.db.inbox_list(Some("p"), true).unwrap();
+        assert!(inbox.iter().all(|i| i.event != "task needs check"), "닫힌 알림까지 포함해 깜빡임이 없어야 한다");
+        assert!(inbox.iter().any(|i| i.event == "task auto-cleaned"));
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        assert_eq!(reopened.thread_show("p", "t-0001").unwrap().followups, view.followups);
+        drop(reopened);
+        lab.close().await;
+    }
 }
 
 #[tokio::test]
@@ -1286,13 +1363,95 @@ async fn resolve_preserves_cleanup_when_other_followups_are_pending() {
     ] {
         let lab = Lab::with_report(0, b"", "test.log", b"", body);
         lab.cleanup_thread();
-        let view =
-            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+        let view = lab
+            .h
+            .thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "device:person")
+            .await
+            .unwrap();
         assert!(view.followups.iter().all(|f| f.handled_ms.is_none()));
         lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
         assert!(lab.h.task_board("p").unwrap().tasks[0].attention.as_deref().unwrap().contains("후속 남음"));
         assert!(lab.h.db.archive_list("p").unwrap().is_empty());
         assert!(lab.h.db.inbox_list(Some("p"), false).unwrap().iter().any(|i| i.event == "task needs check"));
+        lab.close().await;
+    }
+}
+
+#[tokio::test]
+async fn cli_resolve_rejects_followups_without_changes_then_allows_handled_followups() {
+    let lab = Lab::with_report(
+        0,
+        b"",
+        "test.log",
+        b"",
+        "[완료] 구현\n## Next\n- 정리: worktree와 branch를 지운다\n- 배포한다\n",
+    );
+    lab.cleanup_thread();
+    lab.h.collect("p", "t-0001", false).await.unwrap();
+    let before = serde_json::to_value(lab.h.load("p", "t-0001").unwrap()).unwrap();
+    let task_path = lab.h.project_dir("p").unwrap().join("TASKS.md");
+    let tasks = std::fs::read(&task_path).unwrap();
+    let requests = lab.requests.load(Ordering::SeqCst);
+    for actor in ["local:cli", "local:cli@coordinator"] {
+        for skip_copy in [false, true] {
+            let opts = ResolveOpts { skip_copy, ..Default::default() };
+            let e = lab.h.thread_resolve("p", "t-0001", opts, ResolveWhy::Manual, actor).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::Conflict);
+            assert!(e.message.contains("배포한다"));
+            assert!(e.message.contains("--task d-NNNN"));
+            assert!(e.message.contains("--reason-file"));
+            assert_eq!(serde_json::to_value(lab.h.load("p", "t-0001").unwrap()).unwrap(), before);
+            assert_eq!(std::fs::read(&task_path).unwrap(), tasks);
+            assert_eq!(lab.requests.load(Ordering::SeqCst), requests, "마지막 사본도 시작하지 않는다");
+        }
+    }
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    let entry = rec.task_clean.followups.iter().find(|f| f.line == "배포한다").unwrap();
+    lab.h.thread_followup("p", "t-0001", &entry.id, None, Some("이번 배포는 취소한다"), "local:cli").unwrap();
+    let view =
+        lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap();
+    assert_eq!(view.status, ThreadStatus::Resolved);
+    assert!(view.followups.iter().all(|f| f.handled_ms.is_some()));
+    assert!(lab.h.db.inbox_list(Some("p"), true).unwrap().iter().all(|i| i.event != "task needs check"));
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn cli_resolve_stops_on_followups_discovered_in_final_copy() {
+    let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n후속을 구현한다\n");
+    lab.cleanup_thread();
+    let e =
+        lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(rec.status, ThreadStatus::Open);
+    assert!(rec.resolve_pending.is_none());
+    assert!(rec.task_clean.why.is_none());
+    assert!(e.message.contains(&rec.task_clean.followups[0].id));
+    assert!(lab.h.db.inbox_list(Some("p"), true).unwrap().iter().all(|i| i.event != "task needs check"));
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn cli_resolve_allows_empty_next_automation_and_failed_without_report() {
+    for scenario in ["empty-next", "automation", "failed"] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n");
+        lab.cleanup_thread();
+        match scenario {
+            "automation" => {
+                *lab.report.lock().unwrap() = "[완료] 자동화\n## Next\n다음 입력을 확인한다\n";
+                lab.h.update_rec("p", "t-0001", |r| r.automation = Some("watch".into())).unwrap();
+            }
+            "failed" => {
+                *lab.report.lock().unwrap() = "";
+                lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Failed).unwrap();
+            }
+            _ => {}
+        }
+        let view =
+            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap();
+        assert_eq!(view.status, ThreadStatus::Resolved, "{scenario}");
+        assert!(view.followups.is_empty());
         lab.close().await;
     }
 }
