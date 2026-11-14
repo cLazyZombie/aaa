@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { root, aaa, until, step, browser, webkit, waitOutput, shot, pairPage, domIs } from "../lib/harness.mjs";
+import { finishFixtureFollowups, root, aaa, until, step, browser, webkit, waitOutput, shot, pairPage, domIs } from "../lib/harness.mjs";
 import { questionReplyScenario } from "../lib/question-reply.mjs";
 import { responseGate } from "../lib/bulk-actions.mjs";
 
@@ -72,6 +72,7 @@ export default async function ({ page }) {
       || !notice.summary.includes("2B + 의견: 선택한 B에 색만 더한다") || !notice.body.includes("원래 픽셀 밀도 유지")
       || !notice.body.includes("2번 직접 쓴 답(의견): 선택한 B에 색만 더한다")) throw new Error(`질문별 inbox 원문: ${JSON.stringify(notice)}`);
     await shot(page, "53-t0621-answered-notes");
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", t.id);
   });
 
@@ -152,6 +153,7 @@ export default async function ({ page }) {
     if ((await page.getByTestId("ask-done-text").innerText()) !== "직접 쓴 답 올라갈 때 한 번 꺾인다\n박쥐 간격에 offset") throw new Error(`답한 카드 글: ${JSON.stringify(await page.getByTestId("ask-done-text").innerText())}`);
     await shot(page, "53-answer-lines-done");
     await page.setViewportSize({ width: 1280, height: 800 });
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", t.id);
   });
 
@@ -212,6 +214,7 @@ export default async function ({ page }) {
       gate.clear();
       await phone.context().unrouteAll({ behavior: "wait" });
       await phone.context().close();
+      finishFixtureFollowups(t.id);
       aaa("thread", "resolve", t.id);
     }
   });
@@ -305,6 +308,7 @@ export default async function ({ page }) {
     if (!absent?.includes("끝 코드 1") || !absent.includes("library 파일 1개가 프로젝트 library에 없다(library/preview/gone.png)")) throw new Error(`빠진 파일 post 거절: ${absent}`);
     fs.writeFileSync(file, questions.replace("- A 첫 안", above.replaceAll("library/", "library/preview/") + "- A 첫 안"));
     aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "근거 위치 post", "--body-file", file);
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", t.id);
   });
 

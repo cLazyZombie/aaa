@@ -23,6 +23,8 @@ mod no_pr;
 mod preparation;
 #[path = "m13/report_events.rs"]
 mod report_events;
+#[path = "m13/resolve_followups.rs"]
+mod resolve_followups;
 #[path = "m13/secret_k0.rs"]
 mod secret_k0;
 #[path = "m13/ssh_install.rs"]
@@ -641,7 +643,7 @@ impl World {
     /// 공통 fake 보고의 두 Next는 해당 시험에서 확인을 마친 뒤 명시적으로 기록한다.
     fn finish_fixture_followups(&self, id: &str) {
         let reason = self.task("fixture-followup-reason.txt", "시험 결과 확인과 다음 단계 검토 완료");
-        for entry in self.show(id)["followups"].as_array().unwrap() {
+        for entry in self.show(id)["followups"].as_array().into_iter().flatten() {
             if entry["handled_ms"].is_null() {
                 self.h.ok(&[
                     "thread",
@@ -890,6 +892,7 @@ fn worktree_thread_round_trip() {
     // 끝내기는 마지막 사본을 다시 받는다: 복사하지 못한 symlink를 치우면 사본이 다 와(complete) worktree를 지운다
     // (다 오지 않았으면 남긴다, `resolve_keeps_dirty_worktree_and_unmerged_branch`)
     std::fs::remove_file(work.join("library/link")).unwrap();
+    w.finish_fixture_followups("t-0001");
     let v = w.h.ok(&["thread", "resolve", "demo", "t-0001"]);
     assert_eq!((v["status"].as_str(), v["copy"].as_str()), (Some("resolved"), Some("complete")), "{v}");
     // 기본 목록은 끝난 thread도 보존하며 --open은 끝난 항목을 거른다. 프로젝트는 위치 인자다.
@@ -918,11 +921,22 @@ fn worktree_thread_round_trip() {
     // 마지막 사본은 받은 파일이 그대로라 따로 알리지 않는다(사본 상태만 complete로 바뀐다)
     // 보고 회수와 brief 받음 확인은 독립 경로다. 둘은 시작 뒤·ack 전에 정확히 한 번씩 와야 한다.
     let mut kinds = w.kinds(0);
-    assert_eq!(kinds.len(), 5, "{kinds:?}");
+    assert_eq!(kinds.len(), 7, "{kinds:?}");
     kinds[1..3].sort();
-    assert_eq!(kinds, ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
+    assert_eq!(
+        kinds,
+        [
+            "thread_started",
+            "brief_delivered",
+            "report_ready",
+            "review_acked",
+            "followup_handled",
+            "followup_handled",
+            "thread_resolved"
+        ]
+    );
     // cursor 뒤만 읽는다
-    assert_eq!(w.kinds(3), ["review_acked", "thread_resolved"]);
+    assert_eq!(w.kinds(3), ["review_acked", "followup_handled", "followup_handled", "thread_resolved"]);
 }
 
 /// 고친 worktree와 병합되지 않은 branch는 남긴다(force 없음). 허용되지 않은 profile은 거부한다.
@@ -957,6 +971,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     // fake agent는 안내 줄을 받자마자 보고하므로, host가 전달을 확인해 brief_delivered를 남기는 것이 보고보다 늦을 수 있다.
     // 둘 다 본 뒤 resolve해야 마지막 사건이 thread_resolved다(부하 아래 brief_delivered가 resolve 뒤에 남아 실패했다)
     w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    w.finish_fixture_followups(&id);
     // 끝내기 전 확인(관리 GUI W4): 커밋하지 않은 파일·병합되지 않은 변경을 읽고 남기기를 권한다. 기록·사건은 그대로다
     let before = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len();
     let p = w.h.ok(&["thread", "resolve", "demo", &id, "--dry-run"]);
@@ -982,6 +997,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let listed = |p: &str| w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|x| x["id"] == p);
     // 끝낸 항목은 그 thread의 thread_resolved 사건에서 읽는다(늦게 남는 brief_delivered가 마지막 사건일 수 있다, 위)
     let resolved_with = |id: &str, flags: &[&str]| {
+        w.finish_fixture_followups(id);
         let mut a = vec!["thread", "resolve", "demo", id];
         a.extend_from_slice(flags);
         w.h.ok(&a);
@@ -2428,6 +2444,7 @@ fn resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted() {
             (p["state"] == "exited" && p["code"] == 1).then_some(())
         });
         // pane 목록과 그 pane을 담은 layout을 함께 확인한다.
+        w.finish_fixture_followups(id);
         w.h.ok(&["pane", "move", pane, "--new-tab", "-w", "exited"]);
         assert_eq!(w.h.ok(&["thread", "resolve", "demo", id])["status"], "resolved");
         let panes = w.h.ok(&["pane", "list"]);
@@ -3929,6 +3946,7 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     assert_eq!(q["entries"][2]["task_id"], second_id);
     w.h.ok(&["ticker", "tick"]);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 6);
+    w.finish_fixture_followups(&first);
     w.h.ok(&["thread", "resolve", "demo", &first]);
     let promoted = wait_for("맨 앞으로 옮긴 예약의 실제 기동", T, || {
         let q = w.h.json(&["task", "queue"]).ok()?;
@@ -3946,6 +3964,8 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
             .all(|r| r["state"] == "queued" && r["thread"].is_null())
     );
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 7);
+    w.wait_show("예약 완료 보고", &promoted, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    w.finish_fixture_followups(&promoted);
     w.h.ok(&["thread", "resolve", "demo", &promoted]);
     // ticker 명령이나 coordinator의 다음 턴 없이 resolve 사건이 dispatch를 깨워야 한다.
     let started = wait_for("가능한 예약의 실제 기동", T, || {

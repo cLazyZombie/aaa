@@ -7,7 +7,7 @@
 //   AAA_PERF_SHOTS=<폴더> 답 직후 화면을 찍는다(「답할 것」 다시 읽기를 붙잡은 채). AAA_BIN=<실행 파일>로 고치기 전 판을 잰다
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { aaa, step, browser, webkit, pairPage, domIs, until, root, base, waitOutput, coordinatorPost } from "../lib/harness.mjs";
+import { finishFixtureFollowups, aaa, step, browser, webkit, pairPage, domIs, until, root, base, waitOutput, coordinatorPost } from "../lib/harness.mjs";
 import { seedHost } from "../lib/bulk-fixture.mjs";
 
 const RUNS = Number(process.env.AAA_PERF_RUNS ?? 5);
@@ -279,6 +279,7 @@ export default async function () {
               asksReread: at(reread?.end), asksBytes: reread?.bytes ?? null,
               hostQueued: host("message_queued"), hostAccepted: host("message_accepted") ?? host("message_unknown"), hostAnswered: host("question_answered"),
             });
+            finishFixtureFollowups(t.id);
             aaa("thread", "resolve", t.id);
           }
           const keys = Object.keys(rows[0]);
@@ -348,6 +349,7 @@ export default async function () {
         await page.screenshot({ path: `${process.env.AAA_PERF_SHOTS}/after-send.png` });
         result.afterSend = await page.evaluate(() => ({ done: !!document.querySelector('[data-testid="ask-done-card"]'), missing: !!document.querySelector('[data-testid="asks-missing"]'), empty: !!document.querySelector('[data-testid="asks-empty"]') }));
         console.log(`perf afterSend ${JSON.stringify(result.afterSend)}`);
+        finishFixtureFollowups(t.id);
         aaa("thread", "resolve", t.id);
       } finally { hold.resolve(); await context.unrouteAll({ behavior: "ignoreErrors" }); await context.close(); }
     });

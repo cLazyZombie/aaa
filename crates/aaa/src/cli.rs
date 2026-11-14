@@ -1254,7 +1254,7 @@ enum ThreadCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
-    /// 끝낸다: 마지막 사본 → 세션 종료 → worktree 정리(force 없음, 병합된 branch만 삭제)
+    /// 끝낸다: 미처리 후속 확인 → 마지막 사본 → 세션 종료 → worktree 정리(force 없음, 병합된 branch만 삭제)
     Resolve {
         thread: String,
         /// (옛 꼴 `<프로젝트> <대상>`의 대상)

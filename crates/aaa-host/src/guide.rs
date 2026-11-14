@@ -175,8 +175,8 @@ thread 일에 `aaa pane …` 명령을 직접 조립하지 않는다(thread 명�
   `--over-limit` 강제 시작은 사용자가 채팅에서 그 task를 한도 무시하고 시작하라고 명시했을 때만 쓴다.
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`.
   다음 지시는 `aaa thread next <id> --line N`으로 Next 줄을 보낸다. Next 줄을 coordinator가 직접 하지 않는다.
-- resolve 전에 보고·요약의 Next를 확인해 후속 할 일에 잇거나 버림·정리 완료 사유를 기록한다(`aaa thread followup`,
-  `aaa guide threads`). 후속 등록은 시작·병합 승인이 아니다. inbox done·완료 체크·연결 해제로 후속을 닫지 않는다.
+- CLI resolve는 정리 전용 외 미처리 후속이 있으면 거부한다. 먼저 후속 연결·버림 사유를 기록한다(`aaa guide threads`).
+  후속 등록은 시작·병합 승인이 아니다. inbox done·완료 체크·연결 해제로 후속을 닫지 않는다.
   자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡는다(시작 출처로만 판정).
 - 보류(`aaa thread park`)는 사용자가 보류하라고 했을 때만, 끝내기(`aaa thread resolve`)는 사용자가 끝내라고 할 때만 한다.
   시안·연구·조사 thread는 「지금 구현·할 일로 만들기·폐기」 답 전에 resolve하지 않는다.
@@ -438,11 +438,17 @@ host는 작업 의도가 남은 idle thread가 새 보고·진행 보고·질문
 
 ## 끝내기
 - 끝난 thread의 보고·요약에 Next가 남으면 resolve 전에 후속 할 일을 만들고 원장에 연결하거나, 일부러 버림을 사유로 기록한다.
-  `aaa thread show <id>`의 후속 ID로 `aaa thread followup <id> --id <후속 ID> --task <d-ID>` 또는 `--reason-file <파일>`을 쓴다.
+  CLI resolve는 정리 전용 외 미처리 후속이 하나라도 있으면 오류로 멈춘다. 남은 후속 hash·문구·처리 명령을 보이며
+  thread 상태·pane·worktree·할 일은 그대로다. 마지막 사본에서 새로 받은 후속도 종료 전에 검사한다.
+  `aaa thread show <id>`의 후속 ID로 `aaa thread followup <id> --id <후속 ID> --task d-NNNN` 또는 `--reason-file <파일>`을 쓴다.
+  같은 프로젝트의 긴 할 일 ID도 받으며 원장에는 d-ID로 기록한다. `--skip-copy`도 후속 검사를 건너뛰지 않는다.
+  CLI 우회 옵션은 없다. 사람이 웹에서 직접 끝내기는 허용하며 미처리 후속은 「후속 남음」 카드로 남는다.
   미처리 Next가 `정리: worktree와 branch를 지운다`뿐이면 resolve의 worktree·branch 삭제 성공 때 host가 삭제 대상과
-  main 포함 SHA를 「정리 완료」 사유로 기록한다. 정리 중에는 확인 필요 알림을 만들지 않는다. 다른 후속이 섞였거나
+  main 포함 SHA를 「정리 완료」 사유로 기록한다. 두 판정은 앞뒤 공백·`정리:` 뒤 공백·끝 `. 。 !`만 무시한다.
+  정리 중에는 확인 필요 알림을 만들지 않는다. 다른 후속이 섞였거나
   worktree·branch·앞 자리가 남으면 직접 후속을 처리한다. 다른 정리 문구도 직접 기록한다. [완료]만 보고 생략하거나 inbox 정리로 닫지 않는다.
   자동화 시작 출처가 있는 thread의 Next는 다음 자동 실행의 책임이므로 제외한다. 사람이 같은 이름·문구로 시작하면 보호한다.
+  Next가 비었거나 보고 없이 시작에 실패한 thread도 후속이 없으면 막지 않는다. `--reopen`·`--dry-run`은 종료가 아니다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
 - worktree는 force 없이 지운다. branch의 현재 끝이 원격 main에 포함된 것을 확인했을 때만 branch를 지운다.
@@ -567,7 +573,7 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
   맡긴 task는 `aaa context`의 열린 thread에서 그 thread의 지금 묶음을 보인다. task 줄이 없는 열린 thread는 따로 머리를 두어
   보인다. 사용자를 기다리는 task를 말한다. 파일을 그대로 붙이지 않는다.
-- thread가 끝나면: 먼저 보고·요약의 Next를 확인해 후속 할 일 연결이나 명시적 버림·정리 완료 사유를 기록한다(위 TASKS.md 규칙). 정리 전용 Next의 resolve 자동 기록은 `aaa guide threads`를 따른다. 그 밖의 후속이 남으면 host는 완료 보관을 막고 `task needs check`의 「후속 남음」을 남긴다. host가 그 thread에 이어진 task를 정리한다. 원격 main에 포함됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
+- thread가 끝나면: 먼저 보고·요약의 Next를 확인해 후속 할 일 연결이나 명시적 버림·정리 완료 사유를 기록한다(위 TASKS.md 규칙). CLI resolve는 정리 전용 외 미처리 후속이 있으면 거부한다(`aaa guide threads`). 웹에서 직접 끝낸 후속은 `task needs check`의 「후속 남음」으로 남는다. host가 그 thread에 이어진 task를 정리한다. 원격 main에 포함됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
   inbox에 `task auto-cleaned`로 알린다(되살리기 `aaa task restore <기록 id>`). 그 밖이면 줄을 남기고 「확인 필요」로 둔다
   (`aaa task list`의 ⚠, inbox `task needs check`). 확인 필요로 남은 task만 사용자에게 끝났는지·다시 맡길지·연결만 풀지 묻는다
   (그 task를 이미 물었으면 묻지 않는다). 하위 task가 남은 task는 지우지 않고, 하위가 모두 끝난 상위는 확인 필요로 올라온다.

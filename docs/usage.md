@@ -330,7 +330,11 @@ host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 
 
 ### 끝난 thread의 후속
 
-끝난 thread를 resolve하기 전에 보고·요약의 Next를 확인한다. 후속이 남으면 후속 할 일을 만들고 `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 `--reason-file <파일>`로 기록한다. 후속 ID는 `aaa thread show <thread>`가 보인다. 미처리 Next가 `정리: worktree와 branch를 지운다`뿐이면 resolve가 worktree·branch 삭제에 모두 성공했을 때 host가 삭제 대상과 main 포함 SHA를 「정리 완료」 사유로 자동 기록한다. 정리 중에는 확인 필요 알림을 만들지 않는다. 다른 후속이 섞였거나 worktree·branch·앞 자리가 남으면 자동 기록하지 않으며, 정리를 마친 사실을 직접 사유로 기록한다. 다른 정리 문구도 직접 기록한다. 일반 inbox 종료·완료 체크·연결 해제로는 후속이 닫히지 않는다. 자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡으므로 후속 원장에서 뺀다. 시작 출처로만 판정하며 이름·문구로 빼지 않는다.
+CLI `aaa thread resolve <id>`는 정리 전용 외 미처리 후속이 있으면 오류로 멈춘다. 남은 후속 hash·문구와 연결·사유 기록 명령을 보이며 thread 상태·pane·worktree·할 일을 바꾸지 않는다. 마지막 사본에서 새 후속을 발견해도 종료 전에 멈춘다(보고 사본과 원장은 최신으로 수집한다). `--skip-copy`도 후속 검사를 우회하지 않는다. CLI 우회 옵션은 없으며, 사람이 웹에서 직접 끝내면 기존처럼 「후속 남음」 카드로 남긴다. Next가 비었거나 보고 없는 시작 실패는 미처리 후속이 없으면 막지 않는다. `--reopen`·`--dry-run`은 종료 검사를 적용하지 않는다.
+
+후속 연결의 `--task`는 같은 프로젝트의 d-ID와 긴 할 일 ID를 모두 받는다. 원장에는 d-ID로 저장한다.
+
+끝난 thread를 resolve하기 전에 보고·요약의 Next를 확인한다. 후속이 남으면 후속 할 일을 만들고 `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 `--reason-file <파일>`로 기록한다. 후속 ID는 `aaa thread show <thread>`가 보인다. 정리 전용 판정은 앞뒤 공백·`정리:` 뒤 공백·끝 문장부호(`.`·`。`·`!`)만 무시하며 CLI 종료 차단과 자동 완료가 같은 판정을 쓴다. 다른 대상·행동을 덧붙인 문구는 면제하지 않는다. 미처리 Next가 `정리: worktree와 branch를 지운다`뿐이면 resolve가 worktree·branch 삭제에 모두 성공했을 때 host가 삭제 대상과 main 포함 SHA를 「정리 완료」 사유로 자동 기록한다. 정리 중에는 확인 필요 알림을 만들지 않는다. 다른 후속이 섞였거나 worktree·branch·앞 자리가 남으면 자동 기록하지 않으며, 정리를 마친 사실을 직접 사유로 기록한다. 다른 정리 문구도 직접 기록한다. 일반 inbox 종료·완료 체크·연결 해제로는 후속이 닫히지 않는다. 자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡으므로 후속 원장에서 뺀다. 시작 출처로만 판정하며 이름·문구로 빼지 않는다.
 
 ### 프로젝트 memory
 

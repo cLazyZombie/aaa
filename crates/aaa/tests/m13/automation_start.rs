@@ -249,6 +249,7 @@ fn automation_threads_leave_user_capacity_and_queue_slots_available() {
         .unwrap_err();
     assert!(denied.contains("프로젝트 실행 한도"), "{denied}");
     // 사용자 자리를 돌려주면 자동화가 열려 있어도 다음 예약이 기동한다.
+    w.finish_fixture_followups(first_id);
     w.h.ok(&["thread", "resolve", first_id]);
     let next = wait_for("자동화와 독립된 사용자 예약 기동", T, || {
         w.h.json(&["task", "queue"]).ok()?["entries"][0]["thread"].as_str().map(str::to_string)
