@@ -11,7 +11,7 @@ import { AutoDecisionLines } from "./AutoMode";
 // 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, CornerUpLeft, Eye, Globe, Hammer, LoaderCircle, Minimize2, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView, ContextCompaction } from "./gen/proto";
@@ -423,7 +423,7 @@ function ImageThumb({ pane, path, onOpenFile }: { pane: string; path: string; on
 }
 
 /** 답: 카드 없이 Markdown, 그 아래 마크다운·일반 텍스트 복사(참고 `chat-agent-meta`) */
-function AgentTurn({ active, text }: { active: boolean; text: string }) {
+const AgentTurn = memo(function AgentTurn({ active, text }: { active: boolean; text: string }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-agent">
@@ -442,7 +442,7 @@ function AgentTurn({ active, text }: { active: boolean; text: string }) {
       {note}
     </article>
   );
-}
+});
 
 export function ChatPanel({
   active = true,

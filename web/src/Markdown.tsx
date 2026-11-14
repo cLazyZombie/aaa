@@ -18,7 +18,7 @@ import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { browserClick } from "./reportLinks.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
-import { AppIdLink, AppRefChip, AppRefContext } from "./AppRefChip.tsx";
+import { AppIdLink, AppRefChip, AppRefContext, type AppRefs } from "./AppRefChip.tsx";
 import { splitAppIds } from "./appIds";
 import { ideaLinkTarget } from "./ideasModel";
 import { isVideoPath } from "./reportMedia";
@@ -110,16 +110,32 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
  * `interactive`가 false면 링크·파일 이름 안이다: 누를 것을 겹치지 않는다. `standalone`은 그 줄이 그림 하나뿐이라는 뜻이다
  * (imageBox.ts): 그림이 풀리는 동안 자리를 잡는다(참고 Inline)
  */
-function Inline({ nodes, interactive = true, standalone = false }: { nodes: InlineNode[]; interactive?: boolean; standalone?: boolean }) {
+type InlineProps = { nodes: InlineNode[]; interactive?: boolean; standalone?: boolean };
+
+// 보고·질문 목록이 바뀌어도 보통 본문·링크·파일 경로를 다시 처리하지 않는다.
+// 아직 알려지지 않은 짧은 ID도 후보로 남겨, 나중에 생기면 링크로 바뀌게 한다.
+function Inline(props: InlineProps) {
+  const usesRefs = props.interactive !== false && props.nodes.some((node) => {
+    if (node.type === "text" || node.type === "code")
+      return splitAppRefs(node.value).some((part) => typeof part !== "string")
+        || splitAppIds(node.value, () => true).some((part) => typeof part !== "string");
+    return node.type === "link" && (appRefOf(node.href) !== null || appLinkOf(node.href, location.origin) !== null);
+  });
+  return usesRefs ? <AppInline {...props} /> : <InlineContent {...props} refs={null} />;
+}
+
+function AppInline(props: InlineProps) {
+  const refs = useContext(AppRefContext);
+  return <InlineContent {...props} refs={refs} />;
+}
+
+function InlineContent({ nodes, interactive = true, standalone = false, refs }: InlineProps & { refs: AppRefs | null }) {
   const context = useContext(OpenFileContext);
   const open = interactive ? context : null;
   const imageResolver = useContext(MarkdownImageContext);
   const openLink = useContext(OpenLinkContext);
   const attachment = useContext(MarkdownAttachmentContext);
   const captions = useContext(MarkdownCaptionContext);
-  // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.329)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
-  const refContext = useContext(AppRefContext);
-  const refs = interactive ? refContext : null;
   const follow = (href: string) =>
     openLink === null ? undefined : (e: MouseEvent<HTMLAnchorElement>) => {
       if (!browserClick(e) && openLink(href)) e.preventDefault();

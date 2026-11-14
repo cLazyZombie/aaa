@@ -8,7 +8,10 @@ import { root, AA, env, aaa, until, step, browser, webkit, pairPage, waitOutput,
 const config = `${root}/c/host.toml`;
 fs.writeFileSync(config, fs.readFileSync(config, "utf8")
   .replace("[projects]\n", "[projects]\nnudge_idle_secs = 0\nnudge_quiet_secs = 0\n")
+  .replace('allow_profiles = ["fake"]', 'allow_profiles = ["fake", "reporter"]')
   .replace('[profiles.fake]\nagent = "custom"', '[profiles.fake]\nagent = "claude"'));
+fs.writeFileSync(`${root}/reporter.sh`, "#!/bin/sh\nprintf 'reporter-ready\\n'\nexec cat\n");
+fs.appendFileSync(config, `\n[profiles.reporter]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/reporter.sh"]\n`);
 const records = `${root}/claude/projects/-inbox-typing`;
 fs.mkdirSync(records, { recursive: true });
 const body = "[기록](https://example.com/inbox-typing/record)과 `context.txt`를 확인한다. **같은 본문**을 유지한다.";
@@ -63,8 +66,8 @@ async function openChat(p, id, count) {
   if (!await p.getByTestId("chat").count()) await p.getByTestId("chat-toggle").click();
   await domIs(p, "대화 본문 준비", n => document.querySelectorAll('[data-testid="chat"] [data-role="assistant"]').length >= n, count);
 }
-async function scenario(engine, width) {
-  const client = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
+function typingClient(engine, width) {
+  return pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
     serviceWorkers: "block",
     init: () => {
       // 고정 본문의 링크를 다시 파싱하면 실제 URL 생성이 발생한다. 시간 임계값 대신 불필요한 본문 처리 자체를 잡는다.
@@ -78,6 +81,9 @@ async function scenario(engine, width) {
       };
     },
   });
+}
+async function scenario(engine, width) {
+  const client = await typingClient(engine, width);
   const p = client.page;
   try {
     await openChat(p, main, 20);
@@ -117,6 +123,66 @@ async function scenario(engine, width) {
     await until("coordinator 입력 대기", () => aaa("pane", "list").panes.find(p => p.id === main)?.agent?.activity === "idle");
   }
 }
+
+let reportSequence = 0;
+async function reportScenario(engine, width) {
+  const id = `t-${String(++reportSequence).padStart(4, "0")}`;
+  // 처음에는 없는 ID다. 알려진 ID만 고정해 구독을 끊으면 뒤의 실제 링크 생성이 실패해야 한다.
+  const refs = `예정인 작업 ${id}.\n\n**강조 ${id}**.\n\n코드 \`${id}\`.\n\n[질문 보기](#question=${id})\n\naaa:question/${id}`;
+  fs.writeFileSync(`${records}/typing.jsonl`, line("user", "앞선 요청")
+    + Array.from({ length: 8 }, (_, i) => line("assistant", `기록 ${i}: ${body}`)).join("") + line("assistant", refs));
+  const client = await typingClient(engine, width);
+  const p = client.page;
+  try {
+    await openChat(p, main, 20);
+    await openChat(p, typing, 9);
+    const threadLinks = p.locator(`[data-testid="chat"] [data-testid="app-id"][data-target="${id}"]`);
+    assert.equal(await threadLinks.count(), 0);
+    assert.equal(await p.locator(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"][data-tone="plain"]`).count(), 2);
+    const box = p.getByRole("textbox", { name: "메시지", exact: true });
+    await box.fill("앞뒤");
+    await box.evaluate(el => el.setSelectionRange(1, 1));
+    await p.keyboard.insertText("가");
+    await box.dispatchEvent("compositionstart", { data: "" });
+    assert.ok(await p.evaluate(() => window.__inboxLinkChecks) > 0);
+    await p.evaluate(() => { window.__inboxLinkChecks = 0; });
+
+    const task = `${root}/report-task-${reportSequence}.md`;
+    fs.writeFileSync(task, "대화 작성 중 보고 갱신\n");
+    const t = aaa("thread", "start", "demo", "--title", "작성 중 새 보고", "--machine", "labA", "--profile", "reporter", "--kind", "dir", "--task-file", task);
+    assert.equal(t.id, id);
+    await waitOutput(t.pane, "reporter-ready");
+    await domIs(p, "새로 등록된 ID의 본문·강조·code 링크", id =>
+      document.querySelectorAll(`[data-testid="chat"] [data-testid="app-id"][data-target="${id}"]`).length === 3, id);
+    assert.equal(await threadLinks.first().getAttribute("href"), `#thread=${id}`);
+
+    const publish = async title => {
+      fs.writeFileSync(`${t.work_dir}/report.md`, `[결정 필요] 질문 1개: ${title}\n\n## Questions\n### 1. ${title}\n- A 계속 (추천)\n- B 멈춤\n`);
+      await tick();
+      await domIs(p, "보고의 최신 질문 칩", ({ id, title }) => {
+        const chips = [...document.querySelectorAll(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`)];
+        const choices = [...document.querySelectorAll(`[data-testid="chat"] [data-testid="app-ref-ask"][data-target="${id}"]`)];
+        return chips.length === 2 && chips.every(chip => chip.dataset.tone === "ask")
+          && choices.length === 2 && choices.every(choice => choice.textContent.includes(title));
+      }, { id, title });
+    };
+    await publish("처음 확인할 질문");
+    await domIs(p, "작성 중 보고 팝업", () => !!document.querySelector('.droplet[data-topic="asks"]'));
+    await publish("바뀐 확인 질문");
+    fs.appendFileSync(`${records}/typing.jsonl`, line("assistant", "작성 중 도착한 새 답. [새 링크](https://example.com/new-reply)"));
+    await domIs(p, "작성 중 새 답 반영", () =>
+      document.querySelector('[data-testid="chat"] .chat-transcript > .chat-row:last-child')?.textContent.includes("작성 중 도착한 새 답."));
+    assert.equal(await p.evaluate(() => window.__inboxLinkChecks), 0, "새 보고·질문·답이 와도 참조 없는 기존 본문은 재처리하지 않는다");
+    assert.equal(await box.inputValue(), "앞가뒤");
+    assert.deepEqual(await box.evaluate(el => ({ focused: document.activeElement === el, editable: !el.readOnly && !el.disabled, start: el.selectionStart, end: el.selectionEnd })),
+      { focused: true, editable: true, start: 2, end: 2 });
+    await p.keyboard.insertText("나");
+    assert.equal(await box.inputValue(), "앞가나뒤");
+    await box.dispatchEvent("compositionend", { data: "" });
+    assert.deepEqual(client.errors, []);
+  } finally { await p.context().close(); }
+}
+
 export default async function () {
   await step("다른 pane inbox 입력 실험실 준비", async () => {
     aaa("project", "create", "demo");
@@ -135,5 +201,9 @@ export default async function () {
   try {
     await step("다른 pane inbox 타이핑: WebKit 데스크톱", () => scenario(safari, 1280));
     await step("다른 pane inbox 타이핑: WebKit 휴대폰", () => scenario(safari, 390));
+    await step("새 보고·질문·답 타이핑: Chromium 데스크톱", () => reportScenario(browser, 1280));
+    await step("새 보고·질문·답 타이핑: Chromium 휴대폰", () => reportScenario(browser, 390));
+    await step("새 보고·질문·답 타이핑: WebKit 데스크톱", () => reportScenario(safari, 1280));
+    await step("새 보고·질문·답 타이핑: WebKit 휴대폰", () => reportScenario(safari, 390));
   } finally { await safari.close(); }
 }
