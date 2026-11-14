@@ -1,5 +1,87 @@
 use super::*;
 
+/// t-1877의 배포 후 오탐 다섯 발췌. 카드 상태와 주변 선택지만 재구성한다.
+#[test]
+fn observed_discarded_cards_and_optional_corrections_are_not_answer_requests() {
+    let cards = HashMap::from([
+        ("q-3744".into(), CardState::Closed),
+        ("q-3746".into(), CardState::Open),
+        ("q-3747".into(), CardState::Open),
+        ("q-3779".into(), CardState::Closed),
+        ("q-3780".into(), CardState::Open),
+    ]);
+    let samples = [
+        "q-3746·q-3747에서 답해 주세요.\n앞에 안내한 q-3744는 닫혔으니 답하지 않으셔도 됩니다.",
+        "「3발부터」를 3발 이하일 때로 읽었습니다.\n\n다르게 뜻하셨으면 말씀해 주세요.",
+        "제가 만든 q-3779는 닫았습니다. 이제 [q-3780 질문](#question=q-3780) 하나에만 답하시면 됩니다.\n- A 진행 (추천)\n- B 보류",
+        "작업은 이미 시작했고 종을 찾아 시안 작성 중입니다.\n\n다른 종을 말씀하신 거라면 알려 주세요.",
+        "앞 경고는 선택적 정정을 질문으로 잘못 센 것입니다. 다른 종이라면 그때 말씀해 주세요.",
+    ];
+    let mut failures = Vec::new();
+    for (n, text) in samples.iter().enumerate() {
+        let result = inspect(text, &cards);
+        if result.missing.is_some() || result.stale.is_some() {
+            failures.push(format!("발췌 {}: missing={:?}, stale={:?}", n + 1, result.missing, result.stale));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+    for text in samples {
+        for request in ["지금 배포할까요?", "배포 승인 여부를 알려 주세요.", "추가로 진행할까요?"]
+        {
+            assert!(inspect(&format!("{text}\n\n{request}"), &cards).missing.is_some(), "{text}\n{request}");
+        }
+    }
+    for feedback in [samples[1], samples[3], samples[4]] {
+        let feedback = feedback.rsplit_once('\n').map_or(feedback, |(_, tail)| tail);
+        for text in [
+            format!("{}, 배포 승인 여부를 알려 주세요.", feedback.trim_end_matches('.')),
+            format!("배포 승인 여부를 알려 주세요, {feedback}"),
+            format!("{feedback}\n- A 진행 (추천)\n- B 보류"),
+        ] {
+            assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        }
+    }
+    for text in [
+        "다르게 뜻하셨으면 배포 승인 여부를 말씀해 주세요.",
+        "다른 종을 말씀하신 거라면 복구와 삭제 중 하나를 골라 주세요.",
+        "다른 종이라면 그때 배포 승인 여부를 알려 주세요.",
+        "다른 배포 방식이라면 말씀해 주세요.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+}
+
+#[test]
+fn discarded_card_references_do_not_cover_or_count_as_answer_targets() {
+    let cards = cards();
+    for discarded in [
+        "q-1003는 닫혔으니 답하지 않으셔도 됩니다.",
+        "제가 만든 q-1003는 닫았습니다.",
+        "[q-1003 질문](#question=q-1003)은 닫았습니다.",
+        "q-1003에는 답하지 않아도 됩니다.",
+    ] {
+        for text in [
+            format!("q-1001에서 답해 주세요. {discarded}"),
+            format!("{discarded}\n\nq-1001에서 답합니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류"),
+            format!("아래 새 카드로 답해 주세요.\n\n**카드**\nq-1001\n{discarded}"),
+        ] {
+            let result = inspect(&text, &cards);
+            assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+        }
+        let text = format!("질문 2개에 답해 주세요.\n\nq-1001\n{discarded}");
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        for text in [
+            format!("{discarded} q-1003에서 답해 주세요."),
+            format!("q-1003에서 답해 주세요. {discarded}"),
+            format!("{discarded}\n\nq-1003에서 선택해 주세요."),
+        ] {
+            assert_eq!(inspect(&text, &cards).stale.unwrap().refs, [("q-1003".into(), CardState::Closed)], "{text}");
+        }
+        assert!(inspect(&format!("{discarded}\n\n지금 배포할까요?"), &cards).missing.is_some());
+    }
+}
+
 /// t-1845의 다섯 발췌와 11-14 선택지 제목 사례. 주변 설명·주소는 재구성한다.
 #[test]
 fn observed_reply_sections_history_and_corrections_keep_decision_boundaries() {
