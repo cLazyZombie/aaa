@@ -1,3 +1,4 @@
+- t-1881: [Ubuntu 실험실 sshd 포트 인계·실패 진단 수리](testing-sshd-startup-t-1881.md)
 - t-1873: [새 보고·대화 출력 중 입력 지연 수리](testing-input-render-t-1873.md)
 - t-1857: [Ubuntu CI의 보고 후속·예약 시험 수리](testing-ci-resolve-t-1857.md)
 - t-1814: [Rust 1.100 Cargo 경로·Clippy 수리](testing-cargo-out-dir-t-1814.md)
