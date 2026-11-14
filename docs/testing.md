@@ -5118,3 +5118,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [질문 감시 제목 경계·교체 이력·선택적 정정(t-1849)](testing-question-guard-t1849.md): 여섯 관측 발췌와 실제 Host·DB 연결, 독립 승인·카드 수 경계.
 - [CLI resolve의 미처리 후속 차단(t-1851)](testing-resolve-followups-t-1851.md)
 - [brief 확정 전 질문 안내 소진 수리(t-1851)](testing-question-warning-brief-t-1851.md)
+- [질문 감시 폐기 설명·선택적 정정(t-1878)](testing-question-guard-t1878.md): 다섯 관측 발췌·질문 수·실제 옛 카드 안내·독립 승인과 Host/DB 회귀.
+- [재시작·Rust 실행기 시험 준비 경계(t-1878)](testing-verification-fixtures-t1878.md): 최초 OS 실행 판정과 재시작 기한 분리·실제 신호 회수와 진단 오류 회귀.

@@ -1781,6 +1781,9 @@ mod tests {
             "혹시 시험 자체를 지우라는 뜻이셨다면 말씀해 주세요.".to_owned(),
             "화면에 뜬 오류 문구가 있었다면 알려 주세요.".to_owned(),
             "기절 시간은 중첩 없이 이어 가는 것으로 맡겼습니다.\n\n겹쳐야 한다면 말씀해 주세요.".to_owned(),
+            "「3발부터」를 3발 이하일 때로 읽었습니다.\n\n다르게 뜻하셨으면 말씀해 주세요.".to_owned(),
+            "작업은 이미 시작했습니다.\n\n다른 종을 말씀하신 거라면 알려 주세요.".to_owned(),
+            "앞 경고는 정정 안내를 잘못 센 것입니다. 다른 종이라면 그때 말씀해 주세요.".to_owned(),
             format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n카드나 채팅(「1B」 등)으로 답해 주세요."),
             format!("질문 하나에 답해 주세요.\n\n**작업 결과**\n내용입니다.\n\n**정할 것**\n[{qid} 질문](#question={qid})"),
             format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n**고칠 방식**\n- A 진행 (추천)\n- B 보류"),
@@ -1797,11 +1800,25 @@ mod tests {
                 "{text}"
             );
         }
-        h.on_harness(
-            "m",
-            completed_reply("codex", start, end + 10, "지금 정해 주실 것은 없습니다. 별도로 배포할까요?"),
-        );
-        assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
+        for (n, text) in [
+            "지금 정해 주실 것은 없습니다. 별도로 배포할까요?",
+            "다르게 뜻하셨으면 말씀해 주세요, 배포 승인 여부를 알려 주세요.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            h.on_harness("m", completed_reply("codex", start, end + 20 + n as u64, text));
+            assert_eq!(
+                h.db.inbox_list(Some("demo"), true)
+                    .unwrap()
+                    .iter()
+                    .filter(|i| i.event == crate::question_guard::EVENT)
+                    .count(),
+                n + 1,
+                "{text}"
+            );
+            h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
+        }
     }
 
     /// i-19078처럼 접수 뒤 빠르게 답해도 그 턴의 접수 증거는 남는다.
@@ -1852,6 +1869,7 @@ mod tests {
         );
         let body = "## Questions\n### 1. 그림\n- A 통과 (추천)\n- B 더 고침\n";
         let now = util::now_ms();
+        let mut turn_end = now;
         let mut previous = None;
         for (n, revision) in ["first", "replacement"].into_iter().enumerate() {
             rec.report_hash = Some(revision.into());
@@ -1865,18 +1883,31 @@ mod tests {
                 let text = format!(
                     "아래 새 카드로 답해 주세요.\n\n**현재 카드**\n| 질문 | 이력 |\n| --- | --- |\n| {current} | {id}에서 바뀜 |"
                 );
-                h.on_harness("m", completed_reply("codex", now, now + 2, &text));
-                assert!(
-                    !h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| {
-                        matches!(i.event.as_str(), crate::question_guard::EVENT | crate::question_guard::STALE_EVENT)
-                    }),
-                    "교체 이력은 답할 옛 카드 안내가 아니다"
-                );
+                for text in [
+                    text,
+                    format!("{current}에서 답해 주세요.\n앞에 안내한 {id}는 닫혔으니 답하지 않으셔도 됩니다."),
+                    format!(
+                        "제가 만든 {id}는 닫았습니다. 이제 [{current} 질문](#question={current}) 하나에만 답하시면 됩니다.\n- A 진행 (추천)\n- B 보류"
+                    ),
+                ] {
+                    turn_end += 1;
+                    h.on_harness("m", completed_reply("codex", now, turn_end, &text));
+                    assert!(
+                        !h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| {
+                            matches!(
+                                i.event.as_str(),
+                                crate::question_guard::EVENT | crate::question_guard::STALE_EVENT
+                            )
+                        }),
+                        "교체·폐기 설명은 답할 옛 카드 안내가 아니다: {text}"
+                    );
+                }
             }
             let text = format!(
                 "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침"
             );
-            h.on_harness("m", completed_reply("codex", now, now + n as u64 * 2 + 1, &text));
+            turn_end += 1;
+            h.on_harness("m", completed_reply("codex", now, turn_end, &text));
             let items = h.db.inbox_list(Some("demo"), true).unwrap();
             assert!(!items.iter().any(|i| i.event == crate::question_guard::EVENT));
             let stale = items.iter().find(|i| i.event == crate::question_guard::STALE_EVENT);
@@ -1886,6 +1917,17 @@ mod tests {
                 let stale = stale.unwrap();
                 assert!(stale.summary.contains(id));
                 assert!(stale.summary.contains(&format!("현재 카드: {current}")));
+                turn_end += 1;
+                h.on_harness(
+                    "m",
+                    completed_reply("codex", now, turn_end, &format!("{id}는 닫았습니다. 지금 배포할까요?")),
+                );
+                assert!(
+                    h.db.inbox_list(Some("demo"), true)
+                        .unwrap()
+                        .iter()
+                        .any(|i| i.event == crate::question_guard::EVENT)
+                );
             }
             previous = Some(current);
         }

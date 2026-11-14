@@ -2,6 +2,7 @@
 #![cfg(target_os = "macos")]
 mod lab;
 
+use aaa_common::child_process::StdCommandExt;
 use aaa_common::{process, util};
 use lab::{Lab, Node, wait_for};
 use serde_json::Value;
@@ -12,6 +13,15 @@ use std::{
 };
 
 const T: Duration = Duration::from_secs(30);
+
+/// 새 adhoc image의 최초 OS 실행 판정은 준비 단계에서 마친다.
+/// 재시작의 30초는 신호 전달·exec·같은 PID의 새 준비 기록을 검사한다.
+fn prepare_worker(source: &Path, target: &Path, variant: &str) {
+    lab::variant_binary(source, target, variant);
+    let out = Command::new(target).arg("--version").capture_output().unwrap();
+    assert!(out.status.success(), "시험 worker 최초 실행 준비: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("aaa "), "{out:?}");
+}
 // launcher를 새 책임자로 만드는 실험 입구. 실제 launcher 소스·등록·환경은 바꾸지 않는다.
 const SPAWNER: &str = r#"
 #include <dlfcn.h>
@@ -252,7 +262,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let spawn = lab.root.join("spawn");
     assert!(Command::new("cc").args(["-Wall", "-Wextra", "-o"]).arg(&spawn).arg(source).status().unwrap().success());
     let binary = lab.root.join("aaa");
-    lab::variant_binary(Path::new(lab::BIN), &binary, "aaa-restart-first");
+    prepare_worker(Path::new(lab::BIN), &binary, "aaa-restart-first");
     lab.spawn("host", &node, &["host"]);
     wait_for("host 준비", T, || node.json(&["machine", "list"]).ok());
     let pidfile = lab.root.join("launcher.pid");
@@ -296,7 +306,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     assert_eq!(pane(&node, &old)["responsibility"]["state"], "launcher");
     probe(&node, &old, &probes, launcher.pid, "before");
     let replacement = lab.root.join("next");
-    lab::variant_binary(Path::new(lab::BIN), &replacement, "aaa-restart-second");
+    prepare_worker(Path::new(lab::BIN), &replacement, "aaa-restart-second");
     assert_ne!(util::sha256_file(&binary).ok(), util::sha256_file(&replacement).ok());
     assert!(Command::new("mv").arg(&replacement).arg(&binary).status().unwrap().success());
     assert_eq!(process::parent(worker), Some(launcher.pid));
