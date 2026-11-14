@@ -5118,3 +5118,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [질문 감시 제목 경계·교체 이력·선택적 정정(t-1849)](testing-question-guard-t1849.md): 여섯 관측 발췌와 실제 Host·DB 연결, 독립 승인·카드 수 경계.
 - [CLI resolve의 미처리 후속 차단(t-1851)](testing-resolve-followups-t-1851.md)
 - [brief 확정 전 질문 안내 소진 수리(t-1851)](testing-question-warning-brief-t-1851.md)
+- [화면 복귀 본문 관측의 덮개 오탐(t-1883)](testing-pane-return-observation-t-1883.md): 원본 artifact 한계·실제 xterm RED/GREEN·빈 본문과 읽기 전용 음성 대조.
