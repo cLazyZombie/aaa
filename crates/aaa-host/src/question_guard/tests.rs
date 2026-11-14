@@ -1,5 +1,140 @@
 use super::*;
 
+/// t-1845의 다섯 발췌와 11-14 선택지 제목 사례. 주변 설명·주소는 재구성한다.
+#[test]
+fn observed_reply_sections_history_and_corrections_keep_decision_boundaries() {
+    let cards = HashMap::from([
+        ("q-3578".into(), CardState::Open),
+        ("q-3619".into(), CardState::Open),
+        ("q-3621".into(), CardState::Open),
+        ("q-3622".into(), CardState::Open),
+        ("q-3654".into(), CardState::Closed),
+        ("q-3656".into(), CardState::Closed),
+        ("q-3655".into(), CardState::Open),
+        ("q-3657".into(), CardState::Open),
+        ("q-3658".into(), CardState::Open),
+        ("q-3706".into(), CardState::Open),
+    ]);
+    let mut failures = Vec::new();
+    for (name, text, missing, stale) in [
+        (
+            "12:08 일반 안내 뒤 카드",
+            "그림과 영상을 보시고 고칠 점과 질문 하나에 답해 주세요.\n\n**정할 것**\n[q-3578 질문](#question=q-3578)",
+            false,
+            false,
+        ),
+        (
+            "16:00 앞 카드와 뒤 선택지",
+            "[q-3619 질문](#question=q-3619)을 열었습니다.\n\n**고칠 방식**\n- A 지금 고침 (추천)\n- B 나중에 고침\n- C 보류",
+            false,
+            false,
+        ),
+        (
+            "16:09 질문 둘과 카드 둘",
+            "질문 2개에 답해 주세요.\n\n**첫 작업**\nq-3621에서 답합니다.\n\n**둘째 작업**\nq-3622에서 답합니다.",
+            false,
+            false,
+        ),
+        (
+            "19:34 교체 이력 표",
+            "아래 새 카드로 답해 주세요.\n\n**현재 카드**\n| 질문 | 교체 이력 |\n| --- | --- |\n| q-3657 | q-3654에서 바뀜 |\n| q-3655 | 유지 |\n| q-3658 | q-3656에서 바뀜 |",
+            false,
+            false,
+        ),
+        (
+            "21:10 선택적 해석 정정",
+            "기절 시간은 중첩 없이 이어 가는 것으로 맡겼습니다.\n\n겹쳐야 한다면 말씀해 주세요.",
+            false,
+            false,
+        ),
+        (
+            "11-14 선택지 제목",
+            "[q-3706 질문](#question=q-3706)을 열었습니다.\n\n**선택지**\n- A 지금 진행 (추천)\n- B 나중에 진행\n- C 보류\n\nA를 고르시면 작업을 이어 갑니다.",
+            false,
+            false,
+        ),
+        (
+            "일반 안내 뒤 새 승인",
+            "질문 하나에 답해 주세요.\n\n**정할 것**\nq-3578에서 답합니다.\n\n지금 배포할까요?",
+            true,
+            false,
+        ),
+        (
+            "선택지 뒤 독립 질문",
+            "q-3706에서 답합니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류\n\n승인 여부를 알려 주세요.",
+            true,
+            false,
+        ),
+        (
+            "선택지 뒤 추가 승인",
+            "q-3706에서 답합니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류\n\n추가로 배포할까요?",
+            true,
+            false,
+        ),
+        ("카드 없는 선택지", "**선택지**\n- A 진행 (추천)\n- B 보류\n- C 취소", true, false),
+        ("질문 둘에 카드 하나", "질문 2개에 답해 주세요.\n\n**정할 것**\nq-3621에서 답합니다.", true, false),
+        (
+            "중복 링크도 카드 하나",
+            "질문 두 개에 답해 주세요.\n\n**정할 것**\n[q-3621 질문](#question=q-03621)",
+            true,
+            false,
+        ),
+        (
+            "모르는 카드는 세지 않음",
+            "질문 2개에 답해 주세요.\n\n**정할 것**\nq-3621, q-9999에서 답합니다.",
+            true,
+            false,
+        ),
+        (
+            "옛 번호를 실제 답할 곳으로 안내",
+            "아래 새 카드로 답해 주세요.\n\n**현재 카드**\nq-3657\n\n**답할 곳**\nq-3654에서 답해 주세요.",
+            false,
+            true,
+        ),
+        ("이력과 실제 안내를 함께 적음", "q-3654에서 바뀜. q-3654에서 선택해 주세요.", false, true),
+        ("옛 번호 표지", "아래 새 카드로 답해 주세요.\n\n**현재 카드**\nq-3657 (옛 번호: q-3654)", false, false),
+        ("옛 번호 뒤 실제 답 요청", "옛 번호: q-3654에서 답해 주세요.", false, true),
+        ("옛 번호 자체를 선택", "옛 번호: q-3654를 선택해 주세요.", false, true),
+        ("옛 번호 괄호를 닫고 답 요청", "(옛 번호: q-3654)에서 답해 주세요.", false, true),
+        ("옛 번호 괄호 뒤 실제 선택", "q-3654 (옛 번호)에서 선택해 주세요.", false, true),
+        (
+            "링크로 쓴 이력",
+            "아래 새 카드로 답해 주세요.\n\n**현재 카드**\nq-3657 ([q-3654 질문](#question=q-3654)에서 바뀜)",
+            false,
+            false,
+        ),
+        (
+            "옛 번호 링크",
+            "아래 새 카드로 답해 주세요.\n\n**현재 카드**\nq-3657 (옛 번호: [q-3654 질문](#question=q-3654))",
+            false,
+            false,
+        ),
+        (
+            "이력 번호는 질문 수에 안 셈",
+            "질문 2개에 답해 주세요.\n\n**현재 카드**\nq-3657 (q-3654에서 바뀜)",
+            true,
+            false,
+        ),
+        (
+            "같은 문장에 요약과 별개 승인",
+            "배포 승인 여부를 알려 주세요, 질문 하나에 답해 주세요.\n\n**정할 것**\nq-3578에서 답합니다.",
+            true,
+            false,
+        ),
+        ("정정과 같은 문장 뒤 승인", "겹쳐야 한다면 말씀해 주세요, 배포 승인 여부를 알려 주세요.", true, false),
+        ("정정과 같은 문장 앞 승인", "배포 승인 여부를 알려 주세요, 겹쳐야 한다면 말씀해 주세요.", true, false),
+        ("조건문에 실제 선택", "겹쳐야 한다면 중첩과 연장 중 하나를 골라 주세요.", true, false),
+        ("조건문에 승인", "배포해야 한다면 말씀해 주세요.", true, false),
+        ("조건문에 승인 내용", "겹쳐야 한다면 배포 승인 여부를 말씀해 주세요.", true, false),
+    ] {
+        let result = inspect(text, &cards);
+        if (result.missing.is_some(), result.stale.is_some()) != (missing, stale) {
+            failures.push(format!("{name}: missing={:?}, stale={:?}", result.missing, result.stale));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 fn cards() -> HashMap<String, CardState> {
     HashMap::from([
         ("q-1001".into(), CardState::Open),
