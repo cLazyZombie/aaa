@@ -10,6 +10,7 @@ struct BriefGate {
     confirm: tokio::sync::Notify,
     has_enter: std::sync::atomic::AtomicBool,
     hide_received: std::sync::atomic::AtomicBool,
+    inputs: std::sync::Mutex<Vec<u8>>,
 }
 
 struct Lab {
@@ -164,8 +165,8 @@ impl Lab {
                     }
                     AgentRequest::Input { data, .. } if brief.is_some() => {
                         let gate = brief.as_ref().unwrap();
-                        if data.0 == b"\r" {
-                            gate.has_enter.store(true, Ordering::SeqCst);
+                        gate.inputs.lock().unwrap().extend_from_slice(&data.0);
+                        if data.0 == b"\r" && !gate.has_enter.swap(true, Ordering::SeqCst) {
                             let tx = conn.pending.lock().unwrap().remove(&id).unwrap();
                             let gate = gate.clone();
                             tokio::spawn(async move {
@@ -538,6 +539,71 @@ async fn evidence_only_above_questions_warns_once_and_keeps_the_report_link() {
     assert!(warnings[0].body.contains("`### N.` 아래(선택지 위)로 옮긴다"), "{}", warnings[0].body);
     assert!(!warnings[0].body.contains("선택지는 A부터"), "{}", warnings[0].body);
     lab.close().await;
+}
+
+/// 첫 Enter를 처리한 agent의 응답을 보류해, 보고 수집이 brief 확정보다 먼저 끝나는 실제 경합을 고정한다.
+#[tokio::test(start_paused = true)]
+async fn evidence_warning_waits_for_brief_confirmation_then_reaches_the_pane_once() {
+    let report = "[결정 필요] 질문\n\n![시안](library/a.png)\n\n## Questions\n### 1. 어느 안\n- A 첫 안\n- B 둘째 안\n";
+    let gate = Arc::new(BriefGate::default());
+    let lab = Lab::with_brief_gate(0, b"", "unused", b"", report, Some(gate.clone()));
+    let h = &lab.h;
+    h.on_session(
+        "m",
+        aaa_proto::SessionInfo {
+            responsibility: None,
+            id: "s".into(),
+            name: "fake".into(),
+            argv: vec!["fake".into()],
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "b".into(),
+            cols: 80,
+            rows: 24,
+            state: aaa_proto::SessionState::Running,
+            role: None,
+            label: None,
+            harness: None,
+        },
+        false,
+    );
+    h.update_rec("p", "t-0001", |r| {
+        r.pane = Some("s".into());
+        r.brief = BriefState::Pending;
+    })
+    .unwrap();
+    let report_before_confirmation = async {
+        gate.entered.notified().await;
+        h.collect("p", "t-0001", false).await.unwrap();
+        let early = h.load("p", "t-0001").unwrap();
+        gate.confirm.notify_one();
+        early
+    };
+    let (delivered, early) = tokio::join!(h.thread_brief("p", "t-0001", "test"), report_before_confirmation);
+    delivered.unwrap();
+    // 본문이 그대로여도 기존 수집 점검이 보류한 안내를 내보내고, 같은 판을 다시 보내지 않는다.
+    let copies = lab.requests.load(Ordering::SeqCst);
+    h.collect_if_changed("p", "t-0001").await;
+    h.collect_if_changed("p", "t-0001").await;
+    let final_rec = h.load("p", "t-0001").unwrap();
+    let warnings: Vec<_> = h
+        .inbox("p", true, true)
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|i| i.item_kind == "question-format-warning")
+        .collect();
+    let inputs = String::from_utf8(gate.inputs.lock().unwrap().clone()).unwrap();
+    let final_copies = lab.requests.load(Ordering::SeqCst);
+    lab.close().await;
+    assert_eq!(early.brief, BriefState::Pending);
+    assert!(early.question_warning_sent.is_none(), "brief 확정 전에는 안내를 보낸 것으로 기록하지 않는다");
+    assert_eq!(final_rec.question_warning_sent, final_rec.report_hash);
+    assert_eq!(inputs.matches("[aaa 질문 근거 확인]").count(), 1, "brief 뒤 실제 입력으로 한 번 전달한다");
+    assert_eq!(warnings.len(), 1);
+    assert!(!warnings[0].body.contains("pane 알림 전달 실패"), "{}", warnings[0].body);
+    assert_eq!(final_copies, copies, "안내를 보내려고 같은 보고를 다시 수집하지 않는다");
 }
 
 /// 질문이 그 판 host 사본에 없는 library 파일을 가리키면(이전 판 파일 등) 카드에 빠진 경로를 보이고 thread에 한 번 알린다.

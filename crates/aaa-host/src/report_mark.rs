@@ -124,7 +124,12 @@ impl Host {
                 crate::asks::missing_files_message(&rec.question_missing, "이 보고 판의 host 사본")
             ));
         }
-        if fixes.is_empty() || rec.question_warning_sent == rec.report_hash {
+        // Enter를 처리한 agent가 brief 확정보다 먼저 보고할 수 있다. 준비 전에는 보낸 표시를
+        // 남기지 않고, brief 확정 뒤 같은 보고를 점검하는 collect_if_changed에서 전달한다.
+        if fixes.is_empty()
+            || rec.question_warning_sent == rec.report_hash
+            || rec.brief != aaa_proto::BriefState::Delivered
+        {
             return;
         }
         let warning = card_warning(rec).unwrap_or_default();
@@ -138,7 +143,10 @@ impl Host {
         };
         let mut claimed = false;
         if let Err(e) = self.update_rec(&rec.project, &rec.id, |r| {
-            if r.report_hash == rec.report_hash && r.question_warning_sent != rec.report_hash {
+            if r.brief == aaa_proto::BriefState::Delivered
+                && r.report_hash == rec.report_hash
+                && r.question_warning_sent != rec.report_hash
+            {
                 r.question_warning_sent = rec.report_hash.clone();
                 claimed = true;
             }
