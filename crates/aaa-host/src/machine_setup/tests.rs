@@ -102,19 +102,14 @@ fn sshd_bin() -> Option<PathBuf> {
 #[cfg(unix)]
 struct Lab {
     root: PathBuf,
-    sshd: std::process::Child,
+    _sshd: sshd::Sshd,
     port: u16,
     host_pub: String,
 }
 
 #[cfg(unix)]
-impl Drop for Lab {
-    fn drop(&mut self) {
-        // 이 시험이 띄운 sshd(자식)만 끝낸다
-        let _ = self.sshd.kill();
-        let _ = self.sshd.wait();
-    }
-}
+#[path = "tests/sshd.rs"]
+mod sshd;
 
 #[cfg(unix)]
 fn keygen(path: &Path) {
@@ -138,8 +133,8 @@ fn lab() -> Option<Lab> {
     keygen(&root.join("hostkey"));
     keygen(&root.join("userkey"));
     std::fs::copy(root.join("userkey.pub"), root.join("authorized_keys")).unwrap();
-    // 빈 포트를 얻어 sshd에 준다(sshd는 고른 포트를 알리지 않는다)
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (port, reservation) = sshd::reserve_port();
+    sshd::event(&root, &format!("port-selected {port} reserved-until-ready={}", reservation.is_some()));
     let cfg = format!(
         "ListenAddress 127.0.0.1:{port}\nHostKey {0}/hostkey\nPidFile {0}/sshd.pid\nAuthorizedKeysFile {0}/authorized_keys\n\
          PasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\n",
@@ -154,33 +149,11 @@ fn lab() -> Option<Lab> {
         root.display()
     );
     std::fs::write(root.join("ssh_config"), client).unwrap();
-    let mut child = std::process::Command::new(sshd)
-        .arg("-f")
-        .arg(root.join("sshd_config"))
-        .args(["-D", "-e"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    // 「Server listening」 줄이 나오면 받을 준비가 됐다(나머지 stderr는 계속 읽어 버린다)
-    let err = child.stderr.take().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        use std::io::BufRead;
-        for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
-            if line.contains("Server listening") {
-                let _ = tx.send(Ok(()));
-            }
-        }
-        let _ = tx.send(Err(()));
-    });
+    let child = sshd::start(&sshd, &root, port).unwrap_or_else(|error| panic!("{error}"));
+    drop(reservation);
+    sshd::event(&root, "port-reservation-released after-ready");
     let host_pub = std::fs::read_to_string(root.join("hostkey.pub")).unwrap();
-    let lab = Lab { root, sshd: child, port, host_pub };
-    match rx.recv_timeout(Duration::from_secs(20)) {
-        Ok(Ok(())) => Some(lab),
-        other => panic!("실험실 sshd가 뜨지 않았다: {other:?}"),
-    }
+    Some(Lab { root, _sshd: child, port, host_pub })
 }
 
 #[cfg(unix)]
