@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, aaa, until, step, browser, webkit, pairPage, domIs, coordinatorPost, waitOutput } from "../lib/harness.mjs";
+import { finishFixtureFollowups, root, aaa, until, step, browser, webkit, pairPage, domIs, coordinatorPost, waitOutput } from "../lib/harness.mjs";
 
 const questions = `## Questions
 ### 1. 단추 자리
@@ -229,6 +229,7 @@ function draftScenario(engine, width, label) {
       assert.deepEqual(complete.comments, ["간격 유지\n부분 의견 보존", null]);
       assert.ok(fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8").includes("1번 직접 쓴 답(의견): 간격 유지\n부분 의견 보존"));
       await page.context().close();
+      finishFixtureFollowups(t.id);
       aaa("thread", "resolve", t.id);
     },
   };

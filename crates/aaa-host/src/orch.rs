@@ -2970,6 +2970,9 @@ impl Host {
     ) -> Result<ThreadView, ErrorBody> {
         let _guard = self.claim_thread(project, id)?;
         let mut rec = self.load(project, id)?;
+        if matches!(why, ResolveWhy::Manual) {
+            crate::followups::check_cli_resolve(&rec, actor)?;
+        }
         if rec.status == ThreadStatus::Starting {
             rec = self.recover_thread_start(&rec)?;
             if rec.status == ThreadStatus::Starting {
@@ -3009,11 +3012,11 @@ impl Host {
                 other => return Err(internal(format!("준비 자리 응답이 아니다: {other:?}"))),
             }
         }
+        let report_lock = self.report_collect_lock(project, id);
+        let report_guard = report_lock.lock().await;
         if rec.status != ThreadStatus::Resolved && !opts.skip_copy && rec.work_dir.is_some() {
             let has_report = self.current_report_hash(&rec, &conn).await.is_ok();
             if has_report {
-                let lock = self.report_collect_lock(project, id);
-                let _guard = lock.lock().await;
                 self.collect(project, id, true)
                     .await
                     .map_err(|e| {
@@ -3024,7 +3027,12 @@ impl Host {
                     })?;
             }
         }
+        // 마지막 사본에서 새 후속을 받았을 수 있다. 종료 상태·pane·worktree를 바꾸기 전에 다시 확인한다.
+        rec = self.load(project, id)?;
         let last_report = self.verified_report(&rec);
+        if matches!(why, ResolveWhy::Manual) {
+            crate::followups::check_cli_resolve(&rec, actor)?;
+        }
         let rec = self.update_rec(project, id, |r| {
             if let (Some(revision), Some(body)) = (r.report_hash.clone(), last_report.as_deref()) {
                 crate::followups::capture(r, &revision, body);
@@ -3039,6 +3047,7 @@ impl Host {
             r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
         })?;
+        drop(report_guard);
         if let Some(revision) = &rec.report_hash {
             let path = self.project_dir(project)?.join("threads").join(format!("{id}.md"));
             match std::fs::read_to_string(path) {

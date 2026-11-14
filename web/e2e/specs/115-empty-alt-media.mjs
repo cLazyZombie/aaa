@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, aaa, until, step, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
+import { finishFixtureFollowups, root, aaa, until, step, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
 
 async function checkMedia(surface, mediaBase) {
   const images = surface.locator("img");
@@ -94,5 +94,6 @@ export default async function () {
     const wk = await webkit.launch();
     try { await check(wk, 390); } finally { await wk.close(); }
   });
+  finishFixtureFollowups(thread.id);
   aaa("thread", "resolve", thread.id);
 }

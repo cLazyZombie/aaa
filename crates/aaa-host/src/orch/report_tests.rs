@@ -1252,30 +1252,41 @@ async fn pending_questions_invalidate_only_changed_material_even_without_report_
 
 #[tokio::test]
 async fn resolve_records_cleanup_only_followup_before_exposing_resolved_task() {
-    let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n");
-    lab.cleanup_thread();
-    let view = lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
-    assert_eq!(view.followups.len(), 1);
-    let receipt = &view.followups[0];
-    assert_eq!(receipt.actor.as_deref(), Some("host"));
-    assert!(receipt.handled_ms.is_some());
-    assert_eq!(
-        receipt.reason.as_deref(),
-        Some(
-            "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree /work/p-t-0001 · branch aaa/p-t-0001 · main 포함 SHA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        )
-    );
-    assert!(lab.h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
-    lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
-    assert!(lab.h.task_board("p").unwrap().tasks.is_empty());
-    assert_eq!(lab.h.db.archive_list("p").unwrap().len(), 1);
-    let inbox = lab.h.db.inbox_list(Some("p"), true).unwrap();
-    assert!(inbox.iter().all(|i| i.event != "task needs check"), "닫힌 알림까지 포함해 깜빡임이 없어야 한다");
-    assert!(inbox.iter().any(|i| i.event == "task auto-cleaned"));
-    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
-    assert_eq!(reopened.thread_show("p", "t-0001").unwrap().followups, view.followups);
-    drop(reopened);
-    lab.close().await;
+    for report in [
+        "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n",
+        "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다.\n",
+        "[완료] 구현\n## Next\n정리:worktree와 branch를 지운다。\n",
+        "[완료] 구현\n## Next\n  정리:   worktree와 branch를 지운다!  \n",
+    ] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", report);
+        lab.cleanup_thread();
+        let view = lab
+            .h
+            .thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli@coordinator")
+            .await
+            .unwrap();
+        assert_eq!(view.followups.len(), 1);
+        let receipt = &view.followups[0];
+        assert_eq!(receipt.actor.as_deref(), Some("host"));
+        assert!(receipt.handled_ms.is_some());
+        assert_eq!(
+            receipt.reason.as_deref(),
+            Some(
+                "정리 완료: resolve가 worktree와 branch를 지웠다 · worktree /work/p-t-0001 · branch aaa/p-t-0001 · main 포함 SHA aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+        );
+        assert!(lab.h.task_board("p").unwrap().tasks.iter().all(|t| t.attention.is_none()));
+        lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
+        assert!(lab.h.task_board("p").unwrap().tasks.is_empty());
+        assert_eq!(lab.h.db.archive_list("p").unwrap().len(), 1);
+        let inbox = lab.h.db.inbox_list(Some("p"), true).unwrap();
+        assert!(inbox.iter().all(|i| i.event != "task needs check"), "닫힌 알림까지 포함해 깜빡임이 없어야 한다");
+        assert!(inbox.iter().any(|i| i.event == "task auto-cleaned"));
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        assert_eq!(reopened.thread_show("p", "t-0001").unwrap().followups, view.followups);
+        drop(reopened);
+        lab.close().await;
+    }
 }
 
 #[tokio::test]
@@ -1286,13 +1297,95 @@ async fn resolve_preserves_cleanup_when_other_followups_are_pending() {
     ] {
         let lab = Lab::with_report(0, b"", "test.log", b"", body);
         lab.cleanup_thread();
-        let view =
-            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+        let view = lab
+            .h
+            .thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "device:person")
+            .await
+            .unwrap();
         assert!(view.followups.iter().all(|f| f.handled_ms.is_none()));
         lab.h.task_clean_pass("p", &lab.h.project_dir("p").unwrap());
         assert!(lab.h.task_board("p").unwrap().tasks[0].attention.as_deref().unwrap().contains("후속 남음"));
         assert!(lab.h.db.archive_list("p").unwrap().is_empty());
         assert!(lab.h.db.inbox_list(Some("p"), false).unwrap().iter().any(|i| i.event == "task needs check"));
+        lab.close().await;
+    }
+}
+
+#[tokio::test]
+async fn cli_resolve_rejects_followups_without_changes_then_allows_handled_followups() {
+    let lab = Lab::with_report(
+        0,
+        b"",
+        "test.log",
+        b"",
+        "[완료] 구현\n## Next\n- 정리: worktree와 branch를 지운다\n- 배포한다\n",
+    );
+    lab.cleanup_thread();
+    lab.h.collect("p", "t-0001", false).await.unwrap();
+    let before = serde_json::to_value(lab.h.load("p", "t-0001").unwrap()).unwrap();
+    let task_path = lab.h.project_dir("p").unwrap().join("TASKS.md");
+    let tasks = std::fs::read(&task_path).unwrap();
+    let requests = lab.requests.load(Ordering::SeqCst);
+    for actor in ["local:cli", "local:cli@coordinator"] {
+        for skip_copy in [false, true] {
+            let opts = ResolveOpts { skip_copy, ..Default::default() };
+            let e = lab.h.thread_resolve("p", "t-0001", opts, ResolveWhy::Manual, actor).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::Conflict);
+            assert!(e.message.contains("배포한다"));
+            assert!(e.message.contains("--task d-NNNN"));
+            assert!(e.message.contains("--reason-file"));
+            assert_eq!(serde_json::to_value(lab.h.load("p", "t-0001").unwrap()).unwrap(), before);
+            assert_eq!(std::fs::read(&task_path).unwrap(), tasks);
+            assert_eq!(lab.requests.load(Ordering::SeqCst), requests, "마지막 사본도 시작하지 않는다");
+        }
+    }
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    let entry = rec.task_clean.followups.iter().find(|f| f.line == "배포한다").unwrap();
+    lab.h.thread_followup("p", "t-0001", &entry.id, None, Some("이번 배포는 취소한다"), "local:cli").unwrap();
+    let view =
+        lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap();
+    assert_eq!(view.status, ThreadStatus::Resolved);
+    assert!(view.followups.iter().all(|f| f.handled_ms.is_some()));
+    assert!(lab.h.db.inbox_list(Some("p"), true).unwrap().iter().all(|i| i.event != "task needs check"));
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn cli_resolve_stops_on_followups_discovered_in_final_copy() {
+    let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n후속을 구현한다\n");
+    lab.cleanup_thread();
+    let e =
+        lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(rec.status, ThreadStatus::Open);
+    assert!(rec.resolve_pending.is_none());
+    assert!(rec.task_clean.why.is_none());
+    assert!(e.message.contains(&rec.task_clean.followups[0].id));
+    assert!(lab.h.db.inbox_list(Some("p"), true).unwrap().iter().all(|i| i.event != "task needs check"));
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn cli_resolve_allows_empty_next_automation_and_failed_without_report() {
+    for scenario in ["empty-next", "automation", "failed"] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", "[완료] 구현\n## Next\n");
+        lab.cleanup_thread();
+        match scenario {
+            "automation" => {
+                *lab.report.lock().unwrap() = "[완료] 자동화\n## Next\n다음 입력을 확인한다\n";
+                lab.h.update_rec("p", "t-0001", |r| r.automation = Some("watch".into())).unwrap();
+            }
+            "failed" => {
+                *lab.report.lock().unwrap() = "";
+                lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Failed).unwrap();
+            }
+            _ => {}
+        }
+        let view =
+            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await.unwrap();
+        assert_eq!(view.status, ThreadStatus::Resolved, "{scenario}");
+        assert!(view.followups.is_empty());
         lab.close().await;
     }
 }

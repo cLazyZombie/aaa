@@ -370,6 +370,8 @@ fn park_moves_between_machines_through_the_pushed_branch() {
     // 쓰는 중에 resolve하면 마지막 사본이 「받는 동안 바뀌었다」로 거부된다(t-1646 검증에서 한 번 났다)
     w.h.wait_output(home["pane"].as_str().unwrap(), "done", T);
 
+    w.wait_show("마지막 완료 보고", &id, |v| v["report_hash"].is_string());
+    w.finish_fixture_followups(&id);
     // 끝낼 때 다른 머신에 남은 자리를 알린다
     w.h.ok(&["thread", "resolve", "demo", &id]);
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();

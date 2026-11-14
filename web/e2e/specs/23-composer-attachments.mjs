@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot, until } from "../lib/harness.mjs";
+import { finishFixtureFollowups, aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot, until } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 // CODEX_HOME: agent가 Codex 대화 기록을 읽는 폴더(실험실 안, 실제 ~/.codex는 건드리지 않는다)
@@ -972,6 +972,7 @@ draw();
             await imageAwait("until(`${name} 첨부 thread 보고`, () => aaa(\"thread\", \"show\", \"images\", started.id).report_hash)", async () => (until(`${name} 첨부 thread 보고`, () => aaa("thread", "show", "images", started.id).report_hash)));
             const brief = fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8");
             assert.ok(brief.includes(`![그림](attachments/${digest.slice(0, 16)}.png)`), `${name}: brief 사본 경로`);
+            finishFixtureFollowups(started.id);
             aaa("thread", "resolve", "images", started.id);
           }
         }
@@ -1070,6 +1071,7 @@ draw();
     assert.deepEqual(fs.readFileSync(`${thread.work_dir}/attachments/${expected.split("/")[1]}`), png);
     assert.deepEqual(fs.readFileSync(legacy), png, "다시 올린 뒤에도 옛 이름·내용 보존");
     await until("새 링크 thread 보고", () => aaa("thread", "show", "images", started.id).report_hash);
+    finishFixtureFollowups(started.id);
     aaa("thread", "resolve", "images", started.id);
     await client.page.context().close();
   });

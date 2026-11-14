@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { aaa, step, browser, webkit, pairPage, domIs, until, root, shot } from "../lib/harness.mjs";
+import { finishFixtureFollowups, aaa, step, browser, webkit, pairPage, domIs, until, root, shot } from "../lib/harness.mjs";
 
 const call = (page, request) => page.evaluate(async request => (await fetch("/api/v1/call", {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),
@@ -29,6 +29,7 @@ export default async function () {
             const hash = createHash("sha256").update(report).digest("hex");
             fs.writeFileSync(`${t.work_dir}/report.md`, report);
             await until("표지 없는 보고 수집", () => aaa("thread", "show", t.id).report_hash === hash);
+            finishFixtureFollowups(t.id);
             aaa("thread", "resolve", t.id);
             aaa("ticker", "tick");
             const task = aaa("task", "list").tasks.find(t => t.title === title);
@@ -71,6 +72,7 @@ export default async function () {
                 return task?.thread && task.thread !== t.id && task;
               });
               await until("재배정 보고 수집", () => aaa("thread", "show", current.thread).report_hash);
+              finishFixtureFollowups(current.thread);
               aaa("thread", "resolve", current.thread);
             }
           });

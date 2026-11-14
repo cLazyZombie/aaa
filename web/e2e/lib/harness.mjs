@@ -67,6 +67,15 @@ function aaa(...args) {
   }
 }
 
+// 각 owner가 확인한 fixture의 후속을 명시적으로 기록한 뒤 CLI에서 끝낸다.
+function finishFixtureFollowups(thread) {
+  const entries = (aaa("thread", "show", thread).followups ?? []).filter(f => f.handled_ms == null);
+  if (!entries.length) return;
+  const file = `${root}/fixture-followup-reason.txt`;
+  fs.writeFileSync(file, "이 시험의 결과 확인과 다음 단계 검토를 마쳤다\n");
+  for (const entry of entries) aaa("thread", "followup", thread, "--id", entry.id, "--reason-file", file);
+}
+
 // pane 출력에 글이 나올 때까지(`pane wait-output`: host가 출력 사건마다 다시 본다). 기다리는 동안 node를 막지 않는다.
 function waitOutput(pane, text, source = "visible", ms = 20_000) {
   const args = ["--json", "pane", "wait-output", pane, `--match=${text}`, "--source", source, "--timeout", String(ms)];
@@ -1248,7 +1257,7 @@ export {
   inTime,
   STEP_LIMIT_MS,
   paneHash,
-  require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, waitOutput, start, stop, until, domIs,
+  require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, finishFixtureFollowups, waitOutput, start, stop, until, domIs,
   hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,

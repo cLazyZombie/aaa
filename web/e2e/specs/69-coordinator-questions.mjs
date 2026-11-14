@@ -2,7 +2,7 @@ import { listIds } from "../lib/list-ids.mjs";
 // coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 요청 수신 경계를 본다.
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA, drawerSettled } from "../lib/harness.mjs";
+import { finishFixtureFollowups, root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA, drawerSettled } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const call = (page, data) => page.evaluate(async (data) => {
@@ -256,6 +256,7 @@ export default async function ({ page }) {
     await chipState(page, [...q.items, ...req.questions.items].map((q) => q.id), "plain");
     for (const x of [phone, reader]) { if (x.errors.length) throw new Error(x.errors.join("; ")); await x.page.context().close(); }
     await wk.close(); wk = null;
+    finishFixtureFollowups(t.id);
     aaa("thread", "resolve", "demo", t.id);
   });
   } finally { if (wk) { await wk.close(); wk = null; } }
