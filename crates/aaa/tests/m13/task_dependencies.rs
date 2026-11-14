@@ -20,12 +20,9 @@ fn multiple_predecessors_start_once_after_all_archives_and_capacity_across_resta
     w.h.ok(&["task", "reserve", ids[3]]);
     let independent = wait_for("독립 예약 기동", T, || queue()[1]["thread"].as_str().map(str::to_string));
     w.wait_show("독립 pane 준비", &independent, |v| v["brief"] == "delivered");
-    let complete = |title: &str| {
-        let text = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, text.replace(&format!("- [ ] {title}"), &format!("- [x] {title}"))).unwrap();
-        w.h.ticks(1);
-    };
-    complete("첫째");
+    // 감시 중인 파일을 truncate한 빈 순간에 예약이 「할 일 없음」으로 바뀌지 않도록 제품 편집 경로로 저장한다.
+    w.h.ok(&["task", "edit", ids[0], "--done"]);
+    w.h.ticks(1);
     wait_for("첫째 완료 보관", T, || {
         w.h.ok(&["task", "archive"])["entries"].as_array()?.iter().any(|a| a["task"]["title"] == "첫째").then_some(())
     });
@@ -34,8 +31,7 @@ fn multiple_predecessors_start_once_after_all_archives_and_capacity_across_resta
     w.lab.kill("host");
     w.spawn_host("host-dependencies-restored");
     wait_for("재연결", T, || w.h.connected("labA").then_some(()));
-    let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("- [ ] 둘째", "- [x] 둘째")).unwrap();
+    w.h.ok(&["task", "edit", ids[1], "--done"]);
     w.h.ticks(1);
     wait_for("둘째 완료 보관", T, || {
         w.h.ok(&["task", "archive"])["entries"].as_array()?.iter().any(|a| a["task"]["title"] == "둘째").then_some(())
@@ -94,8 +90,7 @@ fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() 
     std::fs::rename(w.h.state.join("host/secrets.key"), w.h.state.join("host/held.key")).unwrap();
     w.spawn_host("host-pinned-account");
     wait_for("지정 예약 재연결", deadline, || w.h.connected("labA").then_some(()));
-    let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("- [ ] 선행", "- [x] 선행")).unwrap();
+    w.h.ok(&["task", "edit", first, "--done"]);
     wait_for("지정 계정 대기", deadline, || {
         w.h.ticks(1);
         let row = w.h.ok(&["task", "queue"])["entries"][0].clone();
