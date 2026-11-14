@@ -53,25 +53,34 @@ function instrument() {
       super.send(raw);
     }
   };
-  const sample = () => {
+  const sample = (source) => {
     if (!window.watchReturn) return;
     const term = document.querySelector('.term:not([hidden])');
     if (term?.dataset.pane !== window.watchReturn) return;
+    const live = term.querySelector('.xterm-screen:not(.term-history-cover) .xterm-rows');
+    const cover = term.querySelector('.term-history-cover .xterm-rows');
+    // 앞 기록을 다시 쓰는 동안 사용자가 보는 본문은 덮개다. reset한 뒤쪽 DOM은 비어 있어도 화면은 비지 않는다.
+    const rows = cover ?? live;
     window.returnFrames.push({
-      at: performance.now(), held: window.returnHeld,
+      at: performance.now(), source, held: window.returnHeld,
       banner: term.querySelector('[data-testid="readonly-banner"]')?.textContent ?? '',
-      body: term.querySelector('.xterm-rows')?.textContent.includes('fake>') ?? false,
+      body: rows?.textContent.includes('fake>') ?? false,
+      liveBody: live?.textContent.includes('fake>') ?? false,
+      coverBody: cover?.textContent.includes('fake>') ?? null,
       readonly: term.querySelector('[data-testid="terminal"]')?.dataset.readonly,
+      viewport: term.querySelector('.xterm-viewport')?.scrollTop,
+      view: { ...term.querySelector('.term-box')?.dataset },
+      rows: rows?.textContent.slice(-180),
     });
   };
-  new MutationObserver(sample).observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
+  new MutationObserver(() => sample('mutation')).observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
   let frameId = null;
   window.watchReturns = id => {
     window.watchReturn = id;
     if (frameId !== null) cancelAnimationFrame(frameId);
     frameId = null;
     if (id) {
-      const frame = () => { sample(); frameId = requestAnimationFrame(frame); };
+      const frame = () => { sample('frame'); frameId = requestAnimationFrame(frame); };
       frameId = requestAnimationFrame(frame);
     }
   };
@@ -187,6 +196,7 @@ process.stdin.on('data', bytes => {
           assert.equal((await wheelInputs(wheelFrom)).length, 1, '복귀 휠은 중복 전달하지 않는다');
           const samples = await page.evaluate(() => window.returnFrames.slice());
           results.push({ destination, method, round, before, samples });
+          fs.writeFileSync(`${dir}/pane-return-${engine.browserType().name()}-${width}.json`, JSON.stringify(results, null, 2));
           // 권한이 확인된 뒤 실제 입력이 host·PTY에 도착한다.
           const marker = `return-${destination}-${method}-${round}`;
           await page.getByLabel('보낼 글').fill(marker);

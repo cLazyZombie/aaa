@@ -5120,3 +5120,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [brief 확정 전 질문 안내 소진 수리(t-1851)](testing-question-warning-brief-t-1851.md)
 - [질문 감시 폐기 설명·선택적 정정(t-1878)](testing-question-guard-t1878.md): 다섯 관측 발췌·질문 수·실제 옛 카드 안내·독립 승인과 Host/DB 회귀.
 - [재시작·Rust 실행기 시험 준비 경계(t-1878)](testing-verification-fixtures-t1878.md): 최초 OS 실행 판정과 재시작 기한 분리·실제 신호 회수와 진단 오류 회귀.
+- [화면 복귀 본문 관측의 덮개 오탐(t-1883)](testing-pane-return-observation-t-1883.md): 원본 artifact 한계·실제 xterm RED/GREEN·빈 본문과 읽기 전용 음성 대조.
