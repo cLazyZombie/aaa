@@ -5111,3 +5111,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [질문 감시 부정문·선택적 피드백·기존 카드 안내(t-1812)](testing-question-guard-t1812.md): 관측 오탐 네 건·정상 경고 두 건·혼합 승인 요청과 실제 Host·DB 회귀.
 - thread 멈춤 감시·일시 오류 재개(t-1827): [판정 사례와 검증](testing-thread-stall-t-1827.md).
 - 정리 전용 Next의 resolve 자동 기록(t-1840): [판정·회귀 owner와 검증](testing-resolve-cleanup-t-1840.md).
+
+- [질문 감시 제목 경계·교체 이력·선택적 정정(t-1849)](testing-question-guard-t1849.md): 여섯 관측 발췌와 실제 Host·DB 연결, 독립 승인·카드 수 경계.

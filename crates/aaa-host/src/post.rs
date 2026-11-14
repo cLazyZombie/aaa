@@ -1780,7 +1780,11 @@ mod tests {
             "지금 정해 주실 것은 없습니다.".to_owned(),
             "혹시 시험 자체를 지우라는 뜻이셨다면 말씀해 주세요.".to_owned(),
             "화면에 뜬 오류 문구가 있었다면 알려 주세요.".to_owned(),
+            "기절 시간은 중첩 없이 이어 가는 것으로 맡겼습니다.\n\n겹쳐야 한다면 말씀해 주세요.".to_owned(),
             format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n카드나 채팅(「1B」 등)으로 답해 주세요."),
+            format!("질문 하나에 답해 주세요.\n\n**작업 결과**\n내용입니다.\n\n**정할 것**\n[{qid} 질문](#question={qid})"),
+            format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n**고칠 방식**\n- A 진행 (추천)\n- B 보류"),
+            format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류\n\nA를 고르시면 이어 갑니다."),
         ]
         .into_iter()
         .enumerate()
@@ -1793,7 +1797,10 @@ mod tests {
                 "{text}"
             );
         }
-        h.on_harness("m", completed_reply("codex", start, end + 4, "지금 정해 주실 것은 없습니다. 별도로 배포할까요?"));
+        h.on_harness(
+            "m",
+            completed_reply("codex", start, end + 10, "지금 정해 주실 것은 없습니다. 별도로 배포할까요?"),
+        );
         assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
     }
 
@@ -1854,10 +1861,22 @@ mod tests {
             let current = rec.questions[0].id.clone().unwrap();
             assert!(h.question_catalog(false).unwrap().iter().any(|q| q.id == current));
             let id = previous.as_ref().unwrap_or(&current);
+            if previous.is_some() {
+                let text = format!(
+                    "아래 새 카드로 답해 주세요.\n\n**현재 카드**\n| 질문 | 이력 |\n| --- | --- |\n| {current} | {id}에서 바뀜 |"
+                );
+                h.on_harness("m", completed_reply("codex", now, now + 2, &text));
+                assert!(
+                    !h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| {
+                        matches!(i.event.as_str(), crate::question_guard::EVENT | crate::question_guard::STALE_EVENT)
+                    }),
+                    "교체 이력은 답할 옛 카드 안내가 아니다"
+                );
+            }
             let text = format!(
                 "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침"
             );
-            h.on_harness("m", completed_reply("codex", now, now + n as u64, &text));
+            h.on_harness("m", completed_reply("codex", now, now + n as u64 * 2 + 1, &text));
             let items = h.db.inbox_list(Some("demo"), true).unwrap();
             assert!(!items.iter().any(|i| i.event == crate::question_guard::EVENT));
             let stale = items.iter().find(|i| i.event == crate::question_guard::STALE_EVENT);
