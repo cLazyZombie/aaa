@@ -642,8 +642,16 @@ fn world_start(mut w: World, env: Vec<(String, String)>) -> World {
 impl World {
     /// 공통 fake 보고의 두 Next는 해당 시험에서 확인을 마친 뒤 명시적으로 기록한다.
     fn finish_fixture_followups(&self, id: &str) {
+        let mut view = self.show(id);
+        if let Some(work) = view["work_dir"].as_str()
+            && let Ok(report) = std::fs::read(Path::new(work).join("report.md"))
+        {
+            // 이어 하기 뒤에는 예전 보고 hash가 남아 있을 수 있다. 원본의 최신 판을 수집한 사건까지 기다린다.
+            let hash = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(report));
+            view = self.wait_show("최신 fixture 보고 수집", id, |v| v["report_hash"] == hash);
+        }
         let reason = self.task("fixture-followup-reason.txt", "시험 결과 확인과 다음 단계 검토 완료");
-        for entry in self.show(id)["followups"].as_array().into_iter().flatten() {
+        for entry in view["followups"].as_array().into_iter().flatten() {
             if entry["handled_ms"].is_null() {
                 self.h.ok(&[
                     "thread",

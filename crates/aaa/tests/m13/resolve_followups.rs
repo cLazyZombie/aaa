@@ -1,5 +1,29 @@
 use super::*;
 
+/// 이전 보고·안내 예시의 Next는 후속이 아니며, 실제 Next의 CLI 종료 차단은 유지한다.
+#[test]
+fn cli_resolve_ignores_fenced_examples_but_requires_real_followups() {
+    let w = report_shell_world();
+    let task = w.task("fenced-next.txt", "noreport");
+    let started = w.start(&["--title", "보고 예시", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let id = started["id"].as_str().unwrap();
+    w.wait_show("brief 받음", id, |v| v["brief"] == "delivered");
+    let work = Path::new(started["work_dir"].as_str().unwrap());
+    let report = "[완료] 실제 결과\n## Report\n예전 보고:\n````markdown\n## Next\n- 이어 하기\n```\n````\n## Next\n- 결과를 검토한다\n~~~sh\n## Next\n- 예시 명령\n~~~\n";
+    std::fs::write(work.join("report.md.tmp"), report).unwrap();
+    std::fs::rename(work.join("report.md.tmp"), work.join("report.md")).unwrap();
+    let view = w.wait_show("보고 수집", id, |v| v["report_hash"].is_string());
+    assert_eq!(view["next"], serde_json::json!(["결과를 검토한다"]));
+    assert_eq!(view["followups"].as_array().unwrap().len(), 1, "{view}");
+    assert_eq!(view["followups"][0]["line"], "결과를 검토한다");
+    let error = w.h.json(&["thread", "resolve", id]).expect_err("실제 후속은 계속 차단한다");
+    assert!(error.contains("결과를 검토한다"), "{error}");
+    assert!(!error.contains("이어 하기") && !error.contains("예시 명령") && !error.contains("```"), "{error}");
+    assert_eq!(w.show(id)["status"], "open");
+    w.finish_fixture_followups(id);
+    assert_eq!(w.h.ok(&["thread", "resolve", id])["status"], "resolved");
+}
+
 /// 실제 CLI의 오류 종료가 pane·Git·할 일을 보존하고 긴 ID 연결 뒤에만 resolve한다.
 #[test]
 fn cli_resolve_requires_followups_before_changing_the_thread() {

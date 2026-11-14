@@ -1816,11 +1816,31 @@ pub fn next_lines(report: &str) -> Vec<String> {
     section_lines(report, "Next")
 }
 
-/// report.md `## <name>` 절의 목록 줄(`next_lines`와 같은 규칙). `## Decisions`도 이것으로 읽는다(plan §8.259)
+/// report.md `## <name>` 절의 목록 줄. 코드 울타리 안의 예시·절 제목은 제외한다.
+/// `## Decisions`도 이것으로 읽는다(plan §8.259).
 pub fn section_lines(report: &str, name: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut inside = false;
+    let mut fence: Option<(u8, usize)> = None;
     for line in report.lines() {
+        let trimmed = line.trim_start_matches(' ');
+        let indent = line.len() - trimmed.len();
+        let marker = trimmed.as_bytes().first().copied();
+        let width = trimmed.bytes().take_while(|b| Some(*b) == marker).count();
+        if let Some((opened, minimum)) = fence {
+            if indent < 4 && marker == Some(opened) && width >= minimum && trimmed[width..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if indent < 4
+            && matches!(marker, Some(b'`' | b'~'))
+            && width >= 3
+            && (marker == Some(b'~') || !trimmed[width..].contains('`'))
+        {
+            fence = Some((marker.unwrap(), width));
+            continue;
+        }
         if let Some(head) = line.strip_prefix("## ") {
             inside = head.trim() == name;
             continue;
@@ -2384,6 +2404,22 @@ mod tests {
         assert!(next_lines("## Next\n").is_empty());
         // `#` 머리가 오면 Next가 끝난다
         assert_eq!(next_lines("## Next\n- 하나\n# 다른 절\n- 둘\n"), ["하나"]);
+    }
+
+    #[test]
+    fn section_lines_ignore_fenced_examples_and_keep_real_actions() {
+        let report = "[완료] 끝\n## Report\n예전 보고:\n````markdown\n## Next\n- 이어 하기\n```\n## Decisions\n- 예시 결정\n````\n## Next\n- 결과 확인\n~~~sh\n## Remember\n- 예시 명령\n~~~\n- 다음 단계\n## Decisions\n- 실제 결정\n";
+        assert_eq!(next_lines(report), ["결과 확인", "다음 단계"]);
+        assert_eq!(section_lines(report, "Decisions"), ["실제 결정"]);
+        for (open, close) in [("```md", "```"), ("~~~~", "~~~~~"), ("   ```", "  ````  ")] {
+            let report = format!("## Report\n{open}\n## Next\n- 예시\n{close}\n## Next\n- 실제 행동\n");
+            assert_eq!(next_lines(&report), ["실제 행동"], "{report}");
+        }
+        // 다른 문자·짧은 닫기·뒤에 글이 붙은 줄은 열린 울타리를 끝내지 않는다.
+        for close in ["~~~", "``", "``` 설명"] {
+            let report = format!("## Next\n- 실제 행동\n```\n{close}\n## Next\n- 코드 속 예시\n");
+            assert_eq!(next_lines(&report), ["실제 행동"], "{report}");
+        }
     }
 
     /// 번호 줄이 질문, 글자 줄이 선택지다. 선택지가 모자라도 질문 제목은 보존하고 진단한다.
