@@ -12,12 +12,12 @@ import unittest
 import subprocess
 from unittest.mock import patch
 
-from scripts.rust_tests import Job, execute, partitions, plan
+from scripts.rust_tests import Job, execute, partitions, plan, process_tree
 
 
 class RustTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "실제 Unix SIGINT/TERM과 shebang runner를 검사한다")
-    def interrupt_runner(self, phase, signum, ignore_term=False):
+    def interrupt_runner(self, phase, signum, ignore_term=False, snapshot_error=False):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-interrupt-") as tmp, socket.socket() as listener:
             root = Path(tmp)
             listener.bind(("127.0.0.1", 0))
@@ -29,6 +29,7 @@ def gate(phase):
     if phase != {phase!r}: return
     # TERM을 받은 도구가 정상 종료해도 바깥 runner는 중단을 실패로 보존해야 한다.
     signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else lambda *_: sys.exit(0))
+    Path({str(root / 'snapshot-pid')!r}).write_text(str(os.getpid()))
     print('partial-' + phase, flush=True)
     with socket.create_connection(('127.0.0.1', {listener.getsockname()[1]}), timeout=3) as link:
         link.sendall(str(os.getpid()).encode())
@@ -61,6 +62,14 @@ elif '--doc' in sys.argv:
 else: sys.exit(9)
 """)
             cargo.chmod(0o755)
+            # 실제 신호·종료·회수의 3초 계약에 머신 전체 ps의 부하를 섞지 않는다.
+            # 조회 결과/실패의 해석은 별도 process_tree owner가 검사한다.
+            ps = root / "ps"
+            ps.write_text(f"#!{sys.executable}\nfrom pathlib import Path\nimport sys\n"
+                          f"pid = Path({str(root / 'snapshot-pid')!r}).read_text()\n"
+                          f"sys.exit(7) if {snapshot_error!r} else None\n"
+                          "print(f'{pid} 1 S - fixture-child')\n")
+            ps.chmod(0o755)
             logs = root / "logs"
             runner = Path(__file__).with_name("rust_tests.py").resolve()
             # runner의 자식이 아닌 프로세스를 함께 두고 생존을 확인한다.
@@ -100,7 +109,11 @@ else: sys.exit(9)
                 self.assertEqual(summary["signal"], signum)
                 self.assertEqual(state["active"], {})
                 self.assertEqual(state["interrupted_waits"][0]["pid"], child_pid)
-                self.assertTrue(any(row["pid"] == child_pid for row in state["interrupted_waits"][0]["processes"]))
+                snapshot = state["interrupted_waits"][0]["processes"]
+                if snapshot_error:
+                    self.assertIn("CalledProcessError", snapshot["error"])
+                else:
+                    self.assertTrue(any(row["pid"] == child_pid for row in snapshot))
                 events = [json.loads(line) for line in (logs / "events.jsonl").read_text().splitlines()]
                 if ignore_term:
                     finished = next(event for event in events if event["event"] == "child_finished"
@@ -135,6 +148,22 @@ else: sys.exit(9)
 
     def test_sigterm_ignoring_child_is_killed_and_reaped(self):
         self.interrupt_runner("execute", signal.SIGTERM, ignore_term=True)
+
+    def test_snapshot_lookup_failure_still_reaps_the_interrupted_child(self):
+        self.interrupt_runner("execute", signal.SIGTERM, snapshot_error=True)
+
+    @unittest.skipUnless(os.name == "posix", "Unix ps 진단의 결과·오류 계약을 검사한다")
+    def test_process_snapshot_filters_descendants_and_preserves_lookup_errors(self):
+        rows = "100 1 S wait /fixture/parent\n101 100 S wait /fixture/child with spaces\n200 1 R - /fixture/outsider\n"
+        with patch("scripts.rust_tests.subprocess.check_output", return_value=rows) as ps:
+            snapshot = process_tree(100)
+        self.assertEqual([row["pid"] for row in snapshot], [100, 101])
+        self.assertEqual(snapshot[1]["executable"], "/fixture/child with spaces")
+        self.assertEqual(ps.call_args.args[0], ["ps", "-axo", "pid=,ppid=,stat=,wchan=,comm="])
+        with patch("scripts.rust_tests.subprocess.check_output",
+                   side_effect=subprocess.TimeoutExpired(["ps"], 1)):
+            snapshot = process_tree(100)
+        self.assertIn("TimeoutExpired", snapshot["error"])
 
     def test_individual_times_keep_failures_and_reject_missing_completed_cases(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-times-") as tmp:
