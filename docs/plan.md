@@ -8601,3 +8601,17 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 질문 카드에 답하면 host가 thread에 답을 기록한 사건으로 「답한 것」 카드를 바로 그린다. host 기록(답할 때의 사본)을 다시 읽으면 같은 카드가 그 기록으로 이어지고, 그 전에는 「지우기」와 물은 때가 없다. 응답은 전처럼 thread 전달 뒤에 온다(전달 순서·실패 처리·붙여넣기 간격은 그대로).
 - `/api/v1/call`의 1 KiB 이상 답은 정적 자산과 같은 협상으로 gzip이다. 조작(답함 표시·post 답·지우기·자동 모드) 뒤의 답은 쪽 있는 「답할 것」이다: 웹은 그 본문을 쓰지 않고, 쪽 없는 전체는 front socket frame 상한을 넘었다. FRONT_API는 그대로다.
 - 웹은 thread 목록을 host 상한(200개)씩 읽고, 조작 응답이 그 조작의 사건이 시작한 조회를 버리지 않는다. 측정 방법·전후·owner는 [응답 시간 기록](testing-web-response-time-t-1767.md)에 둔다.
+
+
+### 8.565 기획: 저장소 기획 폴더 읽기(t-1894)
+
+아이디어 노트(host `ideas/`)를 저장소 안 기획서 트리로 바꾸는 일의 확정 설계와 그 1단계다. 사용자 결정(11-15): 블록 표지, 저장소 단위 대화(필요하면 여럿), 아이디어마다 「기획으로 옮기기」. 11-16 결정이 「쉼 1분 뒤 main에 바로 올리기」를 대신한다: 기획서는 주제별 기획 branch에서 고친다.
+
+- **원칙**: 정본은 저장소 main의 Markdown 한 벌이다. 표지 없는 글은 지금 사실(구현됨)이고 아직 아닌 것만 `> [!계획]`·`> [!미정]` 블록으로 둔다. 할 일로 넘긴 블록은 `> [!계획] d-NNNN`이고 구현 thread가 코드와 같은 branch에서 표지를 풀어 병합 순간 구현됨이 된다. 일부만 된 것은 된 만큼의 본문과 남은 것의 `[!계획]` 블록으로 나눈다. 구현 상태는 사람이 손으로 고치지 않고 할 일·thread·main에서 읽는다.
+- **기획 branch**(11-16): 기획 대화마다 branch(예: `design/<주제>`)에서 기획서를 고친다. 「구현 맡기기」는 그 branch 위에서 구현 thread가 코드를 더해 기획과 코드가 함께 착지하고, 버리면 branch만 지운다. 구현 없이 글만 확정할 때는 「main에 반영」으로 착지 창을 거친다. 웹 트리는 main을 보이고 진행 중인 기획 branch는 문서 옆에 표시한다. branch 이름·같은 문서를 고치는 branch 둘·오래된 branch 정리는 2단계 전에 정한다.
+- **단계**: 1 저장·읽기(main) → 2 고치기·대화(기획 branch에서 쓰기·commit) → 3 표지·구현 맡기기(블록 그리기, 「전체 | 지금 모습 | 남은 것」 보기, 트리 「모두 | 할 것」과 줄 끝 수, d-ID 칩) → 4 옛 아이디어 「기획으로 옮기기」·정리. 활동 막대 「아이디어」는 4단계 뒤 「기획」에 합친다.
+- **1단계 설정**: 저장소 항목의 `design = "<폴더>"`(`ProjectSettings.designs`). 잘못된 경로는 없는 것이고 toml_edit 쓰기가 그 칸을 보존한다. 같은 이름의 저장소가 여러 항목에 있으면 `design`을 단 항목을, 없으면 처음 항목을 쓰며 설정 차례를 지킨다.
+- **agent `design.v1`**(AGENT_LINK 1.11의 선택 기능): `DesignTree`·`DesignRead`·`DesignFile`. origin 기본 branch(`origin/HEAD` → `origin/main` → `origin/master`, origin 없으면 `HEAD`)의 git 객체만 읽고 작업 파일·index·branch·FETCH_HEAD는 바꾸지 않는다. fetch는 저장소마다 1분에 한 번(`--no-tags --no-write-fetch-head --recurse-submodules=no`, stdin 없음·`GIT_TERMINAL_PROMPT=0`·`GCM_INTERACTIVE=never`)이고 실패하면 가진 ref로 읽고 까닭을 `fetch_error`로 싣는다. 목록은 `ls-tree -r -z -l`의 일반 파일(100644·100755)만이라 symlink·submodule은 목록에도 없고 읽지도 않는다. 제목은 `cat-file --batch`로 문서 앞 8KiB에서 찾는다. 기본 ref는 온전한 이름(`refs/remotes/origin/…`)으로 읽어 같은 이름의 로컬 branch에 가려지지 않는다. 읽기는 받은 commit이 기본 branch의 조상인지 확인한 뒤(다른 branch·올리지 않은 commit은 읽지 않는다) 기획 폴더 안 경로만 받는다. 받기 실패 까닭은 1분 간격 동안 기억해 다시 싣고, 조각은 받은 길이를 확인한다. 상한은 문서 512KiB(CLI front frame 1MiB 안), 그림·영상 16MiB(조각마다 blob을 처음부터 풀기 때문)다. 이 기능을 알리지 않은 agent에는 보내지 않는다.
+- **host·FRONT_API 1.170**: `design_tree`(보기 권한, 저장소마다 동시에 읽고 저장소마다 마지막 트리를 기억해 끊긴 머신은 그것과 오류를 보인다)·`design_read`(기억한 트리의 commit으로 읽는다). 그림·영상은 `GET /api/v1/projects/<p>/design/<저장소>/<경로>?c=<commit>`이고 기기 cookie가 있어야 한다. agent에서 512KiB 조각으로 받고 Range(206·416)를 받는다. 끝까지 받지 못하면 오류이고 잘린 파일을 보내지 않는다. commit을 준 응답은 오래 두고(immutable) sandbox CSP·nosniff로 보낸다. CLI `aaa plan list|show`.
+- **웹**: 활동 막대 「기획」(아이디어 앞), 사이드바 트리(`DesignPanel`)와 본문 문서(`DesignView`, 숨긴 채 그려 둔다). 선택은 `design:<저장소>/<경로>`, 주소는 `#design=`. 본문은 보고서 Markdown 그리기를 쓰고 그림 resolver가 같은 commit 주소를 준다. 상대 `.md` 링크는 트리에 있는 문서일 때 앱 안에서 연다(문서 폴더 기준, 다음으로 저장소 기준).
+- **1단계에서 계획과 달리 한 것**: 쓰기와 그것을 위한 사본은 2단계로 옮겼다(1단계는 git 객체 읽기만이라 작업 root·복구와 얽히지 않는다). 블록 표지는 3단계 전까지 보통 인용문으로 보인다. 검증은 [기획 1단계 검증](testing-design-docs-t-1894.md)에 둔다.

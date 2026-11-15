@@ -692,6 +692,82 @@ notes: Array<string>, };
 
 export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
+export type DesignDocEntry = {
+/**
+ * 저장소 기준 경로(`docs/game-loop/README.md`)
+ */
+path: string,
+/**
+ * 첫 `# ` 제목(없으면 빈 글)
+ */
+title: string, bytes: number, };
+
+export type DesignTree = {
+/**
+ * 읽은 commit(full SHA)
+ */
+commit: string,
+/**
+ * commit 시각(ms)
+ */
+committed_ms: number,
+/**
+ * 읽은 ref(`origin/main`, origin이 없으면 `HEAD`)
+ */
+base: string,
+/**
+ * 경로 차례
+ */
+docs: Array<DesignDocEntry>,
+/**
+ * 문서가 상한보다 많아 뒤를 뺐다
+ */
+truncated: boolean,
+/**
+ * origin을 받지 못해 가지고 있던 ref로 읽었다(까닭)
+ */
+fetch_error: string | null, };
+
+export type DesignRepoView = {
+/**
+ * 저장소 이름(경로 끝 폴더 이름)
+ */
+repo: string,
+/**
+ * 저장소가 있는 머신 이름
+ */
+machine: string,
+/**
+ * 기획 폴더(저장소 기준, `docs`). 없으면 이 저장소는 기획 폴더를 정하지 않았다
+ */
+folder: string | null,
+/**
+ * 읽은 트리. 못 읽었으면 없고 `error`가 까닭이다
+ */
+tree: DesignTree | null,
+/**
+ * 못 읽은 까닭, 또는 마지막으로 읽은 트리를 보이는 까닭(머신 연결 끊김 등)
+ */
+error: string | null, };
+
+export type DesignDoc = {
+/**
+ * 프로젝트(그림 주소 `/api/v1/projects/<p>/design/<저장소>/<경로>`)
+ */
+project: string, repo: string,
+/**
+ * 저장소 기준 경로
+ */
+path: string, title: string, text: string,
+/**
+ * 파일 blob SHA(다음 단계 저장의 기준 판)
+ */
+blob: string,
+/**
+ * 읽은 commit(그림 주소에 싣는다)
+ */
+commit: string, committed_ms: number, };
+
 export type IdeaStatus = "open" | "done";
 
 export type IdeaAuthor = "user" | "thread";
@@ -1502,7 +1578,7 @@ user_request?: string, } | { "op": "task_attention_answer", project?: string, at
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -1713,7 +1789,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

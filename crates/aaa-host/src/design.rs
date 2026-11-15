@@ -1,0 +1,340 @@
+//! 기획(t-1894, FRONT_API 1.170): 프로젝트 저장소마다 기획 폴더(`aaa.toml [[workspaces]]`의 `design`)의 Markdown 문서 트리와
+//! 문서·그림 읽기. 정본은 저장소 origin 기본 branch이고 repo 머신 agent(`design.v1`)가 git 객체에서 읽는다. host는 저장소마다
+//! 마지막으로 읽은 트리를 기억해 두었다가 머신 연결이 끊기면 그것을 보인다(읽기 전용).
+//!
+//! - 같은 저장소(경로 끝 이름)가 여러 머신에 있으면 `design`을 단 항목의 머신에서 읽는다.
+//! - 문서·그림 경로는 저장소 기준이고 기획 폴더 안이어야 한다(agent도 다시 본다).
+
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use aaa_proto::{
+    AgentRequest, AgentResponse, DESIGN_MAX_FILE, DesignDoc, DesignRepoView, DesignTree, ErrorBody, ErrorCode,
+    FrontResponse, design_clean_path, design_inside,
+};
+
+use crate::{Host, err};
+
+/// 트리 읽기(origin 받기 30초 + 목록)
+const TREE_WAIT: Duration = Duration::from_secs(60);
+const READ_WAIT: Duration = Duration::from_secs(30);
+/// 그림 한 번에 받는 조각
+const CHUNK: u32 = 512 * 1024;
+pub(crate) const FEATURE: &str = "design.v1";
+
+/// 저장소 하나의 읽을 자리
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Target {
+    /// 경로 끝 이름
+    name: String,
+    path: String,
+    machine: Option<String>,
+    folder: Option<String>,
+}
+
+/// 프로젝트 저장소 목록에서 이름마다 한 자리를 고른다: `design`을 단 항목이 있으면 그것, 없으면 처음 항목. 설정 차례를 지킨다
+fn targets(settings: &crate::project::ProjectSettings) -> Vec<Target> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_name: BTreeMap<String, Target> = BTreeMap::new();
+    for repo in &settings.repos {
+        let name = repo_name(&repo.path);
+        if name.is_empty() {
+            continue;
+        }
+        let folder = settings
+            .designs
+            .iter()
+            .find(|d| d.repo.path == repo.path && d.repo.machine == repo.machine)
+            .map(|d| d.folder.clone());
+        let candidate = Target { name: name.clone(), path: repo.path.clone(), machine: repo.machine.clone(), folder };
+        match by_name.get(&name) {
+            None => {
+                order.push(name.clone());
+                by_name.insert(name, candidate);
+            }
+            Some(old) if old.folder.is_none() && candidate.folder.is_some() => {
+                by_name.insert(name, candidate);
+            }
+            Some(_) => {}
+        }
+    }
+    order.into_iter().filter_map(|n| by_name.remove(&n)).collect()
+}
+
+/// 경로 끝 폴더 이름(`/` 또는 `\`로 나눈다: Windows 머신 경로도 받는다)
+fn repo_name(path: &str) -> String {
+    path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or_default().to_string()
+}
+
+impl Host {
+    fn design_targets(&self, project: &str) -> Result<Vec<Target>, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        Ok(targets(&crate::project::ProjectSettings::load(&dir)))
+    }
+
+    /// 그 저장소의 기획 폴더 자리와 연결(기획 폴더가 없거나 머신이 꺼져 있으면 오류)
+    fn design_target(&self, project: &str, repo: &str) -> Result<(Target, String), ErrorBody> {
+        let target = self
+            .design_targets(project)?
+            .into_iter()
+            .find(|t| t.name == repo)
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("프로젝트 저장소가 아니다: {repo}")))?;
+        if target.folder.is_none() {
+            return Err(err(ErrorCode::NotFound, format!("{repo}: 기획 폴더를 정하지 않았다(aaa.toml의 design)")));
+        }
+        let mid = self.resolve_machine(target.machine.as_deref())?;
+        Ok((target, mid))
+    }
+
+    fn design_conn(&self, mid: &str) -> Result<crate::AgentConn, ErrorBody> {
+        let conn = self.live_conn(mid)?;
+        if !self.machine_feature(mid, FEATURE) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "그 머신 agent가 기획 읽기를 아직 모른다(agent binary를 바꿔야 한다)",
+            ));
+        }
+        Ok(conn)
+    }
+
+    /// 프로젝트 저장소마다 기획 트리(머신마다 동시에 읽는다)
+    pub(crate) async fn design_tree(self: &Arc<Self>, project: &str) -> Result<FrontResponse, ErrorBody> {
+        let targets = self.design_targets(project)?;
+        let mut jobs = tokio::task::JoinSet::new();
+        for (i, t) in targets.into_iter().enumerate() {
+            let host = self.clone();
+            let project = project.to_string();
+            jobs.spawn(async move { (i, host.design_repo(&project, t).await) });
+        }
+        let mut repos = Vec::new();
+        while let Some(done) = jobs.join_next().await {
+            match done {
+                Ok(v) => repos.push(v),
+                Err(e) => return Err(crate::orch::internal(e)),
+            }
+        }
+        repos.sort_by_key(|(i, _)| *i);
+        Ok(FrontResponse::DesignTree { repos: repos.into_iter().map(|(_, v)| v).collect() })
+    }
+
+    async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
+        let mut view = DesignRepoView {
+            repo: t.name.clone(),
+            machine: t.machine.clone().unwrap_or_default(),
+            folder: t.folder.clone(),
+            tree: None,
+            error: None,
+        };
+        let Some(folder) = t.folder.clone() else { return view };
+        let mid = match self.resolve_machine(t.machine.as_deref()) {
+            Ok(mid) => mid,
+            Err(e) => {
+                view.error = Some(e.message);
+                return view;
+            }
+        };
+        view.machine = self.machine_name(&mid);
+        let key = format!("{project}/{}", t.name);
+        let fresh = async {
+            let conn = self.design_conn(&mid)?;
+            match conn.request_timeout(AgentRequest::DesignTree { repo: t.path.clone(), folder }, TREE_WAIT).await? {
+                AgentResponse::DesignTree(tree) => Ok(tree),
+                _ => Err(err(ErrorCode::Internal, "예상하지 못한 응답")),
+            }
+        }
+        .await;
+        match fresh {
+            Ok(tree) => {
+                self.design_trees.lock().unwrap().insert(key, tree.clone());
+                view.tree = Some(tree);
+            }
+            Err(e) => {
+                // 마지막으로 읽은 트리를 보인다(머신이 꺼져 있어도 목록·문서 고르기는 된다)
+                view.tree = self.design_trees.lock().unwrap().get(&key).cloned();
+                view.error = Some(e.message);
+            }
+        }
+        view
+    }
+
+    /// 마지막으로 읽은 그 저장소 트리의 commit(문서·그림을 같은 판으로 읽는다)
+    fn design_commit(&self, project: &str, repo: &str) -> Option<String> {
+        self.design_trees.lock().unwrap().get(&format!("{project}/{repo}")).map(|t: &DesignTree| t.commit.clone())
+    }
+
+    pub(crate) async fn design_read(&self, project: &str, repo: &str, path: &str) -> Result<FrontResponse, ErrorBody> {
+        let (target, mid) = self.design_target(project, repo)?;
+        let folder = target.folder.clone().unwrap_or_default();
+        let path = checked_path(&folder, path)?;
+        let conn = self.design_conn(&mid)?;
+        let commit = self.design_commit(project, repo);
+        let req = AgentRequest::DesignRead { repo: target.path.clone(), folder, commit, path: path.clone() };
+        let AgentResponse::DesignText { text, blob, commit, committed_ms } =
+            conn.request_timeout(req, READ_WAIT).await?
+        else {
+            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+        };
+        let title = aaa_proto::design_title(&text);
+        Ok(FrontResponse::DesignDoc {
+            doc: DesignDoc {
+                project: project.to_string(),
+                repo: target.name,
+                path,
+                title,
+                text,
+                blob,
+                commit,
+                committed_ms,
+            },
+        })
+    }
+
+    /// 문서 안 그림·영상(웹 `GET /api/v1/projects/<p>/design/<저장소>/<경로>?c=<commit>`). 조각으로 받아 모은다. `range`는 HTTP
+    /// `Range` 머리다(영상 넘기기·WebKit 영상): 먼저 크기만 묻고 그 범위만 받는다
+    pub(crate) async fn design_file_read(
+        &self,
+        project: &str,
+        repo: &str,
+        path: &str,
+        commit: Option<&str>,
+        range: Option<&str>,
+    ) -> Result<DesignBytes, ErrorBody> {
+        let (target, mid) = self.design_target(project, repo)?;
+        let folder = target.folder.clone().unwrap_or_default();
+        let path = checked_path(&folder, path)?;
+        let commit = match commit {
+            Some(c) => c.to_string(),
+            None => self
+                .design_commit(project, repo)
+                .ok_or_else(|| err(ErrorCode::NotFound, "기획 트리를 먼저 읽어야 한다"))?,
+        };
+        let file = FileAt { conn: self.design_conn(&mid)?, repo: target.path, folder, commit, path };
+        let Some(range) = range else { return Ok(DesignBytes::Whole(file.read(0, u64::MAX).await?.0)) };
+        let total = file.read(0, 0).await?.1;
+        Ok(match crate::files::parse_range(Some(range), total) {
+            Err(()) => DesignBytes::Unsatisfiable { total },
+            Ok(None) => DesignBytes::Whole(file.read(0, u64::MAX).await?.0),
+            Ok(Some((start, end))) => {
+                let (bytes, total) = file.read(start, end - start + 1).await?;
+                DesignBytes::Part { bytes, start, end, total }
+            }
+        })
+    }
+}
+
+/// 웹에 보낼 기획 파일
+pub(crate) enum DesignBytes {
+    Whole(Vec<u8>),
+    Part { bytes: Vec<u8>, start: u64, end: u64, total: u64 },
+    Unsatisfiable { total: u64 },
+}
+
+/// 읽을 파일 하나(agent 연결·저장소·commit 고정)
+struct FileAt {
+    conn: crate::AgentConn,
+    repo: String,
+    folder: String,
+    commit: String,
+    path: String,
+}
+
+impl FileAt {
+    /// `offset`부터 `want`바이트(파일 끝까지)를 조각으로 받는다. 파일 전체 크기도 돌려준다. `want` 0은 크기만 묻는다.
+    /// 끝까지 받지 못하면 오류다(잘린 그림을 commit 주소로 오래 두지 않는다)
+    async fn read(&self, offset: u64, want: u64) -> Result<(Vec<u8>, u64), ErrorBody> {
+        let mut bytes = Vec::new();
+        loop {
+            let len = (want - bytes.len() as u64).min(u64::from(CHUNK)) as u32;
+            let req = AgentRequest::DesignFile {
+                repo: self.repo.clone(),
+                folder: self.folder.clone(),
+                commit: self.commit.clone(),
+                path: self.path.clone(),
+                offset: offset + bytes.len() as u64,
+                len,
+            };
+            let AgentResponse::DesignChunk { data, total } = self.conn.request_timeout(req, READ_WAIT).await? else {
+                return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+            };
+            if total > DESIGN_MAX_FILE {
+                return Err(err(ErrorCode::TooLarge, "파일이 너무 크다"));
+            }
+            let got = data.0.len();
+            bytes.extend_from_slice(&data.0);
+            let end = want.min(total.saturating_sub(offset));
+            if len == 0 || bytes.len() as u64 >= end {
+                return Ok((bytes, total));
+            }
+            if got == 0 {
+                return Err(err(ErrorCode::Internal, format!("파일을 다 받지 못했다({}/{end}바이트)", bytes.len())));
+            }
+        }
+    }
+}
+
+/// 저장소 기준 경로를 정리하고 기획 폴더 안인지 본다
+fn checked_path(folder: &str, path: &str) -> Result<String, ErrorBody> {
+    let path = design_clean_path(path).ok_or_else(|| err(ErrorCode::BadRequest, "문서 경로가 잘못됐다"))?;
+    if !design_inside(folder, &path) {
+        return Err(err(ErrorCode::BadRequest, "기획 폴더 밖 경로다"));
+    }
+    Ok(path)
+}
+
+/// 확장자의 Content-Type. 모르는 것(HTML 포함)은 내려받기다. 응답은 sandbox CSP라 SVG의 script도 앱에 닿지 못한다
+pub(crate) fn mime(path: &str) -> &'static str {
+    let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "md" | "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::ProjectSettings;
+
+    fn settings(toml: &str) -> ProjectSettings {
+        crate::project::ProjectSettings::load_str(toml)
+    }
+
+    #[test]
+    fn targets_pick_the_entry_with_design_and_keep_order() {
+        let s = settings(
+            "[[workspaces]]\npath = \"/w/rc\"\n\n[[workspaces]]\npath = \"/v/pt\"\nmachine = \"mac-a\"\n\n\
+             [[workspaces]]\npath = \"/x/pt\"\nmachine = \"mac-b\"\ndesign = \"./docs/\"\n\n\
+             [[workspaces]]\npath = \"/x/rc\"\nmachine = \"mac-b\"\n\n[[workspaces]]\npath = \"/y/aaa\"\ndesign = \"../x\"\n",
+        );
+        let got: Vec<_> = targets(&s).into_iter().map(|t| (t.name, t.path, t.machine, t.folder)).collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            [
+                ("rc".to_string(), "/w/rc".to_string(), None, None),
+                ("pt".into(), "/x/pt".into(), Some("mac-b".into()), Some("docs".into())),
+                ("aaa".into(), "/y/aaa".into(), None, None),
+            ],
+            "design 단 항목이 이기고, 잘못된 design은 없는 것"
+        );
+        assert_eq!(repo_name(r"C:\work\tool\"), "tool");
+    }
+
+    #[test]
+    fn paths_stay_inside_the_folder() {
+        assert_eq!(checked_path("docs", "./docs/a.md").unwrap(), "docs/a.md");
+        assert_eq!(checked_path("docs", "README.md").unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(checked_path("docs", "docs/../x.md").unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!((mime("docs/media/a.PNG"), mime("docs/x.html")), ("image/png", "application/octet-stream"));
+    }
+}

@@ -209,6 +209,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "hook.manage.v1".into(),
             // 설정 「모델」: 이 머신 harness가 아는 모델 목록(t-1509)
             "model_catalog.v1".into(),
+            // 기획: 저장소 기획 폴더를 origin 기본 branch의 git 객체에서 읽는다(DesignTree·DesignRead·DesignFile, t-1894)
+            "design.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
