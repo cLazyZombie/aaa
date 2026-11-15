@@ -13,6 +13,7 @@ mod ci;
 mod command;
 mod cwd;
 pub mod deploy;
+mod design;
 pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod diff;
@@ -2146,6 +2147,13 @@ impl Agent {
                 .await
                 .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::DesignTree { repo, folder } => design::tree(&repo, &folder).await,
+            AgentRequest::DesignRead { repo, folder, commit, path } => {
+                design::read(&repo, &folder, commit.as_deref(), &path).await
+            }
+            AgentRequest::DesignFile { repo, folder, commit, path, offset, len } => {
+                design::file(&repo, &folder, &commit, &path, offset, len).await
+            }
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
             AgentRequest::ModelCatalog => model_catalog::catalog().await,

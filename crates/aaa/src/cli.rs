@@ -393,6 +393,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: IdeaCmd,
     },
+    /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다)
+    Plan {
+        #[command(subcommand)]
+        cmd: PlanCmd,
+    },
     /// inbox: 보고·질문·세션 끝남·머신 단절 같은 잃지 않는 항목(끝내기로 정리)
     Inbox {
         #[command(subcommand)]
@@ -670,6 +675,19 @@ enum InboxCmd {
         /// 끝내지 않은 항목 모두
         #[arg(long)]
         all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlanCmd {
+    /// 저장소마다 기획 폴더와 문서(경로·제목)
+    List,
+    /// 문서 글. 첫 줄에 저장소·경로·commit, 빈 줄 뒤에 글이다
+    Show {
+        /// 저장소 이름(경로 끝 폴더 이름)
+        repo: String,
+        /// 저장소 기준 문서 경로(기획 폴더 안)
+        path: String,
     },
 }
 
@@ -2297,6 +2315,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
         Cmd::Idea { cmd } => idea_cli(json, cmd),
+        Cmd::Plan { cmd } => {
+            let project = project_or_here(None)?;
+            match cmd {
+                PlanCmd::List => front(json, FrontRequest::DesignTree { project }),
+                PlanCmd::Show { repo, path } => front(json, FrontRequest::DesignRead { project, repo, path }),
+            }
+        }
         Cmd::Task { cmd: TaskCmd::Queue } => {
             front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
         }
@@ -6233,6 +6258,38 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
+        FrontResponse::DesignTree { repos } => {
+            for r in repos {
+                let folder = r.folder.as_deref().map(|f| format!("{f}/")).unwrap_or_else(|| "기획 폴더 없음".into());
+                let at = r
+                    .tree
+                    .as_ref()
+                    .map(|t| format!(" · {} {}", t.base, &t.commit[..t.commit.len().min(8)]))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    s,
+                    "{} {folder}{at}{}",
+                    r.repo,
+                    r.error.as_deref().map(|e| format!(" · {e}")).unwrap_or_default()
+                );
+                for d in r.tree.iter().flat_map(|t| &t.docs) {
+                    let _ = writeln!(s, "  {}\t{}", d.path, d.title);
+                }
+                if let Some(e) = r.tree.as_ref().and_then(|t| t.fetch_error.as_deref()) {
+                    let _ = writeln!(s, "  (origin을 받지 못해 가진 판: {e})");
+                }
+            }
+            if repos.is_empty() {
+                s.push_str("저장소 없음\n");
+            }
+        }
+        FrontResponse::DesignDoc { doc } => {
+            let _ = writeln!(s, "{} {} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);
+            let _ = write!(s, "\n{}", doc.text);
+            if !doc.text.ends_with('\n') {
+                s.push('\n');
+            }
+        }
         FrontResponse::Ideas { ideas } => {
             for i in ideas {
                 let _ = writeln!(

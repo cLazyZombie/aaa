@@ -38,6 +38,7 @@ mod coord;
 mod ctrl_enter;
 pub mod db;
 mod deploy;
+mod design;
 mod diff;
 mod enroll_guide;
 pub mod file_backup;
@@ -726,6 +727,8 @@ pub struct Host {
     library_reaper: std::sync::OnceLock<library_delete::Reaper>,
     /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
     file_caps: Mutex<HashMap<String, files::FileCap>>,
+    /// 기획: `<프로젝트>/<저장소>`마다 마지막으로 읽은 트리(머신이 꺼졌을 때 보인다, t-1894)
+    design_trees: Mutex<HashMap<String, aaa_proto::DesignTree>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -969,6 +972,7 @@ impl Host {
             library_ops: std::sync::Mutex::new(()),
             library_reaper: std::sync::OnceLock::new(),
             file_caps: Mutex::new(HashMap::new()),
+            design_trees: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             account_quota: Default::default(),
@@ -2162,6 +2166,8 @@ impl Host {
                 self.task_log_search(&project, before, limit, filter, task.as_deref(), search.as_ref())
             }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
+            FrontRequest::DesignTree { project } => self.design_tree(&project).await,
+            FrontRequest::DesignRead { project, repo, path } => self.design_read(&project, &repo, &path).await,
             req @ (FrontRequest::IdeaList { .. }
             | FrontRequest::IdeaRead { .. }
             | FrontRequest::IdeaSeen { .. }

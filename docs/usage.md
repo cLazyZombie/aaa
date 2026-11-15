@@ -118,6 +118,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa idea save <n-ID> --base <판> --file F [--summary "…"]` · `aaa idea say <n-ID> "…"` · `aaa idea copy <n-ID>` | 판을 주고 노트 저장(그사이 다른 판이 있으면 쓰지 않고 `F.base-<판>.md`·`F.current-<판>.md`를 남기고 종료 코드 3) · 전용 thread에 말하기 · 복사해서 새 아이디어 |
 | `aaa idea model <n-ID> <profile>` | 아이디어 진행 모델을 바꾼다(host 머신이 맡을 수 있는 profile, `aaa assignable`). 다음 말부터 그 모델의 새 thread가 노트를 읽고 잇는다([아이디어](#아이디어) 「진행 모델」) |
 | `aaa idea attach <n-ID> <파일>... [--alt "설명"] [--section "절"] [--store-only]` | host 머신의 그림·영상을 노트 끝(또는 그 절 끝)에 붙여 새 판으로 저장하고 붙인 이름을 한 줄씩 출력. `--store-only`는 폴더에만 넣는다([아이디어](#아이디어) 「그림」) |
+| `aaa plan list` · `aaa plan show <저장소> <경로>` | 기획 트리(저장소마다 기획 폴더의 문서와 읽은 판) · 기획 문서 하나(저장소 기준 경로). 웹은 활동 막대 「기획」([기획](#기획)) |
 | `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--user-request 근거] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
@@ -306,6 +307,16 @@ host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 
 변경은 파일별 잠금·원문 대조와 SQLite 트랜잭션으로 처리한다. 파일과 DB 사이에서 host가 종료돼도 시작할 때 journal을 복구한다. 복구 중 직접 편집을 발견하면 그 글을 덮지 않고 경로를 알리며 멈춘다.
 
 할 일 메모를 보태려면 `aaa task edit <ID> --add-note "한 줄"`을 여러 번 쓴다. `--note`는 전체 교체, `--clear-notes`는 전체 삭제다. 세 방식은 함께 쓸 수 없다. 기존 메모 줄이 빠지거나 바뀌면 저장 결과에 「메모 N줄→M줄」과 기록 번호가 나온다. `aaa --json task log`의 해당 기록 `before`에서 이전 원문을 찾는다. 웹 상세의 「메모 추가」는 손대지 않은 일에 바로 저장하고, 고치는 중이거나 새 일이면 초안에 더해 「저장」 때 함께 쓴다. 잘못된 제목은 CLI·웹 저장에서 거부하며 thread 번호는 연결 칸, 상태·긴 글은 메모로 옮긴다.
+
+### 기획
+
+기획서의 정본은 프로젝트 저장소 안의 Markdown 폴더(기획 폴더)다. 1단계(t-1894)는 읽기만 한다. 고치기·대화·구현 맡기기·아이디어 옮기기는 뒤 단계다([plan §8.565](plan.md#8565-기획-저장소-기획-폴더-읽기t-1894)).
+
+- **설정**: 프로젝트 설정의 저장소 항목(`aaa.toml [[workspaces]]`, 없으면 project.toml `[[repos]]`)에 `design = "docs"`처럼 저장소 기준 폴더를 단다. 절대 경로·`..`·`\`가 든 값은 없는 것이다. 같은 이름의 저장소가 여러 머신 항목에 있으면 `design`을 단 항목의 머신에서 읽는다. 저장소를 더하고·빼고·고쳐도(`aaa set repos.add` 등, 웹 「저장소」) 그 항목의 `design`은 남는다.
+- **읽는 판**: 그 머신 agent가 origin 기본 branch(`origin/HEAD`가 가리키는 것, 없으면 `origin/main`·`origin/master`, origin이 없는 저장소는 `HEAD`)의 git 객체에서 읽는다. 작업 파일·index·branch는 바꾸지 않는다. origin은 저장소마다 1분에 한 번 받고(FETCH_HEAD·tag는 쓰지 않는다) 못 받으면 가진 판으로 읽고 그 저장소 줄에 경고 표시를 단다(1분 안에 다시 읽어도 남는다). 머신이 끊기면 host가 마지막으로 읽은 트리를 보인다.
+- **웹**: 활동 막대 「기획」(책). 사이드바는 저장소 → 폴더 → 문서이고 폴더가 먼저, 폴더 안에서는 `README.md`가 먼저 온다. 문서 이름은 첫 `#` 제목(YAML 머리는 건너뛴다), 폴더 이름 옆에는 그 폴더 README의 제목이 보인다. 「새로 읽기」가 트리를 다시 읽는다. 문서 머리의 「새로 읽기」도 트리를 다시 읽고, 판이 바뀌었으면 문서를 그 판으로 다시 읽는다. 문서를 고르면 본문에 읽기 전용으로 보이고 머리에 경로·판(commit 앞 7자리)·commit 시각이 있다. 주소는 `#design=<저장소>/<경로>`다.
+- **그림·링크**: 문서 안 상대 경로의 그림·영상(PNG·JPEG·GIF·WebP·AVIF·SVG·MP4·WebM)은 그 문서를 읽은 commit의 저장소 파일을 보인다(기획 폴더 안만, 파일당 16MiB, 영상은 Range로 넘긴다). 주소의 commit은 그 저장소 기본 branch의 판이어야 한다. 다른 기획 문서로 가는 상대 `.md` 링크는 앱 안에서 그 문서를 연다. Git LFS로 둔 파일은 포인터 글이라 그림으로 보이지 않는다.
+- **한도**: 문서 512KiB, 트리 2,000문서(넘으면 앞 2,000개, 저장소 줄에 경고). 보기 권한 기기도 읽는다. `> [!계획]`·`> [!미정]` 블록은 지금은 보통 인용문으로 보인다.
 
 ### 아이디어
 

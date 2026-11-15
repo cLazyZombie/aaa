@@ -5122,3 +5122,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [재시작·Rust 실행기 시험 준비 경계(t-1878)](testing-verification-fixtures-t1878.md): 최초 OS 실행 판정과 재시작 기한 분리·실제 신호 회수와 진단 오류 회귀.
 - [화면 복귀 본문 관측의 덮개 오탐(t-1883)](testing-pane-return-observation-t-1883.md): 원본 artifact 한계·실제 xterm RED/GREEN·빈 본문과 읽기 전용 음성 대조.
 - [인증 창 완료 뒤 시트 위치 관측(t-1889)](testing-account-sheet-viewport-t-1889.md): 실제 애니메이션 RED/GREEN과 Chromium·WebKit 회귀.
+- [기획 1단계: 저장소 기획 폴더 읽기(t-1894)](testing-design-docs-t-1894.md): git 객체 읽기·고정 commit·origin 실패·링크 거부와 실제 origin E2E 135.
