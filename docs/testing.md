@@ -1,3 +1,4 @@
+- t-1899: [질문 감시의 명시적 카드 대체 설명](testing-question-guard-t1899.md): 실제 문장 재현·교체 참조 제외·옛 카드 안내와 별개 승인 경계.
 - t-1881: [Ubuntu 실험실 sshd 포트 인계·실패 진단 수리](testing-sshd-startup-t-1881.md)
 - t-1873: [새 보고·대화 출력 중 입력 지연 수리](testing-input-render-t-1873.md)
 - t-1857: [Ubuntu CI의 보고 후속·예약 시험 수리](testing-ci-resolve-t-1857.md)

@@ -102,7 +102,7 @@ fn answer_ids(text: &str) -> Vec<String> {
     static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
         let reference = r"(?:\[[^\]\n]*\]\([^()\n]*q-[0-9]+[^()\n]*\)|q-[0-9]+)";
         Regex::new(&format!(
-            r"{reference}\s*에서\s*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)|옛\s*번호\s*[:：]?\s*{reference}|{reference}\s*\(옛\s*번호\)|{reference}\s*(?:(?:은|는|이|가)\s*)?(?:이미\s*)?(?:닫았|닫혔|폐기했)(?:습니다|어요|고|으며|으니|지만)|{reference}\s*(?:에는|에|에서는|에서|은|는)?\s*답하지\s*(?:않으셔도|않아도)\s*됩니다"
+            r"{reference}\s*에서\s*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)|옛\s*번호\s*[:：]?\s*{reference}|{reference}\s*\(옛\s*번호\)|{reference}\s*(?:(?:은|는|이|가)\s*)?(?:이미\s*)?(?:닫았|닫혔|폐기했)(?:습니다|어요|고|으며|으니|지만)|{reference}\s*(?:에는|에|에서는|에서|은|는)?\s*답하지\s*(?:않으셔도|않아도)\s*됩니다|{reference}\s*(?:은|는)\s*이\s*질문이\s*대신합니다\b"
         ))
         .unwrap()
     });

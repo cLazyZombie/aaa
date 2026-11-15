@@ -1887,6 +1887,9 @@ mod tests {
                     text,
                     format!("{current}에서 답해 주세요.\n앞에 안내한 {id}는 닫혔으니 답하지 않으셔도 됩니다."),
                     format!(
+                        "[{current} 질문](#question={current})에서 답해 주세요.\n앞서 열려 있던 {id}는 이 질문이 대신합니다."
+                    ),
+                    format!(
                         "제가 만든 {id}는 닫았습니다. 이제 [{current} 질문](#question={current}) 하나에만 답하시면 됩니다.\n- A 진행 (추천)\n- B 보류"
                     ),
                 ] {
@@ -1904,7 +1907,12 @@ mod tests {
                 }
             }
             let text = format!(
-                "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침"
+                "그림은 아직 검수를 받지 않았다고 적었습니다. [질문](#question={id})에서 판단해 주세요.\nA 통과(추천)\nB 더 고침{}",
+                if previous.is_some() {
+                    format!("\n앞서 열려 있던 {id}는 이 질문이 대신합니다.")
+                } else {
+                    String::new()
+                }
             );
             turn_end += 1;
             h.on_harness("m", completed_reply("codex", now, turn_end, &text));
@@ -1920,7 +1928,7 @@ mod tests {
                 turn_end += 1;
                 h.on_harness(
                     "m",
-                    completed_reply("codex", now, turn_end, &format!("{id}는 닫았습니다. 지금 배포할까요?")),
+                    completed_reply("codex", now, turn_end, &format!("{id}는 이 질문이 대신합니다. 지금 배포할까요?")),
                 );
                 assert!(
                     h.db.inbox_list(Some("demo"), true)

@@ -1,5 +1,71 @@
 use super::*;
 
+/// t-1896에서 관측한 교체 설명. 링크는 재구성하고 교체 문장은 그대로 보존한다.
+#[test]
+fn observed_replacement_explanation_is_not_an_old_card_answer_request() {
+    let cards = HashMap::from([("q-3834".into(), CardState::Open), ("q-3822".into(), CardState::Closed)]);
+    let text = "[q-3834 질문](#question=q-3834)에서 답해 주세요.\n앞서 열려 있던 q-3822는 이 질문이 대신합니다.";
+    let result = inspect(text, &cards);
+    assert!(
+        result.missing.is_none() && result.stale.is_none(),
+        "missing={:?}, stale={:?}",
+        result.missing,
+        result.stale
+    );
+}
+
+/// 교체 경위는 카드 수를 채우지 않고 실제 옛 카드 안내·별개 승인을 면제하지 않는다.
+#[test]
+fn replacement_explanations_keep_answer_targets_and_separate_requests() {
+    let cards = cards();
+    for history in [
+        "앞서 열려 있던 q-1003는 이 질문이 대신합니다.",
+        "앞서 열려 있던 [q-1003 질문](#question=q-1003)은 이 질문이 대신합니다.",
+    ] {
+        assert!(answer_ids(history).is_empty(), "{history}");
+        let linked = format!("q-1001에서 답해 주세요.\n{history}");
+        for text in [
+            linked.clone(),
+            format!("{history}\n\nq-1001에서 답합니다.\n- A 진행 (추천)\n- B 보류"),
+            format!("아래 새 카드로 답해 주세요.\n\n**현재 카드**\nq-1001\n{history}"),
+        ] {
+            let result = inspect(&text, &cards);
+            assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+        }
+        let text = format!("질문 2개에 답해 주세요.\n\nq-1001\n{history}");
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        for text in [
+            format!("{linked} q-1003에서 답해 주세요."),
+            format!("q-1003에서 선택해 주세요. {history}"),
+            format!("{linked}\n\nq-1003에서 판단해 주세요.\n- A 진행 (추천)\n- B 보류"),
+        ] {
+            let result = inspect(&text, &cards);
+            assert!(result.missing.is_none(), "{text}");
+            assert!(
+                result.stale.as_ref().is_some_and(|e| e.refs.contains(&("q-1003".into(), CardState::Closed))),
+                "{text}: stale={:?}",
+                result.stale
+            );
+        }
+        for request in ["지금 배포할까요?", "별도로 배포 승인 여부를 알려 주세요."] {
+            for text in
+                [format!("{linked} {request}"), format!("{linked}\n\n{request}"), format!("{request}\n\n{history}")]
+            {
+                let result = inspect(&text, &cards);
+                assert!(result.missing.is_some() && result.stale.is_none(), "{text}");
+            }
+        }
+    }
+    // 대체 주체가 옛 카드이거나, 대체 여부를 묻거나, 설명이 아직 이어지면 제외하지 않는다.
+    for text in [
+        "q-1003가 이 질문을 대신합니다.",
+        "q-1003는 이 질문이 대신할까요?",
+        "q-1003는 이 질문이 대신합니다만 아직 답이 필요합니다.",
+    ] {
+        assert_eq!(answer_ids(text), ["q-1003"], "{text}");
+    }
+}
+
 /// t-1877의 배포 후 오탐 다섯 발췌. 카드 상태와 주변 선택지만 재구성한다.
 #[test]
 fn observed_discarded_cards_and_optional_corrections_are_not_answer_requests() {
