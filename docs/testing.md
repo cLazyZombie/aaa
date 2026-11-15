@@ -1,3 +1,4 @@
+- t-1899: [계정 이름 변경 E2E의 초기 사용량 반영 경계](testing-e2e133-readiness-t1899.md): 지연 응답·native 누름 경합 재현과 DOM 준비 사건 대기.
 - t-1899: [질문 감시의 명시적 카드 대체 설명](testing-question-guard-t1899.md): 실제 문장 재현·교체 참조 제외·옛 카드 안내와 별개 승인 경계.
 - t-1881: [Ubuntu 실험실 sshd 포트 인계·실패 진단 수리](testing-sshd-startup-t-1881.md)
 - t-1873: [새 보고·대화 출력 중 입력 지연 수리](testing-input-render-t-1873.md)

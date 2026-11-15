@@ -31,6 +31,15 @@ async function check(engine, width) {
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { serviceWorkers: "block" });
   try {
     const settings = await openSettings(page, "계정");
+    // 목록 뒤에 오는 사용량 응답은 앞 행마다 두 줄을 더한다. native press 중 행이
+    // 움직이면 WebKit의 release가 버튼 밖에 떨어지므로 초기 응답의 DOM 반영을 먼저 본다.
+    // 이 시험의 가짜 Claude 계정에는 조회 인증이 없으며, 풀 조회도 끝난 뒤 누른다.
+    await domIs(page, "초기 계정 사용량과 자동 배정 반영", () => {
+      const rows = [...document.querySelectorAll('[data-testid="settings-accounts"] [data-account]')];
+      return rows.length > 0 && rows.every(row =>
+        row.querySelector('[data-testid="quota-query-status"]')?.textContent === "조회 인증 필요"
+        && row.querySelector('[data-testid="account-auto-assign"]')?.matches(":enabled"));
+    });
     let row = settings.locator(`[data-account="${before}"]`);
     await row.getByRole("button", { name: `${before} 이름 바꾸기`, exact: true }).click();
     await row.getByLabel(`${before} 새 이름`, { exact: true }).fill(after);
