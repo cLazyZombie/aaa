@@ -42,12 +42,18 @@ async function phoneInput(page, input, width) {
 async function closeCompleted(page, dialog, width) {
   const button = dialog.getByRole("button", { name: "닫기", exact: true });
   if (width < 700) {
-    const viewport = await button.evaluate(el => {
+    const viewport = await button.evaluate(async el => {
+      // 완료 문구는 회전으로 시작한 sheet-in보다 먼저 올 수 있다.
+      // 좌표는 실제 이동이 끝난 뒤 재며 단추 노출·hit-test 단언은 그대로 둔다.
+      const surface = el.closest('[role="dialog"]');
+      await Promise.all(surface.getAnimations().map(a => a.finished));
       const v = window.visualViewport;
       const r = el.getBoundingClientRect();
       return { scale: v?.scale ?? 1, width: v?.width ?? innerWidth, height: v?.height ?? innerHeight,
         left: r.left - (v?.offsetLeft ?? 0), right: r.right - (v?.offsetLeft ?? 0), top: r.top - (v?.offsetTop ?? 0), bottom: r.bottom - (v?.offsetTop ?? 0),
-        hit: el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)), overflow: document.documentElement.scrollWidth > innerWidth };
+        hit: el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)), overflow: document.documentElement.scrollWidth > innerWidth,
+        transform: getComputedStyle(surface).transform,
+        animations: surface.getAnimations().map(a => ({ name: a.animationName, state: a.playState, time: a.currentTime })) };
     });
     assert.equal(viewport.scale, 1, "완료 뒤 화면 배율 유지");
     assert.ok(viewport.left >= 0 && viewport.right <= viewport.width && viewport.top >= 0 && viewport.bottom <= viewport.height, `닫기가 viewport 안에 있다: ${JSON.stringify(viewport)}`);
@@ -228,7 +234,7 @@ function holdRotationHistory() {
   }
 }
 
-async function checkRotation(engine) {
+async function checkRotation(engine, holdRise = false) {
   const fixture = provider();
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 390, height: 900 }, {
     serviceWorkers: "block", route: ["**/api/v1/call", fixture.route], init: holdRotationHistory,
@@ -257,10 +263,29 @@ async function checkRotation(engine) {
     // 새로 그린 설정 탭은 인증 창 밑에 있어도 선택 상태를 보존해야 한다.
     const accountTab = page.getByRole("tab", { name: "계정", exact: true, includeHidden: true });
     assert.equal(await accountTab.getAttribute("aria-selected"), "true", "가로 회전은 계정 쪽을 바꾸지 않는다");
+    if (holdRise) await dialog.evaluate(el => {
+      // 회전으로 다시 생긴 실제 sheet-in을 붙잡아 인증 완료가 먼저 도착하게 한다.
+      window.__accountSheetRise = new Promise(resolve => el.addEventListener("animationstart", event => {
+        if (event.target !== el || event.animationName !== "sheet-in") return;
+        const animation = el.getAnimations().find(a => a.animationName === "sheet-in");
+        animation.pause(); animation.currentTime = 120;
+        resolve(animation);
+      }, { once: true }));
+    });
     await page.setViewportSize({ width: 390, height: 900 });
+    if (holdRise) await page.evaluate(async () => { await window.__accountSheetRise; });
     await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
     await dialog.getByRole("button", { name: "확인", exact: true }).click();
     await dialog.getByText("로그인 완료", { exact: true }).waitFor();
+    if (holdRise) {
+      const rising = await dialog.evaluate(async el => {
+        const animation = await window.__accountSheetRise;
+        const bottom = el.querySelector("footer button").getBoundingClientRect().bottom;
+        animation.play();
+        return { bottom, height: innerHeight };
+      });
+      assert.ok(rising.bottom > rising.height, `완료 문구가 있어도 sheet는 아직 이동 중: ${JSON.stringify(rising)}`);
+    }
     await closeCompleted(page, dialog, 390);
     await settings.getByTestId("settings-accounts").waitFor();
     assert.deepEqual(fixture.starts, ["claude"], "회전·닫기는 새 인증을 시작하지 않는다");
@@ -278,6 +303,8 @@ async function checkRotation(engine) {
 export default async function () {
   await step("휴대폰 Chromium 인증 창 회전·설정 기록 경합", async () => { await checkRotation(browser); });
   await step("휴대폰 WebKit 인증 창 회전·설정 기록 경합", async () => { const wk = await webkit.launch(); try { await checkRotation(wk); } finally { await wk.close(); } });
+  await step("휴대폰 Chromium 인증 완료가 sheet 이동보다 먼저 도착", async () => { await checkRotation(browser, true); });
+  await step("휴대폰 WebKit 인증 완료가 sheet 이동보다 먼저 도착", async () => { const wk = await webkit.launch(); try { await checkRotation(wk, true); } finally { await wk.close(); } });
   await step("PC Chromium 메뉴·설정 원격 인증", async () => { await check("chromium", browser, 1280); });
   await step("휴대폰 Chromium 메뉴·설정 원격 인증", async () => { await check("chromium", browser, 390); });
   await step("PC WebKit 메뉴·설정 원격 인증", async () => { const wk = await webkit.launch(); try { await check("webkit", wk, 1280); } finally { await wk.close(); } });
