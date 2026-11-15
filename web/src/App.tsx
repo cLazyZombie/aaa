@@ -71,6 +71,8 @@ import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs, type ChipAsk } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
+import { DesignPanel, useDesign } from "./DesignPanel";
+import { DesignView } from "./DesignView";
 import { IdeaView } from "./IdeaView";
 import { IdeasPanel, useIdeas } from "./IdeasPanel";
 import { useAutomations } from "./automationData";
@@ -313,7 +315,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|task|question|ask|automation|workspace|machine|idea)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask|automation|workspace|machine|idea|design)=(.+)$/.exec(location.hash);
   if (!m) return null;
   const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a", idea: "n" };
   return `${m[1]}:${normalizeAppTarget(decodeURIComponent(m[2]), prefixes[m[1]!] ?? "")}`;
@@ -1038,6 +1040,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (ideaShown) setIdeaAt(sel!.slice("idea:".length));
   }, [ideaShown, sel]);
+  // 기획 화면(t-1894): 사이드바 「기획」 트리가 고르고 본문은 문서 하나다(`design:<저장소>/<경로>`). 한 번 연 뒤에는 숨긴 채 그려 둔다
+  const designShown = sel?.startsWith("design:") === true;
+  const [designAt, setDesignAt] = useState<string | null>(designShown ? sel!.slice("design:".length) : null);
+  useEffect(() => {
+    if (designShown) setDesignAt(sel!.slice("design:".length));
+  }, [designShown, sel]);
   const automationShown = sel?.startsWith("automation:") === true;
   // 마지막으로 연 자동화(`automation:…`): 다른 화면에 있는 동안에도 본문은 그것을 숨긴 채 그려 둔다
   const [automationAt, setAutomationAt] = useState<string | null>(automationShown ? sel : null);
@@ -1322,6 +1330,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const ideaPanes = new Set(allThreads.flatMap((t) => (t.idea && t.pane ? [t.pane] : [])));
   const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
   const ideas = useIdeas(up);
+  const design = useDesign(up, panel === "design" || designShown);
   // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
@@ -1375,6 +1384,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (ideaShown && panelRef.current !== "ideas") setPanel("ideas");
   }, [ideaShown]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (designShown && panelRef.current !== "design") setPanel("design");
+  }, [designShown]); // eslint-disable-line react-hooks/exhaustive-deps
   // 자동화 주소로 들어오면 사이드바도 「자동화」 카드 목록이다
   useEffect(() => {
     if (automationShown && panelRef.current !== "automations") setPanel("automations");
@@ -1680,6 +1692,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
+          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }} />}
           ideas={<IdeasPanel ideas={ideas} selected={ideaShown ? ideaAt : null} canControl={canControl} onOpen={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
@@ -1732,7 +1745,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown, ideaShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown, ideaShown, designShown]}>
         {machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} page machine={selectedMachine} onClose={closeMachineInfo} />}
         {searchOpened && <RecordSearch shown={searchShown}/>}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
@@ -1808,6 +1821,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               if (r.kind === "library") openFile({ path: doc.path, pane: null, view: r.base });
             }}
           />
+        )}
+        {designAt !== null && (
+          <DesignView shown={designShown} target={designAt} repos={design.repos} onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
         )}
         {ideaAt !== null && (
           <IdeaView
@@ -1905,7 +1921,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
           />);
         })}
-        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown || ideaShown ? null : currentThread ? (
+        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown || ideaShown || designShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}

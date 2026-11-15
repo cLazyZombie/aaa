@@ -169,6 +169,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
         .route("/api/v1/projects/{project}/ideas/{idea}/files", post(idea_file))
         .route("/api/v1/projects/{project}/ideas/{idea}/files/{name}", get(idea_file_get))
+        .route("/api/v1/projects/{project}/design/{repo}/{*path}", get(design_file_get))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
         .route("/api/v1/projects/{project}/requests/{item}/{hash}/{*path}", get(request_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
@@ -792,6 +793,53 @@ async fn idea_file_get(
             .unwrap(),
         Err(e) => error_response(e),
     }
+}
+
+#[derive(Deserialize)]
+struct DesignFileQuery {
+    /// 문서를 읽은 commit. 같은 commit의 그림은 바뀌지 않아 오래 둔다
+    c: Option<String>,
+}
+
+/// 기획 문서 안 그림·영상(보기 권한도, t-1894). repo 머신 agent가 그 commit의 git 객체에서 읽는다. sandbox CSP로 보내 SVG·HTML이
+/// 앱 cookie·API에 닿지 못하게 한다
+async fn design_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, repo, path)): Path<(String, String, String)>,
+    Query(q): Query<DesignFileQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let commit = q.c.filter(|c| aaa_common::git_watch::valid_sha(c));
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let read = match host.design_file_read(&project, &repo, &path, commit.as_deref(), range).await {
+        Ok(read) => read,
+        Err(e) => return error_response(e),
+    };
+    let res = Response::builder()
+        .header(header::CONTENT_TYPE, crate::design::mime(&path))
+        .header(
+            header::CACHE_CONTROL,
+            if commit.is_some() { "private, max-age=31536000, immutable" } else { "private, no-cache" },
+        )
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header("x-content-type-options", "nosniff")
+        .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
+        .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
+    match read {
+        crate::design::DesignBytes::Whole(bytes) => res.body(Body::from(bytes)),
+        crate::design::DesignBytes::Part { bytes, start, end, total } => res
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+            .body(Body::from(bytes)),
+        crate::design::DesignBytes::Unsatisfiable { total } => res
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+            .body(Body::empty()),
+    }
+    .unwrap()
 }
 
 /// task 첨부 파일(보기 권한도). 이름이 내용 hash라 바뀌지 않아 오래 둔다. 올린 HTML은 결과물처럼 sandbox(opaque origin)로 보내

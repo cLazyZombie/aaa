@@ -1122,6 +1122,29 @@ pub enum AgentRequest {
         base: Option<String>,
         query: crate::DiffQuery,
     },
+    /// design.v1을 알린 repo 머신 agent만: 저장소(`repo`, main checkout)의 기획 폴더 `folder` 안 Markdown 목록. origin을 받은 뒤
+    /// (1분에 한 번) origin 기본 branch commit의 git 객체에서 읽는다. 작업 파일·index·branch는 바꾸지 않는다
+    DesignTree {
+        repo: String,
+        folder: String,
+    },
+    /// design.v1: 기획 폴더 안 문서 글 하나. `commit`이 없으면 가지고 있는 origin 기본 branch(fetch하지 않는다)
+    DesignRead {
+        repo: String,
+        folder: String,
+        #[serde(default)]
+        commit: Option<String>,
+        path: String,
+    },
+    /// design.v1: 기획 폴더 안 파일(그림·영상)의 한 조각. 답은 `DesignChunk`다
+    DesignFile {
+        repo: String,
+        folder: String,
+        commit: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    },
     /// work_root.manage.v1을 알린 agent만: 그 머신 작업 root 보기·점검·전환(관리 GUI W5c, `aaa work-root`와 같다)
     WorkRoot {
         action: crate::WorkRootOp,
@@ -1227,6 +1250,20 @@ pub enum AgentResponse {
     FileChunk {
         data: B64,
         eof: bool,
+    },
+    /// design.v1 `DesignTree`의 답
+    DesignTree(crate::DesignTree),
+    /// design.v1 `DesignRead`의 답
+    DesignText {
+        text: String,
+        blob: String,
+        commit: String,
+        committed_ms: u64,
+    },
+    /// design.v1 `DesignFile`의 답: 조각과 파일 전체 크기
+    DesignChunk {
+        data: B64,
+        total: u64,
     },
     Cleanup(Cleanup),
     CleanupAbsent {
@@ -2953,6 +2990,20 @@ pub enum FrontRequest {
         #[ts(optional)]
         search: Option<crate::TaskHistorySearch>,
     },
+    /// 기획 트리(FRONT_API 1.170, 보기 권한): 프로젝트 저장소마다 기획 폴더의 문서 목록. 기획 폴더를 정하지 않은 저장소도 싣는다
+    DesignTree {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// 기획 문서 하나(FRONT_API 1.170, 보기 권한). `path`는 저장소 기준 경로이고 기획 폴더 안이어야 한다
+    DesignRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        path: String,
+    },
     /// 아이디어 목록(FRONT_API 1.147, 보기 권한). 다듬는 중을 먼저, 그 안에서는 최근에 고친 것부터
     IdeaList {
         #[serde(default)]
@@ -3820,6 +3871,8 @@ impl FrontRequest {
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
+            | FrontRequest::DesignTree { project }
+            | FrontRequest::DesignRead { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
             | FrontRequest::IdeaSeen { project, .. }
@@ -3969,6 +4022,8 @@ impl FrontRequest {
                 | FrontRequest::TaskQueue { action: crate::QueueOp::List, .. }
                 | FrontRequest::TaskArchive { restore: None, .. }
                 | FrontRequest::TaskLog { .. }
+                | FrontRequest::DesignTree { .. }
+                | FrontRequest::DesignRead { .. }
                 | FrontRequest::IdeaList { .. }
                 | FrontRequest::IdeaRead { .. }
                 | FrontRequest::IdeaSeen { .. }
@@ -4179,6 +4234,14 @@ pub enum FrontResponse {
     },
     /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
+    /// `design_tree`의 답(FRONT_API 1.170)
+    DesignTree {
+        repos: Vec<crate::DesignRepoView>,
+    },
+    /// `design_read`의 답(FRONT_API 1.170)
+    DesignDoc {
+        doc: crate::DesignDoc,
+    },
     /// `idea_list`의 답(FRONT_API 1.147)
     Ideas {
         ideas: Vec<crate::IdeaSummary>,

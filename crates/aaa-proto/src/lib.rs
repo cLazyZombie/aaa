@@ -22,6 +22,8 @@ pub use ci::*;
 pub use git_watch::*;
 pub use image::*;
 pub mod deploy;
+pub mod design;
+pub use design::*;
 pub mod diff;
 pub use diff::*;
 pub mod input;
@@ -168,6 +170,10 @@ pub fn typescript_bindings() -> String {
         TaskView::decl(&cfg),
         TaskListView::decl(&cfg),
         TaskThread::decl(&cfg),
+        DesignDocEntry::decl(&cfg),
+        DesignTree::decl(&cfg),
+        DesignRepoView::decl(&cfg),
+        DesignDoc::decl(&cfg),
         IdeaStatus::decl(&cfg),
         IdeaAuthor::decl(&cfg),
         IdeaSummary::decl(&cfg),

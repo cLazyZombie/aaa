@@ -18,6 +18,14 @@ pub(crate) struct Repo {
     pub machine: Option<String>,
 }
 
+/// 저장소 항목의 `design`(t-1894): 그 저장소의 기획 폴더(저장소 기준 경로). 같은 저장소가 여러 머신에 있으면 이 값을 단 항목의
+/// 머신에서 읽는다
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DesignFolder {
+    pub repo: Repo,
+    pub folder: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectSettings {
     /// 프로젝트가 무엇을 위한 것인가(brief 머리에 들어간다)
@@ -43,6 +51,8 @@ pub(crate) struct ProjectSettings {
     /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
     /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
     pub nudge: bool,
+    /// 기획 폴더를 정한 저장소 항목(`[[workspaces]]`의 `design`, 잘못된 경로는 없는 것)
+    pub designs: Vec<DesignFolder>,
 }
 
 impl Default for ProjectSettings {
@@ -58,6 +68,7 @@ impl Default for ProjectSettings {
             trust_screens: None,
             mute: false,
             nudge: true,
+            designs: Vec::new(),
         }
     }
 }
@@ -78,6 +89,11 @@ impl ProjectSettings {
         Self::from_table(&table)
     }
 
+    #[cfg(test)]
+    pub(crate) fn load_str(text: &str) -> ProjectSettings {
+        Self::from_table(&text.parse().unwrap())
+    }
+
     fn from_table(t: &toml::Table) -> ProjectSettings {
         let d = ProjectSettings::default();
         let s = |k: &str| t.get(k).and_then(|v| v.as_str()).map(str::to_string);
@@ -96,7 +112,7 @@ impl ProjectSettings {
         let start_threads = s("start_threads").filter(|v| matches!(v.as_str(), "propose" | "auto"));
         let trust_screens = s("trust_screens")
             .filter(|v| matches!(v.as_str(), crate::trust_screen::USER | crate::trust_screen::COORDINATOR));
-        let repos = t
+        let entries: Vec<(Repo, Option<String>)> = t
             .get("workspaces")
             .or_else(|| t.get("repos"))
             .and_then(|v| v.as_array())
@@ -106,11 +122,17 @@ impl ProjectSettings {
                     .filter_map(|r| {
                         let path = r.get("path")?.as_str()?.trim().to_string();
                         let machine = r.get("machine").and_then(|m| m.as_str()).map(str::to_string);
-                        (!path.is_empty()).then_some(Repo { path, machine })
+                        let design = r.get("design").and_then(|d| d.as_str()).and_then(aaa_proto::design_clean_path);
+                        (!path.is_empty()).then_some((Repo { path, machine }, design))
                     })
                     .collect()
             })
             .unwrap_or_default();
+        let designs = entries
+            .iter()
+            .filter_map(|(repo, design)| design.clone().map(|folder| DesignFolder { repo: repo.clone(), folder }))
+            .collect();
+        let repos = entries.into_iter().map(|(repo, _)| repo).collect();
         ProjectSettings {
             goal: s("goal").unwrap_or_default(),
             repos,
@@ -122,6 +144,7 @@ impl ProjectSettings {
             trust_screens,
             mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
             nudge: t.get("nudge").and_then(|v| v.as_bool()).unwrap_or(d.nudge),
+            designs,
         }
     }
 }
@@ -466,6 +489,25 @@ mod tests {
         assert!(t.contains("[[repos]]\npath = \"/b\"") && !t.contains("workspaces"), "{t}");
         drop(h);
         std::fs::remove_dir_all(&state).unwrap();
+    }
+
+    /// 기획 폴더(`design`, t-1894)는 그 저장소 항목의 칸이다: 저장소를 더하고·빼고·고쳐도 남고, 잘못된 경로는 없는 것이다
+    #[test]
+    fn design_folder_survives_repo_edits() {
+        let text = "[[workspaces]]\npath = \"/work/app\"\ndesign = \"./docs/plan/\"\n\n[[workspaces]]\npath = \"/work/lib\"\ndesign = \"/etc\"\n";
+        let t = set_in_table(text, "workspaces.add", "/work/web@mac-a", "workspaces").unwrap();
+        let t = set_in_table(&t, "workspaces.remove", "/work/lib", "workspaces").unwrap();
+        let t = replace_repo_in(&t, "/work/app", "/work/app@mac-b", "workspaces").unwrap();
+        let s = ProjectSettings::from_table(&t.parse().unwrap());
+        assert_eq!(
+            s.designs,
+            vec![DesignFolder {
+                repo: Repo { path: "/work/app".into(), machine: Some("mac-b".into()) },
+                folder: "docs/plan".into()
+            }],
+            "{t}"
+        );
+        assert_eq!(ProjectSettings::load_str(text).designs.len(), 1, "절대 경로 design은 없는 것");
     }
 
     /// 웹 「저장소」 페이지의 고치기(관리 GUI W4): 한 번에 제자리에서 바꾸고(차례·다른 칸 그대로), 설정 읽기가 그것을 보인다
