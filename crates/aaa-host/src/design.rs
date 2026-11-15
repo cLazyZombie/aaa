@@ -313,17 +313,17 @@ mod tests {
     #[test]
     fn targets_pick_the_entry_with_design_and_keep_order() {
         let s = settings(
-            "[[workspaces]]\npath = \"/w/rc\"\n\n[[workspaces]]\npath = \"/v/pt\"\nmachine = \"mac-a\"\n\n\
-             [[workspaces]]\npath = \"/x/pt\"\nmachine = \"mac-b\"\ndesign = \"./docs/\"\n\n\
-             [[workspaces]]\npath = \"/x/rc\"\nmachine = \"mac-b\"\n\n[[workspaces]]\npath = \"/y/aaa\"\ndesign = \"../x\"\n",
+            "[[workspaces]]\npath = \"/w/lib\"\n\n[[workspaces]]\npath = \"/v/app\"\nmachine = \"mac-a\"\n\n\
+             [[workspaces]]\npath = \"/x/app\"\nmachine = \"mac-b\"\ndesign = \"./docs/\"\n\n\
+             [[workspaces]]\npath = \"/x/lib\"\nmachine = \"mac-b\"\n\n[[workspaces]]\npath = \"/y/tool\"\ndesign = \"../x\"\n",
         );
         let got: Vec<_> = targets(&s).into_iter().map(|t| (t.name, t.path, t.machine, t.folder)).collect::<Vec<_>>();
         assert_eq!(
             got,
             [
-                ("rc".to_string(), "/w/rc".to_string(), None, None),
-                ("pt".into(), "/x/pt".into(), Some("mac-b".into()), Some("docs".into())),
-                ("aaa".into(), "/y/aaa".into(), None, None),
+                ("lib".to_string(), "/w/lib".to_string(), None, None),
+                ("app".into(), "/x/app".into(), Some("mac-b".into()), Some("docs".into())),
+                ("tool".into(), "/y/tool".into(), None, None),
             ],
             "design 단 항목이 이기고, 잘못된 design은 없는 것"
         );
