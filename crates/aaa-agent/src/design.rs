@@ -402,7 +402,11 @@ async fn list(
     docs.truncate(DESIGN_MAX_DOCS);
     let titles = titles(top, &docs).await?;
     // 표지 세기는 따로 짧은 시한이다: 못 세면 수를 모른다고 알리고 트리는 그대로 보인다
-    let counted = if count { tokio::time::timeout(MARKS_TIMEOUT, marks(top, &commit, folder, &docs)).await.ok().flatten() } else { None };
+    let counted = if count {
+        tokio::time::timeout(MARKS_TIMEOUT, marks(top, &commit, folder, &docs)).await.ok().flatten()
+    } else {
+        None
+    };
     let marked = counted.is_some();
     let mut marks = counted.unwrap_or_default();
     let docs = docs
@@ -782,8 +786,11 @@ pub(crate) mod tests {
         // origin에 올리는 쪽은 lab의 작업 저장소다(clone은 옛 판에 머문다)
         let work = t.path().join("work");
         std::fs::create_dir_all(work.join("docs/bosses")).unwrap();
-        std::fs::write(work.join("docs/bosses/README.md"), "# 보스\n\n> [!계획] d-0003\n> 해골 왕\n\n> [!미정]\n> 3페이즈\n")
-            .unwrap();
+        std::fs::write(
+            work.join("docs/bosses/README.md"),
+            "# 보스\n\n> [!계획] d-0003\n> 해골 왕\n\n> [!미정]\n> 3페이즈\n",
+        )
+        .unwrap();
         std::fs::write(work.join("docs/notation.md"), "# 표기\n\n```\n> [!계획] d-0001\n```\n").unwrap();
         std::fs::write(work.join("README.md"), "# 밖\n\n> [!계획]\n> 밖은 세지 않는다\n").unwrap();
         sh(&work, &["add", "."]).await;
