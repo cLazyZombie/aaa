@@ -662,8 +662,9 @@ impl Host {
         let (target, mid) = self.design_target(project, repo)?;
         // 그 branch로 옮기는 옛 아이디어(t-1894 4단계): 들어갔으면 「옮김」, 아니면 다시 「다듬는 중」. branch를 지우기 전에 보고,
         // 옮기기(아이디어 잠금 → branch 잠금)와 반대 차례로 잡지 않게 branch 잠금 밖에서 한다
+        // 판정은 agent 읽기·착지 확인을 품어 크다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
         for idea in self.ideas_moving_to(project, &target.name, slug) {
-            self.idea_move_settle(project, &idea, &target.name, slug, true).await;
+            Box::pin(self.idea_move_settle(project, &idea, &target.name, slug, true)).await;
         }
         // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
