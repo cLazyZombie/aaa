@@ -470,7 +470,9 @@ impl Host {
             }
             // 기다리기만 하고 바로 놓는다: thread_resolve가 스스로 잡는다
             drop(tokio::time::timeout_at(deadline, lock.clone().lock_owned()).await);
-            match self.thread_resolve(project, id, ResolveOpts::default(), ResolveWhy::Manual, actor).await {
+            // thread 끝내기 future(약 16KiB)는 heap에 둔다: 이 길이 버리기 요청(공용 dispatcher의 `call_design`)에 있어 그대로
+            // 품으면 모든 요청의 poll 스택이 함께 커진다(Windows 시험 스택 넘침, t-1894)
+            match Box::pin(self.thread_resolve(project, id, ResolveOpts::default(), ResolveWhy::Manual, actor)).await {
                 Ok(_) => return Ok(()),
                 Err(e) if lock.try_lock().is_err() && tokio::time::Instant::now() < deadline => {
                     tracing::info!(

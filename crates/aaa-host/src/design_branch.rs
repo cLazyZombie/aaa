@@ -204,6 +204,12 @@ impl Host {
                     "thread 세션은 기획 branch에 쓰지 않는다(기획 대화 thread는 자기 branch에만 저장한다)",
                 ));
             }
+            if session.ends_with("@unverified") {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "이 CLI를 그 thread pane 안의 프로세스로 확인하지 못했다(알린 세션 ID만으로는 thread로 쓰지 않는다)",
+                ));
+            }
             if actor.starts_with("worker:")
                 || self.pane_view_of(session, DeviceRole::Local).and_then(|p| p.role)
                     == Some(aaa_proto::Role::Coordinator)
