@@ -1,4 +1,4 @@
-/* 아이디어 화면(t-1260, 시안 r-4673): 사이드바 목록 · 노트 · 대화. 넓은 창은 노트와 대화를 나란히, 휴대폰은 한 칸씩 */
+/* 옛 아이디어 화면(t-1260, 읽기 전용 t-1894 4단계): 노트 · 대화. 넓은 창은 노트와 대화를 나란히, 휴대폰은 한 칸씩 */
 .idea-screen { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
 .idea-screen.is-hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
 .idea-screen > .thread-view { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding-left: 0; padding-right: 0; }
@@ -24,85 +24,18 @@
 
 .idea-note-body { position: relative; padding: var(--space-5) var(--space-6) var(--space-8); max-width: 860px; width: 100%; margin: 0 auto; }
 .idea-note-text img, .idea-note-text video { max-width: 100%; border-radius: var(--radius-md); }
-.idea-media-note { position: absolute; z-index: 2; }
-.idea-media-note .quote-note { width: min(320px, 70vw); background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
-/* 그림 메뉴(t-1575): 「의견」 옆 「⋯」, 아래로 펼치는 목록. 노트 칸 기준 위치는 .idea-media-note가 잡는다 */
-.idea-media-buttons { display: flex; gap: var(--space-1); justify-content: flex-end; }
-.idea-media-menu { margin-top: var(--space-1); min-width: 180px; max-width: min(320px, 80vw); display: flex; flex-direction: column; background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-1); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
-.idea-media-menu > button, .idea-media-menu > a { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); padding: var(--space-2); min-height: 36px; border: 0; background: none; color: inherit; text-align: left; text-decoration: none; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
-.idea-media-menu > button:hover:not(:disabled), .idea-media-menu > a:hover { background: var(--bg-hover); }
-.idea-media-menu > button:disabled { opacity: 0.45; cursor: default; }
-.idea-media-menu > button.danger { color: var(--danger-text); }
-.idea-media-menu svg { width: 14px; height: 14px; flex: none; }
-.idea-media-source { margin: 0; padding: var(--space-1) var(--space-2); font-size: var(--fs-xs); overflow-wrap: anywhere; }
-.idea-media-alt { display: flex; gap: var(--space-1); padding: var(--space-1); }
-.idea-media-alt .input { flex: 1 1 auto; min-width: 0; }
+
 .idea-note-text .markdown-caption { display: block; margin-top: var(--space-1); color: var(--text-dim); font-size: var(--fs-sm); }
-/* 올리는 중·실패한 파일(t-1575) */
-.idea-uploads { list-style: none; margin: var(--space-2) auto 0; padding: 0 var(--space-6); max-width: 860px; width: 100%; display: flex; flex-direction: column; gap: var(--space-1); }
-.idea-uploads li { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); min-width: 0; }
-.idea-uploads li[data-state="failed"] .muted { color: var(--danger-text); }
-.idea-upload-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
-.idea-editor-foot .i { width: 14px; height: 14px; }
-
-.idea-editor { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); min-height: 0; }
-.idea-editor-text { flex: 1 1 auto; min-height: 16em; resize: none; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; }
-.idea-editor-foot { display: flex; align-items: center; gap: var(--space-2); }
-.idea-editor-foot .spacer, .idea-tray-head .spacer, .idea-handoff .spacer { flex: 1 1 auto; }
-
 .idea-chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .idea-chat-head { flex: none; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); border-bottom: var(--hairline) solid var(--border); }
 .idea-thread-chip { color: var(--text-dim); }
-.idea-model { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
-.idea-model-name, .idea-model-select { font: inherit; color: var(--accent); border: var(--hairline) solid var(--accent); border-radius: 999px; padding: 0 var(--space-2); background: transparent; }
-.idea-model-select { max-width: 16em; cursor: pointer; }
-.idea-model-select:disabled { cursor: progress; opacity: .6; }
-.idea-model-from { color: var(--text-dim); }
+
 .idea-chat-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .idea-chat-idle { flex: 1 1 auto; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
-.idea-chat-idle .chat-bubble { align-self: flex-end; white-space: pre-wrap; max-width: 85%; }
-.idea-chat-wait { flex: none; margin: 0; padding: var(--space-1) var(--space-3); font-size: var(--fs-xs); color: var(--text-dim); }
-
-.idea-tray { flex: none; margin: 0 var(--space-3) var(--space-2); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elevated); max-height: 40%; display: flex; flex-direction: column; min-height: 0; }
-.idea-tray-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); }
-.idea-tray-list { list-style: none; margin: 0; padding: 0 var(--space-2) var(--space-2); overflow: auto; display: flex; flex-direction: column; gap: var(--space-1); }
-.idea-tray-item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-6) var(--space-2) var(--space-2); border-radius: var(--radius-md); background: var(--bg); font-size: var(--fs-sm); }
-.idea-tray-item > button { position: absolute; top: var(--space-1); right: var(--space-1); }
-.idea-tray-where { font-size: var(--fs-xs); color: var(--text-dim); }
-.idea-tray-comment { font-weight: var(--fw-semibold); }
 
 .idea-tabs { display: inline-flex; flex: none; border: var(--hairline) solid var(--border); border-radius: var(--radius-pill); padding: 2px; }
 .idea-tabs button { position: relative; border: 0; background: none; padding: 4px 12px; border-radius: var(--radius-pill); font-size: var(--fs-sm); color: var(--text-dim); min-height: 32px; }
 .idea-tabs button[aria-selected="true"] { background: var(--bg-hover); color: var(--text-strong); }
-.idea-badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--primary); color: var(--primary-text); font-size: 11px; line-height: 18px; text-align: center; }
-
-.idea-handoff { width: min(640px, 100%); }
-.idea-handoff .modal-body { display: flex; flex-direction: column; gap: var(--space-3); max-height: 70vh; overflow: auto; }
-.idea-draft { display: flex; flex-direction: column; gap: var(--space-2); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); margin: 0; }
-.idea-draft label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-dim); }
-.idea-draft textarea { resize: vertical; font-size: var(--fs-sm); }
-.idea-handoff .modal-footer { display: flex; align-items: center; gap: var(--space-2); }
-
-/* 사이드바 목록: 줄은 thread 줄(herdr/Sidebar.css의 .workspace-header·.sidebar-mark·두 줄 칸)을 그대로 쓰고 여기서는 더하는 것만 둔다.
-   상태 색은 본문 머리 칩(.idea-chip)과 같은 뜻: 다듬는 중 accent, 완료 done. 완료 줄은 끝난 pane처럼 이름·표지를 흐린다 */
-.ideas-sidebar { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
-.ideas-panel { display: flex; flex-direction: column; flex: 1 1 0; padding: 0 var(--side-gutter) var(--space-2); overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
-.ideas-panel > * { flex-shrink: 0; }
-.sidebar-shell button.sidebar-row-action.ideas-add { display: flex; align-items: center; justify-content: flex-start; width: 100%; padding: 0; border-radius: var(--radius-md); color: var(--text-dim); font-size: var(--fs-sm); }
-@media (hover: hover) { .sidebar-shell button.sidebar-row-action.ideas-add:hover { background: var(--side-hover); color: var(--text); } }
-.ideas-add .sidebar-mark { color: inherit; }
-.ideas-new { display: flex; gap: var(--space-2); width: 100%; padding: var(--space-1) 0; }
-.ideas-new .input { flex: 1 1 auto; min-width: 0; }
-.ideas-group-head { display: flex; align-items: flex-end; gap: var(--space-2); min-height: 22px; margin: var(--space-2) 0 0; padding: 0 0 2px var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-regular); letter-spacing: 0.02em; }
-.ideas-group-count { font-variant-numeric: tabular-nums; opacity: 0.8; }
-.ideas-panel .workspace-header { min-height: var(--side-row-2); }
-.ideas-panel .idea-item.is-open .sidebar-mark { color: var(--accent-strong); }
-.idea-item.is-open .idea-state { color: var(--accent-strong); }
-.idea-item.is-done .idea-state { color: var(--done); }
-.idea-item.is-done:not(.is-selected) .workspace-name,
-.idea-item.is-done:not(.is-selected) .sidebar-mark { color: var(--text-dim); }
-.idea-when { color: var(--text-dim); white-space: pre; }
-.idea-when::before { content: " · "; }
 
 @media (max-width: 768px) {
   .idea-note-pane { flex: 1 1 auto; }

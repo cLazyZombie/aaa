@@ -4242,6 +4242,9 @@ impl FrontRequest {
                 | FrontRequest::IdeaList { .. }
                 | FrontRequest::IdeaRead { .. }
                 | FrontRequest::IdeaSeen { .. }
+                // 옛 아이디어 thread의 노트 저장(보기 권한): host가 「기획으로 옮겼다」 까닭으로 거절한다(t-1894 4단계)
+                | FrontRequest::IdeaSave { .. }
+                | FrontRequest::IdeaAttach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }

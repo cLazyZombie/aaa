@@ -295,8 +295,6 @@ export interface SidebarProps {
   onAsks?: () => void;
   /** 「기획」 트리(App이 그린다, t-1894) */
   design?: ReactNode;
-  /** 「아이디어」 목록(App이 그린다, t-1260) */
-  ideas?: ReactNode;
   /** 특수 패널: 임무·사후 평가자(App이 읽는다) */
   /** 임무 동작 뒤 다시 읽기 */
 }
@@ -351,9 +349,6 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <div {...panelProps("design", props.panel)} className="sidebar-panel design-sidebar">
         {props.panel === "design" && props.design}
-      </div>
-      <div {...panelProps("ideas", props.panel)} className="sidebar-panel ideas-sidebar">
-        {props.panel === "ideas" && props.ideas}
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
         {props.panel === "automations" && <AutomationPanel data={props.automations} canControl={props.canControl} threads={props.threads} selected={props.automationSelected} onOpen={props.onAutomation} />}

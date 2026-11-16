@@ -1,35 +1,12 @@
-// 아이디어 화면(t-1260): 휴대폰 페이지 쓸기(결정 24), 고친 노트 머리(결정 16), 노트 인용 꼴(결정 9·17), 노트 그림 주소의 거름.
+// 옛 아이디어 화면(t-1260, 읽기 전용 t-1894 4단계): 휴대폰 페이지 쓸기(결정 24), 노트 인용 꼴(결정 9·17), 노트 그림 주소의 거름,
+// 옮기기 상태와 옮긴 곳.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { draftRepo, ideaFileUrl, ideaLinkTarget, ideaModel, ideaModelChoices, ideaSwipe, withEditNote } from "../src/ideasModel.ts";
+import { ideaFileUrl, ideaLegacy, ideaLinkTarget, ideaModelChoices, ideaSwipe, movedTarget } from "../src/ideasModel.ts";
 import { formatNotes } from "../src/reviewNoteStore.ts";
 
 describe("아이디어", () => {
-  // 할 일로 넘기기 저장소 기본값(t-1616): 제목, 없으면 노트에 낱말로 나온 저장소 이름. 둘 이상이면 정하지 않음
-  it("넘기기 저장소 기본값", () => {
-    const repos = ["rc", "no2-engine", "aaa", "pt", "rc-unity"];
-    const of = (title, text = "") => draftRepo({ idea: { title }, text }, repos);
-    assert.equal(of("pt 보스와 보스 방"), "pt");
-    assert.equal(of("PT에서 보스 방"), "pt", "대소문자·한글 조사");
-    assert.equal(of("rc-unity 저장 고치기"), "rc-unity", "rc가 아니다");
-    assert.equal(of("rc와 pt 함께"), null, "둘이면 짐작하지 않는다");
-    assert.equal(of("보스 방", "## 결정\n- pt 탑에 넣는다"), "pt", "제목에 없으면 노트");
-    assert.equal(of("aaa 화면", "rc처럼 한다"), "aaa", "제목이 먼저");
-    assert.equal(of("output 정리", "script 고침"), null, "낱말 속 글자는 아니다");
-    assert.equal(of("pt 보스"), "pt");
-    assert.equal(of("pt 보스 방."), "pt", "문장 끝 점");
-    assert.equal(draftRepo({ idea: { title: "app.v2 고치기" }, text: "" }, ["app", "app.v2"]), "app.v2", "점 든 긴 이름");
-    assert.equal(draftRepo({ idea: { title: "pt 보스" }, text: "" }, []), null, "목록이 오기 전");
-  });
 
-  // 진행 모델(t-1581): 바꾼 뒤 다음 말 전까지는 열린 앞 thread의 모델을 함께 보이고, 끝난 thread·옛 host는 보이지 않는다
-  it("진행 모델 칩", () => {
-    assert.equal(ideaModel(undefined, null), null, "옛 host");
-    assert.deepEqual(ideaModel("opus-high", null), { model: "opus-high", from: null });
-    assert.deepEqual(ideaModel("opus-high", { profile: "opus-high", status: "open" }), { model: "opus-high", from: null });
-    assert.deepEqual(ideaModel("sonnet-high", { profile: "opus-high", status: "parked" }), { model: "sonnet-high", from: "opus-high" });
-    assert.deepEqual(ideaModel("sonnet-high", { profile: "opus-high", status: "resolved" }), { model: "sonnet-high", from: null });
-  });
 
   // 고르기 목록은 host 머신이 맡을 수 있는 profile뿐이고, 지금 값은 목록에 없어도 남는다
   it("진행 모델 목록", () => {
@@ -51,14 +28,6 @@ describe("아이디어", () => {
     assert.equal(ideaSwipe("note", 200, -4, 3), "pending");
   });
 
-  // 사람이 고친 노트는 다음 말 앞에 한 번만 붙는다. harness 명령에는 붙이지 않는다
-  it("고친 노트 머리", () => {
-    const note = { edited: "판 9 「미정」 1줄 더함" };
-    assert.equal(withEditNote(note, "보내기 전에 보여 줘"), "(노트 고침: 판 9 「미정」 1줄 더함)\n보내기 전에 보여 줘");
-    assert.equal(withEditNote(note, "(노트 고침: x)\n말"), "(노트 고침: x)\n말");
-    assert.equal(withEditNote(note, "/compact"), "/compact");
-    assert.equal(withEditNote({ edited: null }, "말"), "말");
-  });
 
   // thread가 받는 인용: 아이디어·절·고른 글(그림·영상은 통째로 이름과 설명)과 의견
   it("노트 인용 꼴", () => {
@@ -81,5 +50,28 @@ describe("아이디어", () => {
     }
     assert.equal(ideaLinkTarget("ideas/n-0001"), "n-0001");
     assert.equal(ideaLinkTarget("ideas/n-0001/note.md"), null);
+  });
+  // 4단계: 옮긴 곳이 상태를 정한다(완료보다 앞선다)
+  it("옛 아이디어 상태", () => {
+    const mv = (done) => ({ repo: "pt", branch: "idea-n-0003", path: "docs/camp/", done, at_ms: 0, rev: 2, branch_ms: 1 });
+    assert.deepEqual(ideaLegacy({ status: "open" }), { kind: "open", label: "다듬는 중" });
+    assert.equal(ideaLegacy({ status: "done" }).kind, "done");
+    assert.equal(ideaLegacy({ status: "open", moved: mv(false) }).label, "옮기는 중 → pt · design/idea-n-0003");
+    assert.equal(ideaLegacy({ status: "open", moved: mv(true) }).label, "옮김 → pt docs/camp/");
+  });
+
+  // 옮긴 곳 열기: 문서면 그대로, 폴더면 옮기는 branch가 고친 첫 문서 → 그 폴더 README → 그 폴더 첫 문서 → 기획 폴더 README
+  it("옮긴 곳 문서", () => {
+    const repo = (changed, docs) => ({
+      repo: "pt", folder: "docs", tree: { docs: docs.map((path) => ({ path })) },
+      branches: [{ slug: "idea-n-0003", changed: changed.map(([path, status]) => ({ path, status })) }],
+    });
+    const m = (path, done = false) => ({ repo: "pt", branch: "idea-n-0003", path, done, at_ms: 0, rev: 1, branch_ms: 1 });
+    assert.equal(movedTarget(m("docs/camp/board.md", true), []), "pt/docs/camp/board.md");
+    const r = repo([["docs/camp/x.png", "A"], ["docs/camp/board.md", "A"], ["docs/old.md", "D"]], ["docs/README.md", "docs/camp/a.md", "docs/camp/README.md"]);
+    assert.equal(movedTarget(m("docs/camp/"), [r]), "pt/docs/camp/board.md");
+    assert.equal(movedTarget(m("docs/camp/", true), [r]), "pt/docs/camp/README.md", "옮긴 뒤에는 branch를 보지 않는다");
+    assert.equal(movedTarget(m("docs/camp/"), [repo([], ["docs/camp/a.md"])]), "pt/docs/camp/a.md");
+    assert.equal(movedTarget(m("docs/new/"), [repo([], ["docs/camp/a.md"])]), "pt/docs/README.md");
   });
 });

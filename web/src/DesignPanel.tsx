@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, splitTarget, stem, type DesignNode } from "./designModel";
 import type { DesignBranchView, DesignRepoView, IdeaSummary } from "./gen/proto";
-import { ideaLegacy } from "./IdeaMove";
+import { ideaLegacy } from "./ideasModel";
 import { onRowKey } from "./Sidebar";
 
 export type Design = { repos: DesignRepoView[] | null; error: string | null; loading: boolean; reload: () => void };

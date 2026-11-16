@@ -22,7 +22,7 @@ use crate::{Host, err};
 /// 대화 말에 싣는 노트 본문 상한(바이트, 대화 말 상한 100,000 안). 넘으면 줄 경계에서 자르고 `aaa idea show`로 읽게 한다
 const BODY_MAX: usize = 48 * 1024;
 /// 같은 아이디어의 branch를 다시 보는 간격(ticker마다 agent에 묻지 않는다)
-const CHECK_EVERY_MS: u64 = 60_000;
+const CHECK_EVERY_MS: u64 = 20_000;
 const TREE_WAIT: Duration = Duration::from_secs(120);
 
 /// 옮기는 법(확정 계획 §6의 「구현」 칸 바꾸기)
@@ -155,12 +155,13 @@ impl Host {
         let text = f.text(None)?;
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
+        // 위치는 기획 폴더 기준(비우면 기획 폴더)이고 저장소 기준 폴더로 바꿔 둔다. 문서 경로처럼 검사한다
         let place = place.trim().trim_matches('/');
-        // 위치는 기획 폴더 안(비우면 기획 폴더). 문서 경로처럼 검사한다
+        let base = folder.trim_end_matches('/');
         let place_path = if place.is_empty() {
-            folder.trim_end_matches('/').to_string()
+            base.to_string()
         } else {
-            let doc = crate::design::checked_path(&folder, &format!("{place}/x.md"))?;
+            let doc = crate::design::checked_path(&folder, &format!("{base}/{place}/x.md"))?;
             doc.trim_end_matches("/x.md").to_string()
         };
         // 그림·영상은 보내기 전에 모두 확인한다(하나라도 못 붙이면 아무것도 commit하지 않는다)
@@ -189,7 +190,8 @@ impl Host {
         let head = rec.head.clone();
         let mut placed = Vec::new();
         for (name, bytes) in &media {
-            let saved = Box::pin(self.design_attach_quiet(role, actor, project, repo, slug, place, bytes)).await?;
+            let saved =
+                Box::pin(self.design_attach_quiet(role, actor, project, repo, slug, &place_path, bytes)).await?;
             placed.push((name.clone(), saved));
         }
         let tasks = self.idea_summary(project, &f, &m)?.tasks;

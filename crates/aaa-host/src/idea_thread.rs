@@ -219,9 +219,13 @@ mod tests {
         ];
         let before = h.idea_list("demo").unwrap();
         for req in retired {
-            for (role, actor) in [(DeviceRole::Local, "local:jo@cli"), (DeviceRole::Reader, "worker:pane-i")] {
-                let e = h.call(role, actor, req.clone()).await.unwrap_err();
-                assert!(e.message == RETIRED || e.code == ErrorCode::Forbidden, "{actor} {req:?}: {e:?}");
+            // 옛 아이디어 thread가 하던 저장·첨부(보기 권한)도 까닭을 받는다. 그 밖의 쓰기는 보기 권한이면 권한에서 막힌다
+            let thread_wrote = matches!(req, FrontRequest::IdeaSave { .. } | FrontRequest::IdeaAttach { .. });
+            let e = h.call(DeviceRole::Reader, "worker:pane-i", req.clone()).await.unwrap_err();
+            if thread_wrote {
+                assert_eq!((e.code, e.message.as_str()), (ErrorCode::Conflict, RETIRED), "{req:?}");
+            } else {
+                assert_eq!(e.code, ErrorCode::Forbidden, "{req:?}: {e:?}");
             }
             let e = h.call(DeviceRole::Local, "local:jo@cli", req.clone()).await.unwrap_err();
             assert_eq!((e.code, e.message.as_str()), (ErrorCode::Conflict, RETIRED), "{req:?}");

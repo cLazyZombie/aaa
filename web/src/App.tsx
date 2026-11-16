@@ -13,12 +13,14 @@ import type {
   QuestionMenu,
   QuestionView,
   ThreadView,
+  IdeaMoved,
   IdeaSummary,
 } from "./gen/proto";
 import { WorkspaceList, WorkspaceView } from "./WorkspaceView";
 import { useWorkspaceData, workspaceRoute } from "./workspaceData";
 import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { IdeaMoveDialog } from "./IdeaMove";
+import { movedTarget } from "./ideasModel";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { RecordSearch } from "./RecordSearch";
@@ -76,7 +78,7 @@ import { AutomationView, automationTarget } from "./AutomationView";
 import { DesignPanel, useDesign } from "./DesignPanel";
 import { DesignView } from "./DesignView";
 import { IdeaView } from "./IdeaView";
-import { IdeasPanel, useIdeas } from "./IdeasPanel";
+import { useIdeas } from "./IdeasPanel";
 import { useAutomations } from "./automationData";
 import { openAsks, answerIndex, questionIds, doneOf, questionKey, questionRefLook } from "./asksModel";
 import { isSheetRewind } from "./herdr/sheetHistory.ts";
@@ -1334,7 +1336,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const ideas = useIdeas(up);
   // 옛 아이디어 「기획으로 옮기기」 창(4단계)
   const [moveIdea, setMoveIdea] = useState<IdeaSummary | null>(null);
-  const design = useDesign(up, panel === "design" || designShown);
+  // 옛 아이디어 화면도 기획 트리를 쓴다(옮기기 창의 저장소·대화, 옮긴 곳 열기)
+  const design = useDesign(up, panel === "design" || designShown || ideaShown);
+  // 기획 화면에서 고를 대화(옮기는 아이디어의 「기획 대화 보기」·옮긴 뒤): 바뀔 때 한 번 고른다
+  const [designChat, setDesignChat] = useState<{ repo: string; slug: string; n: number } | null>(null);
+  const openMoved = (m: IdeaMoved) => {
+    if (!m.done) setDesignChat({ repo: m.repo, slug: m.branch, n: Date.now() });
+    goSel(`design:${movedTarget(m, design.repos ?? [])}`);
+  };
   // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
@@ -1565,7 +1574,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   );
   useEffect(() => { const refresh = () => loadAutomations(); window.addEventListener("aaa:automations-changed", refresh); return () => window.removeEventListener("aaa:automations-changed", refresh); }, []);
   const badges = {
-    ideas: { count: (ideas.list ?? []).filter((i) => i.unseen).length, label: "새 노트" },
     asks: { count: askList.length, label: "질문·확인 필요·할 일", ask: true },
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
@@ -1700,7 +1708,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }}
             ideas={ideas.list ?? []} ideaSelected={ideaShown ? ideaAt : null} canControl={canControl}
             onOpenIdea={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} onMoveIdea={setMoveIdea} />}
-          ideas={<IdeasPanel ideas={ideas} selected={ideaShown ? ideaAt : null} canControl={canControl} onOpen={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
             <AsksPanel
@@ -1830,24 +1837,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         )}
         {designAt !== null && (
-          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
+          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl} chatAsk={designChat}
             tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)}
               ideas={ideas.list ?? []} ideaSelected={null} canControl={canControl} onOpenIdea={(id) => goSel(`idea:${id}`)} onMoveIdea={setMoveIdea} />}
             onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
         )}
-        {moveIdea && <IdeaMoveDialog idea={moveIdea} repos={design.repos ?? []} onClose={() => setMoveIdea(null)} />}
+        {moveIdea && <IdeaMoveDialog idea={moveIdea} repos={design.repos} onClose={() => setMoveIdea(null)}
+          onDone={(note) => { setMoveIdea(null); design.reload(); if (note.idea.moved) openMoved(note.idea.moved); }} />}
         {ideaAt !== null && (
           <IdeaView
             onMove={setMoveIdea}
-            onOpenDesign={(t) => goSel(`design:${t}`)}
+            onOpenDesign={openMoved}
             shown={ideaShown}
             target={ideaAt}
             ideas={ideas.list ?? []}
             threads={allThreads}
             panes={panes}
-            hostMachine={machines.find((m) => m.local)?.name ?? null}
             canControl={canControl}
-            onOpen={(id) => goSel(`idea:${id}`)}
             onOpenLink={(href) => {
               const m = /^#(task|idea|thread)=(.+)$/.exec(href);
               if (!m) return false;
