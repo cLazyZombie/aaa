@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { token } from "../../../scripts/fixture-secret.mjs";
-import { root, aaa, until, step, browser, webkit, pairPage, openSettings, waitOutput } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, webkit, pairPage, openSettings, domIs, waitOutput } from "../lib/harness.mjs";
 
 const config = `${root}/c/host.toml`;
 fs.writeFileSync(config, fs.readFileSync(config, "utf8").replace('allow_profiles = ["fake"]', 'allow_profiles = ["fake", "fake-codex"]')
@@ -38,6 +38,14 @@ async function check(engine, width) {
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { serviceWorkers: "block" });
   try {
     const settings = await openSettings(page, "계정");
+    // 가짜 Codex의 초기 사용량 응답은 「조회 지원 안 됨」 한 줄을 더한다.
+    // native press 중 버튼이 움직이지 않게 사용량·자동 배정의 DOM 반영부터 기다린다.
+    await domIs(page, "초기 Codex 사용량과 자동 배정 반영", () => {
+      const rows = [...document.querySelectorAll('[data-testid="settings-accounts"] [data-account]')];
+      return rows.length > 0 && rows.every(row =>
+        row.querySelector('[data-testid="quota-problem"]')?.textContent === "조회 지원 안 됨"
+        && row.querySelector('[data-testid="account-auto-assign"]')?.matches(":enabled"));
+    });
     const row = settings.locator(`[data-account="${name}"]`);
     const edit = async () => { await row.getByRole("button", { name: `${name} 이름 바꾸기`, exact: true }).click(); await row.getByLabel(`${name} 새 이름`, { exact: true }).fill(after); };
     await edit();

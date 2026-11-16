@@ -5128,3 +5128,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [인증 창 완료 뒤 시트 위치 관측(t-1889)](testing-account-sheet-viewport-t-1889.md): 실제 애니메이션 RED/GREEN과 Chromium·WebKit 회귀.
 - [기획 1단계: 저장소 기획 폴더 읽기(t-1894)](testing-design-docs-t-1894.md): git 객체 읽기·고정 commit·origin 실패·링크 거부와 실제 origin E2E 135.
 - [끝나는 문서의 터미널 압축 Worker(t-1894)](testing-page-leave-terminal-t-1894.md): WebKit 떠난 뒤 blob Worker 페이지 오류의 원인·RED/GREEN.
+
+E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리는 [t-1919 기록](testing-account-image-jobs-t1919.md)을 따른다.
