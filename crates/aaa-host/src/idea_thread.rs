@@ -2,7 +2,7 @@
 //!
 //! - 아이디어는 저장소 기획 문서로 옮겼다(q-3982 3A·q-3985 6A): 노트 읽기(목록·보기·읽음)와 「기획으로 옮기기」만 남고, 만들기·저장·말·
 //!   깨우기·할 일로 넘기기·첨부·모델·복사 요청은 `RETIRED`로 거절한다(옛 CLI·웹이 보내도 알아듣는 까닭을 받는다).
-//! - 열린 아이디어 전용 thread는 ticker가 끝낸다(q-3983 4A). 기록과 대화는 남는다.
+//! - 열린 아이디어 전용 thread는 ticker(`idea_rest_pass`)가 끝낸다(q-3983 4A). 기록과 대화는 남는다.
 //! - 대화 전용 thread(기획 대화, 남은 아이디어 thread)는 이야기가 없으면(쉼이 `[projects] idea_rest_secs` 넘게 이어지면) ticker가
 //!   조용히 보류한다(알림함 항목 없음).
 
@@ -103,11 +103,10 @@ impl Host {
             .collect()
     }
 
-    /// ticker: 열린 옛 아이디어 thread를 끝낸다(q-3983 4A). agent가 없거나 실패하면 `END_RETRY_MS` 뒤에 다시 한다.
+    /// 열린 옛 아이디어 thread를 끝낸다(q-3983 4A). agent가 없거나 실패하면 `END_RETRY_MS` 뒤에 다시 한다.
     /// 대화 전용 thread라 끝남 알림·후속 확인 카드는 만들지 않는다
-    pub(crate) async fn idea_threads_end_pass(self: &Arc<Self>, project: &str) {
-        let now = aaa_common::util::now_ms();
-        for r in self.chat_threads(project).into_iter().filter(idea_thread_open) {
+    async fn idea_threads_end(self: &Arc<Self>, project: &str, chats: &[ThreadRec], now: u64) {
+        for r in chats.iter().filter(|r| idea_thread_open(r)) {
             {
                 let key = format!("end:{project}/{}", r.id);
                 let mut tried = self.idea_move_checked.lock().unwrap();
@@ -128,14 +127,16 @@ impl Host {
         }
     }
 
-    /// ticker: 이야기가 없는 대화 전용 thread를 조용히 보류한다(결정 20)
+    /// ticker: 열린 옛 아이디어 thread를 끝내고, 이야기가 없는 대화 전용 thread(기획 대화)를 조용히 보류한다(결정 20).
+    /// thread 기록은 한 번만 읽는다
     pub(crate) async fn idea_rest_pass(self: &Arc<Self>, project: &str) {
         let rest_ms = self.cfg.projects.idea_rest_secs.saturating_mul(1000);
         let now = aaa_common::util::now_ms();
-        let resting: Vec<ThreadRec> = self
-            .chat_threads(project)
+        let chats = self.chat_threads(project);
+        self.idea_threads_end(project, &chats, now).await;
+        let resting: Vec<ThreadRec> = chats
             .into_iter()
-            .filter(|r| r.status == ThreadStatus::Open)
+            .filter(|r| r.idea.is_none() && r.status == ThreadStatus::Open)
             .filter(|r| {
                 let (live, agent) = self.thread_live(r);
                 live && should_rest(r, agent.as_ref(), now, rest_ms)
