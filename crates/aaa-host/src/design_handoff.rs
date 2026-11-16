@@ -132,6 +132,27 @@ fn changed_blocks(before: &[String], now: &[String]) -> Vec<String> {
     now.iter().filter(|b| !before.contains(b)).cloned().collect()
 }
 
+/// 구현 thread에 보낼 고침 글: 바뀐 블록(지금 글)과, 블록 수가 줄었으면 빠진 수. 차례만 바뀌었으면 None.
+/// 고친 블록의 옛 글은 「빠진 블록」이 아니다(고침은 바뀐 블록으로만 적는다)
+fn relay_body(before: &[String], now: &[String]) -> Option<String> {
+    let changed = changed_blocks(before, now);
+    let dropped = before.len().saturating_sub(now.len());
+    if changed.is_empty() && dropped == 0 {
+        return None;
+    }
+    let mut body = String::new();
+    if !changed.is_empty() {
+        body.push_str(&format!("바뀐 블록:\n\n{}\n", changed.join("\n\n")));
+    }
+    if dropped > 0 {
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&format!("이 할 일의 블록 {dropped}개는 표지가 없어져 빠졌다(기획 문서에서 확인한다).\n"));
+    }
+    Some(body)
+}
+
 impl Host {
     fn design_handoff_dir(&self, project: &str) -> Result<PathBuf, ErrorBody> {
         self.project_dir(project)?;
@@ -212,7 +233,10 @@ impl Host {
             if !pushed {
                 return Err(err(
                     ErrorCode::Unavailable,
-                    format!("맡긴 표지를 아직 origin의 design/{}에 올리지 못했다: 올린 뒤 시작한다", rec.slug),
+                    format!(
+                        "기획 branch design/{}를 아직 origin에 다 올리지 못했다(맡긴 표지·그 뒤 고침): 올린 뒤 시작한다",
+                        rec.slug
+                    ),
                 ));
             }
             a.base = Some(format!("origin/design/{}", rec.slug));
@@ -325,8 +349,11 @@ impl Host {
             if now.is_empty() || now == rec.blocks {
                 continue;
             }
-            let changed = changed_blocks(&rec.blocks, &now);
-            let removed = changed_blocks(&now, &rec.blocks);
+            // 블록 글이 없는 기록(3-2에서 맡긴 것)은 처음 본 글을 둔다: 모든 블록을 바뀐 것으로 보내지 않는다
+            if rec.blocks.is_empty() {
+                self.design_handoff_blocks(project, &task, now);
+                continue;
+            }
             // 먼저 올린다: thread가 합칠 판, 아직 thread가 없으면 시작할 판이다(다 올린 뒤에만 갈라진다)
             self.design_push_now(project, repo, slug).await;
             let pushed = self
@@ -358,18 +385,11 @@ impl Host {
                 self.design_handoff_blocks(project, &task, now);
                 continue;
             };
-            if changed.is_empty() && removed.is_empty() {
+            let Some(body) = relay_body(&rec.blocks, &now) else {
                 // 차례만 바뀌었다
                 self.design_handoff_blocks(project, &task, now);
                 continue;
-            }
-            let mut body = String::new();
-            if !changed.is_empty() {
-                body.push_str(&format!("바뀐 블록:\n\n{}\n", changed.join("\n\n")));
-            }
-            if !removed.is_empty() {
-                body.push_str(&format!("\n이 할 일에서 빠진 블록(표지가 없어졌다):\n\n{}\n", removed.join("\n\n")));
-            }
+            };
             let msg = format!(
                 "기획 branch `design/{slug}`에서 맡긴 블록({task})이 바뀌었다(`{path}`, commit {}). \
                  자기 branch에 `origin/design/{slug}`를 합쳐 반영한다.\n\n{}",
@@ -1045,6 +1065,27 @@ mod tests {
         let long = "가".repeat(RELAY_MAX);
         let cut = capped(&long);
         assert!(cut.len() < long.len() + 80 && cut.ends_with("기획 문서에서 읽는다)"));
+    }
+
+    /// 고침 글: 고친 블록은 바뀐 블록으로만, 빠짐은 줄어든 수로만, 차례만 바뀌면 보내지 않는다
+    #[test]
+    fn relay_body_names_edits_and_drops_without_listing_old_text() {
+        let (a, b, b2, c) = (
+            "> [!계획] d-1\n> A".to_string(),
+            "> [!계획] d-1\n> B".to_string(),
+            "> [!계획] d-1\n> B2".to_string(),
+            "> [!계획] d-1\n> C".to_string(),
+        );
+        let edit = relay_body(&[a.clone(), b.clone()], &[a.clone(), b2.clone()]).unwrap();
+        assert!(
+            edit.contains(&b2) && !edit.contains("> B\n") && !edit.ends_with("> B") && !edit.contains("빠졌다"),
+            "{edit}"
+        );
+        let drop = relay_body(&[a.clone(), b.clone()], &[a.clone()]).unwrap();
+        assert!(drop.contains("블록 1개는 표지가 없어져 빠졌다") && !drop.contains("바뀐 블록"), "{drop}");
+        assert_eq!(relay_body(&[a.clone(), b.clone()], &[b.clone(), a.clone()]), None, "차례만 바뀜");
+        let both = relay_body(&[a.clone(), b.clone(), c.clone()], &[a.clone(), b2.clone()]).unwrap();
+        assert!(both.contains(&b2) && both.contains("블록 1개는"), "{both}");
     }
 
     #[test]

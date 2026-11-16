@@ -266,13 +266,14 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const marked = useMemo(() => (blocks && tab !== "main" ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main, tab]);
   const sections = useMemo(() => (blocks && current ? sectionsOf(blocks, current.title) : []), [blocks, current]);
   // main 문서에서 맡긴 블록(3-3): 표지는 구현 branch에만 있어 main 글에는 없다. 맡김 기록의 블록 글로 찾아 그 할 일로 본다
-  // 기획 branch에서 맡긴 블록도 main 판에는 아직 표지가 없다: 그 branch를 칩 옆에 적는다
+  // 맡긴 블록은 다른 판에 아직 표지가 없을 수 있다(main 맡김은 구현 branch에, 기획 branch 맡김은 그 branch에): 같은 글이면
+  // 어느 판에서든 그 할 일로 보이고 다시 맡기지 않는다. 그 판에 표지가 있는 블록은 표지대로다
   const pendingNotes = useMemo(() => {
     const out = new Map<string, { task: string; branch: string }>();
-    if (tab !== "main" || !at) return out;
+    if (!at) return out;
     for (const n of repo?.handoffs ?? []) if (n.path === at.path) for (const b of n.blocks) out.set(b.trim(), { task: n.task, branch: n.branch });
     return out;
-  }, [repo?.handoffs, tab, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [repo?.handoffs, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   const callouts = useMemo(() => (blocks ? blocks.map((b, i) => {
     const c = calloutOf(b, sections[i] ?? "");
     const note = c && c.kind === "plan" && !c.task ? pendingNotes.get(b.trim()) : undefined;
