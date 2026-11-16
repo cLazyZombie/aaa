@@ -175,3 +175,66 @@
   .design-block.is-changed::before { left: -10px; }
   .design-editor { width: calc(100% - 2 * var(--space-3)); }
 }
+
+/* 3-1 블록 표지(확정 계획 §3, library/mock/shots/notation·now·left): 계획 노랑 점선, 미정 보라 점선, 넘긴 계획 파랑과 할 일 상태 칩 */
+:root { --design-open: #8957e5; }
+.design-callout { display: flex; align-items: flex-start; gap: 10px; margin: 0.2em 0; padding: 8px 12px 8px 14px; border-left: 3px dashed var(--warn); border-radius: 0 var(--radius-md) var(--radius-md) 0; background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.design-callout.is-open { border-left-style: dotted; border-left-color: var(--design-open); background: color-mix(in srgb, var(--design-open) 10%, transparent); }
+.design-callout.is-task { border-left: 3px solid var(--status-working); background: color-mix(in srgb, var(--status-working) 10%, transparent); }
+.design-callout.is-task.tone-stale, .design-callout.is-task.tone-missing { border-left-color: var(--danger-text); background: color-mix(in srgb, var(--danger-text) 8%, transparent); }
+.design-callout-side { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 2px; }
+.design-callout-body { flex: 1 1 auto; min-width: 0; }
+.design-callout > .design-discuss { flex: none; }
+.design-callout-body .markdown > :first-child { margin-top: 0; }
+.design-callout-body .markdown > :last-child { margin-bottom: 0; }
+.design-callout-body img { outline: 2px dashed color-mix(in srgb, var(--warn) 60%, transparent); outline-offset: 2px; }
+.design-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--radius-sm); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.design-pill.is-plan { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+.design-pill.is-open { background: color-mix(in srgb, var(--design-open) 22%, transparent); color: var(--design-open); }
+.design-pill.is-draft { background: var(--warn); color: var(--bg); }
+.design-state { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid color-mix(in srgb, var(--status-working) 55%, transparent); background: color-mix(in srgb, var(--status-working) 14%, transparent); color: var(--status-working); font-family: var(--font-mono); font-size: var(--fs-xs); text-decoration: none; white-space: nowrap; }
+.design-state .i { width: 12px; height: 12px; }
+.design-state.is-work .i, .design-state.is-landing .i { animation: design-spin 2.4s linear infinite; }
+.design-state.is-stale, .design-state.is-missing { border-color: color-mix(in srgb, var(--danger-text) 55%, transparent); background: var(--danger-tint); color: var(--danger-text); }
+.design-state.is-wait { border-style: solid; background: transparent; }
+.design-state.is-inline { height: 20px; margin: 0 2px; vertical-align: 1px; text-decoration: none; }
+.design-discuss { gap: 4px; }
+.design-discuss .i { width: 12px; height: 12px; }
+
+.design-looks { display: flex; align-items: center; gap: var(--space-2); max-width: 860px; margin: 0 auto; padding: var(--space-2) var(--space-6) 0; }
+.design-count-chip { height: 20px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: var(--radius-sm); font-size: var(--fs-xs); font-weight: 600; }
+.design-count-chip.is-work { background: color-mix(in srgb, var(--status-working) 18%, transparent); color: var(--status-working); }
+.design-count-chip.is-plan { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.design-count-chip.is-open { background: color-mix(in srgb, var(--design-open) 20%, transparent); color: var(--design-open); }
+.design-tabs.is-small .design-tab { height: 22px; padding: 0 8px; font-family: inherit; }
+.design-looks .design-tab { font-family: inherit; }
+
+.design-left { display: flex; flex-direction: column; gap: var(--space-4); }
+.design-left-group h3 { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-md, 15px); }
+.design-left-some { color: var(--text-dim); font-size: var(--fs-xs); font-weight: 400; }
+.design-left-row { display: flex; align-items: center; gap: var(--space-2); min-height: 34px; padding: 0 var(--space-2); border-radius: var(--radius-md); }
+.design-left-row + .design-left-row { margin-top: 2px; }
+@media (hover: hover) { .design-left-row:hover { background: var(--bg-hover); } }
+.design-left-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.design-panel-top { display: flex; align-items: center; gap: var(--space-2); }
+.design-panel-top .design-reload { flex: 1 1 auto; }
+.design-marks { flex: none; display: inline-flex; gap: 6px; font-size: var(--fs-xs); font-weight: 600; }
+.design-marks .is-work { color: var(--status-working); }
+.design-marks .is-plan { color: var(--warn); }
+.design-marks .is-open { color: var(--design-open); }
+.design-plain { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; padding: 0 var(--space-2) 0 calc(var(--space-2) + 16px); color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* 기획 대화 말풍선 위 맥락 칩(q-3946 1A): 보는 문서·사람 고침·고른 블록 */
+.chat-context-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin: 6px 0 4px; }
+.chat-context-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-dim); font-size: var(--fs-xs); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-context-chip code { background: none; padding: 0; color: var(--text); font-family: var(--font-mono); }
+.design-context-chip.is-picked { border-color: color-mix(in srgb, var(--design-open) 60%, transparent); }
+.design-context-x { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; margin-left: 2px; border: 0; background: transparent; color: var(--text-dim); }
+.design-context-x svg { width: 12px; height: 12px; }
+@media (max-width: 768px) {
+  .design-looks { padding: var(--space-2) var(--space-4) 0; flex-wrap: wrap; }
+  .design-callout { flex-wrap: wrap; }
+  .design-callout-side { flex-direction: row; }
+  .design-callout-body { flex-basis: 100%; }
+}

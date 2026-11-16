@@ -136,6 +136,12 @@ pub struct DesignDocEntry {
     pub title: String,
     #[ts(type = "number")]
     pub bytes: u64,
+    /// 블록 표지 수(FRONT_API 1.174, t-1894 3단계): `> [!계획]`(할 일로 넘긴 것 포함)
+    pub plans: u32,
+    /// `> [!미정]`
+    pub open: u32,
+    /// 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
+    pub tasks: Vec<String>,
 }
 
 /// agent가 읽은 기획 폴더(한 commit 기준)
@@ -159,6 +165,8 @@ pub struct DesignTree {
     pub changed: Vec<DesignChange>,
     /// 기획 branch를 읽었으면 main보다 앞선 commit 수
     pub ahead: u32,
+    /// 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
+    pub marks: bool,
 }
 
 /// 프로젝트 저장소 하나의 기획 폴더

@@ -17,6 +17,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 const FETCH_EVERY: Duration = Duration::from_secs(60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(20);
+/// 표지 세기(트리 읽기 안). 넘으면 수를 모른다고 알리고 트리는 보인다
+const MARKS_TIMEOUT: Duration = Duration::from_secs(5);
 /// 제목을 찾으려고 문서마다 앞에서 읽는 바이트
 const TITLE_BYTES: usize = 8 * 1024;
 /// 명령 출력 상한(ls-tree 등)
@@ -70,10 +72,11 @@ pub async fn tree(repo: &str, folder: &str, branch: Option<&str>) -> Result<Agen
             tokio::time::timeout(QUERY_TIMEOUT, async {
                 let main = base(&top).await?;
                 let tree = match branch {
-                    None => list(&top, &folder, &main.0, &main.1, fetch_error).await?,
+                    None => list(&top, &folder, &main.0, &main.1, fetch_error, true).await?,
                     Some(slug) => {
+                        // branch 트리는 host가 고친 파일·앞선 수만 쓴다: 표지는 세지 않는다
                         let tip = branch_tip(&top, slug).await?;
-                        let mut tree = list(&top, &folder, &design_branch(slug), &tip, fetch_error).await?;
+                        let mut tree = list(&top, &folder, &design_branch(slug), &tip, fetch_error, false).await?;
                         (tree.changed, tree.ahead) = changes(&top, &folder, &main.1, &tip).await?;
                         tree
                     }
@@ -197,6 +200,18 @@ pub(crate) async fn git(dir: &Path, args: &[&str], limit: usize) -> Result<Vec<u
         bail!("git {} 실패(종료 코드 {:?})", args[0], status.code());
     }
     Ok(bytes)
+}
+
+/// `git` 출력과 종료 코드(0이 아니어도 실패로 보지 않는다: `git grep`의 1은 「맞는 것 없음」이다)
+async fn git_status(dir: &Path, args: &[&str], limit: usize) -> Result<(Vec<u8>, Option<i32>)> {
+    let mut child = command(dir, args).stdin(Stdio::null()).spawn_guarded().context("git 실행 실패")?;
+    let mut stdout = child.stdout.take().context("git 출력이 없다")?.take(limit as u64 + 1);
+    let mut bytes = Vec::new();
+    stdout.read_to_end(&mut bytes).await?;
+    if bytes.len() > limit {
+        bail!("git {} 출력이 상한을 넘는다", args[0]);
+    }
+    Ok((bytes, child.wait().await?.code()))
 }
 
 pub(crate) fn command(dir: &Path, args: &[&str]) -> tokio::process::Command {
@@ -367,7 +382,14 @@ fn is_markdown(path: &str) -> bool {
     Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
-async fn list(top: &Path, folder: &str, base: &str, commit: &str, fetch_error: Option<String>) -> Result<DesignTree> {
+async fn list(
+    top: &Path,
+    folder: &str,
+    base: &str,
+    commit: &str,
+    fetch_error: Option<String>,
+    count: bool,
+) -> Result<DesignTree> {
     let (base, commit) = (base.to_string(), commit.to_string());
     let committed_ms = committed_ms(top, &commit).await?;
     let out = git(top, &["ls-tree", "-r", "-z", "-l", "--full-tree", &commit, "--", folder], OUTPUT_MAX).await?;
@@ -379,9 +401,120 @@ async fn list(top: &Path, folder: &str, base: &str, commit: &str, fetch_error: O
     let truncated = docs.len() > DESIGN_MAX_DOCS;
     docs.truncate(DESIGN_MAX_DOCS);
     let titles = titles(top, &docs).await?;
-    let docs =
-        docs.into_iter().zip(titles).map(|(e, title)| DesignDocEntry { path: e.path, title, bytes: e.size }).collect();
-    Ok(DesignTree { commit, committed_ms, base, docs, truncated, fetch_error, ..Default::default() })
+    // 표지 세기는 따로 짧은 시한이다: 못 세면 수를 모른다고 알리고 트리는 그대로 보인다
+    let counted = if count { tokio::time::timeout(MARKS_TIMEOUT, marks(top, &commit, folder, &docs)).await.ok().flatten() } else { None };
+    let marked = counted.is_some();
+    let mut marks = counted.unwrap_or_default();
+    let docs = docs
+        .into_iter()
+        .zip(titles)
+        .map(|(e, title)| {
+            let Marks { plans, open, tasks } = marks.remove(&e.path).unwrap_or_default();
+            DesignDocEntry { path: e.path, title, bytes: e.size, plans, open, tasks }
+        })
+        .collect();
+    Ok(DesignTree { commit, committed_ms, base, docs, truncated, fetch_error, marks: marked, ..Default::default() })
+}
+
+/// 문서 하나의 블록 표지 수(계획·미정)와 넘긴 계획의 d-ID(나온 차례)
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Marks {
+    pub(crate) plans: u32,
+    pub(crate) open: u32,
+    pub(crate) tasks: Vec<String>,
+}
+
+/// 표지 글자가 든 문서만 `git grep -l`로 골라 그 글을 읽는 대로 `count_marks`로 센다. 못 읽으면 None(수를 모름)
+async fn marks(top: &Path, commit: &str, folder: &str, docs: &[Entry]) -> Option<HashMap<String, Marks>> {
+    // 고정 글자로 거른다(locale·정규식 엔진과 무관). `color.grep` 설정이 파일 이름을 칠하지 않게 한다.
+    // 맞는 문서가 없으면 git grep은 1로 끝난다: 그 출력은 비어 있다
+    let args = ["grep", "--no-color", "-l", "-z", "-I", "-F", "-e", "[!계획]", "-e", "[!미정]", commit, "--", folder];
+    let raw = match git_status(top, &args, OUTPUT_MAX).await {
+        Ok((raw, Some(0 | 1))) => raw,
+        _ => return None,
+    };
+    let prefix = format!("{commit}:");
+    let hits: std::collections::HashSet<&str> = raw
+        .split(|b| *b == 0)
+        .filter_map(|p| std::str::from_utf8(p).ok())
+        .map(|p| p.strip_prefix(&prefix).unwrap_or(p))
+        .collect();
+    let docs: Vec<&Entry> = docs.iter().filter(|e| hits.contains(e.path.as_str())).collect();
+    let shas: Vec<&str> = docs.iter().map(|e| e.sha.as_str()).collect();
+    let mut out = HashMap::new();
+    each_head(top, &shas, DESIGN_MAX_TEXT as usize, |i, text| {
+        out.insert(docs[i].path.clone(), count_marks(&String::from_utf8_lossy(text)));
+    })
+    .await
+    .ok()?;
+    Some(out)
+}
+
+/// `d-` 뒤 숫자의 정규형 할 일 번호(웹 `canonicalShortId`와 같다: 앞 0을 빼고 네 자리 이상, 0이나 i64를 넘으면 번호가 아님)
+fn task_id(digits: &str) -> Option<String> {
+    let n = digits.chars().take_while(char::is_ascii_digit).count();
+    let value = digits[..n].trim_start_matches('0');
+    if value.is_empty() || value.len() > 19 || (value.len() == 19 && value > "9223372036854775807") {
+        return None;
+    }
+    Some(format!("d-{value:0>4}"))
+}
+
+/// 웹(`designModel.ts`의 `mdBlocks`·`calloutOf`)과 같은 규칙으로 센다: 빈 줄·제목·코드 울타리로 나눈 덩어리 중
+/// 모든 줄이 인용(`>`)이고 첫 줄이 `> [!계획]`·`> [!미정]`인 것만 표지다. 울타리 안의 표기 예시는 세지 않는다
+pub(crate) fn count_marks(text: &str) -> Marks {
+    fn fence_of(line: &str) -> Option<(char, usize)> {
+        let t = line.trim_start();
+        let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
+        let n = t.chars().take_while(|x| *x == c).count();
+        (n >= 3).then_some((c, n))
+    }
+    fn heading(line: &str) -> bool {
+        let n = line.chars().take_while(|c| *c == '#').count();
+        (1..=6).contains(&n) && line[n..].chars().next().is_some_and(char::is_whitespace)
+    }
+    fn tally(block: &[&str], m: &mut Marks) {
+        let Some(first) = block.first() else { return };
+        if !block.iter().all(|l| l.trim_start().starts_with('>')) {
+            return;
+        }
+        let head = first.trim_start()[1..].trim_start();
+        if let Some(rest) = head.strip_prefix("[!계획]") {
+            m.plans += 1;
+            if let Some(id) = rest.trim_start().strip_prefix("d-").and_then(task_id) {
+                m.tasks.push(id);
+            }
+        } else if head.starts_with("[!미정]") {
+            m.open += 1;
+        }
+    }
+    let mut m = Marks::default();
+    let mut block: Vec<&str> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    // CRLF 문서도 같은 덩어리다(웹 `mdBlocks`는 `\r?\n`으로 나눈다)
+    for line in text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)) {
+        let mark = fence_of(line);
+        if let Some((c, n)) = fence {
+            // 같은 글자로 연 것보다 짧지 않은 울타리만 닫는다
+            if let Some((c2, n2)) = mark
+                && c2 == c
+                && n2 >= n
+                && line.trim().chars().all(|x| x == c)
+            {
+                fence = None;
+            }
+            continue;
+        }
+        if mark.is_some() || line.trim().is_empty() || heading(line) {
+            tally(&block, &mut m);
+            block.clear();
+            fence = mark;
+            continue;
+        }
+        block.push(line);
+    }
+    tally(&block, &mut m);
+    m
 }
 
 /// 기획 branch 끝(로컬 `design/<slug>`, 없으면 origin의 같은 branch)
@@ -438,12 +571,20 @@ async fn changes(top: &Path, folder: &str, main: &str, tip: &str) -> Result<(Vec
 
 /// 문서마다 앞부분만 읽어 첫 `# ` 제목을 찾는다(`cat-file --batch` 한 번)
 async fn titles(top: &Path, docs: &[Entry]) -> Result<Vec<String>> {
-    if docs.is_empty() {
-        return Ok(Vec::new());
+    let shas: Vec<&str> = docs.iter().map(|e| e.sha.as_str()).collect();
+    let mut titles = Vec::with_capacity(docs.len());
+    each_head(top, &shas, TITLE_BYTES, |_, head| titles.push(design_title(&String::from_utf8_lossy(head)))).await?;
+    Ok(titles)
+}
+
+/// blob 여럿의 앞 `keep`바이트를 준 차례대로 하나씩 넘긴다(`cat-file --batch` 한 번, 한 번에 하나만 쥔다)
+async fn each_head(top: &Path, shas: &[&str], keep: usize, mut f: impl FnMut(usize, &[u8])) -> Result<()> {
+    if shas.is_empty() {
+        return Ok(());
     }
     let mut child =
         command(top, &["cat-file", "--batch"]).stdin(Stdio::piped()).spawn_guarded().context("git 실행 실패")?;
-    let input: String = docs.iter().map(|e| format!("{}\n", e.sha)).collect();
+    let input: String = shas.iter().map(|sha| format!("{sha}\n")).collect();
     let mut stdin = child.stdin.take().context("git 입력이 없다")?;
     let writer = tokio::spawn(async move {
         let r = stdin.write_all(input.as_bytes()).await;
@@ -451,31 +592,30 @@ async fn titles(top: &Path, docs: &[Entry]) -> Result<Vec<String>> {
         r
     });
     let mut out = BufReader::new(child.stdout.take().context("git 출력이 없다")?);
-    let mut titles = Vec::with_capacity(docs.len());
-    for e in docs {
+    for (i, want) in shas.iter().enumerate() {
         let mut header = String::new();
         out.read_line(&mut header).await?;
         let mut parts = header.split_whitespace();
         let (Some(sha), Some(_kind), Some(size)) = (parts.next(), parts.next(), parts.next()) else {
             bail!("cat-file 머리 형식이 아니다");
         };
-        if sha != e.sha {
+        if sha != *want {
             bail!("cat-file 차례가 다르다");
         }
         let size: u64 = size.parse().context("cat-file 크기")?;
-        let keep = size.min(TITLE_BYTES as u64) as usize;
-        let mut head = vec![0; keep];
+        let take = size.min(keep as u64) as usize;
+        let mut head = vec![0; take];
         out.read_exact(&mut head).await?;
         // 나머지와 끝 줄바꿈은 버린다
-        tokio::io::copy(&mut (&mut out).take(size - keep as u64 + 1), &mut tokio::io::sink()).await?;
-        titles.push(design_title(&String::from_utf8_lossy(&head)));
+        tokio::io::copy(&mut (&mut out).take(size - take as u64 + 1), &mut tokio::io::sink()).await?;
+        f(i, &head);
     }
     writer.await.context("git 입력 작업")?.context("git 입력")?;
     let status = child.wait().await?;
     if !status.success() {
         bail!("git cat-file 실패(종료 코드 {:?})", status.code());
     }
-    Ok(titles)
+    Ok(())
 }
 
 async fn blob_slice(top: &Path, blob: &str, offset: u64, len: usize) -> Result<Vec<u8>> {
@@ -573,6 +713,7 @@ pub(crate) mod tests {
         let Ok(AgentResponse::DesignTree(t)) = tree(repo, "docs", None).await else { panic!("트리") };
         assert_eq!(t.base, "origin/main");
         assert_eq!(t.fetch_error, None);
+        assert!(t.marks, "표지 글자가 없는 트리(git grep 1)도 센 것이다");
         assert!(!clone.join(".git/FETCH_HEAD").exists(), "FETCH_HEAD를 쓰지 않는다");
         let got: Vec<_> = t.docs.iter().map(|d| (d.path.as_str(), d.title.as_str())).collect();
         assert_eq!(
@@ -595,6 +736,74 @@ pub(crate) mod tests {
             panic!("파일")
         };
         assert_eq!((data.0.as_slice(), total), (&b"012"[..], 14));
+    }
+
+    /// 표지는 웹과 같은 덩어리 규칙으로 센다: 덩어리 첫 줄의 인용 표지만, 코드 울타리 안 예시와 인용 중간 줄은 뺀다
+    #[test]
+    fn marks_count_only_callout_blocks_like_the_web() {
+        let text = "# 게임 루프\n\n본문 d-0007은 칩일 뿐 표지가 아니다.\n\n> [!계획]\n> 100층까지 늘린다.\n\n\
+                    > [!계획] d-0012\n> 처음 1칸.\n## 절\n>[!계획]d-0013 붙여 써도 같다\n\n> [!미정]\n> 확률\n\n\
+                    > 앞 인용\n> [!계획] 중간 줄은 표지가 아니다\n\n> [!계획]\n섞인 덩어리는 표지가 아니다\n\n\
+                    ````md\n> [!계획] d-0099\n```\n> [!미정] 짧은 울타리는 닫지 않는다\n````\n\n\
+                    ~~~\n> [!미정]\n~~~\n> [!계획] d-0014x\n";
+        assert_eq!(
+            count_marks(text),
+            Marks { plans: 4, open: 1, tasks: vec!["d-0012".into(), "d-0013".into(), "d-0014".into()] }
+        );
+        assert_eq!(count_marks("> [!계획]"), Marks { plans: 1, open: 0, tasks: vec![] }, "끝 줄바꿈 없음");
+        assert_eq!(count_marks("> [!계획] d-\n> 번호 없는 d-"), Marks { plans: 1, open: 0, tasks: vec![] });
+        assert_eq!(count_marks("####### [!계획]\n> [!미정]\n"), Marks::default(), "제목이 아닌 줄과 이어진 덩어리");
+    }
+
+    /// 웹과 같은 공용 견본(`web/test/fixtures/design-marks.md`)으로 센다. CRLF로 바꾼 판도 같다
+    #[test]
+    fn marks_match_the_shared_web_fixture() {
+        let raw = include_str!("../../../web/test/fixtures/design-marks.md").replace("\r\n", "\n");
+        let expect = raw.split("expect ").nth(1).and_then(|s| s.split(" -->").next()).expect("견본 기대값");
+        let field = |k: &str| expect.split(' ').find_map(|p| p.strip_prefix(k)).expect("기대 칸");
+        let want = Marks {
+            plans: field("plans=").parse().unwrap(),
+            open: field("open=").parse().unwrap(),
+            tasks: field("tasks=").split(',').filter(|s| !s.is_empty()).map(String::from).collect(),
+        };
+        assert_eq!(count_marks(&raw), want);
+        assert_eq!(count_marks(&raw.replace('\n', "\r\n")), want, "CRLF");
+        assert_eq!(task_id("00012x"), Some("d-0012".into()));
+        assert_eq!(task_id("12345"), Some("d-12345".into()));
+        assert_eq!(task_id("0"), None);
+        assert_eq!(task_id("9223372036854775808"), None, "i64를 넘으면 번호가 아니다");
+        assert_eq!(task_id("9223372036854775807"), Some("d-9223372036854775807".into()));
+    }
+
+    /// 트리의 문서마다 표지 수·넘긴 d-ID를 붙인다(표지 없는 문서와 기획 폴더 밖은 0)
+    #[tokio::test]
+    async fn tree_counts_marks_per_document() {
+        let (t, clone) = lab().await;
+        // origin에 올리는 쪽은 lab의 작업 저장소다(clone은 옛 판에 머문다)
+        let work = t.path().join("work");
+        std::fs::create_dir_all(work.join("docs/bosses")).unwrap();
+        std::fs::write(work.join("docs/bosses/README.md"), "# 보스\n\n> [!계획] d-0003\n> 해골 왕\n\n> [!미정]\n> 3페이즈\n")
+            .unwrap();
+        std::fs::write(work.join("docs/notation.md"), "# 표기\n\n```\n> [!계획] d-0001\n```\n").unwrap();
+        std::fs::write(work.join("README.md"), "# 밖\n\n> [!계획]\n> 밖은 세지 않는다\n").unwrap();
+        sh(&work, &["add", "."]).await;
+        sh(&work, &["commit", "-q", "-m", "표지"]).await;
+        sh(&work, &["push", "-q", "origin", "HEAD:main"]).await;
+        // 머신의 `color.grep` 설정이 파일 이름을 칠해도 센다
+        sh(&clone, &["config", "color.grep", "always"]).await;
+        let repo = clone.to_str().unwrap();
+        let Ok(AgentResponse::DesignTree(t)) = tree(repo, "docs", None).await else { panic!("트리") };
+        assert!(t.marks, "셌다");
+        let got: Vec<_> = t.docs.iter().map(|d| (d.path.as_str(), d.plans, d.open, d.tasks.clone())).collect();
+        assert_eq!(
+            got,
+            [
+                ("docs/bosses/README.md", 1, 1, vec!["d-0003".to_string()]),
+                ("docs/game-loop/README.md", 0, 0, vec![]),
+                ("docs/notation.md", 0, 0, vec![]),
+                ("docs/overview.md", 0, 0, vec![]),
+            ]
+        );
     }
 
     /// origin이 앞서 가도 문서·그림은 트리를 읽은 commit으로 읽고, 고르지 않으면 새 기본 branch다

@@ -1,5 +1,6 @@
 // 기획 트리(t-1894): 저장소 기획 폴더의 Markdown 문서 목록을 폴더 트리로 묶고, 문서 안 상대 경로(그림·다른 문서)를 저장소 기준 경로로 푼다.
-import type { DesignBranchView, DesignDocEntry, DesignEvent, DesignRepoView } from "./gen/proto";
+import { canonicalShortId } from "./appIds.ts";
+import type { DesignBranchView, DesignDocEntry, DesignEvent, DesignRepoView, TaskView, ThreadView } from "./gen/proto";
 
 export type DesignDir = { kind: "dir"; name: string; path: string; title: string; children: DesignNode[] };
 export type DesignFile = { kind: "doc"; name: string; doc: DesignDocEntry };
@@ -141,7 +142,8 @@ export function mdBlocks(text: string): string[] {
   let cur: string[] = [];
   let fence: string | null = null;
   const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
-  for (const line of text.split("\n")) {
+  // CRLF 문서도 같은 덩어리다(agent `count_marks`와 같은 규칙)
+  for (const line of text.split(/\r?\n/)) {
     const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
     if (fence) {
       cur.push(line);
@@ -205,4 +207,134 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
   }
   flush();
   return out;
+}
+
+// 3단계 블록 표지(t-1894, 확정 계획 §3): `> [!계획]`·`> [!계획] d-NNNN`·`> [!미정]` 블록과 그 상태
+
+/** 표지 블록 하나: 종류, 넘긴 할 일, 줄 이름(첫 굵은 낱말, 없으면 첫 줄), 표지를 뺀 본문, 속한 절, 그림이 있나 */
+export type Callout = { kind: "plan" | "open"; task: string | null; title: string; body: string; section: string; image: boolean };
+
+/** 덩어리 첫 줄의 표지: 종류, 넘긴 d-ID(계획만, 정규형), 표지 뒤 글. 정규식 되돌기 없이 글자로 읽는다(agent `count_marks`와 같다) */
+function markOf(line: string): { kind: "plan" | "open"; task: string | null; rest: string } | null {
+  const t = line.trimStart();
+  if (!t.startsWith(">")) return null;
+  const head = t.slice(1).trimStart();
+  if (head.startsWith("[!미정]")) return { kind: "open", task: null, rest: head.slice(5).trim() };
+  if (!head.startsWith("[!계획]")) return null;
+  const rest = head.slice(5).trimStart();
+  const id = /^d-(\d+)/.exec(rest);
+  if (!id) return { kind: "plan", task: null, rest: rest.trim() };
+  return { kind: "plan", task: canonicalShortId(id[0], "d"), rest: rest.slice(id[0].length).trim() };
+}
+
+/** 그림 줄(`![…](`, 한 줄 안): 글자를 한 번씩만 본다(되돌기 없음) */
+function hasImage(text: string): boolean {
+  let open = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "!" && text[i + 1] === "[") { open = true; i++; }
+    else if (c === "\n") open = false;
+    else if (c === "]") { if (open && text[i + 1] === "(") return true; open = false; }
+  }
+  return false;
+}
+
+/** 덩어리가 표지 블록이면 그 내용. 인용 줄(`>`)로만 된 덩어리여야 한다 */
+export function calloutOf(block: string, section: string): Callout | null {
+  const lines = block.split("\n");
+  const head = markOf(lines[0] ?? "");
+  if (!head || !lines.every((l) => l.trimStart().startsWith(">"))) return null;
+  const body = [head.rest, ...lines.slice(1).map((l) => l.trimStart().slice(1).replace(/^\s/, ""))].join("\n").trim();
+  const end = body.startsWith("**") ? body.indexOf("**", 2) : -1;
+  const bold = end > 2 && !body.slice(2, end).includes("\n") ? body.slice(2, end) : "";
+  const first = body.split("\n").find((l) => l.trim() !== "") ?? "";
+  const plain = first.replace(/!\[[^\]\n]{0,300}\]\([^)\n]{0,1000}\)/g, "").replace(/[*_`]/g, "");
+  const title = (bold || plain).trim().slice(0, 80) || section;
+  return { kind: head.kind, task: head.task, title, body, section, image: hasImage(body) };
+}
+
+/** 제목 줄(`#`~`######` 뒤 빈칸)의 글, 아니면 null. 닫는 `#`은 뺀다 */
+export function headingOf(line: string): string | null {
+  const n = line.length - line.replace(/^#+/, "").length;
+  if (n < 1 || n > 6 || !/^\s/.test(line.slice(n))) return null;
+  return line.slice(n).trim().replace(/\s#+$/, "").replace(/^#+$/, "").trim();
+}
+
+/** 덩어리마다 속한 절(가장 가까운 앞 제목, 없으면 문서 제목) */
+export function sectionsOf(blocks: readonly string[], fallback: string): string[] {
+  let now = fallback;
+  return blocks.map((b) => {
+    const h = headingOf(b);
+    if (h !== null) now = h;
+    return now;
+  });
+}
+
+/** 넘긴 블록의 지금 상태(할 일·thread에서 읽는다): 칩 색과 글 */
+export type CalloutState = { tone: "wait" | "work" | "review" | "ready" | "landing" | "stale" | "missing"; label: string };
+
+/** 보드에 없는 d-ID를 보관에서 찾은 결과. 둘 다 아니면 아직 모른다(읽는 중·읽지 못함) */
+export type ArchiveLookup = { archived: ReadonlySet<string>; missing: ReadonlySet<string> };
+const NO_LOOKUP: ArchiveLookup = { archived: new Set(), missing: new Set() };
+
+export function taskState(id: string, tasks: readonly TaskView[] | null, threads: readonly ThreadView[], lookup: ArchiveLookup = NO_LOOKUP): CalloutState | null {
+  if (tasks === null) return null;
+  const task = tasks.find((t) => t.short_id === id);
+  // 끝난 할 일은 보관으로 옮겨진다: 표지가 남아 있으면 「표지 남음」, 보관에도 없으면 「할 일 없음」, 아직 모르면 칩 없이 번호만
+  if (!task) {
+    if (lookup.archived.has(id)) return { tone: "stale", label: `표지 남음 ${id}` };
+    return lookup.missing.has(id) ? { tone: "missing", label: `할 일 없음 ${id}` } : null;
+  }
+  if (task.done) return { tone: "stale", label: `표지 남음 ${id}` };
+  const thread = task.thread ? threads.find((t) => t.id === task.thread) : undefined;
+  if (!thread || thread.status === "resolved" || thread.status === "failed") return { tone: "wait", label: `대기 ${id}` };
+  if (thread.stage === "landing") return { tone: "landing", label: `착지 중 ${id} · ${thread.id}` };
+  if (thread.stage === "merge_ready") return { tone: "ready", label: `병합 준비됨 ${id} · ${thread.id}` };
+  if (thread.group === "ready_for_review" || thread.group === "waiting_on_you") return { tone: "review", label: `검수 대기 ${id} · ${thread.id}` };
+  return { tone: "work", label: `작업 중 ${id} · ${thread.id}` };
+}
+
+/** 문서들의 표지 수: 진행(넘긴 계획, 같은 d-ID는 한 번)·계획(아직 안 넘긴 것)·미정. 폴더·저장소 줄은 그 아래 문서 전부다 */
+export function markCounts(docs: readonly (Pick<DesignDocEntry, "plans" | "open" | "tasks"> | undefined)[]): { work: number; plan: number; open: number } {
+  const ids = new Set<string>();
+  let plan = 0, open = 0;
+  for (const d of docs) {
+    if (!d) continue;
+    const tasks = d.tasks ?? [];
+    for (const id of tasks) ids.add(id);
+    plan += Math.max(0, (d.plans ?? 0) - tasks.length);
+    open += d.open ?? 0;
+  }
+  return { work: ids.size, plan, open };
+}
+
+/** 문서 하나의 표지 블록에서 트리와 같은 꼴의 수(agent `DesignDocEntry.plans`·`open`·`tasks`) */
+export function marksOf(callouts: readonly (Callout | null)[]): Pick<DesignDocEntry, "plans" | "open" | "tasks"> {
+  return {
+    plans: callouts.filter((c) => c?.kind === "plan").length,
+    open: callouts.filter((c) => c?.kind === "open").length,
+    tasks: callouts.flatMap((c) => (c?.task ? [c.task] : [])),
+  };
+}
+
+/** 트리 마디 아래의 문서 전부 */
+export function docsUnder(node: DesignNode): DesignDocEntry[] {
+  return node.kind === "doc" ? [node.doc] : node.children.flatMap(docsUnder);
+}
+
+/** 보낸 말 앞의 맥락 줄(「(보는 문서: …)」·「(문서 고침: …)」·「(고른 블록: …)」)을 떼어 칩 글로. 말풍선에는 남은 글만 보인다 */
+export type ContextChip = { label: string; value: string; path: boolean };
+
+export function splitContext(text: string): { chips: ContextChip[]; text: string } {
+  const lines = text.split("\n");
+  const chips: ContextChip[] = [];
+  while (lines.length > 1) {
+    const m = /^\((보는 문서|문서 고침|고른 블록): (.+)\)$/.exec(lines[0]!.trim());
+    if (!m) break;
+    if (m[1] === "고른 블록") chips.push({ label: "고른 블록", value: m[2]!, path: false });
+    else if (m[1] === "문서 고침") chips.push({ label: "사람 고침", value: m[2]!.split(", ").map((p) => p.slice(p.lastIndexOf("/") + 1)).join(", "), path: true });
+    else chips.push({ label: "보는 문서", value: m[2]!.split("/").slice(1).join("/") || m[2]!, path: true });
+    lines.shift();
+  }
+  return { chips, text: lines.join("\n") };
 }

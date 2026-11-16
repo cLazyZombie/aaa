@@ -800,7 +800,19 @@ path: string,
 /**
  * 첫 `# ` 제목(없으면 빈 글)
  */
-title: string, bytes: number, };
+title: string, bytes: number,
+/**
+ * 블록 표지 수(FRONT_API 1.174, t-1894 3단계): `> [!계획]`(할 일로 넘긴 것 포함)
+ */
+plans: number,
+/**
+ * `> [!미정]`
+ */
+open: number,
+/**
+ * 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
+ */
+tasks: Array<string>, };
 
 export type DesignTree = {
 /**
@@ -834,7 +846,11 @@ changed: Array<DesignChange>,
 /**
  * 기획 branch를 읽었으면 main보다 앞선 commit 수
  */
-ahead: number, };
+ahead: number,
+/**
+ * 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
+ */
+marks: boolean, };
 
 export type DesignRepoView = {
 /**
