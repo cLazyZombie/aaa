@@ -1,8 +1,9 @@
 // 기획 트리(t-1894): 문서 목록을 폴더 트리로 묶는 차례와 문서 안 상대 경로 풀기. 트리 차례는 사이드바 줄 차례이고,
 // 경로 풀기는 그림 주소·앱 안 문서 열기가 저장소 밖을 가리키지 않게 하는 계약이다.
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
-import { addedDocs, ancestors, branchesByPath, changedBlocks, designFileUrl, designMarks, designTree, docLabel, mdBlocks, resolveDocPath, slugSuggest, SLUG, splitTarget } from "../src/designModel.ts";
+import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, resolveDocPath, sectionsOf, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -98,5 +99,118 @@ describe("기획 branch 화면", () => {
   it("그림 주소: branch 판이면 slug를 싣는다", () => {
     assert.equal(designFileUrl("p", "r", "docs/x y.png", "abc", "boss-dex"), "/api/v1/projects/p/design/r/docs/x%20y.png?c=abc&b=boss-dex");
     assert.equal(designFileUrl("p", "r", "docs/x.png", "abc"), "/api/v1/projects/p/design/r/docs/x.png?c=abc");
+  });
+});
+
+describe("블록 표지(3-1)", () => {
+  it("인용 줄로만 된 덩어리의 첫 줄 표지만 표지 블록이다", () => {
+    const blocks = mdBlocks("# 게임 루프\n\n## 탑\n\n> [!계획]\n> **난이도** — 층마다 오른다.\n\n> [!계획] d-0012\n> 처음 1칸.\n>\n> ![시안](a.png)\n\n> [!미정]\n> 확률\n\n> 앞 인용\n> [!계획] 중간\n\n> [!계획]\n섞임\n\n```\n> [!계획] d-0099\n```\n");
+    const sections = sectionsOf(blocks, "게임 루프");
+    const got = blocks.map((b, i) => calloutOf(b, sections[i]));
+    assert.deepEqual(got.map((c) => c && [c.kind, c.task, c.title, c.section, c.image]), [
+      null, null,
+      ["plan", null, "난이도", "탑", false],
+      ["plan", "d-0012", "처음 1칸.", "탑", true],
+      ["open", null, "확률", "탑", false],
+      null, null, null,
+    ]);
+    // 본문이 없으면 절 이름이 줄 이름이다. 그림만 있는 첫 줄은 그림을 뺀 글이다
+    assert.equal(calloutOf("> [!계획]", "나가기").title, "나가기");
+    assert.equal(calloutOf("> [!계획] ![지도](m.png) 캠프 지도", "캠프").title, "캠프 지도");
+  });
+
+  it("절은 가장 가까운 앞 제목, 없으면 문서 제목", () => {
+    assert.deepEqual(sectionsOf(["머리말", "## 탑 ##", "글", "### 층", "글"], "문서"), ["문서", "탑", "탑", "층", "층"]);
+  });
+
+  it("넘긴 블록의 상태는 할 일과 thread에서 읽는다", () => {
+    const tasks = [
+      { short_id: "d-0001", done: false, thread: "t-0001" },
+      { short_id: "d-0002", done: false, thread: null },
+      { short_id: "d-0003", done: true, thread: null },
+      { short_id: "d-0004", done: false, thread: "t-0004" },
+      { short_id: "d-0005", done: false, thread: "t-0005" },
+      { short_id: "d-0006", done: false, thread: "t-0006" },
+      { short_id: "d-0007", done: false, thread: "t-0007" },
+    ];
+    const threads = [
+      { id: "t-0001", status: "open", stage: "work", group: "working" },
+      { id: "t-0004", status: "open", stage: "landing", group: "working" },
+      { id: "t-0005", status: "open", stage: "merge_ready", group: "ready_for_review" },
+      { id: "t-0006", status: "open", stage: "work", group: "waiting_on_you" },
+      { id: "t-0007", status: "resolved", stage: "work", group: "done" },
+    ];
+    const none = { archived: new Set(), missing: new Set() };
+    const state = (id, lookup = none) => taskState(id, tasks, threads, lookup);
+    assert.equal(taskState("d-0001", null, threads), null, "할 일을 아직 못 읽음");
+    assert.deepEqual(state("d-0001"), { tone: "work", label: "작업 중 d-0001 · t-0001" });
+    assert.deepEqual(state("d-0002"), { tone: "wait", label: "대기 d-0002" });
+    assert.deepEqual(state("d-0003"), { tone: "stale", label: "표지 남음 d-0003" });
+    assert.deepEqual(state("d-0004"), { tone: "landing", label: "착지 중 d-0004 · t-0004" });
+    assert.deepEqual(state("d-0005"), { tone: "ready", label: "병합 준비됨 d-0005 · t-0005" });
+    assert.deepEqual(state("d-0006"), { tone: "review", label: "검수 대기 d-0006 · t-0006" });
+    assert.deepEqual(state("d-0007"), { tone: "wait", label: "대기 d-0007" }, "끝난 thread는 다시 대기");
+    assert.deepEqual(state("d-0008", { archived: new Set(["d-0008"]), missing: new Set() }), { tone: "stale", label: "표지 남음 d-0008" }, "보관된 할 일");
+    assert.deepEqual(state("d-9999", { archived: new Set(), missing: new Set(["d-9999"]) }), { tone: "missing", label: "할 일 없음 d-9999" });
+    assert.equal(state("d-9999"), null, "보관을 아직 못 찾았으면(읽는 중·읽지 못함) 「할 일 없음」이 아니다");
+  });
+
+  it("폴더·저장소 합계는 같은 d-ID를 한 번만 센다", () => {
+    const docs = [
+      { path: "docs/a.md", title: "", bytes: 1, plans: 3, open: 1, tasks: ["d-0001", "d-0002"] },
+      { path: "docs/loop/b.md", title: "", bytes: 1, plans: 2, open: 0, tasks: ["d-0001"] },
+      { path: "docs/loop/c.md", title: "", bytes: 1, plans: 0, open: 2, tasks: [] },
+      { path: "docs/old.md", title: "", bytes: 1 },
+    ];
+    assert.deepEqual(markCounts(docs), { work: 2, plan: 2, open: 3 });
+    assert.deepEqual(markCounts([docs[3], undefined]), { work: 0, plan: 0, open: 0 }, "옛 host의 문서 줄");
+    const loop = designTree("docs", docs).find((n) => n.kind === "dir");
+    assert.deepEqual(docsUnder(loop).map((d) => d.path), ["docs/loop/b.md", "docs/loop/c.md"]);
+    assert.deepEqual(markCounts(docsUnder(loop)), { work: 1, plan: 1, open: 2 });
+  });
+
+  it("보낸 말 앞의 맥락 줄은 칩으로 떼고 말만 남긴다", () => {
+    const sent = "(보는 문서: docs/bosses/README.md)\n(문서 고침: docs/bosses/README.md, docs/a/b.md)\n(고른 블록: 쓰러지면과 가호 칸 · 확률)\n이 블록 같이 정하자";
+    assert.deepEqual(splitContext(sent), {
+      chips: [
+        { label: "보는 문서", value: "bosses/README.md", path: true },
+        { label: "사람 고침", value: "README.md, b.md", path: true },
+        { label: "고른 블록", value: "쓰러지면과 가호 칸 · 확률", path: false },
+      ],
+      text: "이 블록 같이 정하자",
+    });
+    assert.deepEqual(splitContext("(보는 문서: README.md)"), { chips: [], text: "(보는 문서: README.md)" }, "말이 없으면 그대로");
+    assert.deepEqual(splitContext("그냥 말\n(보는 문서: a.md)").chips, [], "맨 앞 줄만 맥락이다");
+  });
+
+  it("agent와 같은 공용 견본으로 센다(LF·CRLF)", () => {
+    const raw = fs.readFileSync(new URL("./fixtures/design-marks.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    const m = /expect plans=(\d+) open=(\d+) tasks=([\w,-]*)/.exec(raw);
+    const want = { plans: Number(m[1]), open: Number(m[2]), tasks: m[3] ? m[3].split(",") : [] };
+    for (const text of [raw, raw.replace(/\n/g, "\r\n")]) {
+      const blocks = mdBlocks(text);
+      const sections = sectionsOf(blocks, "");
+      assert.deepEqual(marksOf(blocks.map((b, i) => calloutOf(b, sections[i]))), want);
+    }
+    assert.deepEqual(markCounts([want]), { work: 3, plan: 2, open: 2 }, "같은 번호는 진행 하나");
+  });
+
+  it("미정 뒤 번호는 할 일이 아니고, 번호는 정규형이다", () => {
+    assert.deepEqual([calloutOf("> [!미정] d-0012", "s").kind, calloutOf("> [!미정] d-0012", "s").task], ["open", null]);
+    assert.equal(calloutOf("> [!계획] d-12 줄", "s").task, "d-0012");
+    assert.equal(calloutOf("> [!계획] d-12 줄", "s").title, "줄");
+    assert.equal(calloutOf("> [!계획] d-0", "s").task, null);
+    assert.equal(headingOf("## 탑 ##"), "탑");
+    assert.equal(headingOf("# C#"), "C#");
+    assert.equal(headingOf("####### 일곱"), null);
+  });
+
+  it("긴 줄에서도 되돌기 없이 바로 끝난다", () => {
+    const started = performance.now();
+    calloutOf(`> [!계획]${" ".repeat(200_000)}x`, "s");
+    calloutOf(`> [!계획] ${"![".repeat(100_000)}](a)`, "s");
+    sectionsOf([`# a${" ".repeat(200_000)}x`], "s");
+    mdBlocks(`> [!계획]${" ".repeat(200_000)}x\r\n> 끝`);
+    assert.ok(performance.now() - started < 1000, `${performance.now() - started}ms`);
   });
 });

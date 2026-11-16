@@ -1,17 +1,17 @@
 // 기획 대화(t-1894 2-3, 확정 시안 library/mock2): 기획 문서 화면 오른쪽 칸. 저장소의 기획 branch마다 대화 하나이고, 대화 thread의
 // 기록 사이에 host 사건(새 대화·저장·올림·사람 고침·반영)을 끼운다. 말은 host가 thread 준비 뒤 보낸다(`design_say`).
-import { Check, ChevronDown, Ellipsis, FileText, GitBranch, GitMerge, MessageSquare, Pencil, Play, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { ChatPanel } from "./Chat";
-import { designMarks, restDays, slugSuggest, SLUG } from "./designModel";
+import { designMarks, restDays, slugSuggest, splitContext, SLUG } from "./designModel";
 import type { ChatMessage, DesignBranchView, DesignRepoView, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
 import { ideaModelChoices } from "./ideasModel";
 import { ProviderError } from "./ProviderError";
 import { paneAgentStatus } from "./sidebarModel";
 
-const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge };
+const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge, handoff: Hammer };
 
 /** 대화 고르기 줄의 상태 */
 function branchState(b: DesignBranchView, threads: readonly ThreadView[], now: number): string {
@@ -21,7 +21,7 @@ function branchState(b: DesignBranchView, threads: readonly ThreadView[], now: n
   return "지금";
 }
 
-export function DesignChat({ repo, branch, threads, panes, canControl, viewing, active, now, onPick, onNew, onChanged, onError, onOpenLink }: {
+export function DesignChat({ repo, branch, threads, panes, canControl, viewing, picked, onUnpick, active, now, onPick, onNew, onChanged, onError, onOpenLink }: {
   repo: DesignRepoView;
   /** 고른 대화(기획 branch). 없으면 대화가 없다 */
   branch: DesignBranchView | null;
@@ -30,6 +30,9 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
   canControl: boolean;
   /** 보는 문서(저장소 기준 경로): 보낼 말 앞에 붙인다 */
   viewing: string | null;
+  /** 「대화로 정하기」로 고른 블록: 보낼 말 앞에 붙이고 보낸 뒤 비운다 */
+  picked?: { path: string; section: string; title: string } | null;
+  onUnpick?: () => void;
   active: boolean;
   now: number;
   onPick: (slug: string) => void;
@@ -129,12 +132,20 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
             <ProviderError agent={pane?.agent} />
             {pane && chatable ? (
               <ChatPanel active={active} pane={pane.id} status={status} compacting={pane.agent?.compacting ?? false} compaction={pane.agent?.context?.compaction ?? null}
-                readNow={sent} onMessages={setMessages} pending={pending} harness={harness} onOpenLink={onOpenLink} marks={marks}
+                readNow={sent} onMessages={setMessages} pending={pending} harness={harness} onOpenLink={onOpenLink} marks={marks} contextOf={splitContext}
                 onDismissPending={(id) => setPending((list) => list.filter((p) => p.id !== id))} />
             ) : (
               <div className="design-chat-idle" data-testid="design-chat-idle">
                 {marks.map((m) => <div key={m.key} className="chat-mark-row">{m.node}</div>)}
-                {pending.map((p) => <div key={p.id} className="chat-msg user chat-bubble is-pending">{p.text}</div>)}
+                {pending.map((p) => {
+                  const c = splitContext(p.text);
+                  return (
+                    <div key={p.id} className="chat-mark-group">
+                      {c.chips.length > 0 && <div className="chat-context-chips">{c.chips.map((chip, n) => <span key={n} className="chat-context-chip">{chip.label} {chip.path ? <code>{chip.value}</code> : chip.value}</span>)}</div>}
+                      <div className="chat-msg user chat-bubble is-pending">{c.text}</div>
+                    </div>
+                  );
+                })}
                 {branch.pending > 0 && <p className="chat-note" role="status">thread 준비 중 · 보낼 말 {branch.pending}개</p>}
                 {pending.length === 0 && branch.pending === 0 && <p className="chat-note">{pane ? "대화 기록을 읽지 못하는 harness다" : thread ? "잇는 중…" : "아직 대화가 없다."}</p>}
               </div>
@@ -143,10 +154,15 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
           </>
         )}
       </div>
-      {branch && branch.state === "open" && (viewing || branch.edited.length > 0) && (
+      {branch && branch.state === "open" && (viewing || branch.edited.length > 0 || picked) && (
         <div className="design-context" data-testid="design-context">
           {viewing && <span className="design-context-chip"><FileText aria-hidden="true" />보는 문서 <code>{viewing.split("/").slice(1).join("/") || viewing}</code></span>}
           {branch.edited.length > 0 && <span className="design-context-chip"><Pencil aria-hidden="true" />사람이 고침 <code>{branch.edited.map((p) => p.slice(p.lastIndexOf("/") + 1)).join(", ")}</code></span>}
+          {picked && (
+            <span className="design-context-chip is-picked" data-testid="design-picked">고른 블록 <code>{picked.section} · {picked.title}</code>
+              {onUnpick && <button type="button" className="design-context-x" aria-label="고른 블록 빼기" onClick={onUnpick}><X aria-hidden="true" /></button>}
+            </span>
+          )}
         </div>
       )}
       {branch && branch.state === "open" && canControl && (
@@ -160,10 +176,12 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
           prepare={(text) => [
             branch.edited.length > 0 ? `(문서 고침: ${branch.edited.join(", ")})` : null,
             viewing ? `(보는 문서: ${viewing})` : null,
+            picked ? `(고른 블록: ${picked.section} · ${picked.title})` : null,
             text,
           ].filter((x): x is string => x !== null).join("\n")}
           onSend={(text) => call({ op: "design_say", repo: repo.repo, branch: branch.slug, text }).then(() => {
             onError(null);
+            onUnpick?.();
             onChanged();
             return true as const;
           }, (e: unknown) => (e instanceof ApiError ? e.message : String(e)))}

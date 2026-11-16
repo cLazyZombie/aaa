@@ -664,6 +664,7 @@ mod tests {
         let Ok(AgentResponse::DesignTree(tree)) = crate::design::tree(repo, "docs", Some("boss-dex")).await else {
             panic!("branch 트리")
         };
+        assert!(!tree.marks, "기획 branch 트리는 표지를 세지 않는다(host는 고친 파일만 쓴다)");
         assert_eq!((tree.base.as_str(), tree.commit.as_str(), tree.ahead), ("design/boss-dex", second.as_str(), 2));
         let changed: Vec<_> = tree.changed.iter().map(|c| (c.status.as_str(), c.path.as_str())).collect();
         assert_eq!(changed, [("A", doc)]);

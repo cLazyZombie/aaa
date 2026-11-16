@@ -3152,6 +3152,29 @@ pub enum FrontRequest {
         repo: String,
         branch: String,
     },
+    /// 구현 맡기기(FRONT_API 1.175, 조작, t-1894 3-2): 기획 branch 판 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
+    /// 할 일을 만들고 고른 블록 표지에 그 d-ID를 적어 그 branch에 commit해 바로 올린다. 그 할 일의 구현 thread는
+    /// `origin/design/<주제>`에서 갈라진 worktree에서 일한다. `reserve`면 예약한다(자리가 나면 host가 띄운다). 답은 `design_handoff`
+    DesignHandoff {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+        /// 저장소 기준 문서 경로
+        path: String,
+        /// 고를 때 읽은 판(blob). 그 사이 바뀌었으면 쓰지 않는다
+        blob: String,
+        /// 고른 표지 블록(차례와 첫 줄. 차례는 `design_marks`와 웹 `calloutOf`가 같다)
+        blocks: Vec<crate::DesignPick>,
+        title: String,
+        /// 모델(profile). 비우면 프로젝트 기본
+        #[serde(default)]
+        profile: Option<String>,
+        /// 할 일 메모(여러 줄)
+        memo: String,
+        reserve: bool,
+    },
     /// 아이디어 목록(FRONT_API 1.147, 보기 권한). 다듬는 중을 먼저, 그 안에서는 최근에 고친 것부터
     IdeaList {
         #[serde(default)]
@@ -4026,6 +4049,7 @@ impl FrontRequest {
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
+            | FrontRequest::DesignHandoff { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
             | FrontRequest::IdeaSeen { project, .. }
@@ -4413,6 +4437,10 @@ pub enum FrontResponse {
         path: String,
         commit: String,
         blob: String,
+    },
+    /// `design_handoff`의 답(FRONT_API 1.175)
+    DesignHandoff {
+        handoff: crate::DesignHandoffView,
     },
     /// `idea_list`의 답(FRONT_API 1.147)
     Ideas {

@@ -792,6 +792,30 @@ events: Array<DesignEvent>,
  */
 edited: Array<string>, };
 
+export type DesignHandoffView = {
+/**
+ * 만든 할 일(`d-NNNN`)
+ */
+task: string,
+/**
+ * 표지를 적은 commit(못 적었으면 없음)
+ */
+commit: string | null,
+/**
+ * origin에 올렸다
+ */
+pushed: boolean,
+/**
+ * 예약했다
+ */
+reserved: boolean,
+/**
+ * 할 일과 표지 commit은 됐지만 올리기·예약 중 못한 것(창에 보인다. 올리기 전에는 그 할 일을 시작하지 않는다)
+ */
+warning: string | null, };
+
+export type DesignPick = { ordinal: number, head: string, };
+
 export type DesignDocEntry = {
 /**
  * 저장소 기준 경로(`docs/game-loop/README.md`)
@@ -800,7 +824,19 @@ path: string,
 /**
  * 첫 `# ` 제목(없으면 빈 글)
  */
-title: string, bytes: number, };
+title: string, bytes: number,
+/**
+ * 블록 표지 수(FRONT_API 1.174, t-1894 3단계): `> [!계획]`(할 일로 넘긴 것 포함)
+ */
+plans: number,
+/**
+ * `> [!미정]`
+ */
+open: number,
+/**
+ * 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
+ */
+tasks: Array<string>, };
 
 export type DesignTree = {
 /**
@@ -834,7 +870,11 @@ changed: Array<DesignChange>,
 /**
  * 기획 branch를 읽었으면 main보다 앞선 commit 수
  */
-ahead: number, };
+ahead: number,
+/**
+ * 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
+ */
+marks: boolean, };
 
 export type DesignRepoView = {
 /**
@@ -1710,7 +1750,27 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string, branch: string,
+/**
+ * 저장소 기준 문서 경로
+ */
+path: string,
+/**
+ * 고를 때 읽은 판(blob). 그 사이 바뀌었으면 쓰지 않는다
+ */
+blob: string,
+/**
+ * 고른 표지 블록(차례와 첫 줄. 차례는 `design_marks`와 웹 `calloutOf`가 같다)
+ */
+blocks: Array<DesignPick>, title: string,
+/**
+ * 모델(profile). 비우면 프로젝트 기본
+ */
+profile: string | null,
+/**
+ * 할 일 메모(여러 줄)
+ */
+memo: string, reserve: boolean, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -1921,7 +1981,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

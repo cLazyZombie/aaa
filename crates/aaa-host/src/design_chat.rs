@@ -76,6 +76,16 @@ fn chat_key(repo: &str, slug: &str) -> String {
     format!("{repo}/{slug}")
 }
 
+/// thread에 보낼 글: 사람이 고친 문서가 있으면 앞에 알린다. 웹은 보낼 글에 이미 붙인다(보낸 말 확인이 그 글과 같아야 한다):
+/// 붙어 있으면 다시 붙이지 않는다
+fn said_text(next: &str, told: &[String]) -> String {
+    if told.is_empty() || next.starts_with("(문서 고침:") {
+        next.to_string()
+    } else {
+        format!("(문서 고침: {})\n{next}", told.join(", "))
+    }
+}
+
 /// thread에 줄 할 일 글(brief 끝)
 fn task_text(
     repo: &str,
@@ -440,12 +450,7 @@ impl Host {
             if ready {
                 // 사람이 고친 문서는 다음 말 앞에 알린다(thread가 다시 읽고 잇는다)
                 let told = chat.edited.clone();
-                // 웹은 보낼 글에 이미 붙인다(보낸 말 확인이 그 글과 같아야 한다): 붙어 있으면 다시 붙이지 않는다
-                let text = if told.is_empty() || next.starts_with("(문서 고침:") {
-                    next.clone()
-                } else {
-                    format!("(문서 고침: {})\n{next}", told.join(", "))
-                };
+                let text = said_text(&next, &told);
                 // 보내기 전에 자리를 남긴다: thread가 이 말을 받자마자 저장하면 그 사건이 이 말 뒤에 놓여야 한다
                 let anchor: String = text.chars().take(ANCHOR_CHARS).collect();
                 aaa_common::diagnostic::ignored(
@@ -598,6 +603,15 @@ mod tests {
         assert!(e.message.contains("lab-old") && e.message.contains(CHAT_FEATURE), "{}", e.message);
         drop(h);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn edit_notes_are_added_once() {
+        let told = ["docs/a.md".to_string(), "docs/b.md".to_string()];
+        assert_eq!(said_text("말", &told), "(문서 고침: docs/a.md, docs/b.md)\n말", "CLI 말은 host가 붙인다");
+        assert_eq!(said_text("말", &[]), "말");
+        let web = "(문서 고침: docs/a.md)\n(보는 문서: docs/a.md)\n말";
+        assert_eq!(said_text(web, &told), web, "웹이 붙인 말에는 다시 붙이지 않는다");
     }
 
     #[test]

@@ -2,21 +2,105 @@
 // 문서는 main이나 그 문서를 고친 기획 branch의 판으로 보고, branch 판은 main과 다른 덩어리에 표시를 단다. 「고치기」는 그 대화의
 // 기획 branch에 저장한다. 그림·영상은 같은 commit의 저장소 파일이고, 문서 안 다른 문서 링크(상대 경로 .md)는 앱 안에서 연다.
 import "./DesignView.css";
-import { Check, GitBranch, ImagePlus, Pencil, RefreshCw } from "lucide-react";
+import { Check, CircleDot, GitBranch, Hammer, ImagePlus, MessageSquare, Pencil, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiError, call, uploadDesignFile } from "./api";
+import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
+import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
-import { branchesByPath, changedBlocks, designFileUrl, designTarget, isMarkdown, mdBlocks, resolveDocPath, restDays, splitTarget } from "./designModel";
+import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
+import { branchesByPath, calloutOf, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
-import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, ThreadView } from "./gen/proto";
+import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { useLightbox } from "./Lightbox";
+import { AppIdChipContext } from "./Markdown";
 import { ago } from "./machineDetail";
 import { ReportMarkdown } from "./ReportsView";
 import { useMedia } from "./settings";
 import { useMinute } from "./Sidebar";
 
 type Page = "tree" | "doc" | "chat";
+/** 문서 보기: 전체, 지금 모습(표지 블록을 뺀 구현된 사실), 남은 것(표지 블록 목록) */
+type Look = "all" | "now" | "left";
+
+/** 할 일 목록(넘긴 블록의 상태): 화면이 보일 때·트리를 다시 읽을 때 읽는다. 목록에 없는 d-ID는 보관에서 찾는다(끝난 할 일) */
+/** 보관 찾기: d-ID마다 이만큼만 넘겨 본다(찾지 못하고 더 남으면 모름으로 둔다) */
+const ARCHIVE_PAGES = 4;
+const ARCHIVE_PAGE = 50;
+
+/** 표지·글 속 d-ID의 할 일 보드와 보관 찾기. 할 일이 바뀐 사건마다 다시 읽는다. 문서를 바꾸면 앞 문서의 늦은 답은 버린다 */
+function useDesignTasks(shown: boolean, rev: unknown, ids: readonly string[]): { tasks: TaskView[] | null; lookup: ArchiveLookup } {
+  const [tasks, setTasks] = useState<TaskView[] | null>(null);
+  const [lookup, setLookup] = useState<ArchiveLookup>(() => ({ archived: new Set(), missing: new Set() }));
+  const [changed, setChanged] = useState(0);
+  useEffect(() => onTasksChanged(() => setChanged((n) => n + 1)), []);
+  const want = [...new Set(ids)].join(" ");
+  useEffect(() => {
+    if (!shown || !want) return;
+    let live = true;
+    (async () => {
+      const r = await call({ op: "tasks" });
+      if (!live || r.kind !== "task_board") return;
+      setTasks(r.tasks);
+      const archived = new Set<string>(), missing = new Set<string>();
+      for (const id of want.split(" ").filter((id) => !r.tasks.some((t) => t.short_id === id))) {
+        // 보관 검색은 번호·제목·메모의 부분 일치라 같은 번호가 든 다른 할 일이 앞에 올 수 있다: 정확한 번호를 몇 쪽 넘겨 찾는다
+        let after: string | null = null;
+        for (let n = 0; n < ARCHIVE_PAGES && live; n++) {
+          const a = await call({ op: "task_archive", restore: null, view: { search: { query: id, repo: null }, filter: null, after, limit: ARCHIVE_PAGE, profile: null, machine: null, since_ms: null, until_ms: null } });
+          if (a.kind !== "task_archive") break;
+          if (a.entries.some((e) => e.task.short_id === id)) { archived.add(id); break; }
+          if (!a.next) { missing.add(id); break; }
+          after = a.next;
+        }
+      }
+      if (live) setLookup({ archived, missing });
+    })().catch(() => {
+      // 읽지 못하면 모름이다: 「할 일 없음」으로 그리지 않는다
+      if (live) setLookup({ archived: new Set(), missing: new Set() });
+    });
+    return () => { live = false; };
+  }, [shown, rev, want, changed]);
+  return { tasks, lookup };
+}
+
+/** 표지 블록 하나: 계획(노랑)·미정(보라)·넘김(할 일 상태 칩) */
+function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, children }: {
+  c: Callout;
+  tasks: TaskView[] | null;
+  lookup: ArchiveLookup;
+  threads: ThreadView[];
+  onDiscuss?: () => void;
+  /** 기획 branch 판의 넘기지 않은 계획 블록만 */
+  onHandoff?: () => void;
+  children: ReactNode;
+}) {
+  const state = c.task ? taskState(c.task, tasks, threads, lookup) : null;
+  const tone = c.kind === "open" ? "open" : state ? `task tone-${state.tone}` : "plan";
+  return (
+    <div className={`design-callout is-${tone}`} data-testid="design-callout" data-kind={c.kind} data-task={c.task ?? undefined}>
+      <div className="design-callout-side">
+        {state ? (
+          <a className={`design-state is-${state.tone}`} href={`#task=${encodeURIComponent(c.task!)}`} data-testid="design-state">
+            {(state.tone === "work" || state.tone === "landing") && <CircleDot className="i" aria-hidden="true" />}{state.label}
+          </a>
+        ) : c.task ? (
+          <span className="design-state is-wait">{c.task}</span>
+        ) : (
+          <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>
+        )}
+        {c.image && <span className="design-pill is-draft">시안</span>}
+      </div>
+      <div className="design-callout-body">{children}</div>
+      {c.kind === "open" && onDiscuss && (
+        <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={onDiscuss}><MessageSquare className="i" aria-hidden="true" />대화로 정하기</button>
+      )}
+      {onHandoff && (
+        <button type="button" className="btn small design-discuss" data-testid="design-handoff" onClick={onHandoff}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
+      )}
+    </div>
+  );
+}
 
 /** 저장소마다 고른 대화(기기에 남긴다) */
 function storedChat(repo: string): string | null {
@@ -174,8 +258,103 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
       setSaving(false);
     }
   };
-  const blocks = useMemo(() => (current && tab !== "main" ? mdBlocks(current.text) : null), [current, tab]);
-  const marked = useMemo(() => (blocks ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main]);
+  // 덩어리: 표지 블록을 그리려고 늘 나눈다. branch 판이면 main과 다른 덩어리도 표시한다
+  const blocks = useMemo(() => (current ? mdBlocks(current.text) : null), [current]);
+  const marked = useMemo(() => (blocks && tab !== "main" ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main, tab]);
+  const sections = useMemo(() => (blocks && current ? sectionsOf(blocks, current.title) : []), [blocks, current]);
+  const callouts = useMemo(() => (blocks ? blocks.map((b, i) => calloutOf(b, sections[i] ?? "")) : []), [blocks, sections]);
+  const [look, setLook] = useState<Look>("all");
+  // 글 어디든(표 칸 포함) `d-NNNN`은 표지와 같은 상태 칩이다(확정 계획 §3)
+  const inlineTasks = useMemo(() => (current ? splitAppIds(current.text, (id) => id.kind === "task").flatMap((p) => (typeof p === "string" ? [] : [p.target])) : []), [current]);
+  const { tasks, lookup } = useDesignTasks(shown, repos, [...callouts.flatMap((c) => (c?.task ? [c.task] : [])), ...inlineTasks]);
+  const chipOf = useCallback((id: AppId) => {
+    if (id.kind !== "task") return null;
+    const state = taskState(id.target, tasks, threads, lookup);
+    if (!state) return <span className="design-state is-wait is-inline">{id.target}</span>;
+    return (
+      <a className={`design-state is-${state.tone} is-inline`} href={`#task=${encodeURIComponent(id.target)}`} data-testid="design-inline-state">
+        {(state.tone === "work" || state.tone === "landing") && <CircleDot className="i" aria-hidden="true" />}{state.label}
+      </a>
+    );
+  }, [tasks, threads, lookup]);
+  // 트리 줄과 같은 셈(같은 d-ID는 한 번)
+  const counts = useMemo(() => markCounts([marksOf(callouts)]), [callouts]);
+  // 대화로 정하기: 고른 블록을 대화 입력의 맥락으로 넘긴다
+  const [picked, setPicked] = useState<{ path: string; section: string; title: string } | null>(null);
+  useEffect(() => setPicked(null), [key]);
+  // 구현 맡기기(3-2): 기획 branch 판에서만. 「남은 것」에서 고른 블록과 창
+  const canHand = !!branch && branch.state === "open" && canControl;
+  const [checked, setChecked] = useState<Set<number>>(() => new Set());
+  // 창은 연 때의 판과 블록으로 맡긴다: 그 사이 문서가 다시 읽혀도 고른 번호가 다른 블록을 가리키지 않는다(host가 판을 다시 본다)
+  const [handoff, setHandoff] = useState<{ initial: number[]; blob: string; blocks: HandoffBlock[] } | null>(null);
+  useEffect(() => { setChecked(new Set()); setHandoff(null); }, [docKey]);
+  // 판이 바뀌면 「남은 것」에서 고른 것은 다른 블록일 수 있다: 푼다
+  useEffect(() => { setChecked(new Set()); }, [current?.blob]);
+  const openHandoff = (initial: number[]) => {
+    if (!current || !blocks) return;
+    const list = callouts.flatMap((c, i) => (c ? [{ c, i }] : [])).map((b, ordinal) => ({ ...b, ordinal, head: (blocks[b.i] ?? "").split("\n")[0]!.trim() }));
+    setHandoff({ initial, blob: current.blob, blocks: list });
+  };
+  const flipCheck = (i: number) => setChecked((old) => { const next = new Set(old); if (!next.delete(i)) next.add(i); return next; });
+  const discuss = (c: Callout) => { if (at) { setPicked({ path: at.path, section: c.section, title: c.title }); if (narrow) setPage("chat"); } };
+  // 「지금 모습」은 표지 블록만 든 절의 제목도 숨긴다(확정 계획 §3)
+  const onlyPlans = (i: number) => {
+    if (!blocks || !/^#{1,6}\s/.test(blocks[i]!)) return false;
+    let plans = false;
+    for (let j = i + 1; j < blocks.length && !/^#{1,6}\s/.test(blocks[j]!); j++) {
+      if (!callouts[j]) return false;
+      plans = true;
+    }
+    return plans;
+  };
+  const renderBlock = (b: string, i: number) => {
+    const c = callouts[i];
+    const md = <ReportMarkdown base={null} image={image} text={c ? c.body : b} onImages={lightbox.open} captions />;
+    return (
+      <div key={i} className={`design-block${marked?.[i] ? " is-changed" : ""}`} data-testid={marked?.[i] ? "design-changed" : undefined}>
+        {c ? <DesignCallout c={c} tasks={tasks} lookup={lookup} threads={threads} onDiscuss={canControl ? () => discuss(c) : undefined}
+          onHandoff={canHand && handable(c) ? () => openHandoff([i]) : undefined}>{md}</DesignCallout> : md}
+      </div>
+    );
+  };
+  // 본문: main 판은 표지 블록 사이의 보통 글을 이어 한 번에 그린다(목록 이어짐·참조식 링크·각주가 덩어리마다 끊기지 않게).
+  // 표지가 없으면 문서 전체를 그대로 그린다. branch 판은 main과 다른 덩어리를 표시하므로 덩어리마다 그린다(2-3과 같다)
+  const renderBody = (): ReactNode => {
+    if (!blocks || !current) return null;
+    if (!marked && callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />;
+    const shown = (i: number) => !(look === "now" && (callouts[i] || onlyPlans(i)));
+    if (marked) return blocks.map((b, i) => (shown(i) ? renderBlock(b, i) : null));
+    const out: ReactNode[] = [];
+    let run: string[] = [];
+    let start = 0;
+    const flush = () => {
+      if (run.length) out.push(<div key={`text-${start}`} className="design-block"><ReportMarkdown base={null} image={image} text={run.join("\n\n")} onImages={lightbox.open} captions /></div>);
+      run = [];
+    };
+    blocks.forEach((b, i) => {
+      if (!shown(i)) return;
+      if (callouts[i]) { flush(); out.push(renderBlock(b, i)); return; }
+      if (run.length === 0) start = i;
+      run.push(b);
+    });
+    flush();
+    return out;
+  };
+  // 남은 것: 절마다 표지 블록. 절에 표지 없는 글도 있으면 「일부 구현」
+  const left = useMemo(() => {
+    const groups: { section: string; some: boolean; items: { c: Callout; i: number }[] }[] = [];
+    if (!blocks) return groups;
+    // 제목마다 새 절이다: 같은 이름의 절이 둘이어도 따로 둔다
+    let g: (typeof groups)[number] | null = null;
+    blocks.forEach((b, i) => {
+      const c = callouts[i];
+      if (/^#{1,6}\s/.test(b)) { g = null; return; }
+      if (!g) { g = { section: sections[i] ?? "", some: false, items: [] }; groups.push(g); }
+      if (c) g.items.push({ c, i });
+      else g.some = true;
+    });
+    return groups.filter((g) => g.items.length > 0);
+  }, [blocks, sections, callouts]);
   const others = touching.filter((b) => b.slug !== tab);
   const stateOf = (b: DesignBranchView) => {
     const apply = b.apply ? threads.find((t) => t.id === b.apply) : undefined;
@@ -221,14 +400,14 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
               </div>
             )}
             {at && !editing && canControl && current && (
-              <button type="button" className="btn design-edit" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" />고치기</button>
+              <button type="button" className="btn design-edit" aria-label="고치기" title="고치기" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" /><span className="design-btn-label">고치기</span></button>
             )}
             {editing && (
               <>
                 <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden data-testid="design-attach-input"
                   onChange={(e) => void attach(e.target.files)} />
-                <button type="button" className="btn design-edit" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
-                  <ImagePlus className="i" aria-hidden="true" />그림
+                <button type="button" className="btn design-edit" aria-label="그림" title="그림" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
+                  <ImagePlus className="i" aria-hidden="true" /><span className="design-btn-label">그림</span>
                 </button>
                 <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel" onClick={() => setEditing(null)}>취소</button>
                 <button type="button" className="btn primary" disabled={saving || editing.text === editing.was} data-testid="design-edit-save" onClick={() => void save()}>
@@ -265,6 +444,17 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                   </>
                 )}
               </div>
+              <div className="design-looks">
+                {counts.work > 0 && <span className="design-count-chip is-work" data-testid="design-count-work">진행 {counts.work}</span>}
+                {counts.plan > 0 && <span className="design-count-chip is-plan" data-testid="design-count-plan">계획 {counts.plan}</span>}
+                {counts.open > 0 && <span className="design-count-chip is-open" data-testid="design-count-open">미정 {counts.open}</span>}
+                <span className="spacer" />
+                <div className="design-tabs" role="tablist" aria-label="보기" data-testid="design-looks">
+                  {([["all", "전체"], ["now", "지금 모습"], ["left", "남은 것"]] as const).map(([k, label]) => (
+                    <button key={k} type="button" role="tab" aria-selected={look === k} className={`design-tab${look === k ? " is-on" : ""}`} data-testid="design-look" data-look={k} onClick={() => setLook(k)}>{label}</button>
+                  ))}
+                </div>
+              </div>
               {others.length > 0 && (
                 <div className="design-others">
                   {others.map((b) => (
@@ -276,11 +466,42 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
               )}
               <div className="design-text">
                 <OpenFileContext.Provider value={openPath}>
-                  {blocks && marked ? blocks.map((b, i) => (
-                    <div key={i} className={`design-block${marked[i] ? " is-changed" : ""}`} data-testid={marked[i] ? "design-changed" : undefined}>
-                      <ReportMarkdown base={null} image={image} text={b} onImages={lightbox.open} captions />
+                <AppIdChipContext.Provider value={chipOf}>
+                  {look === "left" ? (
+                    <div className="design-left" data-testid="design-left">
+                      {left.length === 0 && <p className="design-empty">표지 블록 없음</p>}
+                      {canHand && checked.size > 0 && (
+                        <div className="design-left-bar" data-testid="design-left-bar">
+                          <span>{checked.size}개 고름 · 할 일 하나로</span><span className="spacer" />
+                          <button type="button" className="ghost small" onClick={() => setChecked(new Set())}>풀기</button>
+                          <button type="button" className="btn small primary" data-testid="design-left-handoff" onClick={() => openHandoff([...checked])}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
+                        </div>
+                      )}
+                      {left.map((g, gi) => (
+                        <section key={gi} className="design-left-group">
+                          <h3>{g.section}<span className="design-left-some">{g.some ? "일부 구현" : "계획만"}</span></h3>
+                          {g.items.map(({ c, i }) => {
+                            const state = c.task ? taskState(c.task, tasks, threads, lookup) : null;
+                            return (
+                              <div key={i} className={`design-left-row${checked.has(i) ? " is-checked" : ""}`} data-testid="design-left-row">
+                                {canHand && (handable(c)
+                                  ? <input type="checkbox" className="design-left-check" aria-label={`${c.title} 고르기`} checked={checked.has(i)}
+                                      onChange={() => flipCheck(i)} data-testid="design-left-check" />
+                                  : <span className="design-left-check" aria-hidden="true" />)}
+                                {state ? <a className={`design-state is-${state.tone}`} href={`#task=${encodeURIComponent(c.task!)}`}>{state.label}</a>
+                                  : <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>}
+                                <span className="design-left-title">{c.title}</span>
+                                <span className="spacer" />
+                                {c.kind === "open" && canControl && <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={() => discuss(c)}><MessageSquare className="i" aria-hidden="true" />대화로 정하기</button>}
+                              </div>
+                            );
+                          })}
+                        </section>
+                      ))}
                     </div>
-                  )) : <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />}
+                  ) : blocks ? renderBody()
+                    : <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />}
+                </AppIdChipContext.Provider>
                 </OpenFileContext.Provider>
               </div>
             </div>
@@ -290,10 +511,15 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           <section className="design-chat-pane" aria-label="기획 대화" hidden={!show("chat")} data-testid="design-chat-pane">
             {chatError && <div className="banner err" role="alert">{chatError}</div>}
             <DesignChat repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
+              picked={picked} onUnpick={() => setPicked(null)}
               active={shown && show("chat")} now={now} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
           </section>
         )}
       </div>
+      {handoff && repo && branch && at && (
+        <HandoffDialog repo={repo} branch={branch} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
+          onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
+      )}
       {newChat && repo && <NewChatDialog repo={repo} onClose={() => setNewChat(false)} onDone={(slug) => { setNewChat(false); pick(slug); onReload(); }} />}
       {lightbox.node}
     </div>

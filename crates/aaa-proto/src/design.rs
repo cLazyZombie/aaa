@@ -136,6 +136,12 @@ pub struct DesignDocEntry {
     pub title: String,
     #[ts(type = "number")]
     pub bytes: u64,
+    /// 블록 표지 수(FRONT_API 1.174, t-1894 3단계): `> [!계획]`(할 일로 넘긴 것 포함)
+    pub plans: u32,
+    /// `> [!미정]`
+    pub open: u32,
+    /// 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
+    pub tasks: Vec<String>,
 }
 
 /// agent가 읽은 기획 폴더(한 commit 기준)
@@ -159,6 +165,8 @@ pub struct DesignTree {
     pub changed: Vec<DesignChange>,
     /// 기획 branch를 읽었으면 main보다 앞선 commit 수
     pub ahead: u32,
+    /// 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
+    pub marks: bool,
 }
 
 /// 프로젝트 저장소 하나의 기획 폴더
@@ -198,6 +206,167 @@ pub struct DesignDoc {
     pub branch: Option<String>,
     #[ts(type = "number")]
     pub committed_ms: u64,
+}
+
+/// 구현 맡기기에서 고른 표지 블록(FRONT_API 1.175): 표지 블록끼리의 차례(0부터)와 그 첫 줄(앞뒤 빈칸 뺌).
+/// host는 같은 차례의 블록 첫 줄이 같은지 다시 본다(웹과 host의 덩어리 규칙이 어긋나도 다른 블록에 적지 않는다)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignPick {
+    pub ordinal: u32,
+    pub head: String,
+}
+
+/// 구현 맡기기의 결과(FRONT_API 1.175)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignHandoffView {
+    /// 만든 할 일(`d-NNNN`)
+    pub task: String,
+    /// 표지를 적은 commit(못 적었으면 없음)
+    pub commit: Option<String>,
+    /// origin에 올렸다
+    pub pushed: bool,
+    /// 예약했다
+    pub reserved: bool,
+    /// 할 일과 표지 commit은 됐지만 올리기·예약 중 못한 것(창에 보인다. 올리기 전에는 그 할 일을 시작하지 않는다)
+    pub warning: Option<String>,
+}
+
+/// 표지 블록 하나(t-1894 3단계): 첫 줄 번호(`\n`으로 나눈 0부터), 미정인가, 넘긴 계획의 d-ID(정규형), 속한 절(가장 가까운
+/// 앞 제목, 없으면 빈 글)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesignMark {
+    pub line: usize,
+    pub open: bool,
+    pub task: Option<String>,
+    pub section: String,
+}
+
+/// 웹(JS `\s`·`trim`)과 같은 빈칸: Rust `char::is_whitespace`와 달리 U+FEFF(BOM)는 빈칸이고 U+0085는 아니다
+fn js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+/// 웹 `String.prototype.trim`과 같은 앞뒤 빈칸 빼기(구현 맡기기의 고른 블록 첫 줄 대조)
+pub fn design_trim(s: &str) -> &str {
+    s.trim_matches(js_space)
+}
+
+/// `d-` 뒤 숫자의 정규형 할 일 번호(웹 `canonicalShortId`와 같다: 앞 0을 빼고 네 자리 이상, 0이나 i64를 넘으면 번호가 아님)
+pub fn design_task_id(digits: &str) -> Option<String> {
+    let n = digits.chars().take_while(char::is_ascii_digit).count();
+    let value = digits[..n].trim_start_matches('0');
+    if value.is_empty() || value.len() > 19 || (value.len() == 19 && value > "9223372036854775807") {
+        return None;
+    }
+    Some(format!("d-{value:0>4}"))
+}
+
+/// 문서의 표지 블록(나온 차례). 웹(`designModel.ts`의 `mdBlocks`·`calloutOf`)과 같은 규칙이다: CRLF도 같고,
+/// 빈 줄·제목·코드 울타리로 나눈 덩어리 중 모든 줄이 인용(`>`)이고 첫 줄이 `> [!계획]`·`> [!미정]`인 것만 표지다.
+/// 울타리 안의 표기 예시는 표지가 아니고, d-ID는 `[!계획]` 뒤만 읽는다. 두 쪽은 공용 견본(`web/test/fixtures/design-marks.md`)으로 맞춘다
+pub fn design_marks(text: &str) -> Vec<DesignMark> {
+    fn fence_of(line: &str) -> Option<(char, usize)> {
+        let t = line.trim_start_matches(js_space);
+        let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
+        let n = t.chars().take_while(|x| *x == c).count();
+        (n >= 3).then_some((c, n))
+    }
+    /// 제목 줄의 글(닫는 `#`은 뺀다, 웹 `headingOf`와 같다)
+    fn heading(line: &str) -> Option<String> {
+        let n = line.chars().take_while(|c| *c == '#').count();
+        if !(1..=6).contains(&n) || !line[n..].chars().next().is_some_and(js_space) {
+            return None;
+        }
+        let t = design_trim(&line[n..]);
+        let closed = t.trim_end_matches('#');
+        let t = if closed.is_empty() {
+            ""
+        } else if closed.ends_with(js_space) {
+            closed.trim_end_matches(js_space)
+        } else {
+            t
+        };
+        Some(t.to_string())
+    }
+    fn tally(block: &[(usize, &str)], section: &str, out: &mut Vec<DesignMark>) {
+        let Some((line, first)) = block.first() else { return };
+        if !block.iter().all(|(_, l)| l.trim_start_matches(js_space).starts_with('>')) {
+            return;
+        }
+        let head = first.trim_start_matches(js_space)[1..].trim_start_matches(js_space);
+        if let Some(rest) = head.strip_prefix("[!계획]") {
+            let task = rest.trim_start_matches(js_space).strip_prefix("d-").and_then(design_task_id);
+            out.push(DesignMark { line: *line, open: false, task, section: section.to_string() });
+        } else if head.starts_with("[!미정]") {
+            out.push(DesignMark { line: *line, open: true, task: None, section: section.to_string() });
+        }
+    }
+    let mut out = Vec::new();
+    let mut block: Vec<(usize, &str)> = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    let mut section = String::new();
+    for (n, line) in text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).enumerate() {
+        let mark = fence_of(line);
+        if let Some((c, len)) = fence {
+            // 같은 글자로 연 것보다 짧지 않은 울타리만 닫는다
+            if let Some((c2, len2)) = mark
+                && c2 == c
+                && len2 >= len
+                && design_trim(line).chars().all(|x| x == c)
+            {
+                fence = None;
+            }
+            continue;
+        }
+        let title = heading(line);
+        if mark.is_some() || design_trim(line).is_empty() || title.is_some() {
+            tally(&block, &section, &mut out);
+            block.clear();
+            fence = mark;
+            if let Some(title) = title {
+                section = title;
+            }
+            continue;
+        }
+        block.push((n, line));
+    }
+    tally(&block, &section, &mut out);
+    out
+}
+
+/// 고른 표지(`design_marks`의 차례, 0부터)마다 첫 줄 `[!계획]` 바로 뒤에 ` <d-ID>`를 적는다(구현 맡기기, t-1894 3-2).
+/// 고른 것이 없거나, 넘기지 않은 계획 블록이 아니면 그 까닭으로 거절한다. 다른 줄은 바이트 그대로다
+pub fn design_mark_tasks(text: &str, picks: &[usize], id: &str) -> Result<String, String> {
+    if picks.is_empty() {
+        return Err("넘길 블록을 고르지 않았다".into());
+    }
+    let marks = design_marks(text);
+    let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+    let mut done = std::collections::BTreeSet::new();
+    for &pick in picks {
+        if !done.insert(pick) {
+            continue;
+        }
+        let Some(mark) = marks.get(pick) else { return Err(format!("{}번째 표지 블록이 없다", pick + 1)) };
+        if mark.open {
+            return Err("미정 블록은 넘길 수 없다(정한 뒤 넘긴다)".into());
+        }
+        if let Some(task) = &mark.task {
+            return Err(format!("이미 넘긴 블록이다: {task}"));
+        }
+        let line = &mut lines[mark.line];
+        let at = line.find("[!계획]").ok_or("표지 줄을 찾지 못했다")? + "[!계획]".len();
+        // 표지 뒤에 글이 붙어 있으면(`[!계획]100층`) 번호와 글 사이도 띄운다: 붙이면 숫자가 이어져 다른 번호가 된다
+        let glued = line[at..].chars().next().is_some_and(|c| !js_space(c));
+        line.insert_str(at, &if glued { format!(" {id} ") } else { format!(" {id}") });
+    }
+    Ok(lines.join("\n"))
 }
 
 /// 첫 `# ` 제목. 앞 YAML front matter(`---`)는 건너뛴다
@@ -267,6 +436,56 @@ pub fn design_inside(folder: &str, path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// 구현 맡기기: 고른 표지 첫 줄에만 d-ID를 적고, 미정·이미 넘긴 것·없는 차례는 거절한다(공용 견본, LF·CRLF)
+    #[test]
+    fn handoff_marks_only_the_picked_plan_blocks() {
+        let raw = include_str!("../../../web/test/fixtures/design-marks.md").replace("\r\n", "\n");
+        for text in [raw.clone(), raw.replace('\n', "\r\n")] {
+            let before = design_marks(&text);
+            assert_eq!(before.len(), 8);
+            let sections: Vec<_> = before.iter().map(|m| m.section.as_str()).collect();
+            assert_eq!(
+                sections,
+                ["견본", "견본", "절", "절", "절", "절", "절", "절"],
+                "가장 가까운 앞 제목(닫는 #은 뺀다)"
+            );
+            let out = design_mark_tasks(&text, &[6, 0, 0], "d-0050").unwrap();
+            let after = design_marks(&out);
+            let tasks: Vec<_> = after.iter().map(|m| m.task.as_deref()).collect();
+            assert_eq!(
+                tasks,
+                [
+                    Some("d-0050"),
+                    Some("d-0012"),
+                    Some("d-0013"),
+                    None,
+                    None,
+                    Some("d-0014"),
+                    Some("d-0050"),
+                    Some("d-0012")
+                ]
+            );
+            assert_eq!(out.lines().count(), text.lines().count(), "줄 수 그대로");
+            let changed: Vec<_> =
+                text.split('\n').zip(out.split('\n')).filter(|(a, b)| a != b).map(|(_, b)| b).collect();
+            assert_eq!(changed.len(), 2);
+            assert!(changed.iter().all(|l| l.contains("[!계획] d-0050")), "{changed:?}");
+            assert_eq!(text.contains('\r'), out.contains('\r'), "CRLF는 그대로");
+            assert!(design_mark_tasks(&text, &[3], "d-0050").unwrap_err().contains("미정"));
+            assert!(design_mark_tasks(&text, &[1], "d-0050").unwrap_err().contains("이미 넘긴"));
+            assert!(design_mark_tasks(&text, &[8], "d-0050").is_err());
+            assert!(design_mark_tasks(&text, &[], "d-0050").is_err());
+        }
+        // 표지 뒤에 글이 붙은 줄: 번호와 글을 띄운다
+        let glued = design_mark_tasks("> [!계획]100층까지", &[0], "d-0050").unwrap();
+        assert_eq!(glued, "> [!계획] d-0050 100층까지");
+        assert_eq!(design_marks(&glued)[0].task.as_deref(), Some("d-0050"));
+        // 웹과 같은 빈칸: 맨 앞 BOM 뒤의 표지도 표지이고, U+0085로 시작하는 줄은 인용이 아니다
+        assert_eq!(design_marks("\u{feff}> [!계획]\n> 글").len(), 1);
+        assert_eq!(design_marks("\u{85}> [!계획]").len(), 0);
+        assert_eq!(design_trim("\u{feff} 첫 줄 \u{a0}"), "첫 줄");
+    }
+
     use super::*;
 
     #[test]

@@ -41,6 +41,7 @@ mod deploy;
 mod design;
 mod design_branch;
 mod design_chat;
+mod design_handoff;
 mod diff;
 mod enroll_guide;
 pub mod file_backup;
@@ -2196,7 +2197,8 @@ impl Host {
             | FrontRequest::DesignSave { .. }
             | FrontRequest::DesignSay { .. }
             | FrontRequest::DesignDiscard { .. }
-            | FrontRequest::DesignApply { .. }) => Box::pin(self.call_design(role, actor, req)).await,
+            | FrontRequest::DesignApply { .. }
+            | FrontRequest::DesignHandoff { .. }) => Box::pin(self.call_design(role, actor, req)).await,
             req @ (FrontRequest::IdeaList { .. }
             | FrontRequest::IdeaRead { .. }
             | FrontRequest::IdeaSeen { .. }

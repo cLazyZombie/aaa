@@ -1,11 +1,13 @@
 // 기획 2-3(t-1894, 확정 시안 library/mock2): 실제 host·agent·git origin으로 기획 branch 웹 화면을 본다.
 // 트리 branch 표시(저장소 수·문서 칩·branch에서 새로 만든 문서) → branch 판 보기(판 고르기·main과 다른 덩어리·다른 branch 알림)
-// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(반영 thread) → 버리기 → 휴대폰 칸.
+// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(반영 thread) → 버리기
+// → 블록 표지(3-1, 확정 시안 library/mock4: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수와 「할 것」·대화로 정하기)
+// → 구현 맡기기(3-2, 확정 시안 library/mock5: 고른 블록 → 할 일 하나·표지 commit·바로 올림·예약한 구현 thread는 그 기획 branch에서) → 휴대폰 칸.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, pairPage, inList, domIs } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until } from "../lib/harness.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -40,6 +42,45 @@ const LOOP = `# 게임 루프
 - 11-15: 처음 정함.
 `;
 
+/** 블록 표지 문서(3-1): 넘긴 할 일 셋(일함·기다림·끝남)과 없는 d-9999, 아직 안 넘긴 계획 하나, 미정 하나 */
+const EXIT = (d) => `# 나가기
+
+탑에서 캠프로 돌아오는 길.
+
+## 통로
+
+지금 통로는 계단 하나다.
+
+- 계단
+- 귀환 두루마리
+
+  두루마리는 상자에서만 나온다.
+
+> [!계획] ${d.work}
+> 처음 1칸, 스킬 트리로 최대 6칸.
+
+> [!계획] ${d.wait}
+> 스크롤·랜덤 통로.
+
+> [!미정]
+> 스킬 무기가 나오는 확률
+
+## 상한
+
+> [!계획] ${d.done}
+> 층 표 상한을 99로 둔다.
+
+> [!계획] d-9999
+> 나간 뒤 가방 정리 화면.
+
+> [!계획]
+> **캠프 지도** — 시설 자리.
+
+## 바뀐 것
+
+- 11-16: 통로를 ${d.work}로 넘김.
+`;
+
 const branches = () => aaa("plan", "list").repos.find((r) => r.repo === "app").branches;
 const save = (slug, path, text, base) => {
   fs.writeFileSync(`${root}/draft.md`, text);
@@ -48,6 +89,7 @@ const save = (slug, path, text, base) => {
 
 export default async function () {
   let page;
+  const tasks = {};
   await step("기획 branch 둘: 같은 문서를 고치고 한쪽은 새 문서를 더한다", async () => {
     const origin = `${root}/origins/app.git`, seed = `${root}/seed/app`, clone = `${root}/app`;
     for (const d of [`${root}/origins`, seed]) fs.mkdirSync(d, { recursive: true });
@@ -66,6 +108,15 @@ export default async function () {
     aaa("project", "create", "demo", "--thread-profile", "fake");
     // aaa.toml이 있으면 그것이 프로젝트 설정이다: thread profile도 여기에 둔다(반영 thread가 쓴다)
     fs.writeFileSync(`${root}/projects/demo/aaa.toml`, `schema = 1\nthread_profile = "fake"\n\n[[workspaces]]\npath = "${clone}"\nmachine = "labA"\ndesign = "docs"\n`);
+    // 표지 문서는 첫 트리 읽기 전에 origin main에 올린다(agent는 같은 저장소를 1분에 한 번 받는다)
+    for (const [k, title] of [["work", "가호 칸 6칸"], ["wait", "나가기 통로"], ["done", "층 표 상한"]]) {
+      aaa("task", "add", title, "--list", "Backlog");
+      tasks[k] = aaa("task", "list").tasks.find((t) => t.title === title).short_id;
+    }
+    fs.writeFileSync(`${seed}/docs/exit.md`, EXIT(tasks));
+    git(seed, "add", ".");
+    git(seed, "commit", "-q", "-m", "표지");
+    git(seed, "push", "-q", "origin", "HEAD:main");
     aaa("plan", "new", "app", "shop", "--title", "중간 상점");
     const blob = aaa("plan", "show", "app", "docs/loop/README.md", "--branch", "shop").doc.blob;
     save("shop", "docs/loop/README.md", LOOP.replace("지금 20층까지 있다.\n", "지금 20층까지 있다.\n\n> [!계획]\n> **중간 상점** — 다섯 층마다 한 번.\n"), blob);
@@ -174,8 +225,116 @@ export default async function () {
     await page.context().close();
   });
 
-  await step("휴대폰: 트리·문서·대화 칸", async () => {
-    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+  await step("블록 표지: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수·대화로 정하기", async () => {
+    // 넘긴 할 일 하나는 thread가 일하고, 하나는 끝나 보관됐다(표지 남음). d-9999는 어디에도 없다(할 일 없음)
+    const t = aaa("thread", "start", "demo", "--from-task", tasks.work, "--machine", "labA", "--profile", "fake", "--kind", "dir");
+    aaa("task", "edit", tasks.done, "--done");
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 });
+    try {
+      await p.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"));
+      await inList(p, "activity-design");
+      // 트리 줄 끝 수: 진행(같은 d-ID 한 번)·계획·미정. 「할 것」은 표지 없는 문서를 한 줄로 접는다
+      const exit = p.locator('[data-testid="design-doc"][data-path="docs/exit.md"]');
+      await exit.waitFor();
+      assert.deepEqual(await exit.locator("[data-testid=design-marks] span").allTextContents(), ["4", "1", "1"]);
+      await p.getByTestId("design-todo-on").click();
+      await p.locator('[data-testid="design-doc"][data-path="docs/README.md"]').waitFor({ state: "detached" });
+      assert.match(await p.getByTestId("design-plain").textContent(), /표지 없는 문서 \d+/);
+      await exit.click();
+      await p.getByTestId("design-body").waitFor();
+      const state = (id) => p.locator(`[data-testid=design-callout][data-task="${id}"] [data-testid=design-state]`);
+      await domIs(p, "할 일 상태", () => !!document.querySelector("[data-testid=design-callout] [data-testid=design-state]"));
+      await domIs(p, "보관 확인", () => [...document.querySelectorAll("[data-testid=design-state]")].some((e) => e.textContent.startsWith("표지 남음")));
+      assert.equal((await state(tasks.wait).textContent()).trim(), `대기 ${tasks.wait}`);
+      assert.equal((await state(tasks.done).textContent()).trim(), `표지 남음 ${tasks.done}`);
+      assert.equal((await state("d-9999").textContent()).trim(), "할 일 없음 d-9999");
+      const working = (await state(tasks.work).textContent()).trim();
+      assert.match(working, new RegExp(`^(작업 중|검수 대기) ${tasks.work} · ${t.id}$`), "thread가 맡은 할 일");
+      assert.equal(await state(tasks.work).getAttribute("href"), `#task=${tasks.work}`);
+      // main 판은 표지 사이의 보통 글을 한 번에 그린다: 빈 줄 뒤 목록의 이어지는 문단이 덩어리마다 끊기지 않는다
+      assert.equal(await p.getByTestId("design-body").locator("li", { hasText: "두루마리는 상자에서만 나온다" }).count(), 1, "목록 안의 문단");
+      // 글 속 d-ID는 같은 칩이다
+      assert.equal((await p.getByTestId("design-inline-state").textContent()).trim(), working);
+      assert.deepEqual(
+        await p.locator("[data-testid=design-callout]").evaluateAll((els) => els.map((e) => e.dataset.kind)),
+        ["plan", "plan", "open", "plan", "plan", "plan"],
+      );
+      assert.equal((await p.getByTestId("design-count-work").textContent()).trim(), "진행 4");
+      assert.equal((await p.getByTestId("design-count-plan").textContent()).trim(), "계획 1");
+      assert.equal((await p.getByTestId("design-count-open").textContent()).trim(), "미정 1");
+      // 지금 모습: 블록과 블록만 남은 절(상한)을 숨긴다
+      await p.locator("[data-testid=design-look][data-look=now]").click();
+      await domIs(p, "지금 모습", () => !document.querySelector("[data-testid=design-callout]"));
+      const now = await p.getByTestId("design-body").textContent();
+      assert.ok(now.includes("지금 통로는 계단 하나다") && now.includes("바뀐 것") && !now.includes("상한"), now);
+      // 남은 것: 절마다 「일부 구현」·「계획만」, 블록마다 한 줄
+      await p.locator("[data-testid=design-look][data-look=left]").click();
+      await p.getByTestId("design-left").waitFor();
+      assert.deepEqual(await p.locator(".design-left-group h3").allTextContents(), ["통로일부 구현", "상한계획만"]);
+      assert.equal(await p.getByTestId("design-left-row").count(), 6);
+      // 대화로 정하기: 고른 블록을 대화 입력의 맥락 칩으로 넣고, 빼면 사라진다
+      await p.getByTestId("design-left").getByTestId("design-discuss").click();
+      assert.equal((await p.getByTestId("design-picked").textContent()).trim(), "고른 블록 통로 · 스킬 무기가 나오는 확률");
+      await p.getByRole("button", { name: "고른 블록 빼기" }).click();
+      await p.getByTestId("design-picked").waitFor({ state: "detached" });
+    } finally {
+      await p.context().close();
+    }
+  });
+
+  await step("구현 맡기기: 고른 계획 블록을 할 일 하나로 넘기고 표지 commit을 올리며, 예약한 구현 thread는 그 기획 branch에서 갈라진다", async () => {
+    // boss 대화 branch에서 표지 문서에 계획 하나를 더한다(넘기지 않은 계획: 캠프 지도·층 이벤트)
+    const d = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc;
+    save("boss", "docs/exit.md", d.text.replace("## 바뀐 것", "> [!계획]\n> **층 이벤트** — 다섯 층마다 이벤트 방.\n\n## 바뀐 것"), d.blob);
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 });
+    try {
+      await p.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"));
+      await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/exit.md")}`);
+      await p.getByTestId("design-handoff").first().waitFor();
+      assert.equal(await p.getByTestId("design-handoff").count(), 2, "기획 branch 판의 넘기지 않은 계획만");
+      await p.locator("[data-testid=design-look][data-look=left]").click();
+      const checks = p.getByTestId("design-left-check");
+      assert.equal(await checks.count(), 2, "미정·넘긴 줄은 고르지 않는다");
+      await checks.nth(0).check();
+      await checks.nth(1).check();
+      await p.getByTestId("design-left-handoff").click();
+      const dialog = p.getByTestId("design-hand-dialog");
+      await dialog.waitFor();
+      const title = "상한 — 캠프 지도 · 층 이벤트";
+      assert.equal(await p.getByTestId("design-hand-title").inputValue(), title);
+      assert.match(await p.getByTestId("design-hand-memo").inputValue(), /^\[기획 app docs\/exit\.md 「상한」\]\(design\/app\/docs\/exit\.md#상한\)\n- \*\*캠프 지도\*\*/);
+      assert.ok(await p.getByTestId("design-hand-reserve").isChecked(), "예약이 기본(q-3957 2A)");
+      await p.getByTestId("design-hand-submit").click();
+      await dialog.waitFor({ state: "detached" });
+      const id = aaa("task", "list").tasks.find((t) => t.title === title)?.short_id;
+      assert.ok(id, "할 일 하나");
+      // 고른 두 블록 표지에 같은 d-ID를 적어 그 branch에 commit하고 바로 올렸다
+      const text = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc.text;
+      assert.ok(text.includes(`> [!계획] ${id}\n> **캠프 지도**`) && text.includes(`> [!계획] ${id}\n> **층 이벤트**`), text);
+      const boss = branches().find((b) => b.slug === "boss");
+      assert.equal(boss.pushed, boss.head, "바로 올린다");
+      assert.ok(boss.events.some((e) => e.kind === "handoff" && e.text === `${id} · 블록 2`), JSON.stringify(boss.events));
+      // 화면: 두 블록이 같은 할 일의 칩이 되고 대화에 「구현 맡김」 줄이 낀다
+      await p.locator("[data-testid=design-look][data-look=all]").click();
+      await domIs(p, "넘긴 블록 칩", (task) => document.querySelectorAll(`[data-testid=design-callout][data-task="${task}"]`).length === 2, id);
+      assert.equal(await p.getByTestId("design-handoff").count(), 0);
+      await p.getByTestId("design-mark").filter({ hasText: `구현 맡김 ${id} · 블록 2` }).waitFor();
+      // 예약한 할 일은 자리가 나면 host가 띄운다. 그 thread는 기획 branch 끝에서 갈라지고 brief에 맡긴 자리가 있다
+      const thread = await until("구현 thread", () => aaa("task", "list").tasks.find((t) => t.short_id === id)?.thread, 60_000)
+        .catch((e) => { e.message += ` 예약=${JSON.stringify(aaa("task", "queue")).slice(0, 1500)}`; throw e; });
+      const shown = await until("thread 작업 폴더", () => aaa("thread", "show", thread).work_dir && aaa("thread", "show", thread), 60_000);
+      const brief = fs.readFileSync(`${shown.work_dir}/brief.md`, "utf8");
+      assert.ok(brief.includes("## 기획에서 맡긴 일") && brief.includes(`기획 branch \`design/boss\``) && brief.includes(`\`[!계획] ${id}\` 표지를 풀고`), brief);
+      const tree = shown.work_dir.replace(/\/\.aaa\/[^/]+\/?$/, "");
+      git(tree, "merge-base", "--is-ancestor", boss.head, "HEAD");
+    } finally {
+      await p.context().close();
+    }
+  });
+
+  for (const name of ["chromium", "webkit"]) await step(`휴대폰: 트리·문서·대화 칸 ${name} 390px`, async () => {
+    const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
+    const { page: p } = await pairPage(wk ?? browser, aaa("web", "pair").code, { width: 390, height: 844 });
     try {
       await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/loop/README.md")}`);
       await p.getByTestId("design-body").waitFor();
@@ -187,6 +346,7 @@ export default async function () {
       await p.locator('[data-testid="design-repo"][data-repo="app"]').last().waitFor();
     } finally {
       await p.context().close();
+      await wk?.close();
     }
   });
 }
