@@ -1823,7 +1823,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         )}
         {designAt !== null && (
-          <DesignView shown={designShown} target={designAt} repos={design.repos} onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
+          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
+            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
+            onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
         )}
         {ideaAt !== null && (
           <IdeaView

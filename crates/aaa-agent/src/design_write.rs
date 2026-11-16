@@ -9,8 +9,8 @@
 //! - origin에는 `refs/heads/design/<slug>`만 force 없이 올린다. 지울 때는 host가 올린 그 판일 때만 지운다(lease).
 //! - 내릴 때(쉼·버리기) worktree는 force 없이 지운다: 올리지 않은 변경이 있으면 실패해 아무것도 잃지 않는다.
 use aaa_proto::{
-    AgentResponse, DESIGN_MAX_TEXT, ErrorBody, design_branch, design_clean_path, design_inside, design_slug_ok,
-    design_write_path_ok, valid_project,
+    AgentResponse, DESIGN_MAX_FILE, DESIGN_MAX_TEXT, ErrorBody, ErrorCode, design_branch, design_clean_path,
+    design_inside, design_slug_ok, design_write_path_ok, valid_project,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
@@ -272,6 +272,22 @@ pub async fn save(
     base_blob: Option<&str>,
     (text, message): (&str, &str),
 ) -> Result<AgentResponse, ErrorBody> {
+    save_bytes(cfg, project, repo, folder, slug, path, base_blob, (text.as_bytes(), DESIGN_MAX_TEXT), message).await
+}
+
+/// 파일 하나(글이나 그림)를 쓰고 그 파일만 commit한다. `max`는 크기 상한
+#[allow(clippy::too_many_arguments)]
+pub async fn save_bytes(
+    cfg: &ThreadsConfig,
+    project: &str,
+    repo: &str,
+    folder: &str,
+    slug: &str,
+    path: &str,
+    base_blob: Option<&str>,
+    (text, max): (&[u8], u64),
+    message: &str,
+) -> Result<AgentResponse, ErrorBody> {
     reply(
         async {
             let branch = checked(project, slug)?;
@@ -283,8 +299,8 @@ pub async fn save(
             if !design_write_path_ok(&path) {
                 bail!("어느 OS에서나 같은 파일로 쓸 수 있는 이름이 아니다(`.git`, 끝의 `.`·빈칸, `:` 등, `CON` 같은 예약 이름): {path}");
             }
-            if text.len() as u64 > DESIGN_MAX_TEXT {
-                bail!("문서가 너무 크다({}바이트, 상한 {DESIGN_MAX_TEXT})", text.len());
+            if text.len() as u64 > max {
+                bail!("문서가 너무 크다({}바이트, 상한 {max})", text.len());
             }
             if message.trim().is_empty() {
                 bail!("commit 메시지가 비었다");
@@ -497,6 +513,83 @@ pub async fn close(
     )
 }
 
+/// 그림·영상 조각을 모으는 자리(agent 상태 폴더 안, 기획 branch·경로마다 하나)
+fn attach_part(state: &Path, project: &str, repo: &str, slug: &str, path: &str) -> PathBuf {
+    use sha2::Digest as _;
+    let key = hex::encode(sha2::Sha256::digest(format!("{project}\0{repo}\0{slug}\0{path}").as_bytes()));
+    state.join("design-attach").join(format!("{}.part", &key[..32]))
+}
+
+/// 그림·영상 조각 하나를 받는다. 마지막 조각이면 크기·sha256을 확인하고 새 파일로 commit한다(조각 자리는 늘 지운다)
+#[allow(clippy::too_many_arguments)]
+pub async fn attach(
+    cfg: &ThreadsConfig,
+    state: &Path,
+    (project, repo, folder, slug, path): (&str, &str, &str, &str, &str),
+    offset: u64,
+    data: &[u8],
+    eof: bool,
+    sha256: &str,
+    message: &str,
+) -> Result<AgentResponse, ErrorBody> {
+    let part = attach_part(state, project, repo, slug, path);
+    let gathered = (|| -> Result<Vec<u8>> {
+        std::fs::create_dir_all(part.parent().context("조각 폴더가 없다")?)?;
+        let have =
+            if offset == 0 { 0 } else { std::fs::metadata(&part).map(|m| m.len()).context("앞 조각이 없다")? };
+        if have != offset {
+            bail!("조각 자리가 어긋났다(받은 {have}바이트, 요청 {offset})");
+        }
+        if offset + data.len() as u64 > DESIGN_MAX_FILE {
+            bail!("파일이 너무 크다(상한 {DESIGN_MAX_FILE}바이트)");
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(offset != 0)
+            .write(true)
+            .truncate(offset == 0)
+            .open(&part)?;
+        std::io::Write::write_all(&mut f, data)?;
+        if !eof {
+            return Ok(Vec::new());
+        }
+        drop(f);
+        let bytes = std::fs::read(&part)?;
+        use sha2::Digest as _;
+        if hex::encode(sha2::Sha256::digest(&bytes)) != sha256 {
+            bail!("넘긴 파일의 sha256이 다르다");
+        }
+        Ok(bytes)
+    })();
+    let bytes = match gathered {
+        Ok(_) if !eof => return Ok(AgentResponse::Done),
+        Ok(bytes) => bytes,
+        Err(e) => {
+            aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "실패한 조각 자리 지우기");
+            return Err(ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")));
+        }
+    };
+    aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "다 받은 조각 자리 지우기");
+    match save_bytes(cfg, project, repo, folder, slug, path, None, (&bytes, DESIGN_MAX_FILE), message).await {
+        // 이름이 내용 hash다: 같은 이름이 이미 있고 내용도 같으면 붙인 것이다(같은 그림을 다시 붙이거나 이웃 문서에 붙임)
+        Err(e) if e.code == ErrorCode::Conflict => {
+            let same = async {
+                let top = toplevel(repo).await?;
+                let (cwd, _) = own_worktree(cfg, &top, project, slug).await?.context("기획 worktree가 없다")?;
+                let blob = git_told(&cwd, &["rev-parse", &format!("HEAD:{path}")], GIT_WAIT).await?;
+                let now = git(&cwd, &["cat-file", "blob", &blob], DESIGN_MAX_FILE as usize + 1).await?;
+                anyhow::Ok((now == bytes).then_some((git_told(&cwd, &["rev-parse", "HEAD"], GIT_WAIT).await?, blob)))
+            }
+            .await;
+            match same {
+                Ok(Some((commit, blob))) => Ok(AgentResponse::DesignSaved { commit, blob }),
+                _ => Err(e),
+            }
+        }
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,6 +719,72 @@ mod tests {
     }
 
     /// 앞선 판이 origin에 있으면 덮지 않고, 손으로 바꾼 worktree에는 쓰지 않는다. 로컬에 없는 branch는 origin에서 꺼낸다
+    /// 그림 붙이기(t-1894 2-3): 조각을 이어 받아 마지막 조각에서 sha256을 보고 새 파일로 commit한다. 자리가 어긋나거나 sha256이
+    /// 다르면 쓰지 않고 조각 자리를 지운다. 이미 있는 파일에는 쓰지 않는다
+    #[tokio::test]
+    async fn attach_gathers_chunks_and_commits_one_new_file() {
+        use sha2::Digest as _;
+        let (t, clone) = lab().await;
+        let repo = clone.to_str().unwrap();
+        let cfg = cfg(t.path());
+        let state = t.path().join("agent-state");
+        sh(&clone, &["config", "user.name", "t"]).await;
+        sh(&clone, &["config", "user.email", "t@example.com"]).await;
+        let Ok(AgentResponse::DesignBranch { cwd, .. }) = open(&cfg, "demo", repo, "boss-dex").await else {
+            panic!("열기")
+        };
+        let bytes: Vec<u8> = (0..1_300_000u32).map(|n| (n % 251) as u8).collect();
+        let sha = hex::encode(sha2::Sha256::digest(&bytes));
+        let path = "docs/bosses/0123456789abcdef.png";
+        let send = |offset: usize, chunk: &[u8], eof: bool, sha: &str| {
+            let (cfg, state, chunk, sha) = (cfg.clone(), state.clone(), chunk.to_vec(), sha.to_string());
+            async move {
+                attach(
+                    &cfg,
+                    &state,
+                    ("demo", repo, "docs", "boss-dex", path),
+                    offset as u64,
+                    &chunk,
+                    eof,
+                    &sha,
+                    "기획: 그림 (사람)",
+                )
+                .await
+            }
+        };
+        // 자리가 어긋난 조각(앞 조각 없이 중간부터)은 받지 않는다
+        let e = send(512, &bytes[512..1024], false, &sha).await.unwrap_err();
+        assert!(e.message.contains("앞 조각"), "{e}");
+        // sha256이 다르면 commit하지 않고 조각 자리를 지운다
+        assert!(matches!(send(0, &bytes[..1000], false, &sha).await, Ok(AgentResponse::Done)));
+        let e = send(1000, &bytes[1000..2000], true, &"0".repeat(64)).await.unwrap_err();
+        assert!(e.message.contains("sha256"), "{e}");
+        assert!(!attach_part(&state, "demo", repo, "boss-dex", path).exists(), "실패한 조각 자리를 지운다");
+        // 조각 셋으로 이어 받아 commit한다
+        let cuts = [0, 500_000, 1_000_000, bytes.len()];
+        let mut last = None;
+        for w in cuts.windows(2) {
+            last = Some(send(w[0], &bytes[w[0]..w[1]], w[1] == bytes.len(), &sha).await.unwrap());
+        }
+        let Some(AgentResponse::DesignSaved { commit, .. }) = last else { panic!("{last:?}") };
+        assert_eq!(std::fs::read(Path::new(&cwd).join(path)).unwrap(), bytes);
+        assert_eq!(out(Path::new(&cwd), &["rev-parse", "HEAD"], b"").await, commit);
+        assert_eq!(
+            out(Path::new(&cwd), &["show", "--name-only", "--format=", "HEAD"], b"").await,
+            path,
+            "그 파일만 commit"
+        );
+        assert!(!attach_part(&state, "demo", repo, "boss-dex", path).exists(), "다 받은 조각 자리를 지운다");
+        // 이름이 내용 hash라 같은 이름·같은 내용은 이미 붙인 것이다(새 commit 없이 성공). 내용이 다르면 다른 판으로 거부한다
+        let again = send(0, &bytes, true, &sha).await.unwrap();
+        assert!(matches!(&again, AgentResponse::DesignSaved { commit: c, .. } if *c == commit), "{again:?}");
+        let e = send(0, &bytes[..10], true, &hex::encode(sha2::Sha256::digest(&bytes[..10]))).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::Conflict, "{e}");
+        // 상한을 넘는 조각은 받지 않는다
+        let e = send(0, &vec![0; DESIGN_MAX_FILE as usize + 1], true, &sha).await.unwrap_err();
+        assert!(e.message.contains("너무 크다"), "{e}");
+    }
+
     #[tokio::test]
     async fn never_forces_or_writes_over_foreign_changes() {
         let (t, clone) = lab().await;

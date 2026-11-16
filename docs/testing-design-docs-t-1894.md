@@ -31,6 +31,11 @@
 | 2-2 같은 m13: 보류한 대화 thread에 다음 말을 하면 같은 thread로 잇고 말이 닿음, 쉼 창(1초) 뒤 tick이 branch를 쉬게 하고 다음 말이 branch를 다시 열어 같은 thread에 보냄, 띄우는 중에 버리면 그 thread가 끝나고 branch가 사라짐, pane 밖 프로세스가 대화 thread의 `AAA_SESSION_ID`를 대고 `plan save`하면 거부 | 위와 같음 | 위와 같음 |
 | 2-2 원격 전달 hook 사건은 600KiB 글을 싣고(다른 hook은 256KiB에서 거부), 연결 frame 한도를 넘으면 거부, 기획 글 한도+JSON이 들어간다 | `aaa-agent` `hooks::tests::relay_messages_carry_design_documents_but_other_hooks_keep_the_old_limit` | `cargo test -p aaa-agent --lib hooks::` |
 | 2-2 host 머신이 아닌 저장소 머신은 `design_chat.v1`을 아는 agent에서만 대화 thread를 띄우고, 아니면 머신 이름·기능 이름을 담은 Unavailable | `aaa-host` `design_chat::tests::chat_threads_start_only_where_saves_can_reach_the_host` | `cargo test -p aaa-host --lib design_chat` |
+| 2-3 그림 붙이기: 조각을 이어 받아 마지막 조각에서 sha256을 보고 그 파일만 새로 commit, 자리 어긋남·sha256 다름·상한 넘음은 거부하고 조각 자리를 지움, 이미 있는 이름은 conflict | `aaa-agent` `design_write::tests::attach_gathers_chunks_and_commits_one_new_file` | `cargo test -p aaa-agent --lib design_write` |
+| 2-3 사람 고침 알림(다음 말 앞 「(문서 고침: …)」 뒤 비움)·대화 사건(open·create·push·edit)·고친 줄 수, `plan apply`가 저장소 머신(labB)에 `origin/design/<주제>`에서 갈라진 worktree thread를 띄우고 그 commit을 가짐, 끝나지 않은 반영이 있으면 거부 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_…` | `cargo test -p aaa --test m13 design_branch` |
+| 2-3 쉬는 branch에 말하면 다시 열고 대화 thread를 띄워 말을 보냄(같은 commit) | `aaa` m13 `design_branch::idle_design_branch_rests_without_losing_commits_and_reopens` | 위와 같음 |
+| 2-3 트리 branch 표시·새로 만든 문서, branch 덩어리 표시, branch 이름 짓기·꼴, 대화 사건 묶기·문구, branch 판 그림 주소 | `web/test/designModel.test.mjs` 「기획 branch 화면」 | `cd web && node --test test/designModel.test.mjs` |
+| 2-3 실제 host·agent·git으로 웹: 트리 branch 수·문서 칩·「+」 문서 → 판 고르기(main·두 branch)·main과 다른 덩어리·다른 branch 알림 → 고치기와 그림 붙이기(그 branch에 commit, 그림 주소 `b=<주제>`, 사람 고침 사건·알림 칩) → 대화 고르기·새 대화(영문 주제로 branch 이름, 잘못된 꼴 막음, 새 대화 사건) → main에 반영(고친 파일·줄 수, 반영 대기, 올린 뒤 worktree thread) → 버리기(commit 수, 트리에서 사라짐) → 휴대폰 칸 | E2E `136-design-branches` | `ci-local --only web,e2e --spec 136` |
 
 - git 실험실은 `-c init.defaultBranch=main`·`-c user.*`를 주고 index에 symlink·gitlink를 직접 넣어 OS의 symlink 권한과 기본 branch 설정에 기대지 않는다.
 - 1분 받기 간격은 시험마다 새 임시 저장소(다른 toplevel)라 서로 막지 않는다. 고정 commit 시험은 clone에서 직접 `git fetch`해 시계를 기다리지 않는다.
@@ -110,3 +115,12 @@
 - 고침: 대화 thread 끝내기 future를 heap에 두고(`call_design` 4,056바이트), 큰 지역 값을 여럿 쥐는 thread 시작 갈래도 heap의 future로 따로 뒀다(call_from poll 틀 0x114000). 필요 스택은 1,792~1,920KiB가 됐다. `design::tests::design_requests_keep_the_dispatcher_stack_small`이 기획 요청 future를 8KiB 아래로 지킨다(heap에 두지 않게 되돌리면 20,048바이트로 실패).
 - 남은 위험: 공용 dispatcher의 debug poll 틀은 여전히 1.1MiB다(갈래마다 임시 값이 겹치지 않고 쌓인다). 큰 갈래를 더 넣을 때는 갈래 안에서 heap에 둔다.
 - 같은 run의 macOS web-e2e 109 「화면 복귀: Chromium 1280 … coordinator 본문이 되지 않았다」: 2-2의 웹 변경(`chatOnly`)은 기획 thread가 없는 화면에서 이전과 같고(시험 실험실에는 기획 대화가 없다), 화면 고르기·pane 경로는 바꾸지 않았다. 고친 판으로 109를 이 Mac에서 8번 돌려 8번 통과했다(부하 3 안팎, CI는 18~22). 원인은 찾지 못했고 재현하지 못했다.
+
+## 2-3 웹 기획 화면
+
+- 시안 검수(q-3933 1A) 뒤 그림 붙이기와 시험을 더했다. 시안 촬영 도구(실제 host·agent·git과 가짜 Claude 기획 대화)는 저장소 밖에 두었다.
+- 촬영 중 찾아 고친 것: 대화 사건이 그 말 앞에 놓였다(host가 말을 다 보낸 뒤에 자리를 적어, 받자마자 저장한 사건이 자리 없이 맨 앞으로 갔다): 보내기 전에 적는다. 새 대화 사건의 main 판이 `origin/`으로 보였다(agent의 `base`는 ref 이름): host가 main에서 만든 branch의 처음 끝을 쓴다.
+- 시험을 쓰다 찾은 것: 원격 대화 m13의 쉼 창 1초가 ticker의 이른 깨움(git·nudge 차례)으로 아무 단계에서나 branch를 쉬게 했다(앞 판은 우연히 지났다). 그 시험은 쉼 창을 기본으로 두고, 쉼 뒤 말하기는 쉼이 언제 와도 되는 로컬 시험으로 옮겼다. `plan apply`의 thread profile은 aaa.toml이 있으면 그 설정을 따른다(E2E 준비가 aaa.toml에 thread profile을 빠뜨려 허용 밖 profile로 거부됐다).
+- 2-3 독립 리뷰에서 고친 것: 사람이 고친 뒤 웹에서 보낸 말이 대기 말로 남았다(host가 「(문서 고침: …)」을 붙여 보낸 말 확인이 글과 맞지 않았다): 웹이 보낼 글에 붙이고 host는 붙어 있으면 다시 붙이지 않는다. 그림을 올리는 동안 친 글이 사라졌다: 올리는 동안 글을 읽기만 하게 하고, 올린 줄은 지금 글(같은 branch일 때만)에 넣으며, 여럿 중 하나가 실패해도 올린 것만큼은 넣는다. branch에 없는 문서를 main 판에서 고치면 저장할 수 없었다(기준 판이 main blob): 그 branch에 새로 만든다. 같은 그림을 다시 붙이면 거부됐다: 이름이 내용 hash라 같은 이름·같은 내용은 성공(새 commit 없음). 붙인 그림도 다음 말 앞에 알린다. 조각 자리 이름에 저장소를 넣었다. `main`이라는 주제는 판 고르기와 겹쳐 쓰지 않는다(host·웹 모두, 웹 꼴은 `--`도 막아 host와 같게). 긴 코드 울타리(````) 안의 ```로 덩어리가 끊기지 않는다. 반영 직전에 새 저장이 들면 까닭을 말한다. 대화 사건 상한을 100으로 줄였다(branch 보기마다 실린다).
+- 남긴 것(리뷰 낮음): 대화 사건 자리는 불러온 기록 안에서만 찾고, 앞부분 80자가 비슷한 다른 말에 붙을 수 있으며, 대화 thread를 새로 띄우면 앞 사건은 맨 끝으로 간다. 그림을 넘기는 동안(조각 최대 32개) 그 branch 잠금을 쥔다. 끊긴 조각 자리 파일은 다음 같은 그림이 덮어쓸 때까지 남는다. branch 판은 덩어리마다 따로 그려 참조식 링크·각주·여러 문단 목록이 깨질 수 있다. 반영을 맡긴 뒤의 저장은 그 반영에 들지 않는다.
+

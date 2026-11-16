@@ -411,7 +411,22 @@ async fn changes(top: &Path, folder: &str, main: &str, tip: &str) -> Result<(Vec
     while let (Some(status), Some(path)) = (parts.next(), parts.next()) {
         let path = String::from_utf8_lossy(path).into_owned();
         if design_inside(folder, &path) {
-            changed.push(DesignChange { path, status: String::from_utf8_lossy(status).into_owned() });
+            changed.push(DesignChange {
+                path,
+                status: String::from_utf8_lossy(status).into_owned(),
+                ..Default::default()
+            });
+        }
+    }
+    // 줄 수(`더함\t뺌\t경로\0`, 바이너리는 `-`)
+    let counts = git(top, &["diff", "--numstat", "-z", "--no-renames", &fork, tip, "--", folder], OUTPUT_MAX).await?;
+    for entry in counts.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let line = String::from_utf8_lossy(entry);
+        let mut f = line.splitn(3, '\t');
+        let (Some(add), Some(del), Some(path)) = (f.next(), f.next(), f.next()) else { continue };
+        if let Some(c) = changed.iter_mut().find(|c| c.path == path) {
+            c.added = add.parse().ok();
+            c.removed = del.parse().ok();
         }
     }
     let ahead = String::from_utf8_lossy(&git(top, &["rev-list", "--count", &format!("{main}..{tip}")], 4096).await?)

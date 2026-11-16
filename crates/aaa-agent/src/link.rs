@@ -214,6 +214,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "design_write.v1".into(),
             // 기획 대화 thread 세션의 자기 기획 branch 저장을 host에 원격 전달한다(thread_read에 DesignSave, t-1894 2-2)
             "design_chat.v1".into(),
+            // 기획 branch에 그림·영상을 조각으로 넘겨 commit한다(DesignAttach, t-1894 2-3)
+            "design_attach.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

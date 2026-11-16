@@ -696,7 +696,25 @@ export type DesignChange = { path: string,
 /**
  * `A`(새 파일)·`M`(고침)·`D`(지움)
  */
-status: string, };
+status: string,
+/**
+ * 더하고 뺀 줄 수(FRONT_API 1.173, 바이너리·옛 agent는 없음)
+ */
+added?: number, removed?: number, };
+
+export type DesignEvent = {
+/**
+ * `open`·`save`·`push`·`edit`·`apply`
+ */
+kind: string,
+/**
+ * 한 줄(「문서 2 고침 · 1 새로」 같은 꼴은 웹이 짓는다: 여기는 경로·판 같은 자료)
+ */
+text: string, commit: string | null,
+/**
+ * 이 사건 전에 대화에 보낸 마지막 사람 말의 앞부분(그 말의 답 뒤에 끼운다). 없으면 대화 처음
+ */
+after: string | null, at_ms: number, };
 
 export type DesignBranchState = "open" | "rest";
 
@@ -748,7 +766,31 @@ pending: number,
 /**
  * 대화 thread를 띄우거나 말을 보내지 못한 까닭
  */
-chat_error: string | null, };
+chat_error: string | null,
+/**
+ * 갈라진 main 판(FRONT_API 1.173)
+ */
+base: string | null,
+/**
+ * 마지막으로 올린 때(0이면 올린 적 없음)
+ */
+pushed_ms: number,
+/**
+ * 대화 thread profile(없으면 프로젝트 기본)
+ */
+profile: string | null,
+/**
+ * 「main에 반영」을 맡은 thread
+ */
+apply: string | null,
+/**
+ * 대화에 끼우는 host 사건(오래된 차례)
+ */
+events: Array<DesignEvent>,
+/**
+ * 사람이 고쳤고 아직 대화 thread에 알리지 않은 문서(다음 말 앞에 붙는다)
+ */
+edited: Array<string>, };
 
 export type DesignDocEntry = {
 /**
@@ -1660,11 +1702,15 @@ branch?: string, } | { "op": "design_branch_open", project?: string, repo: strin
 /**
  * 주제(없으면 slug). 이미 있는 branch는 바꾸지 않는다
  */
-title?: string, } | { "op": "design_save", project?: string, repo: string, branch: string, path: string, base?: string, text: string,
+title?: string,
+/**
+ * 대화 thread profile(FRONT_API 1.173, 없으면 프로젝트 기본·있던 고르기)
+ */
+profile?: string, } | { "op": "design_save", project?: string, repo: string, branch: string, path: string, base?: string, text: string,
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */

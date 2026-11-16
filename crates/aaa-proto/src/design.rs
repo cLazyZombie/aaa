@@ -27,6 +27,8 @@ pub fn design_slug_ok(slug: &str) -> bool {
         && !slug.starts_with('-')
         && !slug.ends_with('-')
         && !slug.contains("--")
+        // 웹 판 고르기의 「main」과 겹치지 않게
+        && slug != "main"
 }
 
 /// 기획 branch 이름
@@ -41,6 +43,28 @@ pub struct DesignChange {
     pub path: String,
     /// `A`(새 파일)·`M`(고침)·`D`(지움)
     pub status: String,
+    /// 더하고 뺀 줄 수(FRONT_API 1.173, 바이너리·옛 agent는 없음)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub removed: Option<u32>,
+}
+
+/// 기획 대화에 끼우는 host 사건 한 줄(FRONT_API 1.173): 대화 시작·저장·올림·사람 고침·main에 반영
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignEvent {
+    /// `open`·`save`·`push`·`edit`·`apply`
+    pub kind: String,
+    /// 한 줄(「문서 2 고침 · 1 새로」 같은 꼴은 웹이 짓는다: 여기는 경로·판 같은 자료)
+    pub text: String,
+    pub commit: Option<String>,
+    /// 이 사건 전에 대화에 보낸 마지막 사람 말의 앞부분(그 말의 답 뒤에 끼운다). 없으면 대화 처음
+    pub after: Option<String>,
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// 기획 branch의 상태
@@ -87,6 +111,19 @@ pub struct DesignBranchView {
     pub pending: u32,
     /// 대화 thread를 띄우거나 말을 보내지 못한 까닭
     pub chat_error: Option<String>,
+    /// 갈라진 main 판(FRONT_API 1.173)
+    pub base: Option<String>,
+    /// 마지막으로 올린 때(0이면 올린 적 없음)
+    #[ts(type = "number")]
+    pub pushed_ms: u64,
+    /// 대화 thread profile(없으면 프로젝트 기본)
+    pub profile: Option<String>,
+    /// 「main에 반영」을 맡은 thread
+    pub apply: Option<String>,
+    /// 대화에 끼우는 host 사건(오래된 차례)
+    pub events: Vec<DesignEvent>,
+    /// 사람이 고쳤고 아직 대화 thread에 알리지 않은 문서(다음 말 앞에 붙는다)
+    pub edited: Vec<String>,
 }
 
 /// 기획 폴더 안 Markdown 문서 한 개
@@ -237,7 +274,7 @@ mod tests {
         for ok in ["boss-dex", "a", "floors-100", &"x".repeat(48)] {
             assert!(design_slug_ok(ok), "{ok}");
         }
-        for bad in ["", "Boss", "boss_dex", "-a", "a-", "a--b", "a/b", "a.b", "보스", &"x".repeat(49)] {
+        for bad in ["", "Boss", "boss_dex", "-a", "a-", "a--b", "a/b", "a.b", "보스", "main", &"x".repeat(49)] {
             assert!(!design_slug_ok(bad), "{bad}");
         }
         assert_eq!(design_branch("boss-dex"), "design/boss-dex");

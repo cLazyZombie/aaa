@@ -701,6 +701,9 @@ enum PlanCmd {
         /// 사람이 읽는 주제
         #[arg(long)]
         title: Option<String>,
+        /// 대화 thread profile(없으면 프로젝트 기본)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// 기획 branch에 문서 하나를 저장한다(그 문서만 commit, 잠시 뒤 origin에 올린다). 그 사이 다른 판이 생겼으면 쓰지 않는다
     Save {
@@ -736,6 +739,8 @@ enum PlanCmd {
     },
     /// 기획 branch를 버린다: 대화 thread를 끝내고 worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
     Discard { repo: String, slug: String },
+    /// main에 반영: 기획 branch를 올리고 그 branch에서 갈라진 thread가 main을 합치고 검사를 지나 착지 창을 받는다
+    Apply { repo: String, slug: String },
 }
 
 #[derive(Subcommand)]
@@ -2369,9 +2374,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 PlanCmd::Show { repo, path, branch } => {
                     front(json, FrontRequest::DesignRead { project, repo, path, branch })
                 }
-                PlanCmd::New { repo, slug, title } => {
-                    front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title })
+                PlanCmd::New { repo, slug, title, profile } => {
+                    front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title, profile })
                 }
+                PlanCmd::Apply { repo, slug } => front(json, FrontRequest::DesignApply { project, repo, branch: slug }),
                 PlanCmd::Save { repo, path, branch, base, new, file, summary } => {
                     if base.is_none() && !new {
                         anyhow::bail!("--base <blob>(고칠 문서의 판) 또는 --new(새 문서)를 준다");

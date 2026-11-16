@@ -170,6 +170,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/ideas/{idea}/files", post(idea_file))
         .route("/api/v1/projects/{project}/ideas/{idea}/files/{name}", get(idea_file_get))
         .route("/api/v1/projects/{project}/design/{repo}/{*path}", get(design_file_get))
+        .route("/api/v1/projects/{project}/design-files/{repo}/{branch}", post(design_file_post))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
         .route("/api/v1/projects/{project}/requests/{item}/{hash}/{*path}", get(request_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
@@ -769,6 +770,42 @@ async fn idea_file(
     .and_then(|r| r);
     match result {
         Ok(name) => Json(Outcome::Ok(serde_json::json!({ "name": name }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DesignAttachQuery {
+    /// 문서 폴더(저장소 기준)
+    dir: String,
+}
+
+/// 기획 「그림」: 그 기획 branch의 문서 폴더에 그림·영상을 붙인다(조작 기기만, t-1894 2-3)
+async fn design_file_post(
+    State(host): State<Arc<Host>>,
+    Path((project, repo, branch)): Path<(String, String, String)>,
+    Query(q): Query<DesignAttachQuery>,
+    req: Request,
+) -> Response {
+    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
+    if !role.can_control() {
+        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 붙일 수 없다"));
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), aaa_proto::DESIGN_MAX_FILE as usize)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일은 16MiB까지 붙인다"))),
+        )
+            .into_response();
+    };
+    match host.design_attach(role, &format!("device:{id}"), &project, &repo, &branch, &q.dir, &bytes).await {
+        Ok(aaa_proto::FrontResponse::DesignSaved { path, commit, blob }) => {
+            Json(Outcome::Ok(serde_json::json!({ "path": path, "commit": commit, "blob": blob }))).into_response()
+        }
+        Ok(_) => error_response(ErrorBody::new(ErrorCode::Internal, "예상하지 못한 응답")),
         Err(e) => error_response(e),
     }
 }
