@@ -388,7 +388,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TaskCmd,
     },
-    /// 아이디어 노트(n-NNNN): 목록·보기·만들기·판을 주고 저장·전용 thread에 말하기·복사. 웹 「아이디어」 화면과 같은 저장소다
+    /// 옛 아이디어 노트(n-NNNN, 읽기 전용): 목록·보기. 아이디어는 저장소 기획 문서(`aaa plan`)로 옮겼다
     Idea {
         #[command(subcommand)]
         cmd: IdeaCmd,
@@ -755,47 +755,36 @@ enum IdeaCmd {
         #[arg(long)]
         rev: Option<u32>,
     },
-    /// 새 아이디어. 전용 thread는 처음 말할 때 뜬다
+    /// 거둔 쓰기 명령(t-1894 4단계): 옛 판 이름은 남겨 까닭을 알린다
+    #[command(hide = true)]
     New {
-        title: String,
-        /// 노트 첫 글(Markdown 파일). 생략하면 `# 제목`
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
     },
-    /// 판을 주고 노트를 저장한다. 그사이 다른 판이 있으면 쓰지 않고, 기준 판과 지금 판을 `<파일>.base-<판>.md`·`<파일>.current-<판>.md`로 남긴다
+    #[command(hide = true)]
     Save {
-        idea: String,
-        /// 읽은 판(`idea show` 첫 줄)
-        #[arg(long)]
-        base: u32,
-        #[arg(long)]
-        file: std::path::PathBuf,
-        /// 바뀐 곳 한 줄
-        #[arg(long)]
-        summary: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
     },
-    /// 전용 thread에 말한다(없으면 host 머신에 띄우고, 쉬느라 내렸으면 잇는다)
-    Say { idea: String, text: String },
-    /// 노트를 복사해 새 아이디어로(완료한 것을 다시 다듬을 때)
-    Copy { idea: String },
-    /// 진행 모델을 바꾼다(host 머신이 맡을 수 있는 profile, `aaa assignable`). 다음 말부터 그 모델의 새 thread가 노트를 읽고 잇는다
-    Model { idea: String, profile: String },
-    /// 그림·영상(PNG·JPEG·GIF·WebP·MP4·WebM, 16MiB까지)을 노트 끝에 붙여 새 판으로 저장한다. 전용 thread는 자기 작업 폴더와
-    /// 프로젝트 uploads/ 안의 파일만 붙인다. 붙인 이름을 한 줄씩 출력한다
+    #[command(hide = true)]
+    Say {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
+    #[command(hide = true)]
+    Copy {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
+    #[command(hide = true)]
+    Model {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
+    #[command(hide = true)]
     Attach {
-        idea: String,
-        /// host 머신의 파일(여러 개, 20개까지)
-        #[arg(required = true)]
-        files: Vec<std::path::PathBuf>,
-        /// 설명(그림 아래 한 줄). 없으면 `그림`·`영상`
-        #[arg(long)]
-        alt: Option<String>,
-        /// 이 절(`## 제목`의 제목) 끝에 넣는다
-        #[arg(long)]
-        section: Option<String>,
-        /// 폴더에만 넣고 노트는 그대로 둔다(받은 이름을 `![설명](<이름>)`로 직접 적는다)
-        #[arg(long)]
-        store_only: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
     },
 }
 
@@ -4227,73 +4216,22 @@ fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
 
-/// `aaa idea …`. 저장 겹침은 두 판을 파일로 남기고 실패로 끝낸다(thread가 합쳐 다시 저장한다)
+/// `aaa idea …`: 옛 아이디어 읽기. 쓰기 명령은 거뒀다(t-1894 4단계, q-3982)
 fn idea_cli(json: bool, cmd: IdeaCmd) -> Result<ExitCode> {
-    let project = project_or_here(None)?;
-    let read = |p: &std::path::Path| std::fs::read_to_string(p).with_context(|| format!("{}", p.display()));
     match cmd {
-        IdeaCmd::List => front(json, FrontRequest::IdeaList { project }),
-        IdeaCmd::Show { idea, rev } => front(json, FrontRequest::IdeaRead { project, idea, rev }),
-        IdeaCmd::New { title, file } => {
-            let text = file.as_deref().map(read).transpose()?.unwrap_or_default();
-            front(json, FrontRequest::IdeaCreate { project, title, text })
+        IdeaCmd::List => front(json, FrontRequest::IdeaList { project: project_or_here(None)? }),
+        IdeaCmd::Show { idea, rev } => {
+            front(json, FrontRequest::IdeaRead { project: project_or_here(None)?, idea, rev })
         }
-        IdeaCmd::Save { idea, base, file, summary } => {
-            let text = read(&file)?;
-            let r = front_call(FrontRequest::IdeaSave { project, idea, base_rev: base, text, summary })?;
-            if let Ok(FrontResponse::IdeaConflict(c)) = &r {
-                let side = |what: &str, rev: u32| {
-                    let mut name = file.clone().into_os_string();
-                    name.push(format!(".{what}-{rev}.md"));
-                    std::path::PathBuf::from(name)
-                };
-                let (base_path, current_path) = (side("base", c.base_rev), side("current", c.current.rev));
-                std::fs::write(&base_path, &c.base_text).with_context(|| format!("{}", base_path.display()))?;
-                std::fs::write(&current_path, &c.current.text)
-                    .with_context(|| format!("{}", current_path.display()))?;
-                if json {
-                    println!("{}", serde_json::to_string(&c)?);
-                } else {
-                    eprintln!(
-                        "겹침: 판 {}을 기준으로 고쳤지만 지금 판은 {}이다. 기준 판 {} · 지금 판 {}. 지금 판에 고침을 다시 얹어 \
-                         `--base {}`로 저장한다",
-                        c.base_rev,
-                        c.current.rev,
-                        base_path.display(),
-                        current_path.display(),
-                        c.current.rev
-                    );
-                }
-                return Ok(ExitCode::from(3));
-            }
-            front_print(json, r)
-        }
-        IdeaCmd::Say { idea, text } => front(json, FrontRequest::IdeaSay { project, idea, text }),
-        IdeaCmd::Copy { idea } => front(json, FrontRequest::IdeaCopy { project, idea }),
-        IdeaCmd::Model { idea, profile } => front(json, FrontRequest::IdeaModel { project, idea, profile }),
-        IdeaCmd::Attach { idea, files, alt, section, store_only } => {
-            // host가 경로를 직접 읽는다(아이디어 thread·coordinator·사람 CLI는 host 머신에서 돈다): 실행한 폴더 기준 절대 경로로 준다
-            let paths = files
-                .iter()
-                .map(|p| {
-                    std::path::absolute(p)
-                        .with_context(|| format!("{}", p.display()))
-                        .map(|p| p.to_string_lossy().into_owned())
-                })
-                .collect::<Result<Vec<_>>>()?;
-            front(
-                json,
-                FrontRequest::IdeaAttach {
-                    project,
-                    idea,
-                    names: Vec::new(),
-                    paths,
-                    alt,
-                    section,
-                    store_only: store_only.then_some(true),
-                },
-            )
-        }
+        IdeaCmd::New { .. }
+        | IdeaCmd::Save { .. }
+        | IdeaCmd::Say { .. }
+        | IdeaCmd::Copy { .. }
+        | IdeaCmd::Model { .. }
+        | IdeaCmd::Attach { .. } => anyhow::bail!(
+            "옛 아이디어는 읽기 전용이다(아이디어는 저장소 기획 문서로 옮겼다). 기획은 `aaa plan`(`aaa plan say <저장소> <주제> …`)과 \
+             웹 「기획」에서 다듬고, 옛 아이디어는 웹 「기획으로 옮기기」로 넘긴다. 읽기는 `aaa idea list`·`aaa idea show`"
+        ),
     }
 }
 

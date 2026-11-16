@@ -54,6 +54,7 @@ pub mod guide;
 mod harness;
 mod health;
 mod http;
+mod idea_move;
 mod idea_thread;
 mod ideas;
 mod image;
@@ -738,6 +739,8 @@ pub struct Host {
     design_passes: Mutex<std::collections::HashSet<String>>,
     /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
     design_chatting: Mutex<std::collections::HashSet<String>>,
+    /// 옮기는 아이디어의 branch를 마지막으로 본 때(`<프로젝트>/<아이디어>`, t-1894 4단계)
+    idea_move_checked: Mutex<HashMap<String, u64>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -985,6 +988,7 @@ impl Host {
             design_push_gen: Mutex::new(HashMap::new()),
             design_passes: Mutex::new(Default::default()),
             design_chatting: Mutex::new(Default::default()),
+            idea_move_checked: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             account_quota: Default::default(),
@@ -2209,7 +2213,8 @@ impl Host {
             | FrontRequest::IdeaHandoff { .. }
             | FrontRequest::IdeaCopy { .. }
             | FrontRequest::IdeaModel { .. }
-            | FrontRequest::IdeaAttach { .. }) => self.call_idea(role, actor, req).await,
+            | FrontRequest::IdeaAttach { .. }
+            | FrontRequest::IdeaMove { .. }) => Box::pin(self.call_idea(role, actor, req)).await,
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;

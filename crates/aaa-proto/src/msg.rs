@@ -3292,6 +3292,25 @@ pub enum FrontRequest {
         project: String,
         idea: String,
     },
+    /// 옛 아이디어를 기획으로 옮긴다(FRONT_API 1.177, t-1894 4단계, 조작 권한의 사람만). host가 그 저장소의 기획 branch를 열고(`slug`가
+    /// 없으면 `title`로 새로 만든다) 노트가 쓰는 그림·영상을 위치 폴더(`place`, 기획 폴더 기준, 비우면 기획 폴더)에 내용 hash 이름으로
+    /// commit한 뒤 노트 본문과 옮기는 법을 그 대화에 보낸다. 아이디어는 「옮기는 중」이 되고 그 branch가 main에 반영되면 「옮김」이다
+    IdeaMove {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        /// 창을 연 판(그 사이 바뀌었으면 거절)
+        rev: u32,
+        repo: String,
+        slug: String,
+        /// 새 대화의 주제(이미 있는 branch면 쓰지 않는다)
+        #[serde(default)]
+        #[ts(optional)]
+        title: Option<String>,
+        #[serde(default)]
+        place: String,
+    },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
         #[serde(default)]
@@ -4060,6 +4079,7 @@ impl FrontRequest {
             | FrontRequest::IdeaWake { project, .. }
             | FrontRequest::IdeaHandoff { project, .. }
             | FrontRequest::IdeaCopy { project, .. }
+            | FrontRequest::IdeaMove { project, .. }
             | FrontRequest::IdeaModel { project, .. }
             | FrontRequest::IdeaAttach { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
@@ -4135,10 +4155,18 @@ impl FrontRequest {
 
     /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
     /// host 밖 머신 thread 세션의 CLI가 agent를 거쳐 host에 보낼 수 있는 요청(`thread_read.v1`): 위 읽기와 기획 읽기, 그리고 자기
-    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다)
+    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다), 옛 아이디어 읽기(4단계)
     pub fn thread_relay_allowed(&self) -> bool {
         self.thread_read_allowed()
-            || matches!(self, Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignSave { .. })
+            || matches!(
+                self,
+                Self::DesignTree { .. }
+                    | Self::DesignRead { .. }
+                    | Self::DesignSave { .. }
+                    // 옛 아이디어 읽기(t-1894 4단계): 기획 대화 thread가 옮기는 노트 전체를 읽는다
+                    | Self::IdeaList { .. }
+                    | Self::IdeaRead { .. }
+            )
     }
 
     pub fn thread_read_allowed(&self) -> bool {
@@ -4214,9 +4242,6 @@ impl FrontRequest {
                 | FrontRequest::IdeaList { .. }
                 | FrontRequest::IdeaRead { .. }
                 | FrontRequest::IdeaSeen { .. }
-                // 전용 thread(보기 권한)도 자기 노트를 저장한다: 권한은 host가 요청자로 다시 본다
-                | FrontRequest::IdeaSave { .. }
-                | FrontRequest::IdeaAttach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }

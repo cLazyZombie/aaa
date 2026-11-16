@@ -470,6 +470,40 @@ impl Host {
         dir: &str,
         bytes: &[u8],
     ) -> Result<FrontResponse, ErrorBody> {
+        self.design_attach_with(role, actor, project, repo, slug, dir, bytes, true).await
+    }
+
+    /// 옛 아이디어 옮기기의 그림(t-1894 4단계): 옮기기 말이 경로를 함께 알리므로 다음 말 앞 「사람이 고친 문서」에 넣지 않는다.
+    /// 저장소 경로를 돌려준다
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_attach_quiet(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        dir: &str,
+        bytes: &[u8],
+    ) -> Result<String, ErrorBody> {
+        match self.design_attach_with(role, actor, project, repo, slug, dir, bytes, false).await? {
+            FrontResponse::DesignSaved { path, .. } => Ok(path),
+            other => Err(internal(format!("그림 저장 응답이 아니다: {other:?}"))),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn design_attach_with(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        dir: &str,
+        bytes: &[u8],
+        tell: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
         let by = self.design_writer(role, actor, project, None)?;
         if bytes.is_empty() || bytes.len() as u64 > aaa_proto::DESIGN_MAX_FILE {
             return Err(bad("파일은 1바이트부터 16MiB까지 붙인다"));
@@ -529,16 +563,18 @@ impl Host {
         rec.rest_error = None;
         self.design_branch_store(project, &rec)?;
         self.design_chat_event(project, &target.name, slug, "edit", &path, Some(commit.clone())).await;
-        let told = path.clone();
-        aaa_common::diagnostic::ignored(
-            self.design_chat_edit(project, &target.name, slug, |c| {
-                if !c.edited.contains(&told) {
-                    c.edited.push(told);
-                }
-            })
-            .await,
-            "다음 말 앞 알림만 빠진다",
-        );
+        if tell {
+            let told = path.clone();
+            aaa_common::diagnostic::ignored(
+                self.design_chat_edit(project, &target.name, slug, |c| {
+                    if !c.edited.contains(&told) {
+                        c.edited.push(told);
+                    }
+                })
+                .await,
+                "다음 말 앞 알림만 빠진다",
+            );
+        }
         self.db.audit(
             actor,
             "design_attach",
@@ -624,6 +660,11 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
+        // 그 branch로 옮기는 옛 아이디어(t-1894 4단계): 들어갔으면 「옮김」, 아니면 다시 「다듬는 중」. branch를 지우기 전에 보고,
+        // 옮기기(아이디어 잠금 → branch 잠금)와 반대 차례로 잡지 않게 branch 잠금 밖에서 한다
+        for idea in self.ideas_moving_to(project, &target.name, slug) {
+            self.idea_move_settle(project, &idea, &target.name, slug, true).await;
+        }
         // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
@@ -787,6 +828,8 @@ impl Host {
                 }
             }
         }
+        // 옛 아이디어 옮기기: 그 branch가 main에 들어갔나(t-1894 4단계)
+        self.idea_move_pass(project).await;
     }
 
     async fn design_rest(&self, project: &str, repo: &str, slug: &str) {

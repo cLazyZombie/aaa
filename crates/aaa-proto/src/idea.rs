@@ -75,12 +75,21 @@ pub struct IdeaMoved {
     pub repo: String,
     /// 옮기는 기획 branch 주제(`design/<주제>`)
     pub branch: String,
-    /// 기획 폴더 안 위치(폴더나 문서)
+    /// 저장소 기준 경로: 옮기는 중에는 위치 폴더, 그 branch가 문서를 고치면 고친 문서(여럿이면 공통 폴더)
     pub path: String,
-    /// main에 반영돼 옮기기를 마쳤다
+    /// 그 branch가 main에 반영돼 옮기기를 마쳤다
     pub done: bool,
     #[ts(type = "number")]
     pub at_ms: u64,
+    /// 옮긴 노트 판
+    pub rev: u32,
+    /// 옮길 때 그 branch의 끝 commit(이 뒤의 commit이 main에 들어가야 마친 것이다)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub head: Option<String>,
+    /// 그 branch 기록을 만든 때(같은 이름으로 다시 만든 branch와 가른다)
+    #[ts(type = "number")]
+    pub branch_ms: u64,
 }
 
 /// 남은 판 하나
