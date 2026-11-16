@@ -9,6 +9,11 @@ if (typeof window !== "undefined") {
   window.addEventListener("pageshow", () => { pageClosed = false; }, { capture: true });
 }
 
+/** 페이지가 떠나는 중인가(beforeunload·pagehide 뒤, BFCache pageshow 전). 끝나는 문서가 새 연결·Worker를 만들지 않게 본다 */
+export function pageClosing(): boolean {
+  return pageClosed;
+}
+
 export function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (pageClosed && !init?.keepalive) {
     return Promise.reject(new DOMException("페이지가 종료되어 요청을 취소했습니다.", "AbortError"));

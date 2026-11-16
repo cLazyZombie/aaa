@@ -14,6 +14,8 @@ mod auto_merge;
 mod automation_completion;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
+#[path = "m13/design_branch.rs"]
+mod design_branch;
 #[path = "m13/instance.rs"]
 mod instance;
 mod lab;

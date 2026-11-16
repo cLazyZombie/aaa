@@ -503,7 +503,7 @@ mod tests {
             s.designs,
             vec![DesignFolder {
                 repo: Repo { path: "/work/app".into(), machine: Some("mac-b".into()) },
-                folder: "docs/plan".into()
+                folder: "docs/plan".into(),
             }],
             "{t}"
         );

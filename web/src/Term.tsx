@@ -4,6 +4,7 @@ import { AutoModeChip } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { createTerminalWorker } from "./terminalWorkerFactory";
+import { pageClosing } from "./apiRequest";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
@@ -1253,6 +1254,8 @@ export function TermView({
     let stopped = false;
     let delay = 500;
     let timer: number | undefined;
+    // 떠나는 문서라 다시 붙기를 미뤘다: BFCache로 돌아오면 pageshow(onWake)가 잇는다
+    let pageWait = false;
     // 출력 흐름 제어(herdr-web-ui pty-ack, plan §8.62): snapshot마다 host가 구독 번호를 주고, xterm이 다 쓴 뒤
     // 그 구독에서 받은 바이트 끝(replay + 출력)을 알린다. 받았을 때가 아니라 쓴 뒤에 알려야 느린 기기가 드러난다.
     let streamId = 0;
@@ -1284,7 +1287,7 @@ export function TermView({
     // `onWake`·`wake()`: online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다.
     // t3code client-runtime connection/supervisor.ts도 같다). 열린 연결·출력 정지(4008)는 그대로 둔다
     const onWake = () => {
-      if (stopped || outputStopped || document.visibilityState !== "visible" || timer === undefined) return;
+      if (stopped || outputStopped || document.visibilityState !== "visible" || (timer === undefined && !pageWait)) return;
       window.clearTimeout(timer);
       timer = undefined;
       delay = 500;
@@ -1414,6 +1417,14 @@ export function TermView({
     let receive: TerminalReceiver | null = null;
     let gzipSupport: boolean | undefined;
     const connect = async () => {
+      // 끝나는 문서는 새 연결·압축 Worker를 만들지 않는다(t-0584의 「종료 뒤 후속 일 없음」). WebKit은 떠나기 시작한 뒤 만든
+      // blob Worker 읽기를 막고 페이지 오류를 낸다(t-1894 착지 gate의 E2E 23). 표지는 시험이 sleep 없이 본다
+      if (pageClosing()) {
+        pageWait = true;
+        el.dataset.retry = "page-closed";
+        return;
+      }
+      pageWait = false;
       const epoch = ++connectEpoch;
       receive?.close();
       setLink("connecting");

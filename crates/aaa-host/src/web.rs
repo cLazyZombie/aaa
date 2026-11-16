@@ -799,6 +799,8 @@ async fn idea_file_get(
 struct DesignFileQuery {
     /// 문서를 읽은 commit. 같은 commit의 그림은 바뀌지 않아 오래 둔다
     c: Option<String>,
+    /// 기획 branch에서 읽은 문서면 그 slug(FRONT_API 1.171): commit이 그 branch의 판이어도 된다
+    b: Option<String>,
 }
 
 /// 기획 문서 안 그림·영상(보기 권한도, t-1894). repo 머신 agent가 그 commit의 git 객체에서 읽는다. sandbox CSP로 보내 SVG·HTML이
@@ -814,7 +816,9 @@ async fn design_file_get(
     }
     let commit = q.c.filter(|c| aaa_common::git_watch::valid_sha(c));
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-    let read = match host.design_file_read(&project, &repo, &path, commit.as_deref(), range).await {
+    let branch = q.b.filter(|b| aaa_proto::design_slug_ok(b));
+    let read = match host.design_file_read(&project, &repo, &path, (commit.as_deref(), branch.as_deref()), range).await
+    {
         Ok(read) => read,
         Err(e) => return error_response(e),
     };

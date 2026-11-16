@@ -53,7 +53,7 @@ function repo(name, first, later) {
     git(seed, "commit", "-q", "-m", "기획 더함");
     git(seed, "push", "-q", "origin", "HEAD:main");
   }
-  return { clone, head: git(seed, "rev-parse", "HEAD") };
+  return { clone, seed, head: git(seed, "rev-parse", "HEAD") };
 }
 
 const LOOP = `# 게임 루프
@@ -89,11 +89,17 @@ export default async function () {
       "docs/loop/media/noise.bin": noise,
     });
     const tool = repo("tool", { "README.md": "# tool\n" });
+    // origin을 받지 못하는 저장소: 가진 판으로 읽고 까닭을 싣는다
+    const lore = repo("lore", { "notes/README.md": "# 설정 노트\n" });
+    git(lore.clone, "remote", "set-url", "origin", `${root}/origins/gone.git`);
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/projects/demo/aaa.toml`,
-      `schema = 1\n\n[[workspaces]]\npath = "${app.clone}"\nmachine = "labA"\ndesign = "docs"\n\n[[workspaces]]\npath = "${tool.clone}"\nmachine = "labA"\n`);
+      `schema = 1\n\n[[workspaces]]\npath = "${app.clone}"\nmachine = "labA"\ndesign = "docs"\n\n` +
+      `[[workspaces]]\npath = "${lore.clone}"\nmachine = "labA"\ndesign = "notes"\n\n[[workspaces]]\npath = "${tool.clone}"\nmachine = "labA"\n`);
     const tree = aaa("plan", "list");
-    assert.deepEqual(tree.repos.map((r) => [r.repo, r.folder]), [["app", "docs"], ["tool", null]]);
+    assert.deepEqual(tree.repos.map((r) => [r.repo, r.folder]), [["app", "docs"], ["lore", "notes"], ["tool", null]]);
+    assert.match(tree.repos[1].tree.fetch_error ?? "", /origin을 받지 못했다/);
+    assert.deepEqual(tree.repos[1].tree.docs.map((d) => d.path), ["notes/README.md"], "가진 판의 문서");
     const t = tree.repos[0].tree;
     assert.equal(t.commit, app.head, "origin 기본 branch의 판");
     assert.equal(t.base, "origin/main");
@@ -114,6 +120,10 @@ export default async function () {
           const tool = p.locator('[data-testid="design-repo"][data-repo="tool"]');
           await tool.waitFor({ state: "attached" });
           assert.match(await tool.textContent(), /기획 폴더 없음/);
+          // origin을 받지 못한 저장소 줄: 경고와 가진 판의 문서
+          const lore = p.locator('[data-testid="design-repo"][data-repo="lore"]');
+          assert.match(await lore.getByTestId("design-repo-error").locator("svg").getAttribute("aria-label"), /origin을 받지 못해 가진 판/);
+          assert.equal(await lore.getByTestId("design-doc").count(), 1);
           await inList(p, p.locator('[data-testid="design-dir"][data-path="docs/loop"]'));
           await inList(p, p.locator(`[data-testid="design-doc"][data-path="docs/loop/README.md"]`));
           const body = p.getByTestId("design-body");
@@ -187,5 +197,24 @@ export default async function () {
       const outside = await api(reader, { op: "design_read", project: "demo", repo: "app", path: "README.md" });
       assert.equal(outside.err?.code, "bad_request", JSON.stringify(outside));
     } finally { await reader.context().close(); }
+  });
+
+  await step("문서 「새로 읽기」는 트리를 다시 읽어 origin의 새 판을 보인다", async () => {
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { hash: `#design=${encodeURIComponent("app/docs/loop/skills.md")}` });
+    try {
+      const body = p.getByTestId("design-body");
+      await body.getByRole("heading", { name: "기술 목록", exact: true }).waitFor();
+      assert.match(await p.getByTestId("design-meta").textContent(), new RegExp(app.head.slice(0, 7)));
+      fs.writeFileSync(`${app.seed}/docs/loop/skills.md`, "# 기술 목록 둘\n\n| 이름 | 효과 |\n| --- | --- |\n| 돌진 | 앞으로 네 칸 |\n");
+      git(app.seed, "commit", "-q", "-am", "기술 고침");
+      git(app.seed, "push", "-q", "origin", "HEAD:main");
+      const next = git(app.seed, "rev-parse", "HEAD");
+      // agent의 1분 받기 간격과 별개로 clone이 새 판을 가진 상태
+      git(app.clone, "fetch", "-q", "origin");
+      await p.getByTestId("design-doc-reload").click();
+      await body.getByRole("heading", { name: "기술 목록 둘", exact: true }).waitFor();
+      assert.match(await p.getByTestId("design-meta").textContent(), new RegExp(next.slice(0, 7)));
+      assert.match(await p.locator('[data-testid="design-doc"][data-path="docs/loop/skills.md"]').textContent(), /기술 목록 둘/, "트리도 새 판");
+    } finally { await p.context().close(); }
   });
 }
