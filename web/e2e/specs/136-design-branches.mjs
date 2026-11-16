@@ -50,6 +50,11 @@ const EXIT = (d) => `# 나가기
 
 지금 통로는 계단 하나다.
 
+- 계단
+- 귀환 두루마리
+
+  두루마리는 상자에서만 나온다.
+
 > [!계획] ${d.work}
 > 처음 1칸, 스킬 트리로 최대 6칸.
 
@@ -245,6 +250,8 @@ export default async function () {
       const working = (await state(tasks.work).textContent()).trim();
       assert.match(working, new RegExp(`^(작업 중|검수 대기) ${tasks.work} · ${t.id}$`), "thread가 맡은 할 일");
       assert.equal(await state(tasks.work).getAttribute("href"), `#task=${tasks.work}`);
+      // main 판은 표지 사이의 보통 글을 한 번에 그린다: 빈 줄 뒤 목록의 이어지는 문단이 덩어리마다 끊기지 않는다
+      assert.equal(await p.getByTestId("design-body").locator("li", { hasText: "두루마리는 상자에서만 나온다" }).count(), 1, "목록 안의 문단");
       // 글 속 d-ID는 같은 칩이다
       assert.equal((await p.getByTestId("design-inline-state").textContent()).trim(), working);
       assert.deepEqual(

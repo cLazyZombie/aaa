@@ -296,6 +296,29 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
       </div>
     );
   };
+  // 본문: main 판은 표지 블록 사이의 보통 글을 이어 한 번에 그린다(목록 이어짐·참조식 링크·각주가 덩어리마다 끊기지 않게).
+  // 표지가 없으면 문서 전체를 그대로 그린다. branch 판은 main과 다른 덩어리를 표시하므로 덩어리마다 그린다(2-3과 같다)
+  const renderBody = (): ReactNode => {
+    if (!blocks || !current) return null;
+    if (!marked && callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />;
+    const shown = (i: number) => !(look === "now" && (callouts[i] || onlyPlans(i)));
+    if (marked) return blocks.map((b, i) => (shown(i) ? renderBlock(b, i) : null));
+    const out: ReactNode[] = [];
+    let run: string[] = [];
+    let start = 0;
+    const flush = () => {
+      if (run.length) out.push(<div key={`text-${start}`} className="design-block"><ReportMarkdown base={null} image={image} text={run.join("\n\n")} onImages={lightbox.open} captions /></div>);
+      run = [];
+    };
+    blocks.forEach((b, i) => {
+      if (!shown(i)) return;
+      if (callouts[i]) { flush(); out.push(renderBlock(b, i)); return; }
+      if (run.length === 0) start = i;
+      run.push(b);
+    });
+    flush();
+    return out;
+  };
   // 남은 것: 절마다 표지 블록. 절에 표지 없는 글도 있으면 「일부 구현」
   const left = useMemo(() => {
     const groups: { section: string; some: boolean; items: { c: Callout; i: number }[] }[] = [];
@@ -444,7 +467,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                         </section>
                       ))}
                     </div>
-                  ) : blocks ? blocks.map((b, i) => (look === "now" && (callouts[i] || onlyPlans(i)) ? null : renderBlock(b, i)))
+                  ) : blocks ? renderBody()
                     : <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />}
                 </AppIdChipContext.Provider>
                 </OpenFileContext.Provider>
