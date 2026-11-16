@@ -89,7 +89,7 @@ fn diagnostic_line(line: &str) -> bool {
 fn eligible(r: &ThreadRec, a: &AgentStatus, group: ThreadGroup, attention: bool) -> bool {
     r.status == aaa_proto::ThreadStatus::Open
         && r.role == Role::Worker
-        && r.idea.is_none()
+        && !r.chat_only()
         && r.park.is_none()
         && r.resolve_pending.is_none()
         && r.brief == BriefState::Delivered

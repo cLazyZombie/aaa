@@ -13,6 +13,8 @@ export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
 
 /** 목록(sidebar)에 보이는 thread: 끝낸 것과 보류한 것(plan §8.426, pane이 없고 자리를 돌려줬다)은 「모든 thread」·할 일에만 있다 */
 export const inSidebar = (t: Pick<ThreadView, "group">): boolean => t.group !== "resolved" && t.group !== "parked";
+/** 아이디어·기획 대화 thread(작업 목록 밖, 아이디어·기획 화면의 대화) */
+export const chatOnly = (t: Pick<ThreadView, "idea" | "design">): boolean => Boolean(t.idea || t.design);
 
 /** herdr-projects `sidebar::word`(목록·탭 줄의 짧은 말) */
 export const GROUP_WORD: Record<string, string> = {

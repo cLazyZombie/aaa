@@ -736,7 +736,19 @@ changed: Array<DesignChange>,
 /**
  * main보다 앞선 commit 수
  */
-ahead: number, };
+ahead: number,
+/**
+ * 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
+ */
+thread: string | null,
+/**
+ * thread에 아직 보내지 못한 말 수
+ */
+pending: number,
+/**
+ * 대화 thread를 띄우거나 말을 보내지 못한 까닭
+ */
+chat_error: string | null, };
 
 export type DesignDocEntry = {
 /**
@@ -1652,7 +1664,7 @@ title?: string, } | { "op": "design_save", project?: string, repo: string, branc
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -2102,6 +2114,10 @@ export type ThreadView = {
  * 아이디어 전용 thread면 그 아이디어(`n-NNNN`, FRONT_API 1.147). 작업 목록·할 일 화면에 보이지 않고 아이디어 화면이 쓴다
  */
 idea?: string,
+/**
+ * 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 아이디어 thread처럼 작업 목록·할 일에 보이지 않는다
+ */
+design?: string,
 /**
  * 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
  */

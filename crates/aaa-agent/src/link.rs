@@ -212,6 +212,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             // 기획: 저장소 기획 폴더를 origin 기본 branch의 git 객체에서 읽는다(DesignTree·DesignRead·DesignFile, t-1894)
             "design.v1".into(),
             "design_write.v1".into(),
+            // 기획 대화 thread 세션의 자기 기획 branch 저장을 host에 원격 전달한다(thread_read에 DesignSave, t-1894 2-2)
+            "design_chat.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

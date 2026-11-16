@@ -3106,6 +3106,16 @@ pub enum FrontRequest {
         #[ts(optional)]
         summary: Option<String>,
     },
+    /// 기획 대화에 말하기(FRONT_API 1.172, 조작): 그 기획 branch의 대화 thread에 보낸다. thread가 없거나 끝났으면 그 저장소 머신에
+    /// 새로 띄우고, 쉬느라 내린 것은 잇고, 쉬는 branch는 다시 연다. 말은 thread가 brief를 받은 뒤 차례로 간다
+    DesignSay {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+        text: String,
+    },
     /// 기획 branch 버리기(FRONT_API 1.171, 조작): worktree와 로컬 branch, host가 올린 origin branch를 지운다
     DesignDiscard {
         #[serde(default)]
@@ -3985,6 +3995,7 @@ impl FrontRequest {
             | FrontRequest::DesignRead { project, .. }
             | FrontRequest::DesignBranchOpen { project, .. }
             | FrontRequest::DesignSave { project, .. }
+            | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
@@ -4069,6 +4080,13 @@ impl FrontRequest {
     }
 
     /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
+    /// host 밖 머신 thread 세션의 CLI가 agent를 거쳐 host에 보낼 수 있는 요청(`thread_read.v1`): 위 읽기와 기획 읽기, 그리고 자기
+    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다)
+    pub fn thread_relay_allowed(&self) -> bool {
+        self.thread_read_allowed()
+            || matches!(self, Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignSave { .. })
+    }
+
     pub fn thread_read_allowed(&self) -> bool {
         matches!(
             self,
@@ -4137,6 +4155,8 @@ impl FrontRequest {
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::DesignTree { .. }
                 | FrontRequest::DesignRead { .. }
+                // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
+                | FrontRequest::DesignSave { .. }
                 | FrontRequest::IdeaList { .. }
                 | FrontRequest::IdeaRead { .. }
                 | FrontRequest::IdeaSeen { .. }

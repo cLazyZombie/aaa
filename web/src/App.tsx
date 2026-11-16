@@ -44,7 +44,7 @@ import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
 import type { RolloutSnapshot } from "./RolloutCard";
-import { inSidebar, needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
+import { chatOnly, inSidebar, needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
@@ -1323,11 +1323,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}${t.group === "parked" ? ":parked" : ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
-  // 아이디어 전용 thread는 작업 목록·배지에 보이지 않는다(아이디어 화면의 대화다, t-1255 결정 20). 그 pane도 목록에서 뺀다
-  const shownThreads = allThreads.filter((t) => inSidebar(t) && !t.idea);
+  // 아이디어·기획 대화 thread는 작업 목록·배지에 보이지 않는다(아이디어·기획 화면의 대화다, t-1255 결정 20·t-1894). 그 pane도 목록에서 뺀다
+  const shownThreads = allThreads.filter((t) => inSidebar(t) && !chatOnly(t));
   // 질문 카드는 아이디어 thread의 것도 「답할 것」에 보인다(최후의 수단, 결정 2)
   const askThreads = allThreads.filter(inSidebar);
-  const ideaPanes = new Set(allThreads.flatMap((t) => (t.idea && t.pane ? [t.pane] : [])));
+  const ideaPanes = new Set(allThreads.flatMap((t) => (chatOnly(t) && t.pane ? [t.pane] : [])));
   const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
   const ideas = useIdeas(up);
   const design = useDesign(up, panel === "design" || designShown);
@@ -1942,7 +1942,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           <ProjectThreads
             loading={threadsSync === 0 && !threadsError}
             loadError={threadsError}
-            threads={allThreads.filter((t) => !t.idea)}
+            threads={allThreads.filter((t) => !chatOnly(t))}
             onThread={(t) => chooseThread(t, "threads:")}
             onBack={() => choose(null)}
             onPane={canControl ? (id) => choose(id) : undefined}

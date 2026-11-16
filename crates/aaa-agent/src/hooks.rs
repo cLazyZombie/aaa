@@ -24,6 +24,12 @@ pub const ENV_SOCK: &str = "AAA_HOOK_SOCK";
 pub const ENV_TOKEN: &str = "AAA_HOOK_TOKEN";
 pub const ENV_SESSION: &str = "AAA_SESSION_ID";
 const MAX_MSG: usize = 256 * 1024;
+/// 원격 전달(`thread_read`)은 기획 문서 저장(글 512KiB까지)을 싣는다: host 연결 frame에 감싸 들어갈 만큼까지 받는다
+const MAX_RELAY_MSG: usize = aaa_proto::MAX_FRAME - 16 * 1024;
+
+fn msg_limit(harness: &str) -> usize {
+    if harness == "thread_read" { MAX_RELAY_MSG } else { MAX_MSG }
+}
 
 /// 빠른 전역 hook gate. 최종 판정은 agent의 token·peer PID 검사다.
 pub fn in_session() -> bool {
@@ -358,10 +364,17 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     let session = std::env::var(ENV_SESSION).context("AAA_SESSION_ID가 없다")?;
     let msg = HookMsg { session, token, harness: harness.to_string(), payload };
     let body = serde_json::to_vec(&msg)?;
-    if body.len() > MAX_MSG {
-        bail!("사건이 너무 크다");
+    if body.len() > msg_limit(harness) {
+        bail!("사건이 너무 크다({}KiB, 한도 {}KiB)", body.len() / 1024, msg_limit(harness) / 1024);
     }
-    let wait = if harness == "thread_read" { 30 } else { 3 };
+    let wait = match harness {
+        // agent가 host를 기다리는 시간보다 조금 길게(`thread_read::on_thread_read`)
+        "thread_read" if msg.payload.get("op").and_then(Value::as_str) == Some("design_save") => {
+            aaa_proto::DESIGN_RELAY_SAVE_SECS + 10
+        }
+        "thread_read" => 30,
+        _ => 3,
+    };
     tokio::time::timeout(Duration::from_secs(wait), async {
         let mut s = aaa_common::ipc::connect(Path::new(&sock)).await?;
         exchange(&mut s, &body).await
@@ -398,16 +411,22 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
             break;
         }
         buf.extend_from_slice(&chunk[..n]);
-        if buf.len() > MAX_MSG {
+        if buf.len() > MAX_RELAY_MSG {
             bail!("사건이 너무 크다");
         }
-        match serde_json::from_slice(&buf) {
+        match serde_json::from_slice::<HookMsg>(&buf) {
+            // 큰 한도는 원격 전달만: 다른 사건은 예전 한도를 지킨다
+            Ok(msg) if buf.len() > msg_limit(&msg.harness) => bail!("사건이 너무 크다"),
             Ok(msg) => return Ok(msg),
             Err(e) if e.is_eof() => {} // JSON·UTF-8이 read 경계에서 잘렸으면 나머지를 받는다.
             Err(e) => return Err(e.into()),
         }
     }
-    Ok(serde_json::from_slice(&buf)?)
+    let msg: HookMsg = serde_json::from_slice(&buf)?;
+    if buf.len() > msg_limit(&msg.harness) {
+        bail!("사건이 너무 크다");
+    }
+    Ok(msg)
 }
 
 #[cfg(test)]
@@ -576,10 +595,10 @@ mod tests {
             (valid.clone(), false, "완성"),
             (valid, true, "완성"),
             (b"{!".to_vec(), false, "문법"),
-            ([b"{\"payload\":\"".as_slice(), &vec![b'x'; MAX_MSG]].concat(), false, "한도"),
+            ([b"{\"payload\":\"".as_slice(), &vec![b'x'; MAX_RELAY_MSG]].concat(), false, "한도"),
             (b"{\"session\":".to_vec(), true, "미완성"),
         ] {
-            let capacity = if expected == "완성" { 7 } else { MAX_MSG + 64 };
+            let capacity = if expected == "완성" { 7 } else { MAX_RELAY_MSG + 64 };
             let (mut writer, reader) = tokio::io::duplex(capacity);
             let writing = tokio::spawn(async move {
                 writer.write_all(&bytes).await.unwrap();
@@ -604,6 +623,35 @@ mod tests {
                 _ => assert!(result.unwrap_err().downcast_ref::<serde_json::Error>().is_some(), "{expected}"),
             }
         }
+    }
+
+    /// 원격 전달은 기획 문서 저장(512KiB 글)을 싣고, 다른 hook 사건은 예전 한도(256KiB)를 지킨다
+    #[tokio::test]
+    async fn relay_messages_carry_design_documents_but_other_hooks_keep_the_old_limit() {
+        for (harness, size, ok) in
+            [("thread_read", 600 * 1024, true), ("post", 600 * 1024, false), ("thread_read", MAX_RELAY_MSG, false)]
+        {
+            let body = serde_json::to_vec(&HookMsg {
+                session: "s1".into(),
+                token: aaa_test_support::token("test-hook-secret"),
+                harness: harness.into(),
+                payload: json!({ "text": "가".repeat(size / 3) }),
+            })
+            .unwrap();
+            let (mut writer, reader) = tokio::io::duplex(body.len() + 64);
+            let writing = tokio::spawn(async move {
+                writer.write_all(&body).await.unwrap();
+                writer
+            });
+            let mut reader: aaa_common::ipc::LocalStream = Box::new(reader);
+            let result = read_msg(&mut reader).await;
+            let _writer = writing.await.unwrap();
+            match result {
+                Ok(msg) => assert!(ok && msg.harness == harness, "{harness} {size}"),
+                Err(e) => assert!(!ok && e.to_string().contains("사건이 너무 크다"), "{harness} {size}: {e}"),
+            }
+        }
+        assert!(aaa_proto::DESIGN_MAX_TEXT as usize * 3 / 2 < MAX_RELAY_MSG, "기획 글 한도와 JSON 감쌈이 들어간다");
     }
 
     #[test]

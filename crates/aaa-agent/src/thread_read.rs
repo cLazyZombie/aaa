@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 use std::time::Duration;
 
 pub async fn send(request: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
-    ensure!(request.thread_read_allowed(), "원격 전달을 허용한 읽기 명령이 아니다");
+    ensure!(request.thread_relay_allowed(), "원격 전달을 허용한 명령이 아니다(읽기·자기 기획 branch 저장)");
     let reply = crate::hooks::send("thread_read", serde_json::to_value(request)?).await?;
     let text = reply
         .as_deref()
@@ -32,11 +32,17 @@ impl Agent {
             "읽기 요청 프로세스가 이 세션 안에 없다(peer pid)"
         );
         let request: FrontRequest = serde_json::from_value(msg.payload).context("원격 읽기 요청 해독")?;
-        ensure!(request.thread_read_allowed(), "원격 전달을 허용한 읽기 명령이 아니다");
+        ensure!(request.thread_relay_allowed(), "원격 전달을 허용한 명령이 아니다(읽기·자기 기획 branch 저장)");
         ensure!(
             self.host_thread_read.load(std::sync::atomic::Ordering::Relaxed) && self.host_tx().is_some(),
             "연결된 host의 thread_read.v1 지원이 필요하다"
         );
+        // 기획 저장은 host가 그 branch 올리기를 기다릴 수 있다(읽기보다 길게)
+        let wait = if matches!(request, FrontRequest::DesignSave { .. }) {
+            Duration::from_secs(aaa_proto::DESIGN_RELAY_SAVE_SECS)
+        } else {
+            Duration::from_secs(25)
+        };
         let id = util::new_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
@@ -50,7 +56,7 @@ impl Agent {
             request: Box::new(request),
         }))
         .await;
-        let result = tokio::time::timeout(Duration::from_secs(25), rx).await;
+        let result = tokio::time::timeout(wait, rx).await;
         self.read_waiters.lock().unwrap().remove(&id);
         result.context("원격 읽기 host 응답 시간 초과")?.context("원격 읽기 host 응답 채널이 닫혔다")
     }

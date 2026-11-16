@@ -723,7 +723,18 @@ enum PlanCmd {
         #[arg(long)]
         summary: Option<String>,
     },
-    /// 기획 branch를 버린다: worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
+    /// 기획 대화에 말한다: 그 기획 branch의 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다. 쉬던 branch는 다시 연다
+    Say {
+        repo: String,
+        slug: String,
+        /// 보낼 말(여럿이면 빈칸으로 잇는다)
+        #[arg(required_unless_present = "file", conflicts_with = "file")]
+        text: Vec<String>,
+        /// 말이 든 파일
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// 기획 branch를 버린다: 대화 thread를 끝내고 worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
     Discard { repo: String, slug: String },
 }
 
@@ -2368,6 +2379,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let text =
                         std::fs::read_to_string(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
                     front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary })
+                }
+                PlanCmd::Say { repo, slug, text, file } => {
+                    let text = match file {
+                        Some(file) => std::fs::read_to_string(&file)
+                            .with_context(|| format!("{}를 읽지 못했다", file.display()))?,
+                        None => text.join(" "),
+                    };
+                    front(json, FrontRequest::DesignSay { project, repo, branch: slug, text })
                 }
                 PlanCmd::Discard { repo, slug } => {
                     front(json, FrontRequest::DesignDiscard { project, repo, branch: slug })
@@ -4412,7 +4431,7 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
                     Ok(client) => client,
                     Err(error)
                         if aaa_agent::hooks::in_session()
-                            && req.thread_read_allowed()
+                            && req.thread_relay_allowed()
                             && error.chain().filter_map(|e| e.downcast_ref::<std::io::Error>()).any(|e| {
                                 matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
                             }) =>
@@ -5414,6 +5433,12 @@ fn print_design_branch(s: &mut String, b: &aaa_proto::DesignBranchView) {
         _ => " · 올리기 전".to_string(),
     };
     let _ = writeln!(s, "  ⑂ design/{} 「{}」 · main보다 {} 앞{state}{pushed}", b.slug, b.title, b.ahead);
+    if b.thread.is_some() || b.pending > 0 || b.chat_error.is_some() {
+        let thread = b.thread.as_deref().map_or_else(|| "대화 thread 준비 중".to_string(), |t| format!("대화 {t}"));
+        let pending = if b.pending > 0 { format!(" · 보낼 말 {}", b.pending) } else { String::new() };
+        let error = b.chat_error.as_deref().map(|e| format!(" · 띄우지 못함: {e}")).unwrap_or_default();
+        let _ = writeln!(s, "    {thread}{pending}{error}");
+    }
     for c in &b.changed {
         let _ = writeln!(s, "    {} {}", c.status, c.path);
     }

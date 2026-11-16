@@ -64,6 +64,8 @@ pub(crate) struct Rec {
     pub own_head: Option<String>,
     /// 마지막으로 쉼으로 내리려 한 때
     pub rest_tried_ms: u64,
+    /// 저장소 머신의 기획 worktree 자리(대화 thread가 읽는다)
+    pub cwd: Option<String>,
 }
 
 impl Rec {
@@ -146,7 +148,7 @@ impl Host {
         list
     }
 
-    fn design_branch_lock(&self, project: &str, repo: &str, slug: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn design_branch_lock(&self, project: &str, repo: &str, slug: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.thread_op_lock(project, &format!("design:{repo}/{slug}"))
     }
 
@@ -162,18 +164,55 @@ impl Host {
         Ok(conn)
     }
 
-    /// 누가 쓰나: 조작 권한의 사람(aaa 밖 터미널·사람의 셸 pane·웹). thread·coordinator 세션은 쓰지 않는다
-    fn design_writer(&self, role: DeviceRole, actor: &str) -> Result<String, ErrorBody> {
-        let agent_pane = actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).is_some_and(|(_, s)| {
-            self.thread_of_pane(s).is_some()
-                || self.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role) == Some(aaa_proto::Role::Coordinator)
-        });
-        if actor.starts_with("worker:")
-            || actor.starts_with("evaluator:")
-            || actor.starts_with("detached:")
-            || agent_pane
-        {
-            return Err(err(ErrorCode::Forbidden, "thread·coordinator 세션 안에서는 기획 branch에 쓰지 않는다"));
+    /// 기록과 대화를 합친 보기
+    pub(crate) fn design_view(&self, project: &str, rec: &Rec) -> DesignBranchView {
+        let mut view = rec.view();
+        if let Ok(chat) = self.design_chat_load(project, &rec.repo, &rec.slug) {
+            view.thread = chat.thread;
+            view.pending = chat.pending.len() as u32;
+            view.chat_error = chat.error;
+        }
+        view
+    }
+
+    /// 누가 쓰나: 조작 권한의 사람(aaa 밖 터미널·사람의 셸 pane·웹)과, `branch`(저장소, 주제)를 주면 그 프로젝트 그 기획
+    /// branch 대화의 지금 thread(보기 권한·다른 머신 중계여도). 다른 thread·버린 대화에서 남은 thread·coordinator 세션과,
+    /// 알린 세션만으로 정한 thread 범위(`worker:<세션>@unverified`)는 쓰지 않는다
+    pub(crate) fn design_writer(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        branch: Option<(&str, &str)>,
+    ) -> Result<String, ErrorBody> {
+        let session = actor
+            .strip_prefix("worker:")
+            .or_else(|| actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).map(|(_, s)| s));
+        if let Some(session) = session {
+            if let Some(rec) = self.thread_of_pane(session) {
+                if let Some((repo, slug)) = branch
+                    && rec.project == project
+                    && rec.design.as_deref() == Some(format!("{repo}/{slug}").as_str())
+                    && self
+                        .design_chat_load(project, repo, slug)
+                        .is_ok_and(|c| c.thread.as_deref() == Some(rec.id.as_str()))
+                {
+                    return Ok(rec.id);
+                }
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "thread 세션은 기획 branch에 쓰지 않는다(기획 대화 thread는 자기 branch에만 저장한다)",
+                ));
+            }
+            if actor.starts_with("worker:")
+                || self.pane_view_of(session, DeviceRole::Local).and_then(|p| p.role)
+                    == Some(aaa_proto::Role::Coordinator)
+            {
+                return Err(err(ErrorCode::Forbidden, "thread·coordinator 세션 안에서는 기획 branch에 쓰지 않는다"));
+            }
+        }
+        if actor.starts_with("evaluator:") || actor.starts_with("detached:") {
+            return Err(err(ErrorCode::Forbidden, "이 세션은 기획 branch에 쓰지 않는다"));
         }
         if !role.can_control() {
             return Err(err(
@@ -194,18 +233,39 @@ impl Host {
         slug: &str,
         title: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor)?;
+        self.design_branch_open_with(role, actor, project, repo, slug, title, true).await
+    }
+
+    /// `create`가 아니면 host 기록이 있는 branch만 다시 연다(대화 배경 일: 그 사이 버린 branch를 되살리지 않는다)
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_branch_open_with(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        title: Option<String>,
+        create: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let by = self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
         let old = self.design_branch_load(project, &target.name, slug)?;
+        if old.is_none() && !create {
+            return Err(err(ErrorCode::NotFound, format!("기획 branch가 없다(버렸다): design/{slug}")));
+        }
         let conn = self.design_write_conn(&mid)?;
+        if old.is_none() {
+            self.design_chat_forget(project, &target.name, slug).await?;
+        }
         let req = AgentRequest::DesignOpen {
             project: project.to_string(),
             repo: target.path.clone(),
             slug: slug.to_string(),
         };
-        let AgentResponse::DesignBranch { head, opened, .. } = conn.request_timeout(req, WRITE_WAIT).await? else {
+        let AgentResponse::DesignBranch { head, opened, cwd, .. } = conn.request_timeout(req, WRITE_WAIT).await? else {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
         let now = aaa_common::util::now_ms();
@@ -216,6 +276,7 @@ impl Host {
                 rec.head = Some(head);
                 rec.rest_error = None;
                 rec.push_error = None;
+                rec.cwd = Some(cwd);
                 rec
             }
             None => Rec {
@@ -232,13 +293,14 @@ impl Host {
                 // origin에서 꺼낸 branch는 그 판이 이미 origin에 있다
                 pushed: (opened == "remote").then(|| head.clone()),
                 head: Some(head),
+                cwd: Some(cwd),
                 origin: if opened == "open" { "local".into() } else { opened },
                 ..Default::default()
             },
         };
         self.design_branch_store(project, &rec)?;
         self.db.audit(actor, "design_branch_open", &format!("{project} {}/{slug}", target.name));
-        Ok(FrontResponse::DesignBranch { branch: rec.view() })
+        Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
     }
 
     /// 기획 branch에 문서 하나를 저장한다(그 문서만 commit). 쉼 뒤 origin에 올린다
@@ -255,7 +317,8 @@ impl Host {
         text: String,
         summary: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor)?;
+        // 저장소 이름은 그대로 찾으므로(design_target) 대화 thread의 `<저장소>/<주제>`와 바로 견준다
+        let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         let path = crate::design::checked_path(&folder, path)?;
@@ -302,20 +365,26 @@ impl Host {
 
     /// 기획 branch를 버린다: worktree·로컬 branch와 host가 올린 origin branch를 지우고 기록을 지운다
     pub(crate) async fn design_discard(
-        &self,
+        self: &Arc<Self>,
         role: DeviceRole,
         actor: &str,
         project: &str,
         repo: &str,
         slug: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_writer(role, actor)?;
+        self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
+        // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
-        let rec = self
-            .design_branch_load(project, &target.name, slug)?
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")))?;
+        let Some(rec) = self.design_branch_load(project, &target.name, slug)? else {
+            // 앞선 버리기가 branch는 지웠는데 대화 thread를 끝내지 못했으면 마저 끝낸다
+            if self.design_chat_load(project, &target.name, slug)?.thread.is_some() {
+                self.design_chat_retire(project, &target.name, slug, actor).await?;
+                return Ok(FrontResponse::Done);
+            }
+            return Err(err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")));
+        };
         let conn = self.design_write_conn(&mid)?;
         // origin branch는 host가 만들어 올린 것만, 그 판일 때만 지운다. 있던 로컬 branch는 남긴다
         let req = AgentRequest::DesignClose {
@@ -335,6 +404,13 @@ impl Host {
         std::fs::remove_file(&path).map_err(|e| internal(format!("{}: {e}", path.display())))?;
         self.design_push_gen.lock().unwrap().remove(&format!("{project}/{}/{slug}", target.name));
         self.db.audit(actor, "design_discard", &format!("{project} {}/{slug}", target.name));
+        // branch를 지운 뒤에 대화를 끝낸다(닫기가 멈추면 대화는 그대로 남는다)
+        self.design_chat_retire(project, &target.name, slug, actor).await.map_err(|e| {
+            err(
+                e.code,
+                format!("기획 branch는 버렸으나 대화 thread를 끝내지 못했다(다시 버리면 마저 끝낸다): {}", e.message),
+            )
+        })?;
         Ok(FrontResponse::Done)
     }
 
@@ -431,10 +507,14 @@ impl Host {
         let rest_ms = self.cfg.projects.design_rest_secs.saturating_mul(1000);
         for t in targets.iter().filter(|t| t.folder.is_some()) {
             for rec in self.design_branch_list(project, &t.name) {
+                // 끊긴 전달을 잇는다(쉬는 branch면 배경 일이 다시 연다)
+                self.design_chat_resume(project, &t.name, &rec.slug);
                 if rec.state != DesignBranchState::Open {
                     continue;
                 }
-                let idle = now.saturating_sub(rec.updated_ms);
+                // 마지막 저장과 마지막 말 중 늦은 때부터 센다(대화 중인 branch는 쉬지 않는다)
+                let said = self.design_chat_load(project, &t.name, &rec.slug).map(|c| c.said_ms).unwrap_or(0);
+                let idle = now.saturating_sub(rec.updated_ms.max(said));
                 let queued =
                     self.design_push_gen.lock().unwrap().contains_key(&format!("{project}/{}/{}", t.name, rec.slug));
                 let retry = rec.push_error.is_none()
@@ -462,8 +542,9 @@ impl Host {
         // 잠금을 기다리는 사이 쓰거나 다시 열었으면 쉬지 않는다
         let rest_ms = self.cfg.projects.design_rest_secs.saturating_mul(1000);
         let now = aaa_common::util::now_ms();
+        let said = self.design_chat_load(project, repo, slug).map(|c| c.said_ms).unwrap_or(0);
         if rec.state != DesignBranchState::Open
-            || now.saturating_sub(rec.updated_ms) < rest_ms
+            || now.saturating_sub(rec.updated_ms.max(said)) < rest_ms
             || (rec.rest_error.is_some() && now.saturating_sub(rec.rest_tried_ms) < REST_RETRY_MS)
         {
             return;
@@ -511,7 +592,7 @@ impl Host {
         let conn = if recs.is_empty() { None } else { self.design_write_conn(mid).ok() };
         let mut views = Vec::new();
         for rec in recs {
-            let mut view = rec.view();
+            let mut view = self.design_view(project, &rec);
             if let Some(conn) = &conn {
                 let req = AgentRequest::DesignTree {
                     repo: repo_path.to_string(),
@@ -573,6 +654,12 @@ mod tests {
                     summary: None,
                 },
                 FrontRequest::DesignDiscard { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
+                FrontRequest::DesignSay {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                    text: "말".into(),
+                },
             ];
             for req in reqs {
                 let e = h.call(role, actor, req).await.unwrap_err();
@@ -592,6 +679,105 @@ mod tests {
         let e = h.call(DeviceRole::Local, "local:me@01SHELL", open).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
         assert!(h.design_branch_load("demo", "repo", "Bad").is_err(), "branch 이름 검사");
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
+
+    /// 기획 대화 thread는 (보기 권한·다른 머신 중계여도) 자기 기획 branch 저장만 한다. 열기·버리기·말하기와 다른 branch,
+    /// 다른 thread는 거부한다
+    #[tokio::test]
+    async fn design_chat_thread_saves_only_its_own_branch() {
+        let state = std::env::temp_dir().join(format!("aaa-design-writer-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Arc::new(Host::open(cfg, state.clone()).unwrap());
+        h.project_create("demo", Default::default(), "test").unwrap();
+        // t-0003은 같은 대화 표지지만 대화의 지금 thread가 아니다(버린 대화에서 남은 thread), t-0004는 다른 프로젝트의 것
+        for (project, id, pane, design) in [
+            ("demo", "t-0001", "01DESIGN", Some("repo/boss-dex")),
+            ("demo", "t-0002", "01OTHER", None),
+            ("demo", "t-0003", "01ORPHAN", Some("repo/boss-dex")),
+            ("other", "t-0004", "01ELSE", Some("repo/boss-dex")),
+        ] {
+            let mut rec = crate::orch::ThreadRec::starting(
+                project,
+                "기획",
+                "m",
+                "",
+                aaa_proto::Role::Worker,
+                aaa_proto::ThreadKind::Dir,
+                0,
+            );
+            rec.id = id.into();
+            rec.pane = Some(pane.into());
+            rec.design = design.map(str::to_string);
+            rec.status = aaa_proto::ThreadStatus::Open;
+            h.db.thread_import(project, id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        }
+        let chat = crate::design_chat::Chat { thread: Some("t-0001".into()), ..Default::default() };
+        h.design_chat_store("demo", "repo", "boss-dex", &chat).unwrap();
+        let save = |branch: &str| FrontRequest::DesignSave {
+            project: "demo".into(),
+            repo: "repo".into(),
+            branch: branch.into(),
+            path: "docs/a.md".into(),
+            base: None,
+            text: "# a\n".into(),
+            summary: None,
+        };
+        // 자기 branch: 권한을 지나 저장소 확인에서 멈춘다(이 프로젝트에 저장소가 없다). 중계(보기)·같은 머신 pane 모두
+        for (role, actor) in [(DeviceRole::Reader, "worker:01DESIGN"), (DeviceRole::Local, "local:me@01DESIGN")] {
+            let e = h.call(role, actor, save("boss-dex")).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::NotFound, "{actor}: {e:?}");
+        }
+        assert_eq!(
+            h.design_writer(DeviceRole::Reader, "worker:01DESIGN", "demo", Some(("repo", "boss-dex"))).unwrap(),
+            "t-0001"
+        );
+        let others = [
+            ("worker:01DESIGN", save("other")),
+            // 알린 세션만으로 정한 thread 범위(coordinator pane·떼어 낸 프로세스가 대화 thread 세션을 댄 것)
+            ("worker:01DESIGN@unverified", save("boss-dex")),
+            ("worker:01ORPHAN", save("boss-dex")),
+            ("worker:01ELSE", save("boss-dex")),
+            ("worker:01OTHER", save("boss-dex")),
+            ("local:me@01OTHER", save("boss-dex")),
+            (
+                "worker:01DESIGN",
+                FrontRequest::DesignBranchOpen {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    slug: "boss-dex".into(),
+                    title: None,
+                },
+            ),
+            (
+                "worker:01DESIGN",
+                FrontRequest::DesignDiscard { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
+            ),
+            (
+                "local:me@01DESIGN",
+                FrontRequest::DesignSay {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                    text: "말".into(),
+                },
+            ),
+        ];
+        for (actor, req) in others {
+            let e = h.call(DeviceRole::Local, actor, req).await.unwrap_err();
+            assert_eq!(e.code, ErrorCode::Forbidden, "{actor}: {e:?}");
+        }
+        // 원격 중계는 저장만 싣는다(열기·말하기·버리기는 중계 목록 밖)
+        let say = FrontRequest::DesignSay {
+            project: "demo".into(),
+            repo: "repo".into(),
+            branch: "boss-dex".into(),
+            text: "말".into(),
+        };
+        assert!(!say.thread_relay_allowed() && save("x").thread_relay_allowed());
         drop(h);
         std::fs::remove_dir_all(&state).unwrap();
     }

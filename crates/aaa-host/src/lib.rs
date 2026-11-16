@@ -40,6 +40,7 @@ pub mod db;
 mod deploy;
 mod design;
 mod design_branch;
+mod design_chat;
 mod diff;
 mod enroll_guide;
 pub mod file_backup;
@@ -734,6 +735,8 @@ pub struct Host {
     design_push_gen: Mutex<HashMap<String, u64>>,
     /// 도는 기획 branch ticker 일(프로젝트)
     design_passes: Mutex<std::collections::HashSet<String>>,
+    /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
+    design_chatting: Mutex<std::collections::HashSet<String>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -980,6 +983,7 @@ impl Host {
             design_trees: Mutex::new(HashMap::new()),
             design_push_gen: Mutex::new(HashMap::new()),
             design_passes: Mutex::new(Default::default()),
+            design_chatting: Mutex::new(Default::default()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             account_quota: Default::default(),
@@ -2055,6 +2059,7 @@ impl Host {
                     role: aaa_proto::Role::Worker,
                     attachments: Vec::new(),
                     idea: None,
+                    design: None,
                 };
                 let (mut warnings, picked) = match from_task {
                     Some(t) => {
@@ -2177,6 +2182,7 @@ impl Host {
             | FrontRequest::DesignRead { .. }
             | FrontRequest::DesignBranchOpen { .. }
             | FrontRequest::DesignSave { .. }
+            | FrontRequest::DesignSay { .. }
             | FrontRequest::DesignDiscard { .. }) => Box::pin(self.call_design(role, actor, req)).await,
             req @ (FrontRequest::IdeaList { .. }
             | FrontRequest::IdeaRead { .. }

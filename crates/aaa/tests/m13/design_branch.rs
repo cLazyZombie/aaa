@@ -143,3 +143,195 @@ fn idle_design_branch_rests_without_losing_commits_and_reopens() {
     );
     assert!(place.exists());
 }
+
+/// 기획 대화(2-2): 저장소가 다른 머신(labB)에 있으면 `aaa plan say`가 그 머신에 대화 thread를 띄우고 말을 brief 뒤 보낸다.
+/// thread 세션(front.sock 없음)은 agent 중계로 자기 기획 branch에만 저장하고, 열기·말하기·다른 branch는 거부된다.
+/// 올린 기획 branch에서 갈라진 구현 thread(`--base origin/design/<주제>`)는 그 기획 commit을 받는다. 버리면 대화 thread도 끝난다
+#[test]
+fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
+    // 쉼 1초: 시험이 tick을 부를 때만 판정한다(tick_secs=3600)
+    let (mut w, env) =
+        world_files("tick_secs=3600\ndesign_push_secs=1\ndesign_rest_secs=1\n", false, Some("0"), true, |_| Vec::new());
+    w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+    let mut w = world_start(w, env);
+    w.add_remote();
+    git(&w.repo, &["config", "user.name", "t"]);
+    git(&w.repo, &["config", "user.email", "t@example.com"]);
+    std::fs::create_dir_all(w.repo.join("docs")).unwrap();
+    std::fs::write(w.repo.join("docs/README.md"), "# 개요\n").unwrap();
+    git(&w.repo, &["add", "."]);
+    git(&w.repo, &["commit", "-qm", "기획 폴더"]);
+    git(&w.repo, &["push", "-q", "origin", "main"]);
+    let other = w.lab.root.join("b-src");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["clone", "-q", path_str(&w.lab.root.join("origin.git")), "game"]);
+    let game = other.join("game");
+    git(&game, &["config", "user.name", "t"]);
+    git(&game, &["config", "user.email", "t@example.com"]);
+    let game_head = git(&game, &["rev-parse", "HEAD"]);
+    std::fs::write(
+        w.projects.join("demo/project.toml"),
+        format!(
+            "schema = 1\nthread_profile = \"fake\"\n\n[[repos]]\npath = {:?}\nmachine = \"labA\"\n\n[[repos]]\npath = {:?}\nmachine = \"labB\"\ndesign = \"docs\"\n",
+            path_str(&w.repo),
+            path_str(&game)
+        ),
+    )
+    .unwrap();
+    let opened = w.h.ok(&["plan", "new", "game", "boss-dex", "--title", "보스 도감"]);
+    assert_eq!(opened["branch"]["slug"], "boss-dex", "{opened}");
+    let said = w.h.ok(&["plan", "say", "game", "boss-dex", "첫말고유", "보스부터"]);
+    assert_eq!(said["branch"]["pending"], 1, "{said}");
+    let thread = wait_for("기획 대화 thread", T, || {
+        let b = &branches_of(&w, "game")[0];
+        b["thread"].as_str().map(str::to_string)
+    });
+    let shown = w.wait_show("대화 thread brief", &thread, |v| v["brief"] == "delivered");
+    assert_eq!(shown["design"], "game/boss-dex", "{shown}");
+    assert_eq!(shown["machine"], "labB", "저장소 머신에서 돈다: {shown}");
+    let pane = shown["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&pane, "첫말고유 보스부터", T);
+    wait_for("보낸 말 비움", T, || (branches_of(&w, "game")[0]["pending"] == 0).then_some(()));
+    assert!(
+        !w.h.ok(&["task", "list"])["tasks"].as_array().unwrap().iter().any(|t| t["thread"] == thread.as_str()),
+        "대화 thread는 할 일을 남기지 않는다"
+    );
+
+    let body = w.lab.root.join("boss-from-thread.md");
+    std::fs::write(&body, "# 보스 도감\n\n## 해골 왕\n").unwrap();
+    let py = w.task(
+        "design-probe.py",
+        &format!(
+            r#"
+import json, os, subprocess
+AA = {bin:?}
+def call(*args, ok=True):
+    p = subprocess.run([AA, '--json', *args], capture_output=True)
+    assert (p.returncode == 0) == ok, (args, p.returncode, p.stdout, p.stderr)
+    return json.loads(p.stdout) if ok else p.stderr.decode()
+assert not os.path.exists(os.path.join(os.environ['AAA_STATE_DIR'], 'host/front.sock'))
+saved = call('plan', 'save', 'game', 'docs/boss.md', '--branch', 'boss-dex', '--new', '--file', {body:?}, '--summary', '해골 왕 정리')
+doc = call('plan', 'show', 'game', 'docs/boss.md', '--branch', 'boss-dex')['doc']
+assert doc['text'] == '# 보스 도감\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
+assert any(r['repo'] == 'game' for r in call('plan', 'list')['repos'])
+assert '자기 branch' in call('plan', 'save', 'game', 'docs/x.md', '--branch', 'other', '--new', '--file', {body:?}, ok=False)
+# 열기·말하기·버리기는 중계 목록 밖이라 CLI가 보내지 않는다(host·agent 중계 검사는 단위 시험)
+for args in [('plan', 'new', 'game', 'other'), ('plan', 'say', 'game', 'boss-dex', 'x'), ('plan', 'discard', 'game', 'boss-dex')]:
+    call(*args, ok=False)
+print('design-relay-ok', saved['commit'])
+"#,
+            bin = lab::BIN,
+        ),
+    );
+    let out = w.lab.root.join("design-probe.out");
+    let done = w.lab.root.join("design-probe.done");
+    let script = w.task(
+        "design-probe.sh",
+        &format!(
+            "python3 {py:?} > {out:?} 2>&1\nprintf '%s' \"$?\" > {done:?}.tmp\nmv {done:?}.tmp {done:?}\necho design-probe-done\n"
+        ),
+    );
+    w.h.ok(&["pane", "run", &pane, &format!("post-probe {script}")]);
+    w.h.wait_output(&pane, "design-probe-done", T);
+    let output = std::fs::read_to_string(out).unwrap();
+    assert_eq!(std::fs::read_to_string(done).unwrap(), "0", "{output}");
+    let commit = output.split_whitespace().skip_while(|s| *s != "design-relay-ok").nth(1).unwrap().to_string();
+    assert_eq!(
+        git(&game, &["log", "-1", "--format=%s", "refs/heads/design/boss-dex"]),
+        format!("기획: 해골 왕 정리 ({thread})"),
+        "저장한 thread가 commit 메시지에 남는다"
+    );
+    assert_eq!(git(&game, &["rev-parse", "HEAD"]), game_head, "저장소 checkout은 그대로");
+    // pane 밖 프로세스가 대화 thread의 세션을 대도(coordinator pane·떼어 낸 프로세스와 같은 꼴) 그 thread로 쓰지 못한다
+    let claimed =
+        w.h.cmd(&[
+            "--json",
+            "plan",
+            "save",
+            "game",
+            "docs/claim.md",
+            "--branch",
+            "boss-dex",
+            "--new",
+            "--file",
+            path_str(&body),
+        ])
+        .env("AAA_SESSION_ID", &pane)
+        .capture_output()
+        .unwrap();
+    assert!(!claimed.status.success(), "{}", String::from_utf8_lossy(&claimed.stdout));
+    assert!(String::from_utf8_lossy(&claimed.stderr).contains("세션"), "{}", String::from_utf8_lossy(&claimed.stderr));
+    assert!(!game.join("docs/boss.md").exists());
+
+    // 올린 기획 branch에서 갈라진 구현 thread는 그 기획 commit을 받는다(2-3 「main에 반영」·3단계 구현 맡기기의 바탕)
+    wait_for("기획 branch 올림", T, || origin_ref(&w, "refs/heads/design/boss-dex").filter(|h| *h == commit));
+    let built = w.start(&[
+        "--title",
+        "기획 위 구현",
+        "--machine",
+        "labA",
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+        "--base",
+        "origin/design/boss-dex",
+        "--task-file",
+        &w.task("on-design.md", "noreport"),
+    ]);
+    let cwd = PathBuf::from(built["cwd"].as_str().unwrap());
+    git(&cwd, &["merge-base", "--is-ancestor", &commit, "HEAD"]);
+    assert_eq!(std::fs::read_to_string(cwd.join("docs/boss.md")).unwrap(), "# 보스 도감\n\n## 해골 왕\n");
+
+    // 보류된 대화 thread는 다음 말에 같은 thread로 잇는다(이야기가 없어 쉬어 내린 것과 같은 길)
+    let parked = w.h.ok(&["thread", "park", "demo", &thread, "--now"]);
+    assert_eq!(parked["status"], "parked", "{parked}");
+    w.h.ok(&["plan", "say", "game", "boss-dex", "둘째말고유"]);
+    let back = w.wait_show("보류에서 이음", &thread, |v| v["status"] == "open" && v["brief"] == "delivered");
+    let pane = back["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&pane, "둘째말고유", T);
+    wait_for("둘째 말 보냄", T, || {
+        let b = &branches_of(&w, "game")[0];
+        (b["pending"] == 0 && b["thread"] == thread.as_str()).then_some(())
+    });
+
+    // 쉬는 기획 branch에 말하면 branch를 다시 열고 같은 thread에 보낸다
+    let place = w.lab.root.join("workB/game/demo-design-boss-dex");
+    assert!(place.exists());
+    // fixed wait: 쉼 창(design_rest_secs=1)이 마지막 말·저장 뒤로 지나야 tick이 쉼으로 둔다
+    std::thread::sleep(Duration::from_millis(1100));
+    w.h.ticks(1);
+    wait_for("기획 branch 쉼", T, || (branches_of(&w, "game")[0]["state"] == "rest").then_some(()));
+    assert!(!place.exists(), "쉬면 worktree를 돌려준다");
+    w.h.ok(&["plan", "say", "game", "boss-dex", "셋째말고유"]);
+    w.h.wait_output(&pane, "셋째말고유", T);
+    let b = branches_of(&w, "game")[0].clone();
+    assert_eq!((b["state"].as_str(), b["thread"].as_str()), (Some("open"), Some(thread.as_str())), "{b}");
+    assert!(place.exists(), "다시 연 worktree");
+
+    // 띄우는 중에 버려도 그 thread는 뜬 뒤 끝난다(버린 branch에 남는 thread가 없다)
+    w.h.ok(&["plan", "new", "game", "race"]);
+    w.h.ok(&["plan", "say", "game", "race", "경합말"]);
+    let race = wait_for("경합 대화 thread 생김", T, || {
+        let list = w.h.ok(&["thread", "list", "demo"]);
+        list["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["design"] == "game/race")
+            .map(|t| t["id"].as_str().unwrap().to_string())
+    });
+    w.h.ok(&["plan", "discard", "game", "race"]);
+    w.wait_show("경합 thread 끝남", &race, |v| v["status"] == "resolved");
+    assert!(branches_of(&w, "game").as_array().unwrap().iter().all(|b| b["slug"] != "race"));
+
+    w.h.ok(&["plan", "discard", "game", "boss-dex"]);
+    assert_eq!(w.show(&thread)["status"], "resolved", "버리면 대화 thread도 끝난다");
+    assert_eq!(branches_of(&w, "game"), serde_json::json!([]));
+    assert_eq!(origin_ref(&w, "refs/heads/design/boss-dex"), None);
+}
+
+fn branches_of(w: &World, repo: &str) -> Value {
+    let tree = w.h.ok(&["plan", "list"]);
+    tree["repos"].as_array().unwrap().iter().find(|r| r["repo"] == repo).unwrap()["branches"].clone()
+}

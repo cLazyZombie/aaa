@@ -117,7 +117,7 @@ fn auto_resolve_eligible(r: &ThreadRec) -> bool {
     // 아이디어 thread는 끝내지 않고 쉬게 한다(idea_thread.rs `idea_rest_pass`)
     r.status == ThreadStatus::Open
         && r.role != Role::Evaluator
-        && r.idea.is_none()
+        && !r.chat_only()
         && r.last_group == Some(ThreadGroup::Idle)
 }
 

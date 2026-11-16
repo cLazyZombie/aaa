@@ -23,6 +23,14 @@
 | 2-1 thread·평가 세션과 보기 기기는 실제 입구(`Host::call`)에서 기획 branch를 열거나 쓰거나 버리지 못하고, 사람의 셸 pane은 지나간다 | `aaa-host` `design_branch::tests::sessions_and_readers_do_not_write_design_branches` | `cargo test -p aaa-host --lib design_branch::` |
 | 2-1 `.git` 조각·끝의 `.`·Windows 금지 글자·예약 이름 경로 거부 | `aaa-proto` `design::tests::clean_path_rejects_escape` | `cargo test -p aaa-proto` |
 | 2-1 실제 host·agent·Git과 CLI: `plan new`·`save`·`show --branch`·`list`·`discard`, 겹침·기준 판 없음 거부, 쉼(1초) 뒤 한 번 올림·`design_check` 통과, main과 main checkout 그대로, 버리면 origin branch까지 / 쉼 창 뒤 tick이 worktree를 돌려주고 branch·commit은 남김, 검사 실패면 올리지 않고 까닭을 남김, 쉬는 branch에는 쓰지 않음, 다시 열면 이어 씀 | `aaa` m13 `design_branch::` 둘 | `cargo test -p aaa --test m13 design_branch` |
+| 2-2 기획 대화 thread는 보기 권한·같은 머신 pane 모두 자기 branch 저장만 지나가고(commit 저자 표시는 thread ID), 다른 branch·다른 thread·버린 대화에서 남은 thread(대화 기록의 지금 thread가 아님)·다른 프로젝트의 같은 표지 thread·알린 세션만의 범위(`@unverified`)·열기·버리기·말하기는 거부, 중계 목록은 저장만 싣는다 | `aaa-host` `design_branch::tests::design_chat_thread_saves_only_its_own_branch` | `cargo test -p aaa-host --lib design_branch` |
+| 2-2 원격 중계는 기획 열기·말하기·버리기를 싣지 않는다 | `thread_read::tests::relay_checks_machine_live_session_and_explicit_read_allowlist` | `cargo test -p aaa-host --lib thread_read` |
+| 2-2 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니고 CLI 끝내기를 막지 않는다 | `followups::tests::chat_only_threads_collect_no_followups` | `cargo test -p aaa-host --lib followups` |
+| 2-2 대화 thread 할 일 글이 branch·worktree·checkout·읽기·저장 명령을 가리킨다 | `design_chat::tests::task_text_points_at_branch_worktree_and_commands` | `cargo test -p aaa-host --lib design_chat` |
+| 2-2 실제 host·agent 둘(TLS 원격 labB)·Git과 CLI: 저장소가 labB에 있으면 `plan say`가 labB에 대화 thread를 띄우고(할 일 없음) brief 뒤 말을 보내 `pending` 0, front.sock 없는 thread 세션이 agent 중계로 `plan save`(자기 branch)·`show --branch`·`list`, 다른 branch 저장은 「자기 branch」 거부, 열기·말하기·버리기는 CLI가 보내지 않음, commit 메시지 끝이 thread ID, 저장소 checkout 그대로, 올린 기획 branch에서 `--base origin/design/<주제>`로 시작한 worktree thread가 그 commit과 문서를 가짐, 버리면 대화 thread가 끝나고 origin branch까지 지움 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_saves_only_its_own_branch` | `cargo test -p aaa --test m13 design_branch` |
+| 2-2 같은 m13: 보류한 대화 thread에 다음 말을 하면 같은 thread로 잇고 말이 닿음, 쉼 창(1초) 뒤 tick이 branch를 쉬게 하고 다음 말이 branch를 다시 열어 같은 thread에 보냄, 띄우는 중에 버리면 그 thread가 끝나고 branch가 사라짐, pane 밖 프로세스가 대화 thread의 `AAA_SESSION_ID`를 대고 `plan save`하면 거부 | 위와 같음 | 위와 같음 |
+| 2-2 원격 전달 hook 사건은 600KiB 글을 싣고(다른 hook은 256KiB에서 거부), 연결 frame 한도를 넘으면 거부, 기획 글 한도+JSON이 들어간다 | `aaa-agent` `hooks::tests::relay_messages_carry_design_documents_but_other_hooks_keep_the_old_limit` | `cargo test -p aaa-agent --lib hooks::` |
+| 2-2 host 머신이 아닌 저장소 머신은 `design_chat.v1`을 아는 agent에서만 대화 thread를 띄우고, 아니면 머신 이름·기능 이름을 담은 Unavailable | `aaa-host` `design_chat::tests::chat_threads_start_only_where_saves_can_reach_the_host` | `cargo test -p aaa-host --lib design_chat` |
 
 - git 실험실은 `-c init.defaultBranch=main`·`-c user.*`를 주고 index에 symlink·gitlink를 직접 넣어 OS의 symlink 권한과 기본 branch 설정에 기대지 않는다.
 - 1분 받기 간격은 시험마다 새 임시 저장소(다른 toplevel)라 서로 막지 않는다. 고정 commit 시험은 clone에서 직접 `git fetch`해 시계를 기다리지 않는다.
@@ -38,6 +46,24 @@
 - 기본 ref 고르기를 줄인 이름(`rev-parse --abbrev-ref origin/HEAD` → `origin/main`)인 옛 판으로 되돌리면 `tree_reads_origin_main_without_touching_checkout`가 로컬 branch의 옛 판을 읽어 실패했다. fallback 이름만 줄여서는 앞의 `symbolic-ref`가 온전한 이름을 주어 통과한다.
 
 - 2-1: 버리기에서 origin branch를 지우지 않게 바꾸면 m13 `design_branch_saves_…`가 「host가 올린 origin branch도 지운다」에서 실패했다.
+- 2-2: `design_writer`에서 thread의 `design`과 요청 branch 비교를 빼면 `design_chat_thread_saves_only_its_own_branch`가 다른 branch 저장이 거부되지 않아(NotFound까지 감) 실패했다.
+- 2-2: 중계 목록(`thread_relay_allowed`)에서 `DesignSave`를 빼면 m13 `design_chat_thread_on_the_repo_machine_…`의 thread 안 `plan save`가 「host가 없다(front.sock)」로 실패했다.
+- 2-2: m13을 처음 돌렸을 때 `plan discard`가 대화 thread의 [완료] 보고 Next(후속 할 일) 때문에 끝내기를 거부당했다. 대화 전용 thread는 후속을 모으지 않게 고쳤다(아이디어 thread도 같은 경로였다).
+- 2-2 advisor 확인에서 찾은 것: agent hook 소켓 한도(256KiB)가 기획 글 한도(512KiB)보다 작아 다른 머신 대화 thread가 큰 문서를 저장하지 못했다(`thread_read`만 frame 크기까지). 옛 agent의 저장소 머신에서는 thread가 떠도 저장이 「host가 없다」로 실패했다(`design_chat.v1` 확인). 말한 직후 버리면 띄우던 thread가 버린 branch에 남을 수 있었다(버림 표지).
+- 2-2: 띄우는 중에 버리는 단계를 더하자 버리기가 「준비·정리 작업 중」으로 실패했다. 상태가 열림이 된 뒤에도 기동 일이 thread 작업 잠금을 잠시 쥔다(상태만 보고 기다리게 했을 때도 같은 실패). 잠금을 기다려 끝내게 고쳤다. 이 단계는 실제로는 그 길(기동 일이 잠금을 쥔 동안 버림)을 지난다. 기록하기 전에 버리는 아주 짧은 틈(버림 표지 길)은 시험이 일부러 맞추지 못한다.
+- 2-2: Front의 `@unverified` 표시를 되돌리면 m13 `design_chat_thread_on_the_repo_machine_…`의 세션 ID를 댄 `plan save`가 저장에 성공해(`design_saved`) 실패했다.
+
+## 2-2 독립 리뷰에서 고친 것
+
+- coordinator pane·떼어 낸 프로세스가 대화 thread의 `AAA_SESSION_ID`를 대면 actor가 `worker:<그 pane>`이 되어 그 branch에 쓸 수 있었다(보기로 줄이는 규칙이 2-2부터 쓰기 신원이 됐다). 알린 세션만으로 정한 thread 범위는 `@unverified`를 붙인다. 같은 꼴의 아이디어 thread 노트 쓰기도 함께 막힌다.
+- 버리기 중의 말하기가 버리는 branch에 thread를 남기거나, 쉬던 branch면 배경 일의 다시 열기가 버린 branch를 되살리고 그 말을 지웠다: 말하기·버리기는 branch 잠금 안에서 보고, 배경 일은 기록이 있는 branch만 다시 연다.
+- 버리기가 대화를 먼저 끝내 닫기가 멈춰도 대화가 끝나 있었다: 닫고 기록을 지운 뒤 끝낸다(끝내지 못하면 다시 버릴 때 마저).
+- 도는 배경 일이 있으면 새 말의 「새로 띄우기」를 버렸고, 전달이 멈춘 thread를 600초 기다렸다: thread가 멈추면 돌아가고, 남은 말이 있으면 다시 돈다(하나도 못 보내고 세 번이면 까닭을 남김). 자리는 drop으로 놓는다.
+- 다른 머신 저장이 host의 올리기 대기(최대 420초) 동안 25·30초에 「시간 초과」가 났다(host는 뒤에 저장): 저장 중계는 600초 기다린다.
+- 쓰기 판정이 프로젝트와 대화 기록의 지금 thread를 보지 않았다: 둘 다 본다.
+- E2E 120(아이디어 갱신)은 thread 저장을 pane 밖에서 `AAA_SESSION_ID=<thread pane>`으로 흉내 냈다: 위 수리 뒤 「자기 아이디어 노트만」으로 거부되어 실패했다. 그 저장을 실제처럼 thread pane 안에서(`post-probe`) 하도록 바꿨다. 처음에는 첫 말(「준비」)의 글과 Enter 사이에 저장 줄이 끼어 한 줄로 섞였다(host 기록으로 확인): 첫 말이 전달된 뒤(`pending` 비움) 친다.
+- 재리뷰에서 더 고친 것: 쉼 판정이 대화 thread를 보류하는 사이(상태는 보류, 세션 닫기까지 thread 작업 잠금을 쥔다) 말하면 잇기가 잠금에 막혀 새 thread를 띄우고 앞 thread는 보류인 채 남았다. 잠금을 기다려 잇고, 그래도 잇지 못해 새로 띄우면 앞 thread를 끝낸다.
+- 남긴 것: 다른 머신 저장은 host의 agent 메시지 비밀 가림을 지나 등록된 비밀 조각이 든 글은 `*`로 저장된다(로컬 저장은 그대로). 띄우는 중인 thread가 60초 넘게 잠금을 쥐면 버리기의 끝내기가 실패한다(다시 버리면 잇는다). 같은 머신 thread의 CLI가 pane 자손으로 판정되지 않는 harness라면 그 thread는 자기 문서를 쓰지 못한다(보기만).
 
 ## 2-1 독립 리뷰에서 고친 것
 
@@ -70,3 +96,9 @@
 - 첫 E2E 실행은 135의 마지막 단계에서 실패했다. 400 오류 응답에도 host 공통 CSP 머리가 붙는데 시험이 「없음」을 기대했다. 기대값을 상태·Content-Range만으로 고친 뒤 `ci-local --only web,e2e,public --spec 135,130,120`이 통과했다(135 화면 단계는 첫 실행에서도 네 조합 모두 통과).
 - `aaa` crate: `--test deps`·`--bin aaa cli::`·strict clippy 통과. Linux·Windows strict cross clippy 통과.
 - 화면 확인(검수): 실험실 host·agent와 origin이 있는 견본 저장소 셋으로 넓은 창·390px 휴대폰에서 트리·문서·그림·링크를 직접 봤다.
+
+## 2-2 실제 실행(11-16, macOS)
+
+- `verify.py develop --package aaa-proto --package aaa-agent --package aaa-host --package aaa --spec 135,130,120,131,122`(리뷰 수리 뒤 마지막 commit): Rust 시험 proto 58·agent 218·host 937·m13 104 통과, strict clippy 통과, 웹 단위 통과, E2E 120·122·130·131·135 통과, 공개 검사 통과. 그 전 판(리뷰 수리 전)에서도 같은 묶음이 통과했고, 「알린 세션」 수리 직후 판에서는 E2E 120이 위 까닭으로 실패했다.
+- m13 `design_chat_thread_on_the_repo_machine_…`는 띄우는 중 버리기 단계를 더한 뒤 다섯 번 연달아 통과했다(한 번 7.5초 안팎).
+- Linux·Windows strict cross clippy 통과(나온 unused dependency 경고는 손대지 않은 manifest의 기존 것).

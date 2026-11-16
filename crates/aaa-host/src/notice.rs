@@ -108,7 +108,7 @@ impl Host {
     /// 멈춘 프로젝트는 ticker가 셈하지 않으므로 바로 보낸다
     pub(crate) fn turn_finished(&self, n: NoticeView, thread: Option<&ThreadRec>) {
         match thread {
-            Some(r) if r.idea.is_some() => {}
+            Some(r) if r.chat_only() => {}
             Some(r) if r.role == aaa_proto::Role::Evaluator => {}
             Some(r) if self.active_projects().iter().any(|p| p.name == r.project) => {
                 if let Some(pane) = n.pane.clone() {
