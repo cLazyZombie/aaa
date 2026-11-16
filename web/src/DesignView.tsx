@@ -2,11 +2,12 @@
 // 문서는 main이나 그 문서를 고친 기획 branch의 판으로 보고, branch 판은 main과 다른 덩어리에 표시를 단다. 「고치기」는 그 대화의
 // 기획 branch에 저장한다. 그림·영상은 같은 commit의 저장소 파일이고, 문서 안 다른 문서 링크(상대 경로 .md)는 앱 안에서 연다.
 import "./DesignView.css";
-import { Check, CircleDot, GitBranch, ImagePlus, MessageSquare, Pencil, RefreshCw } from "lucide-react";
+import { Check, CircleDot, GitBranch, Hammer, ImagePlus, MessageSquare, Pencil, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
+import { handable, HandoffDialog } from "./DesignHandoff";
 import { branchesByPath, calloutOf, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
@@ -64,12 +65,14 @@ function useDesignTasks(shown: boolean, rev: unknown, ids: readonly string[]): {
 }
 
 /** 표지 블록 하나: 계획(노랑)·미정(보라)·넘김(할 일 상태 칩) */
-function DesignCallout({ c, tasks, lookup, threads, onDiscuss, children }: {
+function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, children }: {
   c: Callout;
   tasks: TaskView[] | null;
   lookup: ArchiveLookup;
   threads: ThreadView[];
   onDiscuss?: () => void;
+  /** 기획 branch 판의 넘기지 않은 계획 블록만 */
+  onHandoff?: () => void;
   children: ReactNode;
 }) {
   const state = c.task ? taskState(c.task, tasks, threads, lookup) : null;
@@ -91,6 +94,9 @@ function DesignCallout({ c, tasks, lookup, threads, onDiscuss, children }: {
       <div className="design-callout-body">{children}</div>
       {c.kind === "open" && onDiscuss && (
         <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={onDiscuss}><MessageSquare className="i" aria-hidden="true" />대화로 정하기</button>
+      )}
+      {onHandoff && (
+        <button type="button" className="btn small design-discuss" data-testid="design-handoff" onClick={onHandoff}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
       )}
     </div>
   );
@@ -276,6 +282,12 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   // 대화로 정하기: 고른 블록을 대화 입력의 맥락으로 넘긴다
   const [picked, setPicked] = useState<{ path: string; section: string; title: string } | null>(null);
   useEffect(() => setPicked(null), [key]);
+  // 구현 맡기기(3-2): 기획 branch 판에서만. 「남은 것」에서 고른 블록과 창
+  const canHand = !!branch && branch.state === "open" && canControl;
+  const [checked, setChecked] = useState<Set<number>>(() => new Set());
+  const [handoff, setHandoff] = useState<number[] | null>(null);
+  useEffect(() => { setChecked(new Set()); setHandoff(null); }, [docKey]);
+  const flipCheck = (i: number) => setChecked((old) => { const next = new Set(old); if (!next.delete(i)) next.add(i); return next; });
   const discuss = (c: Callout) => { if (at) { setPicked({ path: at.path, section: c.section, title: c.title }); if (narrow) setPage("chat"); } };
   // 「지금 모습」은 표지 블록만 든 절의 제목도 숨긴다(확정 계획 §3)
   const onlyPlans = (i: number) => {
@@ -292,7 +304,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     const md = <ReportMarkdown base={null} image={image} text={c ? c.body : b} onImages={lightbox.open} captions />;
     return (
       <div key={i} className={`design-block${marked?.[i] ? " is-changed" : ""}`} data-testid={marked?.[i] ? "design-changed" : undefined}>
-        {c ? <DesignCallout c={c} tasks={tasks} lookup={lookup} threads={threads} onDiscuss={canControl ? () => discuss(c) : undefined}>{md}</DesignCallout> : md}
+        {c ? <DesignCallout c={c} tasks={tasks} lookup={lookup} threads={threads} onDiscuss={canControl ? () => discuss(c) : undefined}
+          onHandoff={canHand && handable(c) ? () => setHandoff([i]) : undefined}>{md}</DesignCallout> : md}
       </div>
     );
   };
@@ -449,13 +462,24 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                   {look === "left" ? (
                     <div className="design-left" data-testid="design-left">
                       {left.length === 0 && <p className="design-empty">표지 블록 없음</p>}
+                      {canHand && checked.size > 0 && (
+                        <div className="design-left-bar" data-testid="design-left-bar">
+                          <span>{checked.size}개 고름 · 할 일 하나로</span><span className="spacer" />
+                          <button type="button" className="ghost small" onClick={() => setChecked(new Set())}>풀기</button>
+                          <button type="button" className="btn small primary" data-testid="design-left-handoff" onClick={() => setHandoff([...checked])}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
+                        </div>
+                      )}
                       {left.map((g, gi) => (
                         <section key={gi} className="design-left-group">
                           <h3>{g.section}<span className="design-left-some">{g.some ? "일부 구현" : "계획만"}</span></h3>
                           {g.items.map(({ c, i }) => {
                             const state = c.task ? taskState(c.task, tasks, threads, lookup) : null;
                             return (
-                              <div key={i} className="design-left-row" data-testid="design-left-row">
+                              <div key={i} className={`design-left-row${checked.has(i) ? " is-checked" : ""}`} data-testid="design-left-row">
+                                {canHand && (handable(c)
+                                  ? <input type="checkbox" className="design-left-check" aria-label={`${c.title} 고르기`} checked={checked.has(i)}
+                                      onChange={() => flipCheck(i)} data-testid="design-left-check" />
+                                  : <span className="design-left-check" aria-hidden="true" />)}
                                 {state ? <a className={`design-state is-${state.tone}`} href={`#task=${encodeURIComponent(c.task!)}`}>{state.label}</a>
                                   : <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>}
                                 <span className="design-left-title">{c.title}</span>
@@ -484,6 +508,11 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           </section>
         )}
       </div>
+      {handoff && repo && branch && at && current && (
+        <HandoffDialog repo={repo} branch={branch} path={at.path} blob={current.blob} initial={handoff}
+          blocks={callouts.flatMap((c, i) => (c ? [{ c, i }] : [])).map((b, ordinal) => ({ ...b, ordinal }))}
+          onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
+      )}
       {newChat && repo && <NewChatDialog repo={repo} onClose={() => setNewChat(false)} onDone={(slug) => { setNewChat(false); pick(slug); onReload(); }} />}
       {lightbox.node}
     </div>

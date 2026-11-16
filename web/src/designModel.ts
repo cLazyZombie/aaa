@@ -202,6 +202,7 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
       : e.kind === "push" ? `origin에 올림 · ${clock(e.at_ms)}`
         : e.kind === "edit" ? `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`
           : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
+            : e.kind === "handoff" ? `구현 맡김 ${e.text} · ${short(e.commit)}`
             : e.text;
     out.push({ key: `${e.kind}-${e.at_ms}`, after: e.after ?? null, kind: e.kind, text });
   }

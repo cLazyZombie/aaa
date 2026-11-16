@@ -454,71 +454,14 @@ async fn marks(top: &Path, commit: &str, folder: &str, docs: &[Entry]) -> Option
     Some(out)
 }
 
-/// `d-` 뒤 숫자의 정규형 할 일 번호(웹 `canonicalShortId`와 같다: 앞 0을 빼고 네 자리 이상, 0이나 i64를 넘으면 번호가 아님)
-fn task_id(digits: &str) -> Option<String> {
-    let n = digits.chars().take_while(char::is_ascii_digit).count();
-    let value = digits[..n].trim_start_matches('0');
-    if value.is_empty() || value.len() > 19 || (value.len() == 19 && value > "9223372036854775807") {
-        return None;
-    }
-    Some(format!("d-{value:0>4}"))
-}
-
-/// 웹(`designModel.ts`의 `mdBlocks`·`calloutOf`)과 같은 규칙으로 센다: 빈 줄·제목·코드 울타리로 나눈 덩어리 중
-/// 모든 줄이 인용(`>`)이고 첫 줄이 `> [!계획]`·`> [!미정]`인 것만 표지다. 울타리 안의 표기 예시는 세지 않는다
+/// 표지 수: 웹과 같은 규칙의 `aaa_proto::design_marks`를 센다
 pub(crate) fn count_marks(text: &str) -> Marks {
-    fn fence_of(line: &str) -> Option<(char, usize)> {
-        let t = line.trim_start();
-        let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
-        let n = t.chars().take_while(|x| *x == c).count();
-        (n >= 3).then_some((c, n))
+    let marks = aaa_proto::design_marks(text);
+    Marks {
+        plans: marks.iter().filter(|m| !m.open).count() as u32,
+        open: marks.iter().filter(|m| m.open).count() as u32,
+        tasks: marks.into_iter().filter_map(|m| m.task).collect(),
     }
-    fn heading(line: &str) -> bool {
-        let n = line.chars().take_while(|c| *c == '#').count();
-        (1..=6).contains(&n) && line[n..].chars().next().is_some_and(char::is_whitespace)
-    }
-    fn tally(block: &[&str], m: &mut Marks) {
-        let Some(first) = block.first() else { return };
-        if !block.iter().all(|l| l.trim_start().starts_with('>')) {
-            return;
-        }
-        let head = first.trim_start()[1..].trim_start();
-        if let Some(rest) = head.strip_prefix("[!계획]") {
-            m.plans += 1;
-            if let Some(id) = rest.trim_start().strip_prefix("d-").and_then(task_id) {
-                m.tasks.push(id);
-            }
-        } else if head.starts_with("[!미정]") {
-            m.open += 1;
-        }
-    }
-    let mut m = Marks::default();
-    let mut block: Vec<&str> = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
-    // CRLF 문서도 같은 덩어리다(웹 `mdBlocks`는 `\r?\n`으로 나눈다)
-    for line in text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)) {
-        let mark = fence_of(line);
-        if let Some((c, n)) = fence {
-            // 같은 글자로 연 것보다 짧지 않은 울타리만 닫는다
-            if let Some((c2, n2)) = mark
-                && c2 == c
-                && n2 >= n
-                && line.trim().chars().all(|x| x == c)
-            {
-                fence = None;
-            }
-            continue;
-        }
-        if mark.is_some() || line.trim().is_empty() || heading(line) {
-            tally(&block, &mut m);
-            block.clear();
-            fence = mark;
-            continue;
-        }
-        block.push(line);
-    }
-    tally(&block, &mut m);
-    m
 }
 
 /// 기획 branch 끝(로컬 `design/<slug>`, 없으면 origin의 같은 branch)
@@ -772,11 +715,11 @@ pub(crate) mod tests {
         };
         assert_eq!(count_marks(&raw), want);
         assert_eq!(count_marks(&raw.replace('\n', "\r\n")), want, "CRLF");
-        assert_eq!(task_id("00012x"), Some("d-0012".into()));
-        assert_eq!(task_id("12345"), Some("d-12345".into()));
-        assert_eq!(task_id("0"), None);
-        assert_eq!(task_id("9223372036854775808"), None, "i64를 넘으면 번호가 아니다");
-        assert_eq!(task_id("9223372036854775807"), Some("d-9223372036854775807".into()));
+        assert_eq!(aaa_proto::design_task_id("00012x"), Some("d-0012".into()));
+        assert_eq!(aaa_proto::design_task_id("12345"), Some("d-12345".into()));
+        assert_eq!(aaa_proto::design_task_id("0"), None);
+        assert_eq!(aaa_proto::design_task_id("9223372036854775808"), None, "i64를 넘으면 번호가 아니다");
+        assert_eq!(aaa_proto::design_task_id("9223372036854775807"), Some("d-9223372036854775807".into()));
     }
 
     /// 트리의 문서마다 표지 수·넘긴 d-ID를 붙인다(표지 없는 문서와 기획 폴더 밖은 0)

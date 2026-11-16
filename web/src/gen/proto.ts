@@ -792,6 +792,28 @@ events: Array<DesignEvent>,
  */
 edited: Array<string>, };
 
+export type DesignHandoffView = {
+/**
+ * 만든 할 일(`d-NNNN`)
+ */
+task: string,
+/**
+ * 표지를 적은 commit(못 적었으면 없음)
+ */
+commit: string | null,
+/**
+ * origin에 올렸다
+ */
+pushed: boolean,
+/**
+ * 예약했다
+ */
+reserved: boolean,
+/**
+ * 할 일은 생겼지만 표지 commit·올리기·예약 중 못한 것(할 일 메모와 대화 사건에도 남긴다)
+ */
+warning: string | null, };
+
 export type DesignDocEntry = {
 /**
  * 저장소 기준 경로(`docs/game-loop/README.md`)
@@ -1726,7 +1748,27 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string, branch: string,
+/**
+ * 저장소 기준 문서 경로
+ */
+path: string,
+/**
+ * 고를 때 읽은 판(blob). 그 사이 바뀌었으면 쓰지 않는다
+ */
+blob: string,
+/**
+ * 고른 표지 블록의 차례(0부터, `design_marks`와 웹 `calloutOf`가 같은 차례)
+ */
+blocks: Array<number>, title: string,
+/**
+ * 모델(profile). 비우면 프로젝트 기본
+ */
+profile: string | null,
+/**
+ * 할 일 메모(여러 줄)
+ */
+memo: string, reserve: boolean, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -1937,7 +1979,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

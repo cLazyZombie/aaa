@@ -353,6 +353,24 @@ impl Host {
         text: String,
         summary: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.design_save_event(role, actor, project, repo, slug, path, base, text, summary, None).await
+    }
+
+    /// `design_save`와 같고, `event`를 주면 대화에 끼우는 사건을 그것으로 적는다(구현 맡기기의 「구현 맡김」)
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_save_event(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        path: &str,
+        base: Option<String>,
+        text: String,
+        summary: Option<String>,
+        event: Option<(&'static str, String)>,
+    ) -> Result<FrontResponse, ErrorBody> {
         // 저장소 이름은 그대로 찾으므로(design_target) 대화 thread의 `<저장소>/<주제>`와 바로 견준다
         let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
         let (target, mid) = self.design_target(project, repo)?;
@@ -397,7 +415,8 @@ impl Host {
             (true, false) => "save",
             (false, _) => "edit",
         };
-        self.design_chat_event(project, &target.name, slug, kind, &path, Some(commit.clone())).await;
+        let (kind, text) = event.unwrap_or((kind, path.clone()));
+        self.design_chat_event(project, &target.name, slug, kind, &text, Some(commit.clone())).await;
         if !by_thread {
             let doc = path.clone();
             aaa_common::diagnostic::ignored(
@@ -656,7 +675,7 @@ impl Host {
     }
 
     /// 올리지 않은 commit이 있으면 origin에 올리고 결과를 기록한다
-    async fn design_push_now(&self, project: &str, repo: &str, slug: &str) {
+    pub(crate) async fn design_push_now(&self, project: &str, repo: &str, slug: &str) {
         let lock = self.design_branch_lock(project, repo, slug);
         let _one = lock.lock().await;
         let Ok(Some(mut rec)) = self.design_branch_load(project, repo, slug) else { return };

@@ -1,6 +1,6 @@
 // 기획 대화(t-1894 2-3, 확정 시안 library/mock2): 기획 문서 화면 오른쪽 칸. 저장소의 기획 branch마다 대화 하나이고, 대화 thread의
 // 기록 사이에 host 사건(새 대화·저장·올림·사람 고침·반영)을 끼운다. 말은 host가 thread 준비 뒤 보낸다(`design_say`).
-import { Check, ChevronDown, Ellipsis, FileText, GitBranch, GitMerge, MessageSquare, Pencil, Play, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
@@ -11,7 +11,7 @@ import { ideaModelChoices } from "./ideasModel";
 import { ProviderError } from "./ProviderError";
 import { paneAgentStatus } from "./sidebarModel";
 
-const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge };
+const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge, handoff: Hammer };
 
 /** 대화 고르기 줄의 상태 */
 function branchState(b: DesignBranchView, threads: readonly ThreadView[], now: number): string {

@@ -6391,6 +6391,19 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::DesignSaved { path, commit, blob } => {
             let _ = writeln!(s, "{path} · commit {commit} · blob {blob}");
         }
+        FrontResponse::DesignHandoff { handoff } => {
+            let commit = handoff.commit.as_deref().map(|c| format!(" · commit {c}")).unwrap_or_default();
+            let _ = writeln!(
+                s,
+                "{}{commit}{}{}",
+                handoff.task,
+                if handoff.pushed { " · 올림" } else { "" },
+                if handoff.reserved { " · 예약" } else { "" }
+            );
+            if let Some(w) = &handoff.warning {
+                let _ = writeln!(s, "경고: {w}");
+            }
+        }
         FrontResponse::DesignDoc { doc } => {
             let on = doc.branch.as_deref().map(|b| format!(" · design/{b}")).unwrap_or_default();
             let _ = writeln!(s, "{} {}{on} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);

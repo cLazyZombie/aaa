@@ -216,6 +216,36 @@
 .design-left-row + .design-left-row { margin-top: 2px; }
 @media (hover: hover) { .design-left-row:hover { background: var(--bg-hover); } }
 .design-left-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 구현 맡기기(3-2): 「남은 것」 고르기와 창 */
+.design-left-check { width: 15px; height: 15px; margin: 0; flex: none; accent-color: var(--accent); }
+.design-left-row.is-checked { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.design-left-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px 6px 12px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: var(--radius-md); background: var(--bg-elevated); font-size: var(--fs-sm); }
+.design-left-bar .btn { gap: 4px; }
+.design-left-bar .i { width: 12px; height: 12px; }
+.design-pill.is-task { background: transparent; border: 1px solid color-mix(in srgb, var(--status-working) 55%, transparent); color: var(--status-working); font-family: var(--font-mono); font-weight: 400; }
+.design-hand-label { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--fs-sm); color: var(--text-dim); }
+.design-hand-label span { font-size: var(--fs-xs); }
+.design-hand-blocks { list-style: none; margin: -6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.design-new .design-hand-block label { flex-direction: row; align-items: center; gap: var(--space-2); min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); cursor: pointer; }
+.design-hand-block input { width: 15px; height: 15px; margin: 0; flex: none; accent-color: var(--accent); }
+.design-hand-block.is-off label { color: var(--text-dim); cursor: default; }
+.design-hand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-hand-section { color: var(--text-dim); }
+.design-hand-why { margin-left: auto; font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; }
+.design-new .design-hand-memo { height: auto; min-height: 96px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; resize: vertical; }
+.design-new label.design-hand-check { flex-direction: row; align-items: center; gap: var(--space-2); color: var(--text); }
+.design-hand-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+.design-hand .modal-footer { flex-wrap: wrap; }
+.design-hand-head { white-space: nowrap; }
+.design-hand .modal-title code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-hand-note { font-size: var(--fs-xs); color: var(--text-dim); }
+.design-hand-note code { background: none; padding: 0; }
+@media (max-width: 768px) {
+  .design-hand .design-new-row { grid-template-columns: 1fr; }
+  .design-hand-note { flex-basis: 100%; }
+  .design-hand .modal-title { flex-wrap: wrap; row-gap: 2px; }
+  .design-hand .modal-title code { flex-basis: 100%; font-size: var(--fs-xs); }
+}
 
 .design-panel-top { display: flex; align-items: center; gap: var(--space-2); }
 .design-panel-top .design-reload { flex: 1 1 auto; }

@@ -134,6 +134,21 @@ impl Host {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }
             R::DesignApply { project, repo, branch } => self.design_apply(role, actor, &project, &repo, &branch).await,
+            R::DesignHandoff { project, repo, branch, path, blob, blocks, title, profile, memo, reserve } => {
+                let pick = crate::design_handoff::Handoff {
+                    repo,
+                    slug: branch,
+                    path,
+                    blob,
+                    blocks,
+                    title,
+                    profile,
+                    memo,
+                    reserve,
+                };
+                // 할 일·저장·올리기·예약을 차례로 기다리는 큰 future다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
+                Box::pin(self.design_handoff(role, actor, &project, pick)).await
+            }
             _ => Err(err(ErrorCode::Internal, "기획 요청이 아니다")),
         }
     }
