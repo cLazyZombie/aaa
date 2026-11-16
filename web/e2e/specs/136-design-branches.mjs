@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, pairPage, inList, domIs } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, domIs } from "../lib/harness.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -174,8 +174,9 @@ export default async function () {
     await page.context().close();
   });
 
-  await step("휴대폰: 트리·문서·대화 칸", async () => {
-    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+  for (const name of ["chromium", "webkit"]) await step(`휴대폰: 트리·문서·대화 칸 ${name} 390px`, async () => {
+    const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
+    const { page: p } = await pairPage(wk ?? browser, aaa("web", "pair").code, { width: 390, height: 844 });
     try {
       await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/loop/README.md")}`);
       await p.getByTestId("design-body").waitFor();
@@ -187,6 +188,7 @@ export default async function () {
       await p.locator('[data-testid="design-repo"][data-repo="app"]').last().waitFor();
     } finally {
       await p.context().close();
+      await wk?.close();
     }
   });
 }

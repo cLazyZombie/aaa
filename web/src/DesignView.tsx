@@ -221,14 +221,14 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
               </div>
             )}
             {at && !editing && canControl && current && (
-              <button type="button" className="btn design-edit" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" />고치기</button>
+              <button type="button" className="btn design-edit" aria-label="고치기" title="고치기" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" /><span className="design-btn-label">고치기</span></button>
             )}
             {editing && (
               <>
                 <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden data-testid="design-attach-input"
                   onChange={(e) => void attach(e.target.files)} />
-                <button type="button" className="btn design-edit" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
-                  <ImagePlus className="i" aria-hidden="true" />그림
+                <button type="button" className="btn design-edit" aria-label="그림" title="그림" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
+                  <ImagePlus className="i" aria-hidden="true" /><span className="design-btn-label">그림</span>
                 </button>
                 <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel" onClick={() => setEditing(null)}>취소</button>
                 <button type="button" className="btn primary" disabled={saving || editing.text === editing.was} data-testid="design-edit-save" onClick={() => void save()}>
