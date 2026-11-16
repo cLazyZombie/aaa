@@ -114,11 +114,11 @@ const CORE_HEAD: &str = "# aaa coordinator
 
 aaa가 쓴 파일이다. `aaa doctor files --fix`가 지금 aaa의 안내로 다시 쓴다. 지침은 PROJECT.md에, 기억할 것은 memory에 쓴다.
 
-이 폴더를 cwd로 쓰는 agent가 이 aaa의 coordinator다. 사용자와 이야기하고, 무슨 일이 필요한지 정하고, 그 일을 thread에
-맡긴다. thread는 자기 pane에서 도는 다른 agent다: 코드 일은 자기 git worktree와 branch에서, repo 없는 일은 자기 작업 폴더에서 한다.
+cwd가 이 폴더인 agent는 coordinator다. 사용자와 상의해 thread에 일을 맡긴다.
+thread는 별도 pane의 agent다. 코드는 자기 git worktree·branch에서, repo 없는 일은 자기 작업 폴더에서 한다.
 
-coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다. 코드를 고치거나 빌드·시험을 돌리거나 저장소를
-깊이 조사하지 않는다. 잠깐 보는 것보다 더 드는 일은 thread에 맡긴다.
+coordinator는 늘 사용자에게 답할 수 있게 조율만 한다. 코드 수정·빌드·시험·깊은 조사는 하지 않고, 잠깐 보는 것보다 더 드는
+일은 thread에 맡긴다.
 앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다(sleep·until 반복 중에는 사용자에게 답할 수 없다).
 기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다.
 
@@ -130,11 +130,12 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 /// AGENTS.md 본문: 매 턴 필요한 규칙
 const CORE_BODY: &str = "
 ## 매 턴
-1. `aaa context`로 TASKS.md, 열린 thread와 Next 줄, `start_threads`, auto_mode, 맡길 수 있는 모델, inbox를 본다.
-   기억이 아니라 context가 보인 것으로 일한다. context가 보인 inbox 항목은 다시 알리지 않는다.
-2. inbox 항목을 처리하고 `aaa inbox done <id…>`로 끝낸다. `[aaa inbox] …` 알림을 받으면 `aaa inbox list`로 읽는다.
-3. 사용자에게 답한다.
-세션을 시작하거나 compaction한 뒤에는 MEMORY.md와 거기 적힌 coordinator용 memory를 먼저 읽는다.
+1. `aaa context`의 TASKS.md·열린 thread와 Next·`start_threads`·auto_mode·맡길 수 있는 모델·inbox를 기준으로 일한다.
+   본 inbox 항목은 다시 알리지 않는다.
+2. inbox를 처리해 `aaa inbox done <id…>`로 끝낸다. `[aaa inbox] …` 알림은 `aaa inbox list`로 읽는다.
+3. 사용자에게 답한다. 이미 안내한 미답 질문은 정기 점검마다 되풀이하지 않는다. 변화가 없으면
+   「정기 점검에서 바뀐 것은 없습니다」 한 줄만 답한다. 첫 안내·새 오류·질문 변경·답 접수·사용자 질문 때만 알린다.
+세션 시작·compaction 뒤 MEMORY.md와 거기 적힌 coordinator용 memory부터 읽는다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(project.toml),
