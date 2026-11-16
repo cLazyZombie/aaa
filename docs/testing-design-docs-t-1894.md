@@ -96,3 +96,9 @@
 - 첫 E2E 실행은 135의 마지막 단계에서 실패했다. 400 오류 응답에도 host 공통 CSP 머리가 붙는데 시험이 「없음」을 기대했다. 기대값을 상태·Content-Range만으로 고친 뒤 `ci-local --only web,e2e,public --spec 135,130,120`이 통과했다(135 화면 단계는 첫 실행에서도 네 조합 모두 통과).
 - `aaa` crate: `--test deps`·`--bin aaa cli::`·strict clippy 통과. Linux·Windows strict cross clippy 통과.
 - 화면 확인(검수): 실험실 host·agent와 origin이 있는 견본 저장소 셋으로 넓은 창·390px 휴대폰에서 트리·문서·그림·링크를 직접 봤다.
+
+## 2-2 실제 실행(11-16, macOS)
+
+- `verify.py develop --package aaa-proto --package aaa-agent --package aaa-host --package aaa --spec 135,130,120,131,122`(리뷰 수리 뒤 마지막 commit): Rust 시험 proto 58·agent 218·host 937·m13 104 통과, strict clippy 통과, 웹 단위 통과, E2E 120·122·130·131·135 통과, 공개 검사 통과. 그 전 판(리뷰 수리 전)에서도 같은 묶음이 통과했고, 「알린 세션」 수리 직후 판에서는 E2E 120이 위 까닭으로 실패했다.
+- m13 `design_chat_thread_on_the_repo_machine_…`는 띄우는 중 버리기 단계를 더한 뒤 다섯 번 연달아 통과했다(한 번 7.5초 안팎).
+- Linux·Windows strict cross clippy 통과(나온 unused dependency 경고는 손대지 않은 manifest의 기존 것).
