@@ -209,6 +209,47 @@ while True:
     }
   });
 
+  // t-1894 착지 gate: 부하 아래 끝나는 문서가 터미널에 다시 붙으며 압축 Worker(blob)를 만들어 WebKit이
+  // 「Cannot load blob … access control checks」 페이지 오류를 냈다. 떠나기 시작한 뒤에는 새 연결·Worker를 만들지 않는다.
+  await step("종료 문서의 터미널: WebKit에서 떠나기 시작한 뒤 끊긴 터미널은 압축 Worker·연결을 새로 만들지 않고 pageshow 뒤 다시 붙는다", async () => {
+    const wk = await webkit.launch();
+    const routes = [];
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        init: () => {
+          const Original = window.Worker;
+          window.__terminalWorkers = 0;
+          window.Worker = function (url, options) {
+            if (options?.name === "aaa-terminal-inflate") window.__terminalWorkers++;
+            return new Original(url, options);
+          };
+          window.Worker.prototype = Original.prototype;
+        },
+        wsRoute: [/\/api\/v1\/panes\//, (ws) => { ws.connectToServer(); routes.push(ws); }],
+      });
+      const p = client.page;
+      await openChat(p);
+      await until("터미널 연결과 압축 Worker", async () => routes.length > 0 && await p.evaluate(() => window.__terminalWorkers) > 0, 30_000);
+      const workers = await p.evaluate(() => window.__terminalWorkers);
+      const opened = routes.length;
+      await p.evaluate(() => window.dispatchEvent(new Event("beforeunload")));
+      await routes.at(-1).close({ code: 4000, reason: "e2e: 떠나는 문서의 끊김" });
+      // 다시 붙기 타이머가 돈 뒤의 판단: 미룬 표지 또는 새 연결 중 먼저 온 것(sleep으로 타이머를 어림하지 않는다)
+      await until("떠나는 문서의 다시 붙기 판단", async () => routes.length > opened
+        || await p.evaluate(() => document.querySelector("[data-testid=terminal]")?.dataset.retry === "page-closed"), 30_000);
+      assert.equal(await p.evaluate(() => window.__terminalWorkers), workers, "끝나는 문서는 압축 Worker를 새로 만들지 않는다");
+      assert.equal(routes.length, opened, "끝나는 문서는 터미널 연결을 새로 열지 않는다");
+      await p.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await until("pageshow 뒤 다시 붙음", async () => routes.length === opened + 1, 30_000);
+      await until("다시 붙은 연결의 압축 Worker", async () => await p.evaluate(() => window.__terminalWorkers) === workers + 1, 30_000);
+      assert.deepEqual(client.errors, [], "떠나는 문서의 터미널 끊김에 페이지 오류가 없다");
+      await client.page.context().close();
+    } finally {
+      await wk.close();
+    }
+  });
+
   await step("종료 문서 API: WebKit pagehide 뒤 tasks·asks 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
     const wk = await webkit.launch();
     try {
