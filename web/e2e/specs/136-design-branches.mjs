@@ -292,6 +292,21 @@ export default async function () {
       await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/exit.md")}`);
       await p.getByTestId("design-handoff").first().waitFor();
       assert.equal(await p.getByTestId("design-handoff").count(), 2, "기획 branch 판의 넘기지 않은 계획만");
+      // 창을 연 뒤 그 문서가 바뀌면(대화 thread·다른 기기의 저장) 맡기지 않는다: 창은 연 때의 판으로 보내고 host가 다시 본다
+      await p.getByTestId("design-handoff").first().click();
+      const first = p.getByTestId("design-hand-dialog");
+      await first.waitFor();
+      const now = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc;
+      save("boss", "docs/exit.md", now.text.replace("- 11-16: 통로를", "- 11-16: 상한 표지를 정리함.\n- 11-16: 통로를"), now.blob);
+      await p.getByTestId("design-hand-submit").click();
+      await first.locator(".confirm-error").first().waitFor();
+      assert.match(await first.locator(".confirm-error").first().textContent(), /그 사이 문서가 바뀌었다/);
+      assert.ok(!aaa("task", "list").tasks.some((t) => t.title === "캠프 지도"), "할 일을 만들지 않았다");
+      await first.getByRole("button", { name: "닫기" }).click();
+      await first.waitFor({ state: "detached" });
+      // 새 판을 읽은 뒤 고른다
+      await p.getByTestId("design-doc-reload").click();
+      await domIs(p, "새 판", () => !!document.querySelector("[data-testid=design-body]")?.textContent.includes("상한 표지를 정리함"));
       await p.locator("[data-testid=design-look][data-look=left]").click();
       const checks = p.getByTestId("design-left-check");
       assert.equal(await checks.count(), 2, "미정·넘긴 줄은 고르지 않는다");

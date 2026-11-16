@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::orch::{StartArgs, bad, internal};
 use crate::{Host, err, task_edit, tasks};
 
+/// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다
+const HANDOFF_PENDING_MS: u64 = 10 * 60 * 1000;
+
 /// 웹 창에서 고른 것
 pub(crate) struct Handoff {
     pub repo: String,
@@ -123,6 +126,14 @@ impl Host {
         };
         if task_id != Some(rec.task_id.as_str()) || repo != Some(rec.repo.as_str()) {
             tracing::info!(project = a.project, task = rec.task, "다른 할 일의 맡김 기록이라 쓰지 않는다");
+            return Ok(());
+        }
+        if rec.commit.is_none() {
+            // 기록 뒤 표지 commit 전: 맡기는 중이면 미루고, 오래 남았으면 끝나지 못한 맡김(host가 멈춤 등)이라 평소처럼 시작한다
+            if aaa_common::util::now_ms().saturating_sub(rec.created_ms) < HANDOFF_PENDING_MS {
+                return Err(err(ErrorCode::Unavailable, "구현 맡기는 중이다: 표지를 적은 뒤 시작한다"));
+            }
+            tracing::info!(project = a.project, task = rec.task, "끝나지 못한 맡김 기록이라 평소처럼 시작한다");
             return Ok(());
         }
         let branch = self
@@ -528,6 +539,68 @@ mod tests {
         assert!(h.design_handoff_load("demo", "d-0005").is_some(), "다른 판의 branch는 지우지 않는다");
         h.design_handoff_forget("demo", "pt", "loop-plan", 100);
         assert!(h.design_handoff_load("demo", "d-0005").is_none());
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&state), "시험 폴더 정리");
+    }
+
+    /// 맡기는 중(표지 commit 전)인 기록은 시작을 미루고, 오래 남은 것은 끝나지 못한 맡김이라 평소처럼 시작한다
+    #[tokio::test]
+    async fn pending_record_defers_then_expires() {
+        let state = std::env::temp_dir().join(format!("aaa-design-handoff-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Arc::new(Host::open(cfg, state.clone()).unwrap());
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let branch = crate::design_branch::Rec {
+            repo: "pt".into(),
+            slug: "loop-plan".into(),
+            created_ms: 100,
+            ..Default::default()
+        };
+        h.design_branch_store("demo", &branch).unwrap();
+        let mut rec = HandoffRec {
+            task: "d-0007".into(),
+            task_id: "01TASK".into(),
+            repo: "pt".into(),
+            slug: "loop-plan".into(),
+            branch_created_ms: 100,
+            created_ms: aaa_common::util::now_ms(),
+            ..Default::default()
+        };
+        h.design_handoff_store("demo", &rec).unwrap();
+        let mut a = StartArgs { project: "demo".into(), task: "할 일".into(), ..Default::default() };
+        let start = |a: &mut StartArgs| h.design_handoff_start(a, Some("d-0007"), Some("01TASK"), Some("pt"));
+        assert_eq!(start(&mut a).unwrap_err().code, ErrorCode::Unavailable);
+        rec.created_ms = aaa_common::util::now_ms() - HANDOFF_PENDING_MS - 1;
+        h.design_handoff_store("demo", &rec).unwrap();
+        start(&mut a).unwrap();
+        assert_eq!((a.base.as_deref(), a.task.as_str()), (None, "할 일"));
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&state), "시험 폴더 정리");
+    }
+
+    /// 맡김 할 일: 저장소 칸과 메모로 더하고, 같은 제목은 거절하고, 표지를 적지 못하면 지운다(TASKS.md에서 지우는 유일한 새 길)
+    #[tokio::test]
+    async fn handoff_task_is_added_and_removed() {
+        let state = std::env::temp_dir().join(format!("aaa-design-handoff-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Arc::new(Host::open(cfg, state.clone()).unwrap());
+        h.project_create("demo", Default::default(), "test").unwrap();
+        std::fs::write(
+            h.project_dir("demo").unwrap().join("project.toml"),
+            "schema = 1\n\n[[repos]]\npath = '/work/pt'\n",
+        )
+        .unwrap();
+        let notes =
+            vec!["[기획 pt docs/a.md 「탑」](design/pt/docs/a.md#탑)".to_string(), "- 100층까지 늘린다.".into()];
+        let t = h.design_handoff_task("demo", "test", "pt", "탑 — 100층", None, None, notes.clone()).await.unwrap();
+        assert!(t.short_id.as_deref().is_some_and(|id| id.starts_with("d-")));
+        assert_eq!((t.repo.as_deref(), t.notes.clone()), (Some("pt"), notes.clone()));
+        let again = h.design_handoff_task("demo", "test", "pt", "탑 — 100층", None, None, notes).await.unwrap_err();
+        assert_eq!(again.code, ErrorCode::Conflict, "같은 제목");
+        h.design_handoff_task_remove("demo", "test", &t).await.unwrap();
+        assert!(tasks::find(&h.task_board("demo").unwrap().tasks, "탑 — 100층").is_none());
         aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&state), "시험 폴더 정리");
     }
 
