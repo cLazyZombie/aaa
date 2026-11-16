@@ -199,6 +199,7 @@ mod tests {
                 role: Role::Worker,
                 attachments: vec![],
                 idea: None,
+                design: None,
             }
         }
         fn connect(&self) {

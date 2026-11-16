@@ -24,9 +24,9 @@ const MAX_SAY: usize = 100_000;
 /// thread가 brief를 받기를 기다리는 상한. 넘으면 말은 남기고 다음 말·화면 열기 때 다시 보낸다
 const DELIVER_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// 쉬는 아이디어 thread를 내릴 때인가: 열려 있고, 받은 말을 다 보냈고, agent가 `rest_ms` 넘게 쉬었다
+/// 쉬는 대화 전용 thread(아이디어·기획 대화)를 내릴 때인가: 열려 있고, 받은 말을 다 보냈고, agent가 `rest_ms` 넘게 쉬었다
 pub(crate) fn should_rest(r: &ThreadRec, agent: Option<&aaa_proto::AgentStatus>, now: u64, rest_ms: u64) -> bool {
-    r.idea.is_some()
+    r.chat_only()
         && r.status == ThreadStatus::Open
         && r.park.is_none()
         && r.brief == aaa_proto::BriefState::Delivered
@@ -556,7 +556,7 @@ impl Host {
                     })
                     .ok()
             })
-            .filter(|r| r.idea.is_some() && r.status == ThreadStatus::Open)
+            .filter(|r| r.chat_only() && r.status == ThreadStatus::Open)
             .filter(|r| {
                 let (live, agent) = self.thread_live(r);
                 live && should_rest(r, agent.as_ref(), now, rest_ms)
@@ -569,14 +569,22 @@ impl Host {
                 .as_deref()
                 .and_then(|i| self.idea_folder(project, i).ok())
                 .and_then(|f| f.meta().ok())
-                .is_some_and(|m| !m.pending.is_empty());
+                .is_some_and(|m| !m.pending.is_empty())
+                || r.design.as_deref().is_some_and(|d| self.design_chat_waiting(project, d));
             if waiting {
                 continue;
             }
             let request = aaa_proto::ThreadPark {
                 actor: "ticker".into(),
                 requested_at_ms: now,
-                note: Some("아이디어 대화가 쉬어 내렸다".into()),
+                note: Some(
+                    if r.design.is_some() {
+                        "기획 대화가 쉬어 내렸다"
+                    } else {
+                        "아이디어 대화가 쉬어 내렸다"
+                    }
+                    .into(),
+                ),
                 user_request: None,
                 immediate: true,
                 report_before: r.report_hash.clone(),

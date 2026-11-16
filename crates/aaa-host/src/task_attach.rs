@@ -543,6 +543,7 @@ mod tests {
                 sent: false,
             }],
             idea: None,
+            design: None,
         };
         let e = h.thread_start(start, "test").await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Unavailable, "{e:?}");

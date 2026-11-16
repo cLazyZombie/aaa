@@ -131,6 +131,7 @@ pub(crate) fn thread_rec(
         brief_line: None,
         left_places: Vec::new(),
         idea: None,
+        design: None,
         launch_sent: true,
         launch_existing_slot: false,
         legacy: Default::default(),

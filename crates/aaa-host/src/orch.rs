@@ -70,6 +70,10 @@ pub(crate) struct ThreadRec {
     /// 아이디어 전용 thread면 그 아이디어 ULID(ideas.rs). host 머신에만 띄우고 실행 한도에 세지 않는다(t-1255 결정 19·21)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idea: Option<String>,
+    /// 기획 대화 thread면 그 기획 branch `<저장소>/<주제>`(design_chat.rs, t-1894 2-2). 저장소 머신에 띄우고 아이디어 thread처럼
+    /// 할 일·실행 한도·coordinator 요약·자동 끝내기에서 뺀다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design: Option<String>,
     #[serde(default)]
     pub automation: Option<String>,
     #[serde(default)]
@@ -179,10 +183,15 @@ impl ThreadRec {
         matches!(self.status, ThreadStatus::Open | ThreadStatus::Starting) || self.resolve_pending.is_some()
     }
 
+    /// 대화 전용 thread(아이디어·기획 대화): 할 일·실행 한도·coordinator 요약·자동 끝내기·알림에서 빼고 쉬면 조용히 보류한다
+    pub(crate) fn chat_only(&self) -> bool {
+        self.idea.is_some() || self.design.is_some()
+    }
+
     pub(crate) fn holds_worker_slot(&self) -> bool {
         self.role == Role::Worker
             && self.automation.is_none()
-            && self.idea.is_none()
+            && !self.chat_only()
             && self.holds_slot()
             && self.execution_stage() != Some(aaa_proto::ThreadStage::MergeReady)
     }
@@ -235,6 +244,7 @@ impl ThreadRec {
             brief_line: None,
             left_places: Vec::new(),
             idea: None,
+            design: None,
             automation: None,
             automation_run: None,
             repo: None,
@@ -389,6 +399,9 @@ pub struct StartArgs {
     /// 아이디어 전용 thread(ideas.rs): 할 일을 남기지 않고 실행 한도에 세지 않는다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) idea: Option<String>,
+    /// 기획 대화 thread(design_chat.rs, `<저장소>/<주제>`): 아이디어 thread와 같은 대우
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) design: Option<String>,
 }
 
 /// `project create`의 옵션(herdr-projects `new`)
@@ -1050,6 +1063,7 @@ impl Host {
                     })
                     .ok()
             }),
+            design: r.design.clone(),
             over_limit: r.over_limit.clone(),
             park: r.park.clone().map(Box::new),
             auto_merge: self.thread_auto_merge(r),
@@ -1608,7 +1622,14 @@ impl Host {
             .collect();
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
-        let guide = if r.idea.is_some() { crate::brief_text::IDEA_GUIDE } else { THREAD_GUIDE }.to_string();
+        let guide = if r.idea.is_some() {
+            crate::brief_text::IDEA_GUIDE
+        } else if r.design.is_some() {
+            crate::brief_text::DESIGN_GUIDE
+        } else {
+            THREAD_GUIDE
+        }
+        .to_string();
         let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
             title: &title,
@@ -1815,7 +1836,7 @@ impl Host {
             input.minimum = origin.usage_minimum;
         }
         // 자동화 do.start는 자체 실행 기록으로 관리한다. 사용자·coordinator 기동은 할 일을 먼저 남긴다.
-        if origin.is_none() && a.start_task.is_none() && a.idea.is_none() {
+        if origin.is_none() && a.start_task.is_none() && a.idea.is_none() && a.design.is_none() {
             a.machine = Some(self.machine_name(&mid));
             a.start_task = Some(self.create_start_task(&a, actor).await?);
         }
@@ -1834,6 +1855,7 @@ impl Host {
             attachments: a.attachments.clone(),
             task_id: a.start_task.as_ref().and_then(|t| t.id.clone()),
             idea: a.idea.clone(),
+            design: a.design.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         // 내용 승인판 검사와 DB 선점 사이에 host의 파일 쓰기가 끼지 못하게 한다.
@@ -1861,7 +1883,8 @@ impl Host {
                 &a.project,
                 pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
-                (a.over_limit.is_none() && a.idea.is_none()).then(|| self.settings(&a.project).max_parallel_threads),
+                (a.over_limit.is_none() && a.idea.is_none() && a.design.is_none())
+                    .then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |tx, id| {
                     if a.machine_override.is_none() {
@@ -3217,8 +3240,8 @@ impl Host {
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
         }
-        // 아이디어 thread는 사용자 모르게 바뀐다(보류와 같다, park.rs): 진행 모델을 바꿔 끝낸 것은 알림함 항목을 내지 않는다
-        if rec.idea.is_none() {
+        // 대화 전용 thread는 사용자 모르게 바뀐다(보류와 같다, park.rs): 진행 모델을 바꾸거나 버려 끝낸 것은 알림함 항목을 내지 않는다
+        if !rec.chat_only() {
             self.inbox_add(project, "thread-state", id, "resolved", &summary);
         }
         Ok(self.thread_view(&self.load(project, id).unwrap_or(rec)))
@@ -3432,6 +3455,7 @@ mod tests {
             brief_line: None,
             left_places: Vec::new(),
             idea: None,
+            design: None,
             automation: None,
             automation_run: None,
             project: "p".into(),

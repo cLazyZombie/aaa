@@ -757,6 +757,7 @@ fn queued_job(l: &Lab, id: &str) -> Job {
             role: Role::Worker,
             attachments: vec![],
             idea: None,
+            design: None,
         },
         actor: "local:cli".into(),
         picked: None,

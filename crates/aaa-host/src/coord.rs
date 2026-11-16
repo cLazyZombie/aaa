@@ -387,6 +387,7 @@ impl Host {
             role: aaa_proto::Role::Worker,
             attachments: Vec::new(),
             idea: None,
+            design: None,
         };
         let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
         if a.profile.is_empty() {
@@ -449,7 +450,7 @@ impl Host {
         let open: Vec<_> = self
             .threads_of(Some(project), None)?
             .into_iter()
-            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none() && t.design.is_none())
             .collect();
         // 「정리 제안」의 연결 후보는 이 프로젝트의 열린 thread 번호다
         let open_ids: Vec<String> = open.iter().map(|t| t.id.clone()).collect();
@@ -1037,7 +1038,7 @@ impl Host {
         let mut threads: Vec<_> = self
             .threads_of(Some(project), None)?
             .into_iter()
-            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none() && t.design.is_none())
             .collect();
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);

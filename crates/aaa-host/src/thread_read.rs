@@ -10,8 +10,8 @@ impl Host {
         session: &str,
         request: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
-        if !request.thread_read_allowed() {
-            return Err(err(ErrorCode::Forbidden, "원격 전달을 허용한 읽기 명령이 아니다"));
+        if !request.thread_relay_allowed() {
+            return Err(err(ErrorCode::Forbidden, "원격 전달을 허용한 명령이 아니다(읽기·자기 기획 branch 저장)"));
         }
         {
             let i = self.inner.lock().unwrap();
@@ -69,6 +69,10 @@ mod tests {
             FrontRequest::EnrollOpen { minutes: 1 },
             FrontRequest::LibraryMarkRead { reports: vec![] },
             FrontRequest::Status,
+            // 기획은 자기 branch 저장만 싣는다(열기·말하기·버리기는 사람의 일)
+            FrontRequest::DesignBranchOpen { project: "demo".into(), repo: "r".into(), slug: "s".into(), title: None },
+            FrontRequest::DesignSay { project: "demo".into(), repo: "r".into(), branch: "s".into(), text: "x".into() },
+            FrontRequest::DesignDiscard { project: "demo".into(), repo: "r".into(), branch: "s".into() },
         ] {
             assert_eq!(h.relay_thread_read("m1", "s1", request).await.unwrap_err().code, ErrorCode::Forbidden);
         }

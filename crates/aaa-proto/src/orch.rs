@@ -1074,6 +1074,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub idea: Option<String>,
+    /// 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 아이디어 thread처럼 작업 목록·할 일에 보이지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub design: Option<String>,
     /// 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -127,6 +127,9 @@ impl Host {
             R::DesignSave { project, repo, branch, path, base, text, summary } => {
                 self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary).await
             }
+            R::DesignSay { project, repo, branch, text } => {
+                self.design_say(role, actor, &project, &repo, &branch, &text).await
+            }
             R::DesignDiscard { project, repo, branch } => {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }

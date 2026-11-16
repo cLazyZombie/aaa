@@ -23,6 +23,11 @@
 | 2-1 thread·평가 세션과 보기 기기는 실제 입구(`Host::call`)에서 기획 branch를 열거나 쓰거나 버리지 못하고, 사람의 셸 pane은 지나간다 | `aaa-host` `design_branch::tests::sessions_and_readers_do_not_write_design_branches` | `cargo test -p aaa-host --lib design_branch::` |
 | 2-1 `.git` 조각·끝의 `.`·Windows 금지 글자·예약 이름 경로 거부 | `aaa-proto` `design::tests::clean_path_rejects_escape` | `cargo test -p aaa-proto` |
 | 2-1 실제 host·agent·Git과 CLI: `plan new`·`save`·`show --branch`·`list`·`discard`, 겹침·기준 판 없음 거부, 쉼(1초) 뒤 한 번 올림·`design_check` 통과, main과 main checkout 그대로, 버리면 origin branch까지 / 쉼 창 뒤 tick이 worktree를 돌려주고 branch·commit은 남김, 검사 실패면 올리지 않고 까닭을 남김, 쉬는 branch에는 쓰지 않음, 다시 열면 이어 씀 | `aaa` m13 `design_branch::` 둘 | `cargo test -p aaa --test m13 design_branch` |
+| 2-2 기획 대화 thread는 보기 권한·같은 머신 pane 모두 자기 branch 저장만 지나가고(commit 저자 표시는 thread ID), 다른 branch·다른 thread·열기·버리기·말하기는 거부, 중계 목록은 저장만 싣는다 | `aaa-host` `design_branch::tests::design_chat_thread_saves_only_its_own_branch` | `cargo test -p aaa-host --lib design_branch` |
+| 2-2 원격 중계는 기획 열기·말하기·버리기를 싣지 않는다 | `thread_read::tests::relay_checks_machine_live_session_and_explicit_read_allowlist` | `cargo test -p aaa-host --lib thread_read` |
+| 2-2 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니고 CLI 끝내기를 막지 않는다 | `followups::tests::chat_only_threads_collect_no_followups` | `cargo test -p aaa-host --lib followups` |
+| 2-2 대화 thread 할 일 글이 branch·worktree·checkout·읽기·저장 명령을 가리킨다 | `design_chat::tests::task_text_points_at_branch_worktree_and_commands` | `cargo test -p aaa-host --lib design_chat` |
+| 2-2 실제 host·agent 둘(TLS 원격 labB)·Git과 CLI: 저장소가 labB에 있으면 `plan say`가 labB에 대화 thread를 띄우고(할 일 없음) brief 뒤 말을 보내 `pending` 0, front.sock 없는 thread 세션이 agent 중계로 `plan save`(자기 branch)·`show --branch`·`list`, 다른 branch 저장은 「자기 branch」 거부, 열기·말하기·버리기는 CLI가 보내지 않음, commit 메시지 끝이 thread ID, 저장소 checkout 그대로, 올린 기획 branch에서 `--base origin/design/<주제>`로 시작한 worktree thread가 그 commit과 문서를 가짐, 버리면 대화 thread가 끝나고 origin branch까지 지움 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_saves_only_its_own_branch` | `cargo test -p aaa --test m13 design_branch` |
 
 - git 실험실은 `-c init.defaultBranch=main`·`-c user.*`를 주고 index에 symlink·gitlink를 직접 넣어 OS의 symlink 권한과 기본 branch 설정에 기대지 않는다.
 - 1분 받기 간격은 시험마다 새 임시 저장소(다른 toplevel)라 서로 막지 않는다. 고정 commit 시험은 clone에서 직접 `git fetch`해 시계를 기다리지 않는다.
@@ -38,6 +43,9 @@
 - 기본 ref 고르기를 줄인 이름(`rev-parse --abbrev-ref origin/HEAD` → `origin/main`)인 옛 판으로 되돌리면 `tree_reads_origin_main_without_touching_checkout`가 로컬 branch의 옛 판을 읽어 실패했다. fallback 이름만 줄여서는 앞의 `symbolic-ref`가 온전한 이름을 주어 통과한다.
 
 - 2-1: 버리기에서 origin branch를 지우지 않게 바꾸면 m13 `design_branch_saves_…`가 「host가 올린 origin branch도 지운다」에서 실패했다.
+- 2-2: `design_writer`에서 thread의 `design`과 요청 branch 비교를 빼면 `design_chat_thread_saves_only_its_own_branch`가 다른 branch 저장이 거부되지 않아(NotFound까지 감) 실패했다.
+- 2-2: 중계 목록(`thread_relay_allowed`)에서 `DesignSave`를 빼면 m13 `design_chat_thread_on_the_repo_machine_…`의 thread 안 `plan save`가 「host가 없다(front.sock)」로 실패했다.
+- 2-2: m13을 처음 돌렸을 때 `plan discard`가 대화 thread의 [완료] 보고 Next(후속 할 일) 때문에 끝내기를 거부당했다. 대화 전용 thread는 후속을 모으지 않게 고쳤다(아이디어 thread도 같은 경로였다).
 
 ## 2-1 독립 리뷰에서 고친 것
 

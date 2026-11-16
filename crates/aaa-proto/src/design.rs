@@ -78,6 +78,12 @@ pub struct DesignBranchView {
     pub changed: Vec<DesignChange>,
     /// main보다 앞선 commit 수
     pub ahead: u32,
+    /// 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
+    pub thread: Option<String>,
+    /// thread에 아직 보내지 못한 말 수
+    pub pending: u32,
+    /// 대화 thread를 띄우거나 말을 보내지 못한 까닭
+    pub chat_error: Option<String>,
 }
 
 /// 기획 폴더 안 Markdown 문서 한 개

@@ -79,6 +79,10 @@ pub(crate) fn handoff_automation(rec: &mut ThreadRec) {
 }
 
 pub(crate) fn capture(rec: &mut ThreadRec, revision: &str, report: &str) {
+    // 아이디어·기획 대화 thread는 할 일이 없다: Next는 대화의 다음 말이지 후속 할 일이 아니다(끝내기·버리기를 막지 않는다)
+    if rec.chat_only() {
+        return;
+    }
     // 이름·Next 문구·현재 자동화 설정이 아닌, 시작 때 저장한 출처만 본다.
     if rec.automation.is_some() {
         handoff_automation(rec);
@@ -512,5 +516,18 @@ mod tests {
         let persisted = reopened.thread_show("demo", &lab.thread).unwrap();
         assert_eq!(persisted.followups[0].reason, result.followups[0].reason);
         assert!(reopened.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.item_kind != "task-followup"));
+    }
+
+    /// 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니다(버리기의 thread 끝내기를 막지 않는다)
+    #[test]
+    fn chat_only_threads_collect_no_followups() {
+        for (idea, design) in [(Some("i-0001"), None), (None, Some("repo/boss-dex"))] {
+            let mut r = ThreadRec::starting("demo", "대화", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+            r.idea = idea.map(str::to_string);
+            r.design = design.map(str::to_string);
+            capture(&mut r, "rev", "[완료] 정리\n## Next\n- 다음 말\n");
+            assert!(r.task_clean.followups.is_empty() && !pending(&r), "{idea:?} {design:?}");
+            assert!(check_cli_resolve(&r, "local:me").is_ok());
+        }
     }
 }

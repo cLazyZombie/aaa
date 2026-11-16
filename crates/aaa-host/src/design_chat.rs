@@ -1,0 +1,348 @@
+//! 기획 대화(t-1894 2-2, FRONT_API 1.172): 기획 branch마다 대화 thread 하나. 아이디어 전용 thread(idea_thread.rs)와 같은 꼴이다.
+//!
+//! - 처음 말할 때 그 저장소 머신에 작업 폴더 thread로 띄운다(기획 worktree와 저장소 코드를 그 머신에서 읽는다). 할 일·실행
+//!   한도·coordinator 요약·자동 끝내기에서 빼고(`ThreadRec::chat_only`), 쉬면 조용히 보류한다(idea_thread.rs `idea_rest_pass`).
+//! - 보낸 말은 대화 기록(host 상태 폴더 `design-chats/<프로젝트>/<저장소>/<주제>.json`, 기획 branch 기록과 따로 잠근다)에 남기고,
+//!   thread가 brief를 받은 뒤 차례로 보낸다. host가 다시 뜨면 ticker가 남은 말을 잇는다.
+//! - thread는 자기 기획 branch에만 `aaa plan save`로 쓴다(design_branch.rs `design_writer`). 다른 머신 세션은 agent 중계로 쓴다.
+//! - 쉬는 branch에 말하면 branch를 다시 연다. 버리면 대화 thread도 알림 없이 끝낸다.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use aaa_proto::{
+    DesignBranchState, DeviceRole, ErrorBody, ErrorCode, FrontResponse, MessageMode, Role, ThreadKind, ThreadStatus,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::orch::{ResolveOpts, ResolveWhy, StartArgs, bad, internal};
+use crate::{Host, err};
+
+/// 보낸 말 한 개 상한(웹 입력창과 같다)
+const MAX_SAY: usize = 100_000;
+/// thread가 brief를 받기를 기다리는 상한. 넘으면 말은 남기고 다음 말·ticker 때 다시 보낸다
+const DELIVER_WAIT: Duration = Duration::from_secs(600);
+
+/// 기획 branch 하나의 대화
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct Chat {
+    pub thread: Option<String>,
+    /// 아직 보내지 못한 말(차례대로)
+    pub pending: Vec<String>,
+    /// thread를 띄우지 못한 까닭(다음 말에 지운다)
+    pub error: Option<String>,
+    /// 마지막으로 말한 때(쉼을 정할 때 마지막 저장과 함께 본다)
+    pub said_ms: u64,
+}
+
+/// `<저장소>/<주제>`
+fn chat_key(repo: &str, slug: &str) -> String {
+    format!("{repo}/{slug}")
+}
+
+/// thread에 줄 할 일 글(brief 끝)
+fn task_text(
+    repo: &str,
+    slug: &str,
+    title: &str,
+    folder: &str,
+    cwd: Option<&str>,
+    repo_path: &str,
+    again: bool,
+) -> String {
+    let start = if again {
+        "앞 대화를 이을 수 없어 새로 시작했다. 기획 branch의 문서가 지금까지의 정리본이다: 먼저 읽고 사용자의 다음 말을 기다린다."
+    } else {
+        "새 기획 대화다. 기획 폴더를 훑어 읽고 사용자의 말을 기다린다."
+    };
+    format!(
+        "저장소 {repo}의 기획 branch `design/{slug}`(주제 「{title}」) 기획 대화 thread다. {start}\n\n\
+         - 기획 폴더(저장소 기준): `{folder}/`\n\
+         - 기획 worktree(이 branch, 읽기만): {}\n\
+         - 저장소 checkout(코드 읽기만): {repo_path}\n\
+         - 목록 `aaa plan list`, 읽기 `aaa plan show {repo} <경로> --branch {slug}`\n\
+         - 저장 `aaa plan save {repo} <경로> --branch {slug} --base <blob> --file <파일> --summary '<바뀐 곳>'`(새 문서는 `--new`)\n",
+        cwd.unwrap_or("(아직 없다: `aaa plan show`로 읽는다)")
+    )
+}
+
+impl Host {
+    fn design_chat_path(&self, project: &str, repo: &str, slug: &str) -> Result<PathBuf, ErrorBody> {
+        // 기획 branch 기록과 같은 이름 검사(저장소 이름·주제)를 거친다
+        self.design_branch_load(project, repo, slug)?;
+        Ok(self.state.join("design-chats").join(project).join(repo).join(format!("{slug}.json")))
+    }
+
+    pub(crate) fn design_chat_load(&self, project: &str, repo: &str, slug: &str) -> Result<Chat, ErrorBody> {
+        let path = self.design_chat_path(project, repo, slug)?;
+        match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| internal(format!("{}: {e}", path.display()))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Chat::default()),
+            Err(e) => Err(internal(format!("{}: {e}", path.display()))),
+        }
+    }
+
+    fn design_chat_store(&self, project: &str, repo: &str, slug: &str, chat: &Chat) -> Result<(), ErrorBody> {
+        let path = self.design_chat_path(project, repo, slug)?;
+        let dir = path.parent().ok_or_else(|| internal("대화 기록 폴더가 없다"))?;
+        std::fs::create_dir_all(dir).map_err(|e| internal(format!("{}: {e}", dir.display())))?;
+        let bytes = serde_json::to_vec_pretty(chat).map_err(internal)?;
+        crate::orch::write_atomic(&path, &bytes).map_err(internal)
+    }
+
+    fn design_chat_lock(&self, project: &str, repo: &str, slug: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.thread_op_lock(project, &format!("design-chat:{repo}/{slug}"))
+    }
+
+    /// 대화 기록을 잠그고 고친다
+    async fn design_chat_edit<T>(
+        &self,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        edit: impl FnOnce(&mut Chat) -> T,
+    ) -> Result<T, ErrorBody> {
+        let lock = self.design_chat_lock(project, repo, slug);
+        let _one = lock.lock().await;
+        let mut chat = self.design_chat_load(project, repo, slug)?;
+        let out = edit(&mut chat);
+        self.design_chat_store(project, repo, slug, &chat)?;
+        Ok(out)
+    }
+
+    /// 보낼 말이 남았나(`<저장소>/<주제>`, 쉼 판정)
+    pub(crate) fn design_chat_waiting(&self, project: &str, key: &str) -> bool {
+        key.split_once('/')
+            .and_then(|(repo, slug)| self.design_chat_load(project, repo, slug).ok())
+            .is_some_and(|c| !c.pending.is_empty())
+    }
+
+    /// 사람이 기획 대화에 말한다: 말을 남기고, thread를 띄우거나 이어 brief 뒤 보낸다(배경)
+    pub(crate) async fn design_say(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        text: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.design_writer(role, actor, None)?;
+        if text.trim().is_empty() {
+            return Err(bad("글이 비었다"));
+        }
+        if text.len() > MAX_SAY {
+            return Err(err(ErrorCode::TooLarge, format!("한 번에 {MAX_SAY}바이트까지 보낸다")));
+        }
+        let (target, _) = self.design_target(project, repo)?;
+        let rec = self
+            .design_branch_load(project, &target.name, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
+        self.design_chat_edit(project, &target.name, slug, |c| {
+            c.pending.push(text.to_string());
+            c.error = None;
+            c.said_ms = aaa_common::util::now_ms();
+        })
+        .await?;
+        self.db.audit(actor, "design_say", &format!("{project} {}/{slug} {} bytes", target.name, text.len()));
+        self.spawn_design_chat(project, &target.name, slug, true, actor);
+        Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
+    }
+
+    /// 배경 일: (쉬는 branch는 다시 열고) thread를 쓸 수 있게 하고(`start`면 없을 때 새로), 남은 말을 brief 뒤 차례로 보낸다
+    pub(crate) fn spawn_design_chat(self: &Arc<Self>, project: &str, repo: &str, slug: &str, start: bool, actor: &str) {
+        let key = format!("{project}/{repo}/{slug}");
+        if !self.design_chatting.lock().unwrap().insert(key.clone()) {
+            // 도는 일이 남은 말을 끝까지 보낸다(그 사이 온 말도 집어 간다)
+            return;
+        }
+        let (host, project, repo, slug, actor) =
+            (self.clone(), project.to_string(), repo.to_string(), slug.to_string(), actor.to_string());
+        tokio::spawn(async move {
+            host.design_chat_work(&project, &repo, &slug, start, &actor).await;
+            // 끝나는 사이에 온 말은 ticker(`design_chat_resume`)가 잇는다
+            host.design_chatting.lock().unwrap().remove(&key);
+        });
+    }
+
+    async fn design_chat_work(self: &Arc<Self>, project: &str, repo: &str, slug: &str, start: bool, actor: &str) {
+        let ready = async {
+            let rec = self
+                .design_branch_load(project, repo, slug)?
+                .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
+            if rec.state == DesignBranchState::Rest {
+                self.design_branch_open(DeviceRole::Local, actor, project, repo, slug, None).await?;
+            }
+            self.design_chat_ready(project, repo, slug, actor, start).await
+        }
+        .await;
+        match ready {
+            Ok(Some(_)) => {}
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(project, repo, slug, "기획 대화 thread를 띄우지 못했다: {}", e.message);
+                aaa_common::diagnostic::ignored(
+                    self.design_chat_edit(project, repo, slug, |c| c.error = Some(e.message)).await,
+                    "까닭을 못 남겨도 로그에 있다",
+                );
+                return;
+            }
+        }
+        if let Err(e) = tokio::time::timeout(DELIVER_WAIT, self.design_deliver(project, repo, slug)).await {
+            tracing::warn!(project, repo, slug, "기획 대화 thread가 준비되지 않아 말을 남겨 두었다: {e}");
+        }
+    }
+
+    /// 대화 thread를 쓸 수 있게 한다: 열린 것은 그대로, 쉬느라 내린 것은 잇고, 없거나 잇지 못하면(`start`일 때만) 새로 띄운다
+    async fn design_chat_ready(
+        self: &Arc<Self>,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        actor: &str,
+        start: bool,
+    ) -> Result<Option<String>, ErrorBody> {
+        let chat = self.design_chat_load(project, repo, slug)?;
+        let mut again = false;
+        if let Some(id) = chat.thread.as_deref() {
+            match self.load(project, id) {
+                Ok(rec) => match rec.status {
+                    ThreadStatus::Open | ThreadStatus::Starting => return Ok(Some(id.to_string())),
+                    ThreadStatus::Parked => match self.thread_unpark(project, id, None, None, false, actor).await {
+                        Ok(_) => return Ok(Some(id.to_string())),
+                        Err(e) => {
+                            tracing::warn!(
+                                project,
+                                thread = id,
+                                "기획 대화 thread를 잇지 못해 새로 띄운다: {}",
+                                e.message
+                            );
+                            again = true;
+                        }
+                    },
+                    ThreadStatus::Failed | ThreadStatus::Resolved => again = true,
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        project,
+                        thread = id,
+                        "기획 대화 thread 기록을 읽지 못해 새로 띄운다: {}",
+                        e.message
+                    );
+                    again = true;
+                }
+            }
+        }
+        if !start {
+            return Ok(None);
+        }
+        let (target, _) = self.design_target(project, repo)?;
+        let rec = self
+            .design_branch_load(project, repo, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
+        let folder = target.folder.clone().unwrap_or_default();
+        let args = StartArgs {
+            project: project.to_string(),
+            title: format!("기획 {repo} {}", rec.title),
+            // 그 저장소 머신(기획 worktree와 코드를 거기서 읽는다)
+            machine: target.machine.clone(),
+            profile: String::new(),
+            kind: ThreadKind::Dir,
+            task: task_text(repo, slug, &rec.title, &folder, rec.cwd.as_deref(), &target.path, again),
+            role: Role::Worker,
+            design: Some(chat_key(repo, slug)),
+            ..Default::default()
+        };
+        let view = self.thread_start_mode(args, actor, true).await?;
+        self.design_chat_edit(project, repo, slug, |c| c.thread = Some(view.id.clone())).await?;
+        Ok(Some(view.id))
+    }
+
+    async fn design_deliver(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
+        let mut events = self.thread_events.subscribe();
+        loop {
+            let Ok(chat) = self.design_chat_load(project, repo, slug) else { return };
+            let Some(next) = chat.pending.first().cloned() else { return };
+            let Some(thread) = chat.thread.clone() else { return };
+            let ready = self
+                .load(project, &thread)
+                .is_ok_and(|r| r.status == ThreadStatus::Open && r.brief == aaa_proto::BriefState::Delivered);
+            if ready {
+                match self.thread_message(project, &thread, next.clone(), MessageMode::Queue, "design").await {
+                    Ok(_) => {
+                        aaa_common::diagnostic::ignored(
+                            self.design_chat_edit(project, repo, slug, |c| {
+                                if c.pending.first() == Some(&next) {
+                                    c.pending.remove(0);
+                                }
+                            })
+                            .await,
+                            "다음 셈에 다시 보낸다",
+                        );
+                        continue;
+                    }
+                    // 확인창·쓰던 글 같은 막힘: 다음 thread 사건 뒤에 다시 본다
+                    Err(e) => tracing::info!(project, thread, "기획 대화 말을 아직 보내지 못했다: {}", e.message),
+                }
+            }
+            match events.recv().await {
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    }
+
+    /// ticker: host가 다시 떠 끊긴 전달을 잇는다(남은 말이 있고 thread가 있는 대화)
+    pub(crate) fn design_chat_resume(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
+        if self.design_chat_load(project, repo, slug).is_ok_and(|c| !c.pending.is_empty() && c.thread.is_some()) {
+            self.spawn_design_chat(project, repo, slug, false, "ticker");
+        }
+    }
+
+    /// 버리기: 대화 thread를 알림 없이 끝내고(대화 전용 thread라 알림함 항목이 없다) 대화 기록을 지운다
+    pub(crate) async fn design_chat_retire(
+        self: &Arc<Self>,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let chat = self.design_chat_load(project, repo, slug)?;
+        if let Some(id) = chat.thread.as_deref()
+            && let Ok(rec) = self.load(project, id)
+            && !matches!(rec.status, ThreadStatus::Resolved | ThreadStatus::Failed)
+        {
+            self.thread_resolve(project, id, ResolveOpts::default(), ResolveWhy::Manual, actor).await?;
+        }
+        let path = self.design_chat_path(project, repo, slug)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(internal(format!("{}: {e}", path.display()))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_text_points_at_branch_worktree_and_commands() {
+        let t = task_text("app", "boss-dex", "보스 도감", "docs", Some("/w/app/demo-design-boss-dex"), "/r/app", false);
+        for want in [
+            "design/boss-dex",
+            "「보스 도감」",
+            "`docs/`",
+            "/w/app/demo-design-boss-dex",
+            "/r/app",
+            "aaa plan show app <경로> --branch boss-dex",
+            "--branch boss-dex --base <blob>",
+        ] {
+            assert!(t.contains(want), "{want}: {t}");
+        }
+        assert!(task_text("app", "x", "x", "docs", None, "/r", true).contains("앞 대화를 이을 수 없어"));
+    }
+}
