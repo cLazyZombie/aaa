@@ -93,8 +93,6 @@
   "aaa_host::harness::tests::a_different_first_observation_is_not_an_answered_screen_question": 3.63,
   "aaa_host::health::tests::first_report_problems_and_clock_wake_the_ticker": 0.04,
   "aaa_host::http::tests::explicit_http_port_reaches_the_servers_host_authority": 0.04,
-  "aaa_host::idea_thread::tests::only_the_ideas_own_thread_saves_from_a_session": 0.81,
-  "aaa_host::ideas::tests::handoff_locks_and_copy_reopens": 1.08,
   "aaa_host::image_rpc::tests::installed_codex_accepts_isolated_image_config_without_authentication": 0.89,
   "aaa_host::inbox::alias_tests::aliases_keep_front_seen_done_and_request_protection_on_the_stored_item": 1.31,
   "aaa_host::installation::publication::tests::public_probe_confirms_this_host_and_cannot_be_a_pairing_or_authentication_token": 4.34,

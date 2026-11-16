@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import { aaa, root, base, step, browser, webkit, pairPage, inList, domIs, until, finishFixtureFollowups } from "../lib/harness.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { aaa, root, base, step, browser, webkit, pairPage, inList, domIs, until, finishFixtureFollowups, start, stop } from "../lib/harness.mjs";
 
 const git = (cwd, ...args) =>
   execFileSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.com", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
@@ -193,8 +194,11 @@ export default async function () {
   });
 
   await step("main에 들어간 뒤 곧 버려도(origin을 아직 받지 않았어도) 「옮김」으로 남고, 같은 이름으로 다시 만든 대화는 앞 옮기기를 잇지 않는다", async () => {
-    // 앞에서 버린 대화와 같은 이름(idea-n-…)으로 다시 만든다
+    // 앞에서 버린 대화와 같은 이름(idea-n-…)으로 다시 만든다. 노트는 긴 것(약 45KB)으로 바꿔 대화가 끝까지 받는지 본다
     const slug = `idea-${ids.boss}`;
+    const folder = `${root}/projects/demo/ideas/${idea(ids.boss).id}`;
+    const long = ["# 보스 연속 층", "", ...Array.from({ length: 900 }, (_, i) => `- ${i + 1}층 보스 방: 보스 하나와 졸개 둘`), "- 끝 줄: 100층 보스", ""].join("\n");
+    for (const path of ["note.md", "revs/0001.md"]) fs.writeFileSync(`${folder}/${path}`, long);
     await page.goto(`${base}/#idea=${ids.boss}`);
     await page.getByTestId("idea-move").click();
     await domIs(page, "저장소 고름", () => document.querySelector("[data-testid=idea-move-repo]")?.value === "app");
@@ -202,6 +206,12 @@ export default async function () {
     await page.getByTestId("idea-move-submit").click();
     await page.getByTestId("idea-move-dialog").waitFor({ state: "detached" });
     assert.equal(idea(ids.boss).moved?.done, false);
+    const chat = await until("다시 만든 대화 thread", () => branches().find((x) => x.slug === slug)?.thread, 60_000);
+    const log = `${root}/fake-lines/${chat}.log`;
+    const got = await until("긴 노트 끝까지", () => fs.existsSync(log) && fs.readFileSync(log, "utf8").includes("- 끝 줄: 100층 보스") && fs.readFileSync(log, "utf8"), 90_000);
+    assert.ok(got.includes("- 450층 보스 방: 보스 하나와 졸개 둘") && !got.includes("바이트만 실었다"), "자르지 않고 다 실었다");
+    // 옛 판이 남긴 보내지 못한 말(견본 idea.json `pending`)도 싣는다
+    assert.ok(got.includes("닿지 못한 말") && got.includes("91층 보스는 둘로"), got.slice(-800));
     fs.writeFileSync(`${root}/boss.md`, "# 보스 연속 층\n\n91~100층은 방 하나에 보스 하나.\n");
     aaa("plan", "save", "app", "docs/boss/README.md", "--branch", slug, "--new", "--file", `${root}/boss.md`);
     git(seed, "fetch", "-q", "origin", "main");
@@ -229,6 +239,32 @@ export default async function () {
     finishFixtureFollowups(started.id);
     aaa("thread", "resolve", started.id);
     await page.context().close();
+  });
+
+  await step("열린 옛 아이디어 thread는 host가 끝내고, 끝내기 전에 그 작업 폴더 library 그림을 노트로 옮기며 작업 폴더는 남긴다", async () => {
+    // 새 판에는 아이디어 thread를 만드는 길이 없다: 작업 폴더 thread를 띄운 뒤 host를 멈추고 그 기록에 아이디어 표지를 단다
+    fs.writeFileSync(`${root}/old-idea-task.md`, "옛 아이디어 대화\n");
+    const t = aaa("thread", "start", "demo", "--title", "옛 아이디어 대화", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/old-idea-task.md`);
+    const shown = await until("가짜 thread 보고와 library 그림", () => { const x = aaa("thread", "show", t.id); return x.report_hash && fs.existsSync(`${x.work_dir}/library/pic.png`) && x; }, 60_000);
+    const tut = idea(ids.tutorial);
+    const folder = `${root}/projects/demo/ideas/${tut.id}`;
+    const text = "# 초반 튜토리얼\n\n1~3층 안내.\n\n![시안](library/pic.png)\n";
+    for (const path of ["note.md", "revs/0001.md"]) fs.writeFileSync(`${folder}/${path}`, text);
+    const meta = JSON.parse(fs.readFileSync(`${folder}/idea.json`, "utf8"));
+    meta.thread = t.id;
+    fs.writeFileSync(`${folder}/idea.json`, JSON.stringify(meta, null, 2));
+    await stop("host");
+    const db = new DatabaseSync(`${root}/s/host/host.db`);
+    try {
+      const rec = JSON.parse(db.prepare("SELECT data FROM threads WHERE project='demo' AND id=?").get(t.id).data);
+      rec.idea = tut.id;
+      db.prepare("UPDATE threads SET data=? WHERE project='demo' AND id=?").run(JSON.stringify(rec), t.id);
+    } finally { db.close(); }
+    start("host", "host");
+    await until("host와 agent 재연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"), 60_000);
+    await until("옛 아이디어 thread 끝남", () => aaa("thread", "show", t.id).status === "resolved", 90_000);
+    assert.match(fs.readFileSync(`${folder}/note.md`, "utf8"), /!\[시안\]\([0-9a-f]{16}\.png\)/, "끝내기 전에 library 그림을 노트 폴더로 옮겼다");
+    assert.ok(fs.existsSync(`${shown.work_dir}/library/pic.png`), "작업 폴더는 남긴다");
   });
 
   for (const name of ["chromium", "webkit"]) await step(`휴대폰: 옛 아이디어 노트·대화 칸 ${name} 390px`, async () => {

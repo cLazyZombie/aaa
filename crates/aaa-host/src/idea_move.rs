@@ -31,6 +31,20 @@ const HOW: &str = "- 옮기는 법(노트 「구현」 칸):\n  - ✓ → 표지
                    `[!미정]`(이미 답한 것은 계획 글로)\n  - — → 머리말 본문\n  - 「바뀐 것」 절은 그대로, 목업 그림은 해당 블록 안 그림 + \
                    「시안」\n- main 코드와 견주어 이미 된 것은 본문으로 쓴다. 기존 문서와 겹치면 글을 겹쳐 쓰지 않고 링크로 잇는다.\n";
 
+/// 옮기기 말에 덧붙이는 옛 판의 남은 것(없으면 비어 있다)
+#[derive(Default)]
+struct Leftovers {
+    /// 노트 폴더로 옮기지 못한 그림 링크(원본을 찾지 못함)
+    unresolved: Vec<String>,
+    /// 전용 thread에 보내지 못한 말
+    pending: Vec<String>,
+    /// 합치지 못한 사람 글(`merge/` 파일 이름, 글)
+    merges: Vec<(String, String)>,
+}
+
+/// 남은 글 하나의 상한(바이트)
+const LEFTOVER_MAX: usize = 16 * 1024;
+
 /// 대화에 보낼 옮기기 말
 #[allow(clippy::too_many_arguments)]
 fn move_message(
@@ -41,6 +55,7 @@ fn move_message(
     place: &str,
     placed: &[(String, String)],
     text: &str,
+    left: &Leftovers,
 ) -> String {
     let mut out =
         format!("옛 아이디어 {short} 「{title}」(판 {rev})를 기획 폴더로 옮긴다. 노트 본문은 아래에 있다.\n\n");
@@ -52,6 +67,12 @@ fn move_message(
         for (name, path) in placed {
             out.push_str(&format!("  - `{name}` → `{path}`\n"));
         }
+    }
+    if !left.unresolved.is_empty() {
+        out.push_str(&format!(
+            "- 옮기지 못한 그림(원본을 찾지 못했다, 문서에는 넣지 않는다): {}\n",
+            left.unresolved.iter().map(|u| format!("`{u}`")).collect::<Vec<_>>().join(", ")
+        ));
     }
     if !tasks.is_empty() {
         out.push_str(&format!("- 이 아이디어에서 넘긴 할 일: {}\n", tasks.join(", ")));
@@ -66,6 +87,50 @@ fn move_message(
             text.len(),
             body.len()
         ));
+    }
+    if !left.pending.is_empty() {
+        out.push_str("\n사용자가 전용 thread에 보냈으나 닿지 못한 말(이것도 노트에 반영할 뜻이다):\n\n");
+        for p in &left.pending {
+            out.push_str(&format!("{}\n\n", fenced_text(capped_at(p, LEFTOVER_MAX))));
+        }
+    }
+    for (name, merge) in &left.merges {
+        out.push_str(&format!(
+            "\n노트와 겹쳐 아직 합치지 못한 사람 글(`merge/{name}`, 노트 본문과 견주어 살릴 것을 살린다):\n\n{}\n",
+            fenced(capped_at(merge, LEFTOVER_MAX))
+        ));
+    }
+    out
+}
+
+/// 상한까지(글자 경계에서)
+fn capped_at(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// 글 안의 가장 긴 backtick 줄보다 긴 울타리로 감싼 일반 글
+fn fenced_text(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}\n{}\n{fence}", text.trim_end_matches('\n'))
+}
+
+/// 노트 폴더로 옮기지 못한 그림·영상 링크(해시 이름이 아닌 상대 경로의 그림·영상 파일)
+fn unresolved_media(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, target) in crate::ideas::media_targets(text) {
+        let lower = target.to_ascii_lowercase();
+        let media = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm"].iter().any(|e| lower.ends_with(e));
+        if media && !crate::ideas::media_name(&target) && !lower.contains("://") && !out.contains(&target) {
+            out.push(target);
+        }
     }
     out
 }
@@ -158,12 +223,15 @@ impl Host {
         if m.rev != rev {
             return Err(err(ErrorCode::Conflict, format!("노트가 바뀌었다(판 {rev} → {}): 다시 연다", m.rev)));
         }
-        // 옛 판의 `library/`·`uploads/` 그림 링크는 열 때처럼 먼저 노트 폴더로 옮긴다(옮기지 못하면 그림을 빠뜨리지 않게 멈춘다)
+        // 옛 판의 `library/`·`uploads/` 그림 링크는 열 때처럼 먼저 노트 폴더로 옮긴다. 원본이 없어 옮기지 못한 링크는 노트를 고칠 수
+        // 없으므로 막지 않고 말에 따로 적는다
         let read = Box::pin(self.idea_read_note(project, &f, None)).await?;
-        if let Some(e) = read.media_error {
-            return Err(bad(format!("노트의 옛 그림 링크를 노트 폴더로 옮기지 못했다: {e}")));
+        if let Some(e) = &read.media_error {
+            tracing::warn!(project, idea = %f.id, "옛 그림 링크를 다 옮기지 못한 채 옮긴다: {e}");
         }
         let text = read.text;
+        let left =
+            Leftovers { unresolved: unresolved_media(&text), pending: m.pending.clone(), merges: self.idea_merges(&f) };
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         // 위치는 기획 폴더 기준(비우면 기획 폴더)이고 저장소 기준 폴더로 바꿔 둔다. 문서 경로처럼 검사한다
@@ -197,8 +265,8 @@ impl Host {
         let rec = self
             .design_branch_load(project, &target.name, slug)?
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
-        // 옮길 때의 끝: 이 뒤의 commit이 main에 들어가야 옮긴 것이다(열 때 agent가 읽은 끝)
-        let head = rec.head.clone();
+        // 옮길 때의 끝: 이 뒤의 commit이 main에 들어가야 옮긴 것이다. 착지 판정이 견주는 agent의 끝을 그대로 쓴다
+        let head = Some(self.idea_move_tree(project, &target.name, slug).await?.commit);
         let mut placed = Vec::new();
         for (name, bytes) in &media {
             let saved =
@@ -206,7 +274,7 @@ impl Host {
             placed.push((name.clone(), saved));
         }
         let tasks = self.idea_summary(project, &f, &m)?.tasks;
-        let message = move_message(&short, &m.title, rev, &tasks, &place_path, &placed, &text);
+        let message = move_message(&short, &m.title, rev, &tasks, &place_path, &placed, &text, &left);
         // 먼저 「옮기는 중」으로 잠그고 보낸다(기록을 못 쓰면 보내지 않아 다시 옮길 때 같은 말이 두 번 가지 않는다).
         // 보내지 못하면 풀어 준다
         let moved = IdeaMoved {
@@ -244,6 +312,21 @@ impl Host {
             out.push((name, bytes));
         }
         Ok(out)
+    }
+
+    /// 옛 판이 남긴 합치지 못한 사람 글(`merge/*.md`, 이름 차례)
+    fn idea_merges(&self, f: &Folder) -> Vec<(String, String)> {
+        let Ok(entries) = std::fs::read_dir(f.dir.join("merge")) else { return Vec::new() };
+        let mut out: Vec<(String, String)> = entries
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().to_str()?.to_string();
+                (name.ends_with(".md") && e.file_type().ok()?.is_file())
+                    .then(|| std::fs::read_to_string(e.path()).ok().map(|t| (name, t)))?
+            })
+            .collect();
+        out.sort();
+        out
     }
 
     /// 그 저장소 머신 agent가 읽은 기획 branch(main과 다른 파일·앞선 commit 수)
@@ -328,6 +411,14 @@ impl Host {
         else {
             return Ok(());
         };
+        // 저장소를 설정에서 뺐거나 기획 폴더를 지웠다: 그 branch는 반영할 수 없으니 풀어 준다(버리기는 그 전에 실패한다)
+        if let Err(e) = self.design_target(project, repo)
+            && e.code == ErrorCode::NotFound
+            && !discarding
+        {
+            self.idea_move_note(project, &f, repo, slug, None);
+            return Ok(());
+        }
         let rec = match self.design_branch_load(project, repo, slug) {
             Ok(rec) => rec.filter(|r| r.created_ms == mv.branch_ms),
             Err(e) => {
@@ -344,10 +435,10 @@ impl Host {
                     Some(IdeaMoved { done: true, path: path.unwrap_or(mv.path.clone()), ..mv.clone() })
                 }
                 // 버리기 직전에는 받은 지 1분까지 된 origin main으로 판정하지 않는다: origin main을 새로 물어 다시 본다
-                Some((false, _)) if discarding => match self.idea_move_merged_now(project, &mv).await {
-                    Some(true) => Some(IdeaMoved { done: true, ..mv.clone() }),
-                    Some(false) => return Ok(()),
-                    None => return Err(self.idea_move_unknown(project, &f)),
+                // 묻지 못하면(origin 없는 저장소·잠깐 끊김) 트리 판정을 따른다
+                Some((false, path)) if discarding => match self.idea_move_merged_now(project, &mv).await {
+                    Some(true) => Some(IdeaMoved { done: true, path: path.unwrap_or(mv.path.clone()), ..mv.clone() }),
+                    Some(false) | None => return Ok(()),
                 },
                 Some((false, Some(path))) => Some(IdeaMoved { path, ..mv.clone() }),
                 Some((false, None)) => return Ok(()),
@@ -493,6 +584,7 @@ mod tests {
             "docs/camp",
             &[("map.png".to_string(), "docs/camp/0123456789abcdef.png".to_string())],
             text,
+            &Leftovers::default(),
         );
         assert!(msg.starts_with("옛 아이디어 n-0003 「캠프 게시판」(판 2)를 기획 폴더로 옮긴다."), "{msg}");
         assert!(msg.contains("- 위치: `docs/camp/`"), "{msg}");
@@ -504,6 +596,29 @@ mod tests {
             "본문 울타리가 안의 울타리보다 길다: {msg}"
         );
         assert!(!msg.contains("aaa idea show"), "다 실었으면 따로 읽으라 하지 않는다");
+    }
+
+    /// 옛 판이 남긴 것(옮기지 못한 그림 링크·보내지 못한 말·합치지 못한 사람 글)도 말에 싣는다
+    #[test]
+    fn leftovers_ride_along() {
+        let text = "# 노트\n![있음](0123456789abcdef.png)\n![없음](library/gone.png)\n[링크](https://example.com/a.png)\n[문서](docs/a.md)\n";
+        assert_eq!(unresolved_media(text), ["library/gone.png"]);
+        let left = Leftovers {
+            unresolved: unresolved_media(text),
+            pending: vec!["91층 보스는 둘로".into()],
+            merges: vec![("0001-1.md".into(), "# 노트\n사람이 고친 줄\n".into())],
+        };
+        let msg = move_message("n-0002", "보스", 1, &[], "docs", &[], text, &left);
+        assert!(
+            msg.contains("- 옮기지 못한 그림(원본을 찾지 못했다, 문서에는 넣지 않는다): `library/gone.png`"),
+            "{msg}"
+        );
+        assert!(msg.contains("닿지 못한 말") && msg.contains("```\n91층 보스는 둘로\n```"), "{msg}");
+        assert!(msg.contains("`merge/0001-1.md`") && msg.contains("사람이 고친 줄"), "{msg}");
+        assert!(
+            !move_message("n-0002", "보스", 1, &[], "docs", &[], "# 노트\n", &Leftovers::default())
+                .contains("닿지 못한")
+        );
     }
 
     /// 반영 thread는 옮긴 뒤에 옮길 때와 다른 끝에서 갈라졌을 때만 옮긴 것으로 센다
@@ -522,7 +637,7 @@ mod tests {
         let text = line.repeat(BODY_MAX / line.len() + 10);
         let (body, cut) = cut_body(&text);
         assert!(cut && body.len() <= BODY_MAX && body.ends_with('\n'));
-        let msg = move_message("n-0001", "긴 것", 1, &[], "docs", &[], &text);
+        let msg = move_message("n-0001", "긴 것", 1, &[], "docs", &[], &text, &Leftovers::default());
         assert!(msg.contains(&format!("{}바이트 중 앞 {}바이트만", text.len(), body.len())), "{msg}");
         assert!(msg.contains("`aaa idea show n-0001`로 읽는다"));
         assert!(msg.len() < 100_000, "대화 말 상한 안");

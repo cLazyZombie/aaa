@@ -119,9 +119,18 @@ impl Host {
                 }
                 tried.insert(key, now);
             }
-            match Box::pin(self.thread_resolve(project, &r.id, ResolveOpts::default(), ResolveWhy::Manual, "host"))
-                .await
-            {
+            // 끝내기 전에 노트의 옛 `library/` 그림을 노트 폴더로 옮기고(그 thread 작업 폴더가 원본이다), 작업 폴더는 지우지 않는다
+            if let Some(f) = r.idea.as_deref().and_then(|i| self.idea_folder(project, i).ok()) {
+                match Box::pin(self.idea_read_note(project, &f, None)).await {
+                    Ok(n) if n.media_error.is_some() => {
+                        tracing::warn!(project, thread = %r.id, "옛 그림을 노트로 옮기지 못했다(작업 폴더는 남긴다): {}", n.media_error.unwrap_or_default())
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(project, thread = %r.id, "옛 아이디어 노트를 읽지 못했다: {}", e.message),
+                }
+            }
+            let keep = ResolveOpts { keep_worktree: true, ..Default::default() };
+            match Box::pin(self.thread_resolve(project, &r.id, keep, ResolveWhy::Manual, "host")).await {
                 Ok(_) => {
                     tracing::info!(project, thread = %r.id, "옛 아이디어 thread를 끝냈다(아이디어는 기획으로 옮겼다)");
                     self.db.audit("host", "idea_thread_end", &format!("{project}/{}", r.id));
