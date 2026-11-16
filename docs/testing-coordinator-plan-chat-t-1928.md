@@ -15,7 +15,7 @@
 | 계약 | owner |
 | --- | --- |
 | 그 프로젝트 coordinator pane의 열기·말하기는 권한을 지나고(저장소 확인에서 멈춤), 저장·버리기·반영·맡기기·옛 아이디어 옮기기는 Forbidden, 프로젝트 폴더 밖·끝난 coordinator pane은 열기·말하기도 Forbidden, pane으로 확인하지 못한 세션은 전처럼 사람(coordinator 아님) | `aaa-host` `design_branch::tests::project_coordinator_opens_and_says_but_does_not_write` |
-| 실제 host·agent·Git: `project open`으로 띄운 coordinator pane 안 CLI가 `plan new`(만든 이 coordinator)·`plan say --file`로 대화 thread를 띄워 말이 닿고 `pending` 0, 할 일 없음, 같은 pane의 `plan save`·`discard`·`apply`는 거부, 사람이 버리면 대화 thread가 끝남 | `aaa` m13 `design_branch::coordinator_opens_a_plan_chat_and_says_but_does_not_write` |
+| 실제 host·agent·Git: `project open`으로 띄운 coordinator pane 안 CLI가 `plan new`(만든 이 coordinator)·`plan say --file`로 대화 thread를 띄워 말이 닿고, `plan list`에서 같은 주제를 찾아 이어 말한 것도 닿고 `pending` 0, 할 일 없음, 같은 pane의 `plan save`·`discard`·`apply`는 거부, 사람이 버리면 대화 thread가 끝남 | `aaa` m13 `design_branch::coordinator_opens_a_plan_chat_and_says_but_does_not_write` |
 | AGENTS.md 본문이 `plan` 주제를 가리키고 주제가 열기·말하기 명령과 하지 않는 쓰기를 적으며, 거둔 `aaa idea new`·`say`를 안내하지 않음. 크기 상한(16 KiB) 안 | `aaa-host` `guide::tests::` |
 
 - RED: `design_opener`의 coordinator 허용을 끄면 단위 시험이 열기에서 Forbidden으로 실패했다(되돌림).
@@ -32,3 +32,12 @@
 - `cargo test --profile verify --locked -p aaa --test m13 design_branch::`: 4 통과.
 - `cargo test --profile verify --locked -p aaa --bins`: 103 통과. `cargo test -p aaa --test deps`: 2 통과.
 - `cargo clippy --profile verify --locked -p aaa-host -p aaa --all-targets -- -D warnings`: 통과. `cargo fmt --all -- --check`: 통과.
+- 커밋 뒤 `verify.py develop --base origin/main --package aaa-host --package aaa`(`aaa verify`, 원장 기록): `cargo test -p aaa-host -p aaa`
+  1,250 통과·실패 0, strict clippy, 공개 검사 통과.
+- 그 뒤 고친 것(단위 시험의 runtime·상태 폴더 지우기를 deploy.rs 시험처럼, 이어 말하기 E2E, 주석)은 좁은 owner로 다시 봤다:
+  `design_branch::tests::` 5, m13 `design_branch::coordinator…` 1(3.9초), clippy·fmt 통과.
+
+## 배포 뒤
+
+배포(rollout)가 끝나면 host가 `project_files(fix)`로 낡은 AGENTS.md를 새 안내로 다시 쓴다. 이미 도는 coordinator는 다음
+세션 시작·compaction 때 새 안내를 읽는다. AGENTS.md는 16,341바이트로 상한(16,384)에 43바이트만 남았다.

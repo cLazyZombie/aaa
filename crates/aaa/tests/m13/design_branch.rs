@@ -414,6 +414,10 @@ def call(*args, ok=True):
 opened = call('plan', 'new', 'repo', 'boss-idea', '--title', '보스 도감 아이디어')['branch']
 assert (opened['slug'], opened['by']) == ('boss-idea', 'coordinator'), opened
 assert call('plan', 'say', 'repo', 'boss-idea', '--file', {said:?})['branch']['pending'] == 1
+# 이어지는 말: 목록에서 같은 주제를 찾아 그 주제에 말한다
+repo = next(r for r in call('plan', 'list')['repos'] if r['repo'] == 'repo')
+assert [b['slug'] for b in repo['branches']] == ['boss-idea'], repo
+call('plan', 'say', 'repo', 'boss-idea', '사용자: 해골 왕부터 코디둘째말')
 for args in [('plan', 'save', 'repo', 'docs/x.md', '--branch', 'boss-idea', '--new', '--file', {said:?}),
              ('plan', 'discard', 'repo', 'boss-idea'), ('plan', 'apply', 'repo', 'boss-idea')]:
     assert '기획 branch에 쓰지 않는다' in call(*args, ok=False), args
@@ -441,6 +445,7 @@ print('coord-plan-ok')
     assert_eq!(shown["design"], "repo/boss-idea", "{shown}");
     let pane = shown["pane"].as_str().unwrap().to_string();
     w.h.wait_output(&pane, "코디말고유", T);
+    w.h.wait_output(&pane, "코디둘째말", T);
     wait_for("보낸 말 비움", T, || (branches(&w)[0]["pending"] == 0).then_some(()));
     let list = branches(&w);
     assert_eq!((list[0]["slug"].as_str(), list[0]["by"].as_str()), (Some("boss-idea"), Some("coordinator")), "{list}");

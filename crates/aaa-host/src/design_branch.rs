@@ -946,7 +946,7 @@ mod tests {
     use super::*;
     use aaa_proto::FrontRequest;
 
-    /// 쓰기는 조작 권한의 사람만: thread·coordinator 세션과 보기 기기는 agent에 닿기 전에 거부한다
+    /// 쓰기는 조작 권한의 사람만: thread 세션과 보기 기기는 agent에 닿기 전에 거부한다(coordinator의 열기·말하기는 아래 시험)
     #[tokio::test]
     async fn sessions_and_readers_do_not_write_design_branches() {
         let state = std::env::temp_dir().join(format!("aaa-design-branch-{}", aaa_common::util::new_id()));
@@ -1012,123 +1012,126 @@ mod tests {
     /// 그 프로젝트 coordinator(host 머신에서 프로젝트 폴더에 도는 coordinator pane)는 기획 대화를 열고 말하기만 한다(t-1928).
     /// 저장·버리기·반영·맡기기·옛 아이디어 옮기기는 거부하고, 프로젝트 폴더 밖 coordinator pane·끝난 coordinator pane은
     /// 열기·말하기도 거부한다
-    #[tokio::test]
-    async fn project_coordinator_opens_and_says_but_does_not_write() {
+    #[test]
+    fn project_coordinator_opens_and_says_but_does_not_write() {
         let state = std::env::temp_dir().join(format!("aaa-design-coord-{}", aaa_common::util::new_id()));
-        let mut cfg = aaa_config::HostConfig::default();
-        cfg.projects.root = state.join("projects").display().to_string();
-        cfg.notify.web_push = false;
-        let h = Arc::new(Host::open(cfg, state.join("host")).unwrap());
-        h.project_create("demo", Default::default(), "test").unwrap();
-        h.agent_connected(
-            &aaa_proto::AgentHello {
-                proto: aaa_proto::AGENT_LINK,
-                machine_id: "m".into(),
-                machine_name: "mac-a".into(),
+        // Windows에서도 배경 일이 쥔 DB를 runtime과 함께 놓은 뒤 상태 폴더를 지운다(deploy.rs 시험과 같다)
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let mut cfg = aaa_config::HostConfig::default();
+            cfg.projects.root = state.join("projects").display().to_string();
+            cfg.notify.web_push = false;
+            let h = Arc::new(Host::open(cfg, state.join("host")).unwrap());
+            h.project_create("demo", Default::default(), "test").unwrap();
+            h.agent_connected(
+                &aaa_proto::AgentHello {
+                    proto: aaa_proto::AGENT_LINK,
+                    machine_id: "m".into(),
+                    machine_name: "mac-a".into(),
+                    boot_id: "boot".into(),
+                    os: "test".into(),
+                    arch: "test".into(),
+                    software: "test".into(),
+                    features: vec![],
+                    dev_mode: true,
+                    sha256: None,
+                    selfcheck: None,
+                    sessions: vec![],
+                    identity: None,
+                    harness: vec![],
+                },
+                true,
+                crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
+            );
+            let home = h.project_dir("demo").unwrap();
+            let pane = |id: &str, cwd: &std::path::Path, state: aaa_proto::SessionState| aaa_proto::SessionInfo {
+                responsibility: None,
+                id: id.into(),
+                name: "coordinator".into(),
+                argv: vec!["claude".into()],
+                cwd: Some(cwd.to_string_lossy().into()),
+                pid: None,
+                started_at_ms: 0,
                 boot_id: "boot".into(),
-                os: "test".into(),
-                arch: "test".into(),
-                software: "test".into(),
-                features: vec![],
-                dev_mode: true,
-                sha256: None,
-                selfcheck: None,
-                sessions: vec![],
-                identity: None,
-                harness: vec![],
-            },
-            true,
-            crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
-        );
-        let home = h.project_dir("demo").unwrap();
-        let pane = |id: &str, cwd: &std::path::Path, state: aaa_proto::SessionState| aaa_proto::SessionInfo {
-            responsibility: None,
-            id: id.into(),
-            name: "coordinator".into(),
-            argv: vec!["claude".into()],
-            cwd: Some(cwd.to_string_lossy().into()),
-            pid: None,
-            started_at_ms: 0,
-            boot_id: "boot".into(),
-            cols: 80,
-            rows: 24,
-            state,
-            role: Some(aaa_proto::Role::Coordinator),
-            label: None,
-            harness: Some("claude".into()),
-        };
-        h.on_session("m", pane("01COORD", &home, aaa_proto::SessionState::Running), false);
-        // 프로젝트 폴더 밖에서 도는 coordinator 역할 pane은 그 프로젝트 coordinator가 아니다
-        h.on_session("m", pane("01ELSEWHERE", &state, aaa_proto::SessionState::Running), false);
-        h.on_session("m", pane("01GONE", &home, aaa_proto::SessionState::Exited { code: Some(0) }), false);
-        let open = || FrontRequest::DesignBranchOpen {
-            project: "demo".into(),
-            repo: "repo".into(),
-            slug: "boss-dex".into(),
-            title: Some("보스 도감".into()),
-            profile: None,
-        };
-        let say = || FrontRequest::DesignSay {
-            project: "demo".into(),
-            repo: "repo".into(),
-            branch: "boss-dex".into(),
-            text: "사용자: 보스 도감을 기획하자".into(),
-        };
-        let coordinator = "local:cli@01COORD";
-        assert_eq!(h.design_opener(DeviceRole::Local, coordinator, "demo").unwrap(), "coordinator");
-        // 열기·말하기는 권한을 지나 저장소 확인에서 멈춘다(이 프로젝트에 저장소가 없다)
-        for req in [open(), say()] {
-            let e = h.call(DeviceRole::Local, coordinator, req).await.unwrap_err();
-            assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
-        }
-        let writes = [
-            FrontRequest::DesignSave {
+                cols: 80,
+                rows: 24,
+                state,
+                role: Some(aaa_proto::Role::Coordinator),
+                label: None,
+                harness: Some("claude".into()),
+            };
+            h.on_session("m", pane("01COORD", &home, aaa_proto::SessionState::Running), false);
+            // 프로젝트 폴더 밖에서 도는 coordinator 역할 pane은 그 프로젝트 coordinator가 아니다
+            h.on_session("m", pane("01ELSEWHERE", &state, aaa_proto::SessionState::Running), false);
+            h.on_session("m", pane("01GONE", &home, aaa_proto::SessionState::Exited { code: Some(0) }), false);
+            let open = || FrontRequest::DesignBranchOpen {
                 project: "demo".into(),
-                repo: "repo".into(),
-                branch: "boss-dex".into(),
-                path: "docs/a.md".into(),
-                base: None,
-                text: "# a\n".into(),
-                summary: None,
-            },
-            FrontRequest::DesignDiscard { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
-            FrontRequest::DesignApply { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
-            FrontRequest::DesignHandoff {
-                project: "demo".into(),
-                repo: "repo".into(),
-                branch: "boss-dex".into(),
-                path: "docs/a.md".into(),
-                blob: "0".repeat(40),
-                blocks: Vec::new(),
-                title: "a".into(),
-                profile: None,
-                memo: String::new(),
-                reserve: false,
-            },
-            FrontRequest::IdeaMove {
-                project: "demo".into(),
-                idea: "n-0001".into(),
-                rev: 1,
                 repo: "repo".into(),
                 slug: "boss-dex".into(),
-                title: None,
-                place: String::new(),
-            },
-        ];
-        for req in writes {
-            let e = h.call(DeviceRole::Local, coordinator, req.clone()).await.unwrap_err();
-            assert_eq!(e.code, ErrorCode::Forbidden, "{req:?}: {e:?}");
-        }
-        // 프로젝트 폴더 밖 coordinator pane·끝난 coordinator pane
-        for actor in ["local:cli@01ELSEWHERE", "local:cli@01GONE"] {
+                title: Some("보스 도감".into()),
+                profile: None,
+            };
+            let say = || FrontRequest::DesignSay {
+                project: "demo".into(),
+                repo: "repo".into(),
+                branch: "boss-dex".into(),
+                text: "사용자: 보스 도감을 기획하자".into(),
+            };
+            let coordinator = "local:cli@01COORD";
+            assert_eq!(h.design_opener(DeviceRole::Local, coordinator, "demo").unwrap(), "coordinator");
+            // 열기·말하기는 권한을 지나 저장소 확인에서 멈춘다(이 프로젝트에 저장소가 없다)
             for req in [open(), say()] {
-                let e = h.call(DeviceRole::Local, actor, req).await.unwrap_err();
-                assert_eq!(e.code, ErrorCode::Forbidden, "{actor}: {e:?}");
+                let e = h.call(DeviceRole::Local, coordinator, req).await.unwrap_err();
+                assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
             }
-        }
-        // pane으로 확인하지 못한 세션(aaa 밖 터미널이 세션 ID를 댄 것)은 전처럼 사람이고 coordinator가 되지 않는다
-        assert_eq!(h.design_opener(DeviceRole::Local, "local:cli@unverified", "demo").unwrap(), "사람");
-        drop(h);
+            let writes = [
+                FrontRequest::DesignSave {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                    path: "docs/a.md".into(),
+                    base: None,
+                    text: "# a\n".into(),
+                    summary: None,
+                },
+                FrontRequest::DesignDiscard { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
+                FrontRequest::DesignApply { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
+                FrontRequest::DesignHandoff {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                    path: "docs/a.md".into(),
+                    blob: "0".repeat(40),
+                    blocks: Vec::new(),
+                    title: "a".into(),
+                    profile: None,
+                    memo: String::new(),
+                    reserve: false,
+                },
+                FrontRequest::IdeaMove {
+                    project: "demo".into(),
+                    idea: "n-0001".into(),
+                    rev: 1,
+                    repo: "repo".into(),
+                    slug: "boss-dex".into(),
+                    title: None,
+                    place: String::new(),
+                },
+            ];
+            for req in writes {
+                let e = h.call(DeviceRole::Local, coordinator, req.clone()).await.unwrap_err();
+                assert_eq!(e.code, ErrorCode::Forbidden, "{req:?}: {e:?}");
+            }
+            // 프로젝트 폴더 밖 coordinator pane·끝난 coordinator pane
+            for actor in ["local:cli@01ELSEWHERE", "local:cli@01GONE"] {
+                for req in [open(), say()] {
+                    let e = h.call(DeviceRole::Local, actor, req).await.unwrap_err();
+                    assert_eq!(e.code, ErrorCode::Forbidden, "{actor}: {e:?}");
+                }
+            }
+            // pane으로 확인하지 못한 세션(aaa 밖 터미널이 세션 ID를 댄 것)은 전처럼 사람이고 coordinator가 되지 않는다
+            assert_eq!(h.design_opener(DeviceRole::Local, "local:cli@unverified", "demo").unwrap(), "사람");
+            drop(h);
+        });
         std::fs::remove_dir_all(&state).unwrap();
     }
 
