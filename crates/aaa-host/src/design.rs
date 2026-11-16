@@ -386,6 +386,28 @@ mod tests {
         crate::project::ProjectSettings::load_str(toml)
     }
 
+    /// 기획 요청 future는 공용 dispatcher(`Host::call_from`)의 poll 스택에 임시 값으로 얹힌다(`Box::pin`이 heap에 옮기기 전).
+    /// thread 끝내기·시작처럼 큰 future를 그 길 안에 그대로 품으면 모든 요청의 스택이 커진다: 2-2에서 버리기가 thread 끝내기
+    /// (약 16KiB)를 품어 이 future가 3.9KiB → 20KiB가 되었고, 기기 폐기 시험이 Windows에서 스택을 넘쳤다(t-1894)
+    #[test]
+    fn design_requests_keep_the_dispatcher_stack_small() {
+        let root = std::env::temp_dir().join(format!("aaa-design-size-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = std::sync::Arc::new(crate::Host::open(cfg, root.join("host")).unwrap());
+        let f = h.call_design(
+            aaa_proto::DeviceRole::Local,
+            "a",
+            aaa_proto::FrontRequest::DesignTree { project: "p".into() },
+        );
+        let size = std::mem::size_of_val(&f);
+        drop(f);
+        drop(h);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(size <= 8 * 1024, "기획 요청 future {size}바이트: 큰 future는 그 길 안에서 Box::pin 한다");
+    }
+
     #[test]
     fn targets_pick_the_entry_with_design_and_keep_order() {
         let s = settings(

@@ -2021,112 +2021,124 @@ impl Host {
                 link_task: _,
                 task_block,
             } => {
-                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
-                // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
-                // 사용자 지시 근거는 한도 무시와 예약 무시가 함께 쓴다
-                let machine_override =
-                    self.reservation_override(&project, ignore_reservation, user_request.as_deref(), actor)?;
-                let over_limit = self.thread_limit_override(
-                    &project,
-                    over_limit,
-                    user_request.as_deref().filter(|_| over_limit || !ignore_reservation),
-                    from_task.as_deref(),
-                    actor,
-                )?;
-                let kind_given = kind;
-                let kind = kind.unwrap_or(if repo.is_some() {
-                    aaa_proto::ThreadKind::Worktree
-                } else {
-                    aaa_proto::ThreadKind::Dir
-                });
-                let mut a = orch::StartArgs {
-                    automatic_workspace: None,
-                    start_task: None,
-                    pool: pool_request,
-                    over_limit,
-                    reservation: None,
-                    machine_override,
-                    account: selected_account,
-                    holds,
-                    project,
-                    title,
-                    machine,
-                    profile,
-                    kind,
-                    repo,
-                    base,
-                    task,
-                    role: aaa_proto::Role::Worker,
-                    attachments: Vec::new(),
-                    idea: None,
-                    design: None,
-                };
-                let (mut warnings, picked) = match from_task {
-                    Some(t) => {
-                        let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
-                        if let Some(id) = &t.id
-                            && let Some(q) = self.db.queue_list(&a.project).map_err(orch::internal)?.iter().find(|q| {
-                                &q.task_id == id
-                                    && matches!(
-                                        q.state,
-                                        aaa_proto::QueueState::Queued
-                                            | aaa_proto::QueueState::Check
-                                            | aaa_proto::QueueState::Starting
-                                            | aaa_proto::QueueState::Running
-                                    )
-                            })
-                        {
-                            if q.state == aaa_proto::QueueState::Check {
+                // 이 갈래(StartArgs·할 일 적용·기동)는 큰 지역 값을 여러 개 쥔다. 공용 dispatcher의 poll 스택에 함께 얹히면 기기 폐기 같은
+                // 작은 요청도 debug 시험 스택(2MiB)을 넘는다: heap의 future로 따로 둔다(`call_design`과 같은 까닭)
+                Box::pin(async move {
+                    // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
+                    // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                    // 사용자 지시 근거는 한도 무시와 예약 무시가 함께 쓴다
+                    let machine_override =
+                        self.reservation_override(&project, ignore_reservation, user_request.as_deref(), actor)?;
+                    let over_limit = self.thread_limit_override(
+                        &project,
+                        over_limit,
+                        user_request.as_deref().filter(|_| over_limit || !ignore_reservation),
+                        from_task.as_deref(),
+                        actor,
+                    )?;
+                    let kind_given = kind;
+                    let kind = kind.unwrap_or(if repo.is_some() {
+                        aaa_proto::ThreadKind::Worktree
+                    } else {
+                        aaa_proto::ThreadKind::Dir
+                    });
+                    let mut a = orch::StartArgs {
+                        automatic_workspace: None,
+                        start_task: None,
+                        pool: pool_request,
+                        over_limit,
+                        reservation: None,
+                        machine_override,
+                        account: selected_account,
+                        holds,
+                        project,
+                        title,
+                        machine,
+                        profile,
+                        kind,
+                        repo,
+                        base,
+                        task,
+                        role: aaa_proto::Role::Worker,
+                        attachments: Vec::new(),
+                        idea: None,
+                        design: None,
+                    };
+                    let (mut warnings, picked) = match from_task {
+                        Some(t) => {
+                            let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
+                            if let Some(id) = &t.id
+                                && let Some(q) =
+                                    self.db.queue_list(&a.project).map_err(orch::internal)?.iter().find(|q| {
+                                        &q.task_id == id
+                                            && matches!(
+                                                q.state,
+                                                aaa_proto::QueueState::Queued
+                                                    | aaa_proto::QueueState::Check
+                                                    | aaa_proto::QueueState::Starting
+                                                    | aaa_proto::QueueState::Running
+                                            )
+                                    })
+                            {
+                                if q.state == aaa_proto::QueueState::Check {
+                                    return Err(err(
+                                        ErrorCode::Conflict,
+                                        "확인 필요한 예약이다. 원인을 고쳐 예약을 갱신하거나 취소한다",
+                                    ));
+                                }
+                                if let Some(tid) = &q.thread {
+                                    return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
+                                }
                                 return Err(err(
                                     ErrorCode::Conflict,
-                                    "확인 필요한 예약이다. 원인을 고쳐 예약을 갱신하거나 취소한다",
+                                    "예약한 task는 host가 시작한다. queue를 보거나 예약을 취소한다",
                                 ));
                             }
-                            if let Some(tid) = &q.thread {
-                                return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
+                            let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
+                            (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
+                        }
+                        None => {
+                            if self.coordinator_project_of_actor(actor).as_deref() == Some(&a.project)
+                                && self
+                                    .task_board(&a.project)?
+                                    .tasks
+                                    .iter()
+                                    .any(|t| t.title == a.title && (t.profile.is_some() || t.machine.is_some()))
+                            {
+                                return Err(err(
+                                    ErrorCode::Forbidden,
+                                    "모델·머신을 정한 task는 --from-task로 시작한다",
+                                ));
                             }
-                            return Err(err(
-                                ErrorCode::Conflict,
-                                "예약한 task는 host가 시작한다. queue를 보거나 예약을 취소한다",
-                            ));
+                            (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None)
                         }
-                        let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
-                        (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
+                    };
+                    // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
+                    if a.machine.is_none() {
+                        let repos = self.settings(&a.project).repos;
+                        a.machine = a
+                            .repo
+                            .as_ref()
+                            .and_then(|r| repos.into_iter().find(|x| &x.path == r))
+                            .and_then(|x| x.machine);
                     }
-                    None => {
-                        if self.coordinator_project_of_actor(actor).as_deref() == Some(&a.project)
-                            && self
-                                .task_board(&a.project)?
-                                .tasks
-                                .iter()
-                                .any(|t| t.title == a.title && (t.profile.is_some() || t.machine.is_some()))
-                        {
-                            return Err(err(ErrorCode::Forbidden, "모델·머신을 정한 task는 --from-task로 시작한다"));
-                        }
-                        (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None)
+                    let project = a.project.clone();
+                    if a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&project)?) {
+                        a.pool.get_or_insert_with(|| account_pool::PoolRequest {
+                            id: aaa_common::util::new_id(),
+                            size: aaa_proto::AccountTaskSize::Medium,
+                        });
+                        return self.pool_submit(a, actor, picked, background).await;
                     }
-                };
-                // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
-                if a.machine.is_none() {
-                    let repos = self.settings(&a.project).repos;
-                    a.machine =
-                        a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
-                }
-                let project = a.project.clone();
-                if a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&project)?) {
-                    a.pool.get_or_insert_with(|| account_pool::PoolRequest {
-                        id: aaa_common::util::new_id(),
-                        size: aaa_proto::AccountTaskSize::Medium,
-                    });
-                    return self.pool_submit(a, actor, picked, background).await;
-                }
-                let mut v = if background {
-                    self.thread_start_mode(a, actor, true).await?
-                } else {
-                    self.thread_start(a, actor).await?
-                };
-                v.warnings.append(&mut warnings);
-                Ok(FrontResponse::Thread(Box::new(v)))
+                    let mut v = if background {
+                        self.thread_start_mode(a, actor, true).await?
+                    } else {
+                        self.thread_start(a, actor).await?
+                    };
+                    v.warnings.append(&mut warnings);
+                    Ok(FrontResponse::Thread(Box::new(v)))
+                })
+                .await
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
                 self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
