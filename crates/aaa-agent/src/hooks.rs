@@ -367,7 +367,14 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     if body.len() > msg_limit(harness) {
         bail!("사건이 너무 크다({}KiB, 한도 {}KiB)", body.len() / 1024, msg_limit(harness) / 1024);
     }
-    let wait = if harness == "thread_read" { 30 } else { 3 };
+    let wait = match harness {
+        // agent가 host를 기다리는 시간보다 조금 길게(`thread_read::on_thread_read`)
+        "thread_read" if msg.payload.get("op").and_then(Value::as_str) == Some("design_save") => {
+            aaa_proto::DESIGN_RELAY_SAVE_SECS + 10
+        }
+        "thread_read" => 30,
+        _ => 3,
+    };
     tokio::time::timeout(Duration::from_secs(wait), async {
         let mut s = aaa_common::ipc::connect(Path::new(&sock)).await?;
         exchange(&mut s, &body).await

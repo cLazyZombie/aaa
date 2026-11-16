@@ -148,7 +148,7 @@ impl Host {
         list
     }
 
-    fn design_branch_lock(&self, project: &str, repo: &str, slug: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn design_branch_lock(&self, project: &str, repo: &str, slug: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.thread_op_lock(project, &format!("design:{repo}/{slug}"))
     }
 
@@ -175,12 +175,14 @@ impl Host {
         view
     }
 
-    /// 누가 쓰나: 조작 권한의 사람(aaa 밖 터미널·사람의 셸 pane·웹)과, `branch`(저장소, 주제)를 주면 그 기획 branch의 대화
-    /// thread(보기 권한·다른 머신 중계여도). 다른 thread·coordinator 세션은 쓰지 않는다
+    /// 누가 쓰나: 조작 권한의 사람(aaa 밖 터미널·사람의 셸 pane·웹)과, `branch`(저장소, 주제)를 주면 그 프로젝트 그 기획
+    /// branch 대화의 지금 thread(보기 권한·다른 머신 중계여도). 다른 thread·버린 대화에서 남은 thread·coordinator 세션과,
+    /// 알린 세션만으로 정한 thread 범위(`worker:<세션>@unverified`)는 쓰지 않는다
     pub(crate) fn design_writer(
         &self,
         role: DeviceRole,
         actor: &str,
+        project: &str,
         branch: Option<(&str, &str)>,
     ) -> Result<String, ErrorBody> {
         let session = actor
@@ -188,8 +190,12 @@ impl Host {
             .or_else(|| actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).map(|(_, s)| s));
         if let Some(session) = session {
             if let Some(rec) = self.thread_of_pane(session) {
-                if let (Some(own), Some((repo, slug))) = (rec.design.as_deref(), branch)
-                    && own == format!("{repo}/{slug}")
+                if let Some((repo, slug)) = branch
+                    && rec.project == project
+                    && rec.design.as_deref() == Some(format!("{repo}/{slug}").as_str())
+                    && self
+                        .design_chat_load(project, repo, slug)
+                        .is_ok_and(|c| c.thread.as_deref() == Some(rec.id.as_str()))
                 {
                     return Ok(rec.id);
                 }
@@ -227,11 +233,29 @@ impl Host {
         slug: &str,
         title: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor, None)?;
+        self.design_branch_open_with(role, actor, project, repo, slug, title, true).await
+    }
+
+    /// `create`가 아니면 host 기록이 있는 branch만 다시 연다(대화 배경 일: 그 사이 버린 branch를 되살리지 않는다)
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_branch_open_with(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        title: Option<String>,
+        create: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let by = self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
         let old = self.design_branch_load(project, &target.name, slug)?;
+        if old.is_none() && !create {
+            return Err(err(ErrorCode::NotFound, format!("기획 branch가 없다(버렸다): design/{slug}")));
+        }
         let conn = self.design_write_conn(&mid)?;
         if old.is_none() {
             self.design_chat_forget(project, &target.name, slug).await?;
@@ -294,7 +318,7 @@ impl Host {
         summary: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
         // 저장소 이름은 그대로 찾으므로(design_target) 대화 thread의 `<저장소>/<주제>`와 바로 견준다
-        let by = self.design_writer(role, actor, Some((repo, slug)))?;
+        let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         let path = crate::design::checked_path(&folder, path)?;
@@ -348,15 +372,19 @@ impl Host {
         repo: &str,
         slug: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_writer(role, actor, None)?;
+        self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
-        // 대화 thread를 먼저 끝낸다(버린 branch에 쓰지 않게)
-        self.design_chat_retire(project, &target.name, slug, actor).await?;
+        // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
-        let rec = self
-            .design_branch_load(project, &target.name, slug)?
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")))?;
+        let Some(rec) = self.design_branch_load(project, &target.name, slug)? else {
+            // 앞선 버리기가 branch는 지웠는데 대화 thread를 끝내지 못했으면 마저 끝낸다
+            if self.design_chat_load(project, &target.name, slug)?.thread.is_some() {
+                self.design_chat_retire(project, &target.name, slug, actor).await?;
+                return Ok(FrontResponse::Done);
+            }
+            return Err(err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")));
+        };
         let conn = self.design_write_conn(&mid)?;
         // origin branch는 host가 만들어 올린 것만, 그 판일 때만 지운다. 있던 로컬 branch는 남긴다
         let req = AgentRequest::DesignClose {
@@ -376,6 +404,13 @@ impl Host {
         std::fs::remove_file(&path).map_err(|e| internal(format!("{}: {e}", path.display())))?;
         self.design_push_gen.lock().unwrap().remove(&format!("{project}/{}/{slug}", target.name));
         self.db.audit(actor, "design_discard", &format!("{project} {}/{slug}", target.name));
+        // branch를 지운 뒤에 대화를 끝낸다(닫기가 멈추면 대화는 그대로 남는다)
+        self.design_chat_retire(project, &target.name, slug, actor).await.map_err(|e| {
+            err(
+                e.code,
+                format!("기획 branch는 버렸으나 대화 thread를 끝내지 못했다(다시 버리면 마저 끝낸다): {}", e.message),
+            )
+        })?;
         Ok(FrontResponse::Done)
     }
 
@@ -658,9 +693,15 @@ mod tests {
         cfg.notify.web_push = false;
         let h = Arc::new(Host::open(cfg, state.clone()).unwrap());
         h.project_create("demo", Default::default(), "test").unwrap();
-        for (id, pane, design) in [("t-0001", "01DESIGN", Some("repo/boss-dex")), ("t-0002", "01OTHER", None)] {
+        // t-0003은 같은 대화 표지지만 대화의 지금 thread가 아니다(버린 대화에서 남은 thread), t-0004는 다른 프로젝트의 것
+        for (project, id, pane, design) in [
+            ("demo", "t-0001", "01DESIGN", Some("repo/boss-dex")),
+            ("demo", "t-0002", "01OTHER", None),
+            ("demo", "t-0003", "01ORPHAN", Some("repo/boss-dex")),
+            ("other", "t-0004", "01ELSE", Some("repo/boss-dex")),
+        ] {
             let mut rec = crate::orch::ThreadRec::starting(
-                "demo",
+                project,
                 "기획",
                 "m",
                 "",
@@ -672,8 +713,10 @@ mod tests {
             rec.pane = Some(pane.into());
             rec.design = design.map(str::to_string);
             rec.status = aaa_proto::ThreadStatus::Open;
-            h.db.thread_import("demo", id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            h.db.thread_import(project, id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
         }
+        let chat = crate::design_chat::Chat { thread: Some("t-0001".into()), ..Default::default() };
+        h.design_chat_store("demo", "repo", "boss-dex", &chat).unwrap();
         let save = |branch: &str| FrontRequest::DesignSave {
             project: "demo".into(),
             repo: "repo".into(),
@@ -689,11 +732,15 @@ mod tests {
             assert_eq!(e.code, ErrorCode::NotFound, "{actor}: {e:?}");
         }
         assert_eq!(
-            h.design_writer(DeviceRole::Reader, "worker:01DESIGN", Some(("repo", "boss-dex"))).unwrap(),
+            h.design_writer(DeviceRole::Reader, "worker:01DESIGN", "demo", Some(("repo", "boss-dex"))).unwrap(),
             "t-0001"
         );
         let others = [
             ("worker:01DESIGN", save("other")),
+            // 알린 세션만으로 정한 thread 범위(coordinator pane·떼어 낸 프로세스가 대화 thread 세션을 댄 것)
+            ("worker:01DESIGN@unverified", save("boss-dex")),
+            ("worker:01ORPHAN", save("boss-dex")),
+            ("worker:01ELSE", save("boss-dex")),
             ("worker:01OTHER", save("boss-dex")),
             ("local:me@01OTHER", save("boss-dex")),
             (

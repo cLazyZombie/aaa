@@ -242,6 +242,25 @@ print('design-relay-ok', saved['commit'])
         "저장한 thread가 commit 메시지에 남는다"
     );
     assert_eq!(git(&game, &["rev-parse", "HEAD"]), game_head, "저장소 checkout은 그대로");
+    // pane 밖 프로세스가 대화 thread의 세션을 대도(coordinator pane·떼어 낸 프로세스와 같은 꼴) 그 thread로 쓰지 못한다
+    let claimed =
+        w.h.cmd(&[
+            "--json",
+            "plan",
+            "save",
+            "game",
+            "docs/claim.md",
+            "--branch",
+            "boss-dex",
+            "--new",
+            "--file",
+            path_str(&body),
+        ])
+        .env("AAA_SESSION_ID", &pane)
+        .capture_output()
+        .unwrap();
+    assert!(!claimed.status.success(), "{}", String::from_utf8_lossy(&claimed.stdout));
+    assert!(String::from_utf8_lossy(&claimed.stderr).contains("세션"), "{}", String::from_utf8_lossy(&claimed.stderr));
     assert!(!game.join("docs/boss.md").exists());
 
     // 올린 기획 branch에서 갈라진 구현 thread는 그 기획 commit을 받는다(2-3 「main에 반영」·3단계 구현 맡기기의 바탕)

@@ -27,6 +27,20 @@ const MAX_SAY: usize = 100_000;
 const DELIVER_WAIT: Duration = Duration::from_secs(600);
 /// 띄우는 중인 대화 thread를 끝내려고 준비가 끝나기를 기다리는 상한
 const END_WAIT: Duration = Duration::from_secs(60);
+/// 말을 하나도 보내지 못하고 다시 도는 배경 일의 상한(thread가 거듭 멈추면 까닭을 남기고 다음 말을 기다린다)
+const MAX_TRIES: u32 = 3;
+
+/// 도는 배경 일 자리. 일이 끝나거나 panic해도 놓는다
+struct ChatSlot {
+    host: Arc<Host>,
+    key: String,
+}
+
+impl Drop for ChatSlot {
+    fn drop(&mut self) {
+        self.host.design_chatting.lock().unwrap().remove(&self.key);
+    }
+}
 
 /// 기획 branch 하나의 대화
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +105,13 @@ impl Host {
         }
     }
 
-    fn design_chat_store(&self, project: &str, repo: &str, slug: &str, chat: &Chat) -> Result<(), ErrorBody> {
+    pub(crate) fn design_chat_store(
+        &self,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        chat: &Chat,
+    ) -> Result<(), ErrorBody> {
         let path = self.design_chat_path(project, repo, slug)?;
         let dir = path.parent().ok_or_else(|| internal("대화 기록 폴더가 없다"))?;
         std::fs::create_dir_all(dir).map_err(|e| internal(format!("{}: {e}", dir.display())))?;
@@ -136,7 +156,7 @@ impl Host {
         slug: &str,
         text: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_writer(role, actor, None)?;
+        self.design_writer(role, actor, project, None)?;
         if text.trim().is_empty() {
             return Err(bad("글이 비었다"));
         }
@@ -144,16 +164,22 @@ impl Host {
             return Err(err(ErrorCode::TooLarge, format!("한 번에 {MAX_SAY}바이트까지 보낸다")));
         }
         let (target, _) = self.design_target(project, repo)?;
-        let rec = self
-            .design_branch_load(project, &target.name, slug)?
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
-        self.design_chat_edit(project, &target.name, slug, |c| {
-            c.pending.push(text.to_string());
-            c.error = None;
-            c.retired = false;
-            c.said_ms = aaa_common::util::now_ms();
-        })
-        .await?;
+        // branch 잠금 안에서 남긴다: 버리기와 엇갈리면 버리기 전(버리기가 이 말도 버린다)이거나 뒤(없다)다
+        let rec = {
+            let lock = self.design_branch_lock(project, &target.name, slug);
+            let _one = lock.lock().await;
+            let rec = self
+                .design_branch_load(project, &target.name, slug)?
+                .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
+            self.design_chat_edit(project, &target.name, slug, |c| {
+                c.pending.push(text.to_string());
+                c.error = None;
+                c.retired = false;
+                c.said_ms = aaa_common::util::now_ms();
+            })
+            .await?;
+            rec
+        };
         self.db.audit(actor, "design_say", &format!("{project} {}/{slug} {} bytes", target.name, text.len()));
         self.spawn_design_chat(project, &target.name, slug, true, actor);
         Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
@@ -161,46 +187,88 @@ impl Host {
 
     /// 배경 일: (쉬는 branch는 다시 열고) thread를 쓸 수 있게 하고(`start`면 없을 때 새로), 남은 말을 brief 뒤 차례로 보낸다
     pub(crate) fn spawn_design_chat(self: &Arc<Self>, project: &str, repo: &str, slug: &str, start: bool, actor: &str) {
+        self.spawn_design_chat_try(project, repo, slug, start, actor, 0);
+    }
+
+    fn spawn_design_chat_try(
+        self: &Arc<Self>,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        start: bool,
+        actor: &str,
+        tries: u32,
+    ) {
         let key = format!("{project}/{repo}/{slug}");
         if !self.design_chatting.lock().unwrap().insert(key.clone()) {
-            // 도는 일이 남은 말을 끝까지 보낸다(그 사이 온 말도 집어 간다)
+            // 도는 일이 끝난 뒤 남은 말을 보고 다시 돈다(아래)
             return;
         }
+        let slot = ChatSlot { host: self.clone(), key };
         let (host, project, repo, slug, actor) =
             (self.clone(), project.to_string(), repo.to_string(), slug.to_string(), actor.to_string());
         tokio::spawn(async move {
-            host.design_chat_work(&project, &repo, &slug, start, &actor).await;
-            // 끝나는 사이에 온 말은 ticker(`design_chat_resume`)가 잇는다
-            host.design_chatting.lock().unwrap().remove(&key);
+            let sent = host.design_chat_work(&project, &repo, &slug, start, &actor).await;
+            drop(slot);
+            // 일하는 사이에 온 말, thread가 멈춰(보류·실패·끝남) 못 보낸 말이 남았으면 다시 돈다. 띄우지 못한 까닭이 있거나
+            // 버린 대화는 다음 말을 기다린다. 하나도 보내지 못한 채 거듭 돌면 까닭을 남기고 멈춘다
+            let Ok(chat) = host.design_chat_load(&project, &repo, &slug) else { return };
+            if chat.pending.is_empty() || chat.error.is_some() || chat.retired {
+                return;
+            }
+            let tries = if sent { 0 } else { tries + 1 };
+            if tries >= MAX_TRIES {
+                tracing::warn!(project, repo, slug, "기획 대화 thread가 거듭 말을 받지 못해 멈췄다");
+                aaa_common::diagnostic::ignored(
+                    host.design_chat_edit(&project, &repo, &slug, |c| {
+                        c.error = Some("대화 thread가 거듭 말을 받지 못했다(다시 말하면 다시 한다)".into());
+                    })
+                    .await,
+                    "까닭을 못 남겨도 로그에 있다",
+                );
+                return;
+            }
+            host.spawn_design_chat_try(&project, &repo, &slug, true, &actor, tries);
         });
     }
 
-    async fn design_chat_work(self: &Arc<Self>, project: &str, repo: &str, slug: &str, start: bool, actor: &str) {
+    /// 한 번 돈다. 말을 하나라도 보냈으면 참
+    async fn design_chat_work(
+        self: &Arc<Self>,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        start: bool,
+        actor: &str,
+    ) -> bool {
         let ready = async {
             let rec = self
                 .design_branch_load(project, repo, slug)?
                 .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
             if rec.state == DesignBranchState::Rest {
-                self.design_branch_open(DeviceRole::Local, actor, project, repo, slug, None).await?;
+                // 그 사이 버렸으면 되살리지 않는다
+                self.design_branch_open_with(DeviceRole::Local, actor, project, repo, slug, None, false).await?;
             }
             self.design_chat_ready(project, repo, slug, actor, start).await
         }
         .await;
         match ready {
             Ok(Some(_)) => {}
-            Ok(None) => return,
+            Ok(None) => return false,
             Err(e) => {
                 tracing::warn!(project, repo, slug, "기획 대화 thread를 띄우지 못했다: {}", e.message);
                 aaa_common::diagnostic::ignored(
                     self.design_chat_edit(project, repo, slug, |c| c.error = Some(e.message)).await,
                     "까닭을 못 남겨도 로그에 있다",
                 );
-                return;
+                return false;
             }
         }
-        if let Err(e) = tokio::time::timeout(DELIVER_WAIT, self.design_deliver(project, repo, slug)).await {
+        let mut sent = false;
+        if let Err(e) = tokio::time::timeout(DELIVER_WAIT, self.design_deliver(project, repo, slug, &mut sent)).await {
             tracing::warn!(project, repo, slug, "기획 대화 thread가 준비되지 않아 말을 남겨 두었다: {e}");
         }
+        sent
     }
 
     /// 대화 thread를 쓸 수 있게 한다: 열린 것은 그대로, 쉬느라 내린 것은 잇고, 없거나 잇지 못하면(`start`일 때만) 새로 띄운다
@@ -301,7 +369,9 @@ impl Host {
         ))
     }
 
-    async fn design_deliver(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
+    /// 남은 말을 차례로 보낸다(보내면 `sent`를 참으로). thread가 열림·뜨는 중이 아니면(보류·실패·끝남) 돌아간다: 배경 일이
+    /// 다시 잇거나 띄운다
+    async fn design_deliver(self: &Arc<Self>, project: &str, repo: &str, slug: &str, sent: &mut bool) {
         let mut events = self.thread_events.subscribe();
         loop {
             let Ok(chat) = self.design_chat_load(project, repo, slug) else { return };
@@ -310,12 +380,15 @@ impl Host {
             }
             let Some(next) = chat.pending.first().cloned() else { return };
             let Some(thread) = chat.thread.clone() else { return };
-            let ready = self
-                .load(project, &thread)
-                .is_ok_and(|r| r.status == ThreadStatus::Open && r.brief == aaa_proto::BriefState::Delivered);
+            let ready = match self.load(project, &thread) {
+                Ok(r) if r.status == ThreadStatus::Open => r.brief == aaa_proto::BriefState::Delivered,
+                Ok(r) if r.status == ThreadStatus::Starting => false,
+                _ => return,
+            };
             if ready {
                 match self.thread_message(project, &thread, next.clone(), MessageMode::Queue, "design").await {
                     Ok(_) => {
+                        *sent = true;
                         aaa_common::diagnostic::ignored(
                             self.design_chat_edit(project, repo, slug, |c| {
                                 if c.pending.first() == Some(&next) {

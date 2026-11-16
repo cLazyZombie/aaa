@@ -37,6 +37,12 @@ impl Agent {
             self.host_thread_read.load(std::sync::atomic::Ordering::Relaxed) && self.host_tx().is_some(),
             "연결된 host의 thread_read.v1 지원이 필요하다"
         );
+        // 기획 저장은 host가 그 branch 올리기를 기다릴 수 있다(읽기보다 길게)
+        let wait = if matches!(request, FrontRequest::DesignSave { .. }) {
+            Duration::from_secs(aaa_proto::DESIGN_RELAY_SAVE_SECS)
+        } else {
+            Duration::from_secs(25)
+        };
         let id = util::new_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
@@ -50,7 +56,7 @@ impl Agent {
             request: Box::new(request),
         }))
         .await;
-        let result = tokio::time::timeout(Duration::from_secs(25), rx).await;
+        let result = tokio::time::timeout(wait, rx).await;
         self.read_waiters.lock().unwrap().remove(&id);
         result.context("원격 읽기 host 응답 시간 초과")?.context("원격 읽기 host 응답 채널이 닫혔다")
     }

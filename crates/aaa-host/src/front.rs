@@ -219,7 +219,16 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         && pid.is_some_and(|p| aaa_common::process::tty(p).is_some());
     let actor = match (&sess, sess_role) {
         _ if person => format!("person:{}", pid.unwrap()),
-        (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
+        (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker)))
+            if caller == Caller::Pane(s.clone()) =>
+        {
+            format!("{}:{s}", r.as_str())
+        }
+        // 알린 세션만으로 정한 thread 범위(pane 밖·떼어 낸 프로세스·다른 pane): 보기로 줄이되 그 thread의 신원은 주지 않는다
+        // (기획 대화·아이디어 thread의 자기 문서 쓰기는 `worker:<세션>`이 그 thread pane일 때만이다)
+        (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => {
+            format!("{}:{s}@unverified", r.as_str())
+        }
         _ if caller == Caller::Detached => format!("detached:{client}"),
         (Some(s), _) if caller == Caller::Pane(s.clone()) => format!("local:{client}@{s}"),
         (Some(_), _) => format!("local:{client}@unverified"),
