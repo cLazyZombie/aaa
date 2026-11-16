@@ -26,12 +26,14 @@ pub(crate) const FEATURE: &str = "design.v1";
 
 /// 저장소 하나의 읽을 자리
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Target {
+pub(crate) struct Target {
     /// 경로 끝 이름
-    name: String,
-    path: String,
-    machine: Option<String>,
-    folder: Option<String>,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) machine: Option<String>,
+    pub(crate) folder: Option<String>,
+    /// 기획 branch를 올리기 전 검사(`design_check`)
+    pub(crate) check: Vec<String>,
 }
 
 /// 프로젝트 저장소 목록에서 이름마다 한 자리를 고른다: `design`을 단 항목이 있으면 그것, 없으면 처음 항목. 설정 차례를 지킨다
@@ -43,12 +45,14 @@ fn targets(settings: &crate::project::ProjectSettings) -> Vec<Target> {
         if name.is_empty() {
             continue;
         }
-        let folder = settings
-            .designs
-            .iter()
-            .find(|d| d.repo.path == repo.path && d.repo.machine == repo.machine)
-            .map(|d| d.folder.clone());
-        let candidate = Target { name: name.clone(), path: repo.path.clone(), machine: repo.machine.clone(), folder };
+        let design = settings.designs.iter().find(|d| d.repo.path == repo.path && d.repo.machine == repo.machine);
+        let candidate = Target {
+            name: name.clone(),
+            path: repo.path.clone(),
+            machine: repo.machine.clone(),
+            folder: design.map(|d| d.folder.clone()),
+            check: Vec::new(),
+        };
         match by_name.get(&name) {
             None => {
                 order.push(name.clone());
@@ -69,13 +73,18 @@ fn repo_name(path: &str) -> String {
 }
 
 impl Host {
-    fn design_targets(&self, project: &str) -> Result<Vec<Target>, ErrorBody> {
+    pub(crate) fn design_targets(&self, project: &str) -> Result<Vec<Target>, ErrorBody> {
         let dir = self.project_dir(project)?;
-        Ok(targets(&crate::project::ProjectSettings::load(&dir)))
+        let mut list = targets(&crate::project::ProjectSettings::load(&dir));
+        // 올리기 전 검사는 host.toml에서만 읽는다(프로젝트 폴더는 agent가 고칠 수 있다)
+        for t in &mut list {
+            t.check = self.cfg.projects.design_check.get(&t.name).cloned().unwrap_or_default();
+        }
+        Ok(list)
     }
 
     /// 그 저장소의 기획 폴더 자리와 연결(기획 폴더가 없거나 머신이 꺼져 있으면 오류)
-    fn design_target(&self, project: &str, repo: &str) -> Result<(Target, String), ErrorBody> {
+    pub(crate) fn design_target(&self, project: &str, repo: &str) -> Result<(Target, String), ErrorBody> {
         let target = self
             .design_targets(project)?
             .into_iter()
@@ -97,6 +106,32 @@ impl Host {
             ));
         }
         Ok(conn)
+    }
+
+    /// 기획 요청(FRONT_API 1.170·1.171). 공용 dispatcher의 poll 스택이 함께 커지지 않게 따로 둔다(부르는 쪽이 heap에 둔다)
+    pub(crate) async fn call_design(
+        self: &Arc<Self>,
+        role: aaa_proto::DeviceRole,
+        actor: &str,
+        req: aaa_proto::FrontRequest,
+    ) -> Result<FrontResponse, ErrorBody> {
+        use aaa_proto::FrontRequest as R;
+        match req {
+            R::DesignTree { project } => self.design_tree(&project).await,
+            R::DesignRead { project, repo, path, branch } => {
+                self.design_read(&project, &repo, &path, branch.as_deref()).await
+            }
+            R::DesignBranchOpen { project, repo, slug, title } => {
+                self.design_branch_open(role, actor, &project, &repo, &slug, title).await
+            }
+            R::DesignSave { project, repo, branch, path, base, text, summary } => {
+                self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary).await
+            }
+            R::DesignDiscard { project, repo, branch } => {
+                self.design_discard(role, actor, &project, &repo, &branch).await
+            }
+            _ => Err(err(ErrorCode::Internal, "기획 요청이 아니다")),
+        }
     }
 
     /// 프로젝트 저장소마다 기획 트리(머신마다 동시에 읽는다)
@@ -126,6 +161,7 @@ impl Host {
             folder: t.folder.clone(),
             tree: None,
             error: None,
+            branches: Vec::new(),
         };
         let Some(folder) = t.folder.clone() else { return view };
         let mid = match self.resolve_machine(t.machine.as_deref()) {
@@ -139,7 +175,8 @@ impl Host {
         let key = format!("{project}/{}", t.name);
         let fresh = async {
             let conn = self.design_conn(&mid)?;
-            match conn.request_timeout(AgentRequest::DesignTree { repo: t.path.clone(), folder }, TREE_WAIT).await? {
+            let req = AgentRequest::DesignTree { repo: t.path.clone(), folder: folder.clone(), branch: None };
+            match conn.request_timeout(req, TREE_WAIT).await? {
                 AgentResponse::DesignTree(tree) => Ok(tree),
                 _ => Err(err(ErrorCode::Internal, "예상하지 못한 응답")),
             }
@@ -156,6 +193,7 @@ impl Host {
                 view.error = Some(e.message);
             }
         }
+        view.branches = self.design_branch_views(project, &t.name, &t.path, &folder, &mid).await;
         view
     }
 
@@ -164,13 +202,31 @@ impl Host {
         self.design_trees.lock().unwrap().get(&format!("{project}/{repo}")).map(|t: &DesignTree| t.commit.clone())
     }
 
-    pub(crate) async fn design_read(&self, project: &str, repo: &str, path: &str) -> Result<FrontResponse, ErrorBody> {
+    /// 문서 하나. `branch`(slug)면 host가 기억하는 그 기획 branch 끝에서 읽는다
+    pub(crate) async fn design_read(
+        &self,
+        project: &str,
+        repo: &str,
+        path: &str,
+        branch: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         let path = checked_path(&folder, path)?;
-        let conn = self.design_conn(&mid)?;
-        let commit = self.design_commit(project, repo);
-        let req = AgentRequest::DesignRead { repo: target.path.clone(), folder, commit, path: path.clone() };
+        let (conn, commit) = match branch {
+            Some(slug) => {
+                self.design_known_branch(project, &target.name, slug)?;
+                (self.design_write_conn(&mid)?, None)
+            }
+            None => (self.design_conn(&mid)?, self.design_commit(project, repo)),
+        };
+        let req = AgentRequest::DesignRead {
+            repo: target.path.clone(),
+            folder,
+            commit,
+            path: path.clone(),
+            branch: branch.map(str::to_string),
+        };
         let AgentResponse::DesignText { text, blob, commit, committed_ms } =
             conn.request_timeout(req, READ_WAIT).await?
         else {
@@ -187,8 +243,16 @@ impl Host {
                 blob,
                 commit,
                 committed_ms,
+                branch: branch.map(str::to_string),
             },
         })
+    }
+
+    /// host가 만든(기록이 있는) 기획 branch인가
+    fn design_known_branch(&self, project: &str, repo: &str, slug: &str) -> Result<(), ErrorBody> {
+        self.design_branch_load(project, repo, slug)?
+            .map(|_| ())
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")))
     }
 
     /// 문서 안 그림·영상(웹 `GET /api/v1/projects/<p>/design/<저장소>/<경로>?c=<commit>`). 조각으로 받아 모은다. `range`는 HTTP
@@ -198,7 +262,7 @@ impl Host {
         project: &str,
         repo: &str,
         path: &str,
-        commit: Option<&str>,
+        (commit, branch): (Option<&str>, Option<&str>),
         range: Option<&str>,
     ) -> Result<DesignBytes, ErrorBody> {
         let (target, mid) = self.design_target(project, repo)?;
@@ -210,7 +274,14 @@ impl Host {
                 .design_commit(project, repo)
                 .ok_or_else(|| err(ErrorCode::NotFound, "기획 트리를 먼저 읽어야 한다"))?,
         };
-        let file = FileAt { conn: self.design_conn(&mid)?, repo: target.path, folder, commit, path };
+        let conn = match branch {
+            Some(slug) => {
+                self.design_known_branch(project, &target.name, slug)?;
+                self.design_write_conn(&mid)?
+            }
+            None => self.design_conn(&mid)?,
+        };
+        let file = FileAt { conn, repo: target.path, folder, commit, path, branch: branch.map(str::to_string) };
         let Some(range) = range else { return Ok(DesignBytes::Whole(file.read(0, u64::MAX).await?.0)) };
         let total = file.read(0, 0).await?.1;
         Ok(match crate::files::parse_range(Some(range), total) {
@@ -238,6 +309,7 @@ struct FileAt {
     folder: String,
     commit: String,
     path: String,
+    branch: Option<String>,
 }
 
 impl FileAt {
@@ -254,6 +326,7 @@ impl FileAt {
                 path: self.path.clone(),
                 offset: offset + bytes.len() as u64,
                 len,
+                branch: self.branch.clone(),
             };
             let AgentResponse::DesignChunk { data, total } = self.conn.request_timeout(req, READ_WAIT).await? else {
                 return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
@@ -275,7 +348,7 @@ impl FileAt {
 }
 
 /// 저장소 기준 경로를 정리하고 기획 폴더 안인지 본다
-fn checked_path(folder: &str, path: &str) -> Result<String, ErrorBody> {
+pub(crate) fn checked_path(folder: &str, path: &str) -> Result<String, ErrorBody> {
     let path = design_clean_path(path).ok_or_else(|| err(ErrorCode::BadRequest, "문서 경로가 잘못됐다"))?;
     if !design_inside(folder, &path) {
         return Err(err(ErrorCode::BadRequest, "기획 폴더 밖 경로다"));

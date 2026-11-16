@@ -15,6 +15,14 @@
 | 경로 정리·폴더 안 판정·제목(YAML 머리 건너뜀) | `aaa-proto` `design::tests` | `cargo test -p aaa-proto` |
 | 트리 차례(폴더 먼저·README 먼저·폴더 제목), 상대 경로 풀기(저장소 밖·주소·절대 경로 거부, 퍼센트 부호의 `..`), 그림 주소 | `web/test/designModel.test.mjs` | `cd web && node --test test/designModel.test.mjs` |
 | 실제 host·agent·git origin으로 트리 → 문서 → 같은 commit 그림 → 영상 재생 → 문서 안 링크 → 주소 다시 열기, 기획 폴더 없는 저장소 줄, 보기 기기 읽기, 폴더 밖 400·없는 범위 416·Range 206·기기 없음 401, 512KiB 조각을 이어 받은 0.9MiB 파일의 SHA-256과 조각 경계를 넘는 Range | 웹 E2E `135-design-docs`(Chromium·WebKit × 1280·390, 조합마다 한 단계) | `bash scripts/ci-local.sh --only web,e2e,public --spec 135` |
+| 2-1 기획 branch: 열기(origin main에서)·다시 열기·저장(새 문서·기준 blob·겹침 conflict·폴더 밖 거부)·branch 트리(고친 파일·앞선 수)·branch 판 읽기와 main으로는 거부·검사 실패면 올리지 않음·올리기·쉼(남은 파일이 있으면 내리지 않음)·다시 꺼내기·버리기(origin까지) | `aaa-agent` `design_write::tests::open_save_push_rest_and_discard` | `cargo test -p aaa-agent --lib design_write::` |
+| 2-1 force 없이 올리기(origin에 앞선 판이면 실패), 손으로 고친 worktree에는 쓰지 않음, 로컬에 없는 branch는 origin에서 꺼냄, 잘못된 주제 거부 | `design_write::tests::never_forces_or_writes_over_foreign_changes` | 위와 같음 |
+| 2-1 저장소 hook(post-checkout·prepare-commit-msg·post-commit)이 돌지 않음, 쓰다 실패(index 잠금)하면 파일이 남지 않고 다음 저장이 됨, 대소문자만 다른 새 문서 거부, 같은 branch를 기획 자리가 아닌 곳에 꺼냈으면 쓰지도 내리지도 않음 | `design_write::tests::no_hooks_rollback_case_twins_and_foreign_checkouts` | `cargo test -p aaa-agent --lib design_write::` |
+| 2-1 버릴 때 origin에 남이 그 위로 올렸으면 아무것도 지우지 않음(lease) | `design_write::tests::never_forces_or_writes_over_foreign_changes` | 위와 같음 |
+| 2-1 휴대용 작업 root(activate·mount 있음)에서 기획 자리를 `aaa:` 사유로 잠그고, 남은 파일 때문에 못 지우면 다시 잠그고, 쉼·다시 열기·버리기 | `work_root::recovery_tests::design_worktrees_lock_on_portable_roots` | `cargo test -p aaa-agent --lib work_root::recovery_tests::design` |
+| 2-1 thread·평가 세션과 보기 기기는 실제 입구(`Host::call`)에서 기획 branch를 열거나 쓰거나 버리지 못하고, 사람의 셸 pane은 지나간다 | `aaa-host` `design_branch::tests::sessions_and_readers_do_not_write_design_branches` | `cargo test -p aaa-host --lib design_branch::` |
+| 2-1 `.git` 조각·끝의 `.`·Windows 금지 글자·예약 이름 경로 거부 | `aaa-proto` `design::tests::clean_path_rejects_escape` | `cargo test -p aaa-proto` |
+| 2-1 실제 host·agent·Git과 CLI: `plan new`·`save`·`show --branch`·`list`·`discard`, 겹침·기준 판 없음 거부, 쉼(1초) 뒤 한 번 올림·`design_check` 통과, main과 main checkout 그대로, 버리면 origin branch까지 / 쉼 창 뒤 tick이 worktree를 돌려주고 branch·commit은 남김, 검사 실패면 올리지 않고 까닭을 남김, 쉬는 branch에는 쓰지 않음, 다시 열면 이어 씀 | `aaa` m13 `design_branch::` 둘 | `cargo test -p aaa --test m13 design_branch` |
 
 - git 실험실은 `-c init.defaultBranch=main`·`-c user.*`를 주고 index에 symlink·gitlink를 직접 넣어 OS의 symlink 권한과 기본 branch 설정에 기대지 않는다.
 - 1분 받기 간격은 시험마다 새 임시 저장소(다른 toplevel)라 서로 막지 않는다. 고정 commit 시험은 clone에서 직접 `git fetch`해 시계를 기다리지 않는다.
@@ -28,6 +36,22 @@
 - 받은 commit의 조상 검사(`merge-base --is-ancestor`)를 빼면 `pinned_commit_reads_the_old_text_after_origin_moves`가 실패했다.
 - 1분 간격 안에서 지난 받기 실패를 버리면 `fetch_failure_keeps_the_held_tree`가 실패했다.
 - 기본 ref 고르기를 줄인 이름(`rev-parse --abbrev-ref origin/HEAD` → `origin/main`)인 옛 판으로 되돌리면 `tree_reads_origin_main_without_touching_checkout`가 로컬 branch의 옛 판을 읽어 실패했다. fallback 이름만 줄여서는 앞의 `symbolic-ref`가 온전한 이름을 주어 통과한다.
+
+- 2-1: 버리기에서 origin branch를 지우지 않게 바꾸면 m13 `design_branch_saves_…`가 「host가 올린 origin branch도 지운다」에서 실패했다.
+
+## 2-1 독립 리뷰에서 고친 것
+
+- `design_check`를 agent가 고칠 수 있는 프로젝트 설정에서 읽어 승인 없는 명령 실행이 됐다: routine 명령처럼 host.toml `[projects.design_check]`로 옮겼고, 기획 branch 기록도 host 상태 폴더로 옮겼다.
+- 버리기가 남의 origin 작업을 지울 수 있었다(origin에서 꺼낸 branch, 남이 그 위로 올린 판): host가 만든 branch만, lease로 host가 올린 판일 때만 지우고, 다르면 아무것도 지우기 전에 멈춘다. 있던 로컬 branch는 남긴다.
+- `--no-verify`는 prepare-commit-msg·post-commit·post-checkout hook을 막지 않는다: `core.hooksPath`를 없는 폴더로 둔다(시험이 세 hook을 심어 확인).
+- 쓰다 실패하면 파일이 남아 그 뒤 저장·쉼이 막혔다: 되돌린다. worktree를 만들다 실패하면 그 자리만 치운다.
+- 대소문자만 다른 이름·Windows 별칭(`a.md.` 등)·`.git` 조각이 기준 판 검사를 지났다: 경로 규칙과 대소문자 쌍 검사로 막는다.
+- branch 이름으로만 worktree를 찾아 사람의 checkout에 쓸 수 있었다: 이 모듈의 자리인지 확인하고, 폴더가 사라진 기록은 정리한다.
+- 올리기·쉼 실패가 붙박였고(대기 기록이 안 지워져 ticker가 잇지 못함), host 대기(120초)가 agent 검사(600초)보다 짧았다: 실패는 간격을 두고 다시, 끝난 대기는 지움, 검사 300초·host 올리기 대기 420초, ticker 일은 따로 띄운다.
+- 쉼이 잠금을 기다린 사이의 저장을 무시했다: 잠금 안에서 쉼 창을 다시 본다. 다시 열 때 origin이 앞서 있으면 따라간다.
+- 재리뷰에서 더 고친 것: 휴대용 root에서 만들다 실패한 잠긴 자리는 잠금을 풀고 치운다(git은 `--force` 하나로는 잠긴 자리를 지우지 않는다: 직접 확인). 다시 열며 따라간 남의 commit을 「올린 판」으로 삼아 버릴 때 지울 수 있었다: host가 저장한 commit(`own_head`)이 끝일 때만 올리고 그 판일 때만 지운다. hook 자리를 예측할 수 있는 임시 경로 대신 `/dev/null`·`NUL`로. 사라진 자리 정리가 저장소 전체를 prune했다: 그 기록만 `worktree remove`(폴더가 없어도 된다: 직접 확인)하고 잠긴 자리는 멈춘다. 엄격한 경로 규칙이 읽기까지 막았다: 쓰기에만. 큰 원래 파일 되돌리기(512KiB 상한)와 비ASCII 대소문자: `checkout`을 먼저, 유니코드 소문자 비교. 실패한 올리기 간격을 거듭 실패마다 늘리고(`design_branch::tests::failed_pushes_back_off`), 쉼 실패는 하루 뒤 다시. 디스크가 빠진 작업 root는 자리 판정에서 건너뛴다. 시험: agent `open_save_push_rest_and_discard`에 지워진 자리 다시 꺼내기, m13에 있던 로컬 branch는 버려도 남음.
+- advisor 확인에서 더 고친 것: 올린 뒤 더 쓰고 올리기 전에 버리면 origin branch가 남았다(lease가 마지막 저장 판이라 맞지 않음): 올린 판에 lease를 건다(m13에 그 순서를 더함). hook 끄기의 OS 분기를 없앴다(agent 실행 파일 경로). 사람의 aaa 셸 pane CLI까지 막던 것을 thread·coordinator pane만 막게 했다. 휴대용 root 잠금 경로를 실제로 돌리는 시험을 더했다.
+- 남긴 것: `git worktree list -z`는 Git 2.36 이상이다(thread 준비도 같은 조건). Windows에서 검사 명령은 `npm.cmd` 같은 이름을 스스로 찾지 않으므로 실행 파일을 그대로 적는다. m13은 Unix에서만 돈다. 새 쓰기 시험은 착지 뒤 GitHub Windows CI에서 처음 돈다(Windows 전용 코드는 없다, 1단계 git 실험실 시험은 Windows CI를 통과했다). coordinator pane을 거부하는 경로는 시험이 없다(실제 coordinator pane이 필요하다).
 
 ## 독립 리뷰에서 고친 것
 

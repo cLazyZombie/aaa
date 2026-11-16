@@ -393,7 +393,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: IdeaCmd,
     },
-    /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다)
+    /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다).
+    /// 고칠 때는 기획 branch `design/<주제>`를 열고 그 branch에 저장한다(main에는 착지 창을 거친다)
     Plan {
         #[command(subcommand)]
         cmd: PlanCmd,
@@ -682,13 +683,48 @@ enum InboxCmd {
 enum PlanCmd {
     /// 저장소마다 기획 폴더와 문서(경로·제목)
     List,
-    /// 문서 글. 첫 줄에 저장소·경로·commit, 빈 줄 뒤에 글이다
+    /// 문서 글. 첫 줄에 저장소·경로·commit·blob(저장의 기준 판), 빈 줄 뒤에 글이다
     Show {
         /// 저장소 이름(경로 끝 폴더 이름)
         repo: String,
         /// 저장소 기준 문서 경로(기획 폴더 안)
         path: String,
+        /// 기획 branch `design/<주제>`의 주제(없으면 main)
+        #[arg(long)]
+        branch: Option<String>,
     },
+    /// 기획 branch `design/<주제>`를 연다: 없으면 origin 기본 branch에서 만들고, 쉬던 것은 다시 꺼낸다
+    New {
+        repo: String,
+        /// 주제(영문 소문자·숫자·`-`, branch 이름이 된다)
+        slug: String,
+        /// 사람이 읽는 주제
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// 기획 branch에 문서 하나를 저장한다(그 문서만 commit, 잠시 뒤 origin에 올린다). 그 사이 다른 판이 생겼으면 쓰지 않는다
+    Save {
+        repo: String,
+        /// 저장소 기준 문서 경로(기획 폴더 안)
+        path: String,
+        /// 기획 branch 주제
+        #[arg(long)]
+        branch: String,
+        /// 읽은 판(`aaa plan show … --branch`의 blob)
+        #[arg(long, conflicts_with = "new")]
+        base: Option<String>,
+        /// 새 문서
+        #[arg(long)]
+        new: bool,
+        /// 쓸 글이 든 파일
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// 무엇을 바꿨나(commit 메시지)
+        #[arg(long)]
+        summary: Option<String>,
+    },
+    /// 기획 branch를 버린다: worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
+    Discard { repo: String, slug: String },
 }
 
 #[derive(Subcommand)]
@@ -2319,7 +2355,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let project = project_or_here(None)?;
             match cmd {
                 PlanCmd::List => front(json, FrontRequest::DesignTree { project }),
-                PlanCmd::Show { repo, path } => front(json, FrontRequest::DesignRead { project, repo, path }),
+                PlanCmd::Show { repo, path, branch } => {
+                    front(json, FrontRequest::DesignRead { project, repo, path, branch })
+                }
+                PlanCmd::New { repo, slug, title } => {
+                    front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title })
+                }
+                PlanCmd::Save { repo, path, branch, base, new, file, summary } => {
+                    if base.is_none() && !new {
+                        anyhow::bail!("--base <blob>(고칠 문서의 판) 또는 --new(새 문서)를 준다");
+                    }
+                    let text =
+                        std::fs::read_to_string(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
+                    front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary })
+                }
+                PlanCmd::Discard { repo, slug } => {
+                    front(json, FrontRequest::DesignDiscard { project, repo, branch: slug })
+                }
             }
         }
         Cmd::Task { cmd: TaskCmd::Queue } => {
@@ -5349,6 +5401,24 @@ fn status_word(s: ProjectStatus) -> &'static str {
     }
 }
 
+/// 기획 branch 한 줄과 고친 파일
+fn print_design_branch(s: &mut String, b: &aaa_proto::DesignBranchView) {
+    use std::fmt::Write as _;
+    let state = match b.state {
+        aaa_proto::DesignBranchState::Open => "",
+        aaa_proto::DesignBranchState::Rest => " · 쉼",
+    };
+    let pushed = match (&b.pushed, &b.push_error) {
+        (_, Some(e)) => format!(" · 올리지 못함: {e}"),
+        (Some(p), None) if b.head.as_ref() == Some(p) => " · 올림".to_string(),
+        _ => " · 올리기 전".to_string(),
+    };
+    let _ = writeln!(s, "  ⑂ design/{} 「{}」 · main보다 {} 앞{state}{pushed}", b.slug, b.title, b.ahead);
+    for c in &b.changed {
+        let _ = writeln!(s, "    {} {}", c.status, c.path);
+    }
+}
+
 fn render_front(r: &FrontResponse) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
@@ -6278,13 +6348,21 @@ fn render_front(r: &FrontResponse) -> String {
                 if let Some(e) = r.tree.as_ref().and_then(|t| t.fetch_error.as_deref()) {
                     let _ = writeln!(s, "  (origin을 받지 못해 가진 판: {e})");
                 }
+                for b in &r.branches {
+                    print_design_branch(&mut s, b);
+                }
             }
             if repos.is_empty() {
                 s.push_str("저장소 없음\n");
             }
         }
+        FrontResponse::DesignBranch { branch } => print_design_branch(&mut s, branch),
+        FrontResponse::DesignSaved { path, commit, blob } => {
+            let _ = writeln!(s, "{path} · commit {commit} · blob {blob}");
+        }
         FrontResponse::DesignDoc { doc } => {
-            let _ = writeln!(s, "{} {} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);
+            let on = doc.branch.as_deref().map(|b| format!(" · design/{b}")).unwrap_or_default();
+            let _ = writeln!(s, "{} {}{on} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);
             let _ = write!(s, "\n{}", doc.text);
             if !doc.text.ends_with('\n') {
                 s.push('\n');

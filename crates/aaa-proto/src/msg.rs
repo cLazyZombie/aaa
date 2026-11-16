@@ -1127,6 +1127,9 @@ pub enum AgentRequest {
     DesignTree {
         repo: String,
         folder: String,
+        /// design_write.v1: 기획 branch `design/<slug>`의 끝에서 읽고 main과 달리 고친 파일을 함께 싣는다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
     /// design.v1: 기획 폴더 안 문서 글 하나. `commit`이 없으면 가지고 있는 origin 기본 branch(fetch하지 않는다)
     DesignRead {
@@ -1135,6 +1138,9 @@ pub enum AgentRequest {
         #[serde(default)]
         commit: Option<String>,
         path: String,
+        /// design_write.v1: 기획 branch에서 읽는다(`commit`은 그 branch의 판이어도 된다)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
     /// design.v1: 기획 폴더 안 파일(그림·영상)의 한 조각. 답은 `DesignChunk`다
     DesignFile {
@@ -1144,6 +1150,50 @@ pub enum AgentRequest {
         path: String,
         offset: u64,
         len: u32,
+        /// design_write.v1: `commit`이 이 기획 branch의 판이어도 된다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+    },
+    /// design_write.v1(t-1894 2단계): 기획 branch `design/<slug>`의 전용 worktree를 연다. 없으면 origin 기본 branch에서 만들고,
+    /// branch만 남은 것(쉼·다른 머신)은 그 branch로 다시 꺼낸다. 답은 `DesignBranch`다
+    DesignOpen {
+        project: String,
+        repo: String,
+        slug: String,
+    },
+    /// design_write.v1: 기획 branch worktree에 문서 하나를 쓰고 그 파일만 commit한다. `base`는 읽은 blob이고 새 문서는 None이다.
+    /// 그 사이 다른 판이 생겼으면 쓰지 않고 conflict다. 답은 `DesignSaved`다
+    DesignSave {
+        project: String,
+        repo: String,
+        folder: String,
+        slug: String,
+        path: String,
+        #[serde(default)]
+        base: Option<String>,
+        text: String,
+        message: String,
+    },
+    /// design_write.v1: 기획 branch를 origin의 같은 이름으로 올린다(force 없음). `check`가 있으면 먼저 그 worktree에서 셸 없이 돌려
+    /// 통과해야 올린다(저장소의 `design_check`, 공개 저장소의 공개 검사). 답은 `DesignPushed`다
+    DesignPush {
+        project: String,
+        repo: String,
+        slug: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        check: Vec<String>,
+    },
+    /// design_write.v1: 기획 branch worktree를 force 없이 내린다(쉼). `discard`면 로컬 branch도(`keep_local`이면 남긴다),
+    /// `remote`가 있으면 origin branch가 그 판일 때만 지운다(lease, 남이 그 위에 올린 것은 지우지 않는다). 답은 `Done`이다
+    DesignClose {
+        project: String,
+        repo: String,
+        slug: String,
+        discard: bool,
+        #[serde(default)]
+        keep_local: bool,
+        #[serde(default)]
+        remote: Option<String>,
     },
     /// work_root.manage.v1을 알린 agent만: 그 머신 작업 root 보기·점검·전환(관리 GUI W5c, `aaa work-root`와 같다)
     WorkRoot {
@@ -1264,6 +1314,24 @@ pub enum AgentResponse {
     DesignChunk {
         data: B64,
         total: u64,
+    },
+    /// design_write.v1 `DesignOpen`의 답: worktree 자리, branch 끝, 갈라진 기준 ref, 어떻게 열었나(`open` 이미 열림·`created` 새로
+    /// 만듦·`local` 있던 로컬 branch·`remote` origin branch에서 꺼냄)
+    DesignBranch {
+        cwd: String,
+        head: String,
+        base: String,
+        #[serde(default)]
+        opened: String,
+    },
+    /// design_write.v1 `DesignSave`의 답: 새 commit과 쓴 파일의 blob
+    DesignSaved {
+        commit: String,
+        blob: String,
+    },
+    /// design_write.v1 `DesignPush`의 답: 올린 commit
+    DesignPushed {
+        head: String,
     },
     Cleanup(Cleanup),
     CleanupAbsent {
@@ -3003,6 +3071,48 @@ pub enum FrontRequest {
         project: String,
         repo: String,
         path: String,
+        /// 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
+        #[serde(default)]
+        #[ts(optional)]
+        branch: Option<String>,
+    },
+    /// 기획 branch 열기(FRONT_API 1.171, 조작): `design/<slug>`를 origin 기본 branch에서 만들거나 쉬던 것을 다시 연다
+    DesignBranchOpen {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        slug: String,
+        /// 주제(없으면 slug). 이미 있는 branch는 바꾸지 않는다
+        #[serde(default)]
+        #[ts(optional)]
+        title: Option<String>,
+    },
+    /// 기획 문서 저장(FRONT_API 1.171, 조작): 기획 branch에 그 문서 하나를 commit한다. `base`는 읽은 blob(새 문서는 없음)이고
+    /// 그 사이 다른 판이 생겼으면 conflict다. origin에는 쉼 뒤 묶어서 올린다
+    DesignSave {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+        path: String,
+        #[serde(default)]
+        #[ts(optional)]
+        base: Option<String>,
+        text: String,
+        /// commit 메시지의 요약(없으면 「<경로> 고침」)
+        #[serde(default)]
+        #[ts(optional)]
+        summary: Option<String>,
+    },
+    /// 기획 branch 버리기(FRONT_API 1.171, 조작): worktree와 로컬 branch, host가 올린 origin branch를 지운다
+    DesignDiscard {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
     },
     /// 아이디어 목록(FRONT_API 1.147, 보기 권한). 다듬는 중을 먼저, 그 안에서는 최근에 고친 것부터
     IdeaList {
@@ -3873,6 +3983,9 @@ impl FrontRequest {
             | FrontRequest::TaskLogPrune { project, .. }
             | FrontRequest::DesignTree { project }
             | FrontRequest::DesignRead { project, .. }
+            | FrontRequest::DesignBranchOpen { project, .. }
+            | FrontRequest::DesignSave { project, .. }
+            | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
             | FrontRequest::IdeaSeen { project, .. }
@@ -4241,6 +4354,16 @@ pub enum FrontResponse {
     /// `design_read`의 답(FRONT_API 1.170)
     DesignDoc {
         doc: crate::DesignDoc,
+    },
+    /// `design_branch_open`의 답(FRONT_API 1.171)
+    DesignBranch {
+        branch: crate::DesignBranchView,
+    },
+    /// `design_save`의 답(FRONT_API 1.171): 새 commit과 쓴 파일의 blob(다음 저장의 기준)
+    DesignSaved {
+        path: String,
+        commit: String,
+        blob: String,
     },
     /// `idea_list`의 답(FRONT_API 1.147)
     Ideas {

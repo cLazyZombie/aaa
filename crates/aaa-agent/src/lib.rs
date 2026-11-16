@@ -14,6 +14,7 @@ mod command;
 mod cwd;
 pub mod deploy;
 mod design;
+mod design_write;
 pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod diff;
@@ -2147,12 +2148,29 @@ impl Agent {
                 .await
                 .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
-            AgentRequest::DesignTree { repo, folder } => design::tree(&repo, &folder).await,
-            AgentRequest::DesignRead { repo, folder, commit, path } => {
-                design::read(&repo, &folder, commit.as_deref(), &path).await
+            AgentRequest::DesignTree { repo, folder, branch } => design::tree(&repo, &folder, branch.as_deref()).await,
+            AgentRequest::DesignRead { repo, folder, commit, path, branch } => {
+                design::read(&repo, &folder, commit.as_deref(), &path, branch.as_deref()).await
             }
-            AgentRequest::DesignFile { repo, folder, commit, path, offset, len } => {
-                design::file(&repo, &folder, &commit, &path, offset, len).await
+            AgentRequest::DesignFile { repo, folder, commit, path, offset, len, branch } => {
+                design::file(&repo, &folder, &commit, &path, (offset, len), branch.as_deref()).await
+            }
+            AgentRequest::DesignOpen { project, repo, slug } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                design_write::open(&cfg, &project, &repo, &slug).await
+            }
+            AgentRequest::DesignSave { project, repo, folder, slug, path, base, text, message } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                design_write::save(&cfg, &project, &repo, &folder, &slug, &path, base.as_deref(), (&text, &message))
+                    .await
+            }
+            AgentRequest::DesignPush { project, repo, slug, check } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                design_write::push(&cfg, &project, &repo, &slug, &check).await
+            }
+            AgentRequest::DesignClose { project, repo, slug, discard, keep_local, remote } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                design_write::close(&cfg, &project, &repo, &slug, (discard, keep_local), remote.as_deref()).await
             }
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,

@@ -692,6 +692,52 @@ notes: Array<string>, };
 
 export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
+export type DesignChange = { path: string,
+/**
+ * `A`(새 파일)·`M`(고침)·`D`(지움)
+ */
+status: string, };
+
+export type DesignBranchState = "open" | "rest";
+
+export type DesignBranchView = { repo: string,
+/**
+ * `design/<slug>`의 slug
+ */
+slug: string,
+/**
+ * 주제(사람이 읽는 이름)
+ */
+title: string, state: DesignBranchState,
+/**
+ * 만든 이
+ */
+by: string, created_ms: number,
+/**
+ * 마지막으로 쓴 때(쉼을 정한다)
+ */
+updated_ms: number,
+/**
+ * 마지막 commit
+ */
+head: string | null,
+/**
+ * origin에 올린 commit
+ */
+pushed: string | null,
+/**
+ * 마지막으로 올리지 못한 까닭
+ */
+push_error: string | null,
+/**
+ * main과 달리 고친 파일
+ */
+changed: Array<DesignChange>,
+/**
+ * main보다 앞선 commit 수
+ */
+ahead: number, };
+
 export type DesignDocEntry = {
 /**
  * 저장소 기준 경로(`docs/game-loop/README.md`)
@@ -726,7 +772,15 @@ truncated: boolean,
 /**
  * origin을 받지 못해 가지고 있던 ref로 읽었다(까닭)
  */
-fetch_error: string | null, };
+fetch_error: string | null,
+/**
+ * 기획 branch를 읽었으면 main과 달리 고친 파일(기획 폴더 안, 경로 차례)
+ */
+changed: Array<DesignChange>,
+/**
+ * 기획 branch를 읽었으면 main보다 앞선 commit 수
+ */
+ahead: number, };
 
 export type DesignRepoView = {
 /**
@@ -748,7 +802,11 @@ tree: DesignTree | null,
 /**
  * 못 읽은 까닭, 또는 마지막으로 읽은 트리를 보이는 까닭(머신 연결 끊김 등)
  */
-error: string | null, };
+error: string | null,
+/**
+ * 이 저장소의 기획 branch(FRONT_API 1.171, 만든 차례)
+ */
+branches: Array<DesignBranchView>, };
 
 export type DesignDoc = {
 /**
@@ -766,7 +824,11 @@ blob: string,
 /**
  * 읽은 commit(그림 주소에 싣는다)
  */
-commit: string, committed_ms: number, };
+commit: string,
+/**
+ * 기획 branch에서 읽었으면 그 slug(FRONT_API 1.171)
+ */
+branch: string | null, committed_ms: number, };
 
 export type IdeaStatus = "open" | "done";
 
@@ -1578,7 +1640,19 @@ user_request?: string, } | { "op": "task_attention_answer", project?: string, at
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string,
+/**
+ * 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
+ */
+branch?: string, } | { "op": "design_branch_open", project?: string, repo: string, slug: string,
+/**
+ * 주제(없으면 slug). 이미 있는 branch는 바꾸지 않는다
+ */
+title?: string, } | { "op": "design_save", project?: string, repo: string, branch: string, path: string, base?: string, text: string,
+/**
+ * commit 메시지의 요약(없으면 「<경로> 고침」)
+ */
+summary?: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -1789,7 +1863,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

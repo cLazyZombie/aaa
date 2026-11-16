@@ -47,6 +47,8 @@ impl std::fmt::Display for Version {
 // 같은 1.11의 선택 기능 model_catalog.v1: host가 모델 목록을 물으면 그 머신 harness 목록 파일에서 보이는 모델만 답한다(t-1509).
 // response_parts.v1: 양쪽 협상 뒤 agent의 큰 Res JSON을 ResPart로 나눈다. 구판 host에는 too_large로 답한다.
 // 같은 1.11의 선택 기능 design.v1: 저장소 기획 폴더 읽기(DesignTree·DesignRead·DesignFile, t-1894). 알린 agent에만 보낸다.
+// 같은 1.11의 선택 기능 design_write.v1: 기획 branch worktree 열기·저장·올리기·내리기(DesignOpen·DesignSave·DesignPush·
+// DesignClose)와 읽기 요청의 `branch`(t-1894 2단계). 알린 agent에만 보낸다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -308,7 +310,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.168: host 전체 보고서 보존 설정 조회·저장(library_retention·library_retention_set).
 // 1.169: 계정 이름 변경을 막는 이미지 작업 조회·결과 불명 기록의 사람 확인 정리.
 // 1.170: 기획 트리·문서 읽기(design_tree·design_read, t-1894). 옛 host에는 새 요청을 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 170 };
+// 1.171: 기획 branch 열기·저장·버리기(design_branch_open·design_save·design_discard), design_read.branch,
+//        DesignRepoView.branches(t-1894 2단계). 옛 host에는 새 요청을 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 171 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

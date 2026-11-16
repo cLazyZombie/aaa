@@ -413,6 +413,14 @@ pub struct ProjectsSection {
     pub max_auto_threads: u32,
     /// 아이디어 전용 thread가 이만큼(초) 쉬면 조용히 보류한다(t-1260). 다시 말하거나 아이디어 화면을 열면 잇는다. 시험에서 줄인다.
     pub idea_rest_secs: u64,
+    /// 기획 branch에 쓴 뒤 이만큼(초) 더 쓰지 않으면 origin에 올린다(t-1894, 묶어서 올린다). 시험에서 줄인다.
+    pub design_push_secs: u64,
+    /// 기획 branch를 이만큼(초) 쓰지 않으면 「쉼」으로 두고 worktree를 돌려준다(t-1894 결정 3A, 기본 14일). 시험에서 줄인다.
+    pub design_rest_secs: u64,
+    /// 기획 branch를 origin에 올리기 전에 그 worktree에서 셸 없이 돌리는 저장소별 검사(`[projects.design_check]`의
+    /// `<저장소 이름> = ["bash", "scripts/check-public.sh"]`, t-1894). 실행 승인이라 agent가 고칠 수 있는 프로젝트 폴더가 아니라
+    /// 여기(host.toml)에 둔다. 공개 저장소는 공개 검사를 둔다.
+    pub design_check: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for ProjectsSection {
@@ -441,6 +449,9 @@ impl Default for ProjectsSection {
             routine_commands: Vec::new(),
             max_auto_threads: 0,
             idea_rest_secs: 1800,
+            design_push_secs: 60,
+            design_rest_secs: 14 * 86_400,
+            design_check: Default::default(),
         }
     }
 }
@@ -860,6 +871,11 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     if c.projects.auto_resolve_day_secs == 0 {
         out.push(Invalid {
             path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
+        });
+    }
+    if c.projects.design_rest_secs == 0 {
+        out.push(Invalid {
+            path: key(&["projects", "design_rest_secs"]), message: "1초 이상이어야 한다".into()
         });
     }
     if c.projects.idea_rest_secs == 0 {
