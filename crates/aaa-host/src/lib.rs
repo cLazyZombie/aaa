@@ -2195,7 +2195,8 @@ impl Host {
             | FrontRequest::DesignBranchOpen { .. }
             | FrontRequest::DesignSave { .. }
             | FrontRequest::DesignSay { .. }
-            | FrontRequest::DesignDiscard { .. }) => Box::pin(self.call_design(role, actor, req)).await,
+            | FrontRequest::DesignDiscard { .. }
+            | FrontRequest::DesignApply { .. }) => Box::pin(self.call_design(role, actor, req)).await,
             req @ (FrontRequest::IdeaList { .. }
             | FrontRequest::IdeaRead { .. }
             | FrontRequest::IdeaSeen { .. }

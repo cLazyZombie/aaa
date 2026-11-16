@@ -25,6 +25,8 @@ use crate::orch::{bad, internal};
 use crate::{Host, err};
 
 pub(crate) const WRITE_FEATURE: &str = "design_write.v1";
+/// 기획 branch에 그림·영상을 조각으로 넘기는 agent 기능(t-1894 2-3)
+pub(crate) const ATTACH_FEATURE: &str = "design_attach.v1";
 /// worktree 만들기(origin 받기 포함)·commit·내리기를 기다리는 상한
 const WRITE_WAIT: Duration = Duration::from_secs(120);
 /// 올리기(agent의 검사 300초 + 올리기 60초보다 길게)
@@ -66,6 +68,12 @@ pub(crate) struct Rec {
     pub rest_tried_ms: u64,
     /// 저장소 머신의 기획 worktree 자리(대화 thread가 읽는다)
     pub cwd: Option<String>,
+    /// 갈라진 main 판
+    pub base: Option<String>,
+    /// 마지막으로 올린 때
+    pub pushed_ms: u64,
+    /// 「main에 반영」을 맡은 thread
+    pub apply: Option<String>,
 }
 
 impl Rec {
@@ -81,6 +89,9 @@ impl Rec {
             head: self.head.clone(),
             pushed: self.pushed.clone(),
             push_error: self.push_error.clone(),
+            base: self.base.clone(),
+            pushed_ms: self.pushed_ms,
+            apply: self.apply.clone(),
             ..Default::default()
         }
     }
@@ -171,6 +182,9 @@ impl Host {
             view.thread = chat.thread;
             view.pending = chat.pending.len() as u32;
             view.chat_error = chat.error;
+            view.profile = chat.profile;
+            view.events = chat.events;
+            view.edited = chat.edited;
         }
         view
     }
@@ -230,6 +244,7 @@ impl Host {
     }
 
     /// 기획 branch를 연다: 없으면 origin 기본 branch에서 만들고, 쉬던 것은 다시 꺼낸다
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn design_branch_open(
         &self,
         role: DeviceRole,
@@ -238,8 +253,9 @@ impl Host {
         repo: &str,
         slug: &str,
         title: Option<String>,
+        profile: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_branch_open_with(role, actor, project, repo, slug, title, true).await
+        self.design_branch_open_with(role, actor, project, repo, slug, title, profile, true).await
     }
 
     /// `create`가 아니면 host 기록이 있는 branch만 다시 연다(대화 배경 일: 그 사이 버린 branch를 되살리지 않는다)
@@ -252,9 +268,13 @@ impl Host {
         repo: &str,
         slug: &str,
         title: Option<String>,
+        profile: Option<String>,
         create: bool,
     ) -> Result<FrontResponse, ErrorBody> {
         let by = self.design_writer(role, actor, project, None)?;
+        if let Some(p) = profile.as_deref() {
+            self.check_profile_allowed(project, p)?;
+        }
         let (target, mid) = self.design_target(project, repo)?;
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
@@ -275,6 +295,9 @@ impl Host {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
         let now = aaa_common::util::now_ms();
+        let fresh = old.is_none();
+        // host가 main에서 새로 만든 branch는 처음 끝이 갈라진 main 판이다(agent의 `base`는 ref 이름이다)
+        let start = (opened == "created").then(|| head.clone());
         let rec = match old {
             Some(mut rec) => {
                 rec.state = DesignBranchState::Open;
@@ -300,11 +323,18 @@ impl Host {
                 pushed: (opened == "remote").then(|| head.clone()),
                 head: Some(head),
                 cwd: Some(cwd),
+                base: start.clone(),
                 origin: if opened == "open" { "local".into() } else { opened },
                 ..Default::default()
             },
         };
         self.design_branch_store(project, &rec)?;
+        if fresh {
+            self.design_chat_event(project, &target.name, slug, "open", "", start).await;
+        }
+        if profile.is_some() {
+            self.design_chat_edit(project, &target.name, slug, |c| c.profile = profile).await?;
+        }
         self.db.audit(actor, "design_branch_open", &format!("{project} {}/{slug}", target.name));
         Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
     }
@@ -344,6 +374,7 @@ impl Host {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| if base.is_some() { format!("{path} 고침") } else { format!("{path} 새로") });
         let conn = self.design_write_conn(&mid)?;
+        let req_base_none = base.is_none();
         let req = AgentRequest::DesignSave {
             project: project.to_string(),
             repo: target.path.clone(),
@@ -354,9 +385,31 @@ impl Host {
             text,
             message: format!("기획: {summary} ({by})"),
         };
+        let created = req_base_none;
         let AgentResponse::DesignSaved { commit, blob } = conn.request_timeout(req, WRITE_WAIT).await? else {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
+        // 대화에 끼우는 사건: 대화 thread의 저장인가, 사람이 고친 것인가(사람이 고친 것은 다음 말 앞에 알린다)
+        let by_thread =
+            self.design_chat_load(project, &target.name, slug).ok().and_then(|c| c.thread) == Some(by.clone());
+        let kind = match (by_thread, created) {
+            (true, true) => "create",
+            (true, false) => "save",
+            (false, _) => "edit",
+        };
+        self.design_chat_event(project, &target.name, slug, kind, &path, Some(commit.clone())).await;
+        if !by_thread {
+            let doc = path.clone();
+            aaa_common::diagnostic::ignored(
+                self.design_chat_edit(project, &target.name, slug, |c| {
+                    if !c.edited.contains(&doc) {
+                        c.edited.push(doc);
+                    }
+                })
+                .await,
+                "다음 말 앞 알림만 빠진다",
+            );
+        }
         rec.updated_ms = aaa_common::util::now_ms();
         rec.head = Some(commit.clone());
         rec.own_head = Some(commit.clone());
@@ -367,6 +420,151 @@ impl Host {
         self.db.audit(actor, "design_save", &format!("{project} {}/{slug} {path} {commit}", target.name));
         self.design_push_later(project, &target.name, slug);
         Ok(FrontResponse::DesignSaved { path, commit, blob })
+    }
+
+    /// 그림·영상 붙이기(웹 「그림」): 내용 hash 이름(`<문서 폴더>/<sha256 앞 16자>.<확장자>`)으로 기획 branch에 새 파일로 commit한다.
+    /// 그 머신 agent에 조각(`ATTACH_CHUNK`)으로 넘긴다(연결 frame 1MiB). 사람이 고친 것처럼 다음 말 앞에 알리고 쉼 뒤 올린다
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_attach(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        dir: &str,
+        bytes: &[u8],
+    ) -> Result<FrontResponse, ErrorBody> {
+        let by = self.design_writer(role, actor, project, None)?;
+        if bytes.is_empty() || bytes.len() as u64 > aaa_proto::DESIGN_MAX_FILE {
+            return Err(bad("파일은 1바이트부터 16MiB까지 붙인다"));
+        }
+        let ext =
+            crate::ideas::media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?;
+        use sha2::Digest as _;
+        let sha256 = hex::encode(sha2::Sha256::digest(bytes));
+        let (target, mid) = self.design_target(project, repo)?;
+        let folder = target.folder.clone().unwrap_or_default();
+        let dir = dir.trim_matches('/');
+        let path = crate::design::checked_path(&folder, &format!("{dir}/{}.{ext}", &sha256[..16]))?;
+        let conn = self.design_write_conn(&mid)?;
+        if !self.machine_feature(&mid, ATTACH_FEATURE) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!(
+                    "{} agent가 기획 그림 붙이기를 모른다({ATTACH_FEATURE} 없음). 그 머신 aaa를 갱신한다",
+                    self.machine_name(&mid)
+                ),
+            ));
+        }
+        let lock = self.design_branch_lock(project, &target.name, slug);
+        let _one = lock.lock().await;
+        let mut rec = self
+            .design_branch_load(project, &target.name, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
+        if rec.state == DesignBranchState::Rest {
+            return Err(err(ErrorCode::Conflict, format!("쉬는 기획 branch다: design/{slug}(다시 연 뒤 쓴다)")));
+        }
+        let file = path.rsplit('/').next().unwrap_or(&path).to_string();
+        let mut saved = None;
+        for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
+            let offset = i * aaa_proto::ATTACH_CHUNK;
+            let req = AgentRequest::DesignAttach {
+                project: project.to_string(),
+                repo: target.path.clone(),
+                folder: folder.clone(),
+                slug: slug.to_string(),
+                path: path.clone(),
+                offset: offset as u64,
+                data: aaa_proto::B64(chunk.to_vec()),
+                eof: offset + chunk.len() == bytes.len(),
+                sha256: sha256.clone(),
+                message: format!("기획: 그림 {file} 붙임 ({by})"),
+            };
+            if let AgentResponse::DesignSaved { commit, blob } = conn.request_timeout(req, WRITE_WAIT).await? {
+                saved = Some((commit, blob));
+            }
+        }
+        let (commit, blob) = saved.ok_or_else(|| err(ErrorCode::Internal, "그림 저장 응답이 없다"))?;
+        rec.updated_ms = aaa_common::util::now_ms();
+        rec.head = Some(commit.clone());
+        rec.own_head = Some(commit.clone());
+        rec.push_error = None;
+        rec.push_failures = 0;
+        rec.rest_error = None;
+        self.design_branch_store(project, &rec)?;
+        self.design_chat_event(project, &target.name, slug, "edit", &path, Some(commit.clone())).await;
+        self.db.audit(
+            actor,
+            "design_attach",
+            &format!("{project} {}/{slug} {path} {commit} {} bytes", target.name, bytes.len()),
+        );
+        self.design_push_later(project, &target.name, slug);
+        Ok(FrontResponse::DesignSaved { path, commit, blob })
+    }
+
+    /// 「main에 반영」: 올리지 않은 저장을 먼저 올리고, `origin/design/<주제>`에서 갈라진 worktree thread를 띄운다. 그 thread가
+    /// main을 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다
+    pub(crate) async fn design_apply(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.design_writer(role, actor, project, None)?;
+        let (target, _) = self.design_target(project, repo)?;
+        self.design_push_now(project, &target.name, slug).await;
+        let lock = self.design_branch_lock(project, &target.name, slug);
+        let _one = lock.lock().await;
+        let mut rec = self
+            .design_branch_load(project, &target.name, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
+        if rec.head.is_none() || rec.head != rec.pushed {
+            return Err(err(
+                ErrorCode::Conflict,
+                format!(
+                    "기획 branch를 origin에 올리지 못했다{}",
+                    rec.push_error.as_deref().map(|e| format!(": {e}")).unwrap_or_default()
+                ),
+            ));
+        }
+        if let Some(id) = rec.apply.as_deref()
+            && self
+                .load(project, id)
+                .is_ok_and(|t| !matches!(t.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Failed))
+        {
+            return Err(err(ErrorCode::Conflict, format!("이미 반영 중이다: {id}")));
+        }
+        let folder = target.folder.clone().unwrap_or_default();
+        let profile =
+            self.design_chat_load(project, &target.name, slug).ok().and_then(|c| c.profile).unwrap_or_default();
+        let args = crate::orch::StartArgs {
+            project: project.to_string(),
+            title: format!("main에 반영 {} {}", target.name, rec.title),
+            machine: target.machine.clone(),
+            profile,
+            kind: aaa_proto::ThreadKind::Worktree,
+            repo: Some(target.path.clone()),
+            base: Some(format!("origin/design/{slug}")),
+            task: format!(
+                "기획 branch `design/{slug}`(주제 「{}」)의 기획 문서를 main에 반영한다. 이 worktree는 그 branch에서 갈라졌다.\n\n\
+                 - origin main을 받아 합친다. 겹치면 양쪽 내용을 살려 고친다.\n\
+                 - 기획 폴더(`{folder}/`) 밖은 바꾸지 않는다. 문서 표기(`[!계획]`·`[!미정]`·「바뀐 것」)를 지킨다.\n\
+                 - 저장소 검사를 돌려 통과시킨 뒤 `[병합 준비됨]`으로 보고하고 착지 창을 기다린다.\n",
+                rec.title
+            ),
+            role: aaa_proto::Role::Worker,
+            ..Default::default()
+        };
+        // thread 시작 future는 크다: 공용 dispatcher(`call_design`)의 스택에 얹지 않게 heap에 둔다
+        let view = Box::pin(self.thread_start_mode(args, actor, true)).await?;
+        rec.apply = Some(view.id.clone());
+        self.design_branch_store(project, &rec)?;
+        self.design_chat_event(project, &target.name, slug, "apply", &view.id, rec.head.clone()).await;
+        self.db.audit(actor, "design_apply", &format!("{project} {}/{slug} {}", target.name, view.id));
+        Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
     }
 
     /// 기획 branch를 버린다: worktree·로컬 branch와 host가 올린 origin branch를 지우고 기록을 지운다
@@ -477,7 +675,9 @@ impl Host {
         .await;
         match result {
             Ok(head) => {
+                self.design_chat_event(project, repo, slug, "push", "", Some(head.clone())).await;
                 rec.pushed = Some(head);
+                rec.pushed_ms = aaa_common::util::now_ms();
                 rec.push_error = None;
                 rec.push_failures = 0;
             }
@@ -649,6 +849,7 @@ mod tests {
                     repo: "repo".into(),
                     slug: "boss-dex".into(),
                     title: None,
+                    profile: None,
                 },
                 FrontRequest::DesignSave {
                     project: "demo".into(),
@@ -678,6 +879,7 @@ mod tests {
             repo: "repo".into(),
             slug: "boss-dex".into(),
             title: None,
+            profile: None,
         };
         let e = h.call(DeviceRole::Local, "local:me", open.clone()).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
@@ -756,6 +958,7 @@ mod tests {
                     repo: "repo".into(),
                     slug: "boss-dex".into(),
                     title: None,
+                    profile: None,
                 },
             ),
             (

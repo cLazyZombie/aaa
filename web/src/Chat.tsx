@@ -463,6 +463,7 @@ export function ChatPanel({
   findRequest = 0,
   onQuote,
   onQuoteReturn,
+  marks,
 }: {
   active?: boolean;
   onBytes?: (bytes: number) => void;
@@ -491,6 +492,11 @@ export function ChatPanel({
   onQuote?: (text: string, speaker: QuoteSpeaker, comment?: string) => boolean;
   /** 보낸 말 속 인용의 자리로(t-1222). 대화 인용은 이 기록에서 찾고, 터미널·보고·diff 인용은 이것이 연다 */
   onQuoteReturn?: (ref: QuoteRef) => void;
+  /**
+   * 대화 사이에 끼우는 host 사건 줄(기획 대화, t-1894). `after`는 그 사건 전에 보낸 마지막 사람 말의 앞부분이고, 그 말의 답 뒤
+   * (다음 사람 말 앞)에 놓는다. 없으면 맨 앞, 찾지 못하면 맨 끝
+   */
+  marks?: readonly { key: string; after: string | null; node: ReactNode }[];
 }) {
   const visible = usePageVisible();
   const reading = active && visible;
@@ -700,6 +706,31 @@ export function ChatPanel({
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
   // 이어진 도구·생각 줄은 한 줄(묶음)이다(plan §8.304). 묶음 id는 첫 줄 id고, 찾을 때는 묶음 안 어느 줄 id로도 찾는다(`rowAt`)
+  // 사건 줄 자리: 사람 말 순번 → 그 말의 답 뒤에 놓을 줄(-1은 맨 앞, 기록 끝은 Infinity)
+  const markPlaces = useMemo(() => {
+    const at = new Map<number, ReactNode[]>();
+    if (!marks || marks.length === 0) return at;
+    const msgs = chat?.messages ?? [];
+    const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+    const users = msgs.flatMap((m, i) => (m.role === "user" ? [i] : []));
+    for (const mk of marks) {
+      let place = -1;
+      if (mk.after !== null) {
+        const want = norm(mk.after);
+        const hit = [...users].reverse().find((i) => norm(unwrapPasted(msgs[i]!.text)).startsWith(want));
+        place = hit ?? Number.POSITIVE_INFINITY;
+      }
+      at.set(place, [...(at.get(place) ?? []), <div key={mk.key} className="chat-mark-row">{mk.node}</div>]);
+    }
+    return at;
+  }, [marks, chat?.messages]);
+  // 사람 말 순번마다 바로 앞 사람 말(그 앞 말의 사건 줄을 이 말 앞에 놓는다)
+  const prevUser = useMemo(() => {
+    const prev = new Map<number, number>();
+    let last = -1;
+    (chat?.messages ?? []).forEach((m, i) => { if (m.role === "user") { prev.set(i, last); last = i; } });
+    return { prev, last };
+  }, [chat?.messages]);
   const displayRows = useMemo(() => {
     const messages = chat?.messages ?? [];
     return groupChatRows(messages, chatRowIds(messages));
@@ -1084,6 +1115,12 @@ export function ChatPanel({
               ) : m.role === "command_output" ? (
                 <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
+                markPlaces.size > 0 && markPlaces.has(prevUser.prev.get(i) ?? -2) ? (
+                  <div key={key} className="chat-mark-group">
+                    {markPlaces.get(prevUser.prev.get(i)!)}
+                    <UserTurn active={active} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
+                  </div>
+                ) :
                 <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
                 <AgentTurn active={active} key={key} text={m.text} />
@@ -1104,6 +1141,9 @@ export function ChatPanel({
               </ChatRow>
             );
           })}
+          {chat && prevUser.last >= 0 && markPlaces.get(prevUser.last)}
+          {chat && prevUser.last < 0 && markPlaces.get(-1)}
+          {chat && markPlaces.get(Number.POSITIVE_INFINITY)}
           {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
             <UserTurn active={active} key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, chatMessages.length))}

@@ -1174,6 +1174,21 @@ pub enum AgentRequest {
         text: String,
         message: String,
     },
+    /// design_attach.v1(t-1894 2-3): 기획 branch에 그림·영상 파일 하나를 조각(`ATTACH_CHUNK`)으로 넘겨 새 파일로 commit한다.
+    /// 조각은 agent 상태 폴더에 모으고(`offset`은 이어 붙일 자리), 마지막 조각(`eof`)에서 크기·`sha256`을 확인한 뒤 그 파일만
+    /// commit한다. 답은 중간 조각이 `Done`, 마지막이 `DesignSaved`다
+    DesignAttach {
+        project: String,
+        repo: String,
+        folder: String,
+        slug: String,
+        path: String,
+        offset: u64,
+        data: crate::B64,
+        eof: bool,
+        sha256: String,
+        message: String,
+    },
     /// design_write.v1: 기획 branch를 origin의 같은 이름으로 올린다(force 없음). `check`가 있으면 먼저 그 worktree에서 셸 없이 돌려
     /// 통과해야 올린다(저장소의 `design_check`, 공개 저장소의 공개 검사). 답은 `DesignPushed`다
     DesignPush {
@@ -3087,6 +3102,10 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional)]
         title: Option<String>,
+        /// 대화 thread profile(FRONT_API 1.173, 없으면 프로젝트 기본·있던 고르기)
+        #[serde(default)]
+        #[ts(optional)]
+        profile: Option<String>,
     },
     /// 기획 문서 저장(FRONT_API 1.171, 조작): 기획 branch에 그 문서 하나를 commit한다. `base`는 읽은 blob(새 문서는 없음)이고
     /// 그 사이 다른 판이 생겼으면 conflict다. origin에는 쉼 뒤 묶어서 올린다
@@ -3118,6 +3137,15 @@ pub enum FrontRequest {
     },
     /// 기획 branch 버리기(FRONT_API 1.171, 조작): worktree와 로컬 branch, host가 올린 origin branch를 지운다
     DesignDiscard {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+    },
+    /// 「main에 반영」(FRONT_API 1.173, 조작): 기획 branch를 올린 뒤 `origin/design/<주제>`에서 갈라진 worktree thread가 main을
+    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다
+    DesignApply {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
@@ -3997,6 +4025,7 @@ impl FrontRequest {
             | FrontRequest::DesignSave { project, .. }
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
+            | FrontRequest::DesignApply { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
             | FrontRequest::IdeaSeen { project, .. }

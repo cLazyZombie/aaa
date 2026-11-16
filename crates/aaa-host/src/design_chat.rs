@@ -56,7 +56,20 @@ pub(crate) struct Chat {
     /// 버린 대화: 띄우는 중이던 배경 일이 끝나면 이것을 보고 그 thread를 끝낸다. 다시 말하면 지운다.
     /// 같은 주제의 기획 branch를 새로 열면 기록째 지운다(`design_chat_forget`)
     pub retired: bool,
+    /// 대화 thread profile(새 대화 창의 모델, 없으면 프로젝트 기본)
+    pub profile: Option<String>,
+    /// 대화에 끼우는 host 사건(오래된 차례, 상한 `MAX_EVENTS`)
+    pub events: Vec<aaa_proto::DesignEvent>,
+    /// 사람이 고쳤고 아직 알리지 않은 문서(다음 말 앞에 「(문서 고침: …)」으로 붙는다)
+    pub edited: Vec<String>,
+    /// 마지막으로 보낸 말의 앞부분(그 뒤 사건을 그 말의 답 뒤에 끼운다)
+    pub last_said: Option<String>,
 }
+
+/// 대화 사건을 남기는 상한(오래된 것부터 버린다)
+const MAX_EVENTS: usize = 300;
+/// 사건 자리를 찾는 보낸 말 앞부분 길이(글자)
+const ANCHOR_CHARS: usize = 80;
 
 /// `<저장소>/<주제>`
 fn chat_key(repo: &str, slug: &str) -> String {
@@ -124,7 +137,7 @@ impl Host {
     }
 
     /// 대화 기록을 잠그고 고친다
-    async fn design_chat_edit<T>(
+    pub(crate) async fn design_chat_edit<T>(
         &self,
         project: &str,
         repo: &str,
@@ -137,6 +150,33 @@ impl Host {
         let out = edit(&mut chat);
         self.design_chat_store(project, repo, slug, &chat)?;
         Ok(out)
+    }
+
+    /// 대화 사건 한 줄을 남긴다(지금 보낸 마지막 말 뒤). 못 남겨도 대화는 그대로다
+    pub(crate) async fn design_chat_event(
+        &self,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        kind: &str,
+        text: &str,
+        commit: Option<String>,
+    ) {
+        let event = |c: &mut Chat| {
+            c.events.push(aaa_proto::DesignEvent {
+                kind: kind.to_string(),
+                text: text.to_string(),
+                commit,
+                after: c.last_said.clone(),
+                at_ms: aaa_common::util::now_ms(),
+            });
+            let over = c.events.len().saturating_sub(MAX_EVENTS);
+            c.events.drain(..over);
+        };
+        aaa_common::diagnostic::ignored(
+            self.design_chat_edit(project, repo, slug, event).await,
+            "대화 사건 한 줄만 빠진다",
+        );
     }
 
     /// 보낼 말이 남았나(`<저장소>/<주제>`, 쉼 판정)
@@ -247,7 +287,7 @@ impl Host {
                 .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
             if rec.state == DesignBranchState::Rest {
                 // 그 사이 버렸으면 되살리지 않는다
-                self.design_branch_open_with(DeviceRole::Local, actor, project, repo, slug, None, false).await?;
+                self.design_branch_open_with(DeviceRole::Local, actor, project, repo, slug, None, None, false).await?;
             }
             self.design_chat_ready(project, repo, slug, actor, start).await
         }
@@ -335,7 +375,7 @@ impl Host {
             title: format!("기획 {repo} {}", rec.title),
             // 그 저장소 머신(기획 worktree와 코드를 거기서 읽는다)
             machine: target.machine.clone(),
-            profile: String::new(),
+            profile: chat.profile.clone().unwrap_or_default(),
             kind: ThreadKind::Dir,
             task: task_text(repo, slug, &rec.title, &folder, rec.cwd.as_deref(), &target.path, again),
             role: Role::Worker,
@@ -398,7 +438,20 @@ impl Host {
                 _ => return,
             };
             if ready {
-                match self.thread_message(project, &thread, next.clone(), MessageMode::Queue, "design").await {
+                // 사람이 고친 문서는 다음 말 앞에 알린다(thread가 다시 읽고 잇는다)
+                let told = chat.edited.clone();
+                let text = if told.is_empty() {
+                    next.clone()
+                } else {
+                    format!("(문서 고침: {})\n{next}", told.join(", "))
+                };
+                // 보내기 전에 자리를 남긴다: thread가 이 말을 받자마자 저장하면 그 사건이 이 말 뒤에 놓여야 한다
+                let anchor: String = text.chars().take(ANCHOR_CHARS).collect();
+                aaa_common::diagnostic::ignored(
+                    self.design_chat_edit(project, repo, slug, |c| c.last_said = Some(anchor)).await,
+                    "사건 자리만 앞 말에 붙는다",
+                );
+                match self.thread_message(project, &thread, text.clone(), MessageMode::Queue, "design").await {
                     Ok(_) => {
                         *sent = true;
                         aaa_common::diagnostic::ignored(
@@ -406,6 +459,7 @@ impl Host {
                                 if c.pending.first() == Some(&next) {
                                     c.pending.remove(0);
                                 }
+                                c.edited.retain(|d| !told.contains(d));
                             })
                             .await,
                             "다음 셈에 다시 보낸다",

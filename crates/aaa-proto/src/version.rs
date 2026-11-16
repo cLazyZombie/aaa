@@ -314,7 +314,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        DesignRepoView.branches(t-1894 2단계). 옛 host에는 새 요청을 보내지 않는다.
 // 1.172: 기획 대화 `design_say`, ThreadView.design, DesignBranchView.thread·pending·chat_error, 원격 thread 세션의 기획 읽기·
 //        자기 branch 저장 중계(thread_relay_allowed, t-1894 2-2). 옛 host에는 새 요청을 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 172 };
+// 1.173: 웹 기획 화면(t-1894 2-3): `design_apply`(main에 반영), `design_branch_open.profile`, DesignChange 줄 수,
+//        DesignBranchView.base·pushed_ms·profile·apply·events·edited. 옛 host에는 새 요청을 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 173 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

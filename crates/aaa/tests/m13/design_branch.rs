@@ -74,7 +74,8 @@ fn design_branch_saves_on_its_own_branch_pushes_after_rest_and_discards() {
     assert!(w.h.json(&["plan", "show", "repo", doc]).is_err(), "main에는 없다");
     let list = branches(&w);
     assert_eq!(list[0]["ahead"], 2, "{list}");
-    assert_eq!(list[0]["changed"], serde_json::json!([{ "path": doc, "status": "A" }]));
+    // 2-3: 고친 파일마다 더하고 뺀 줄 수(웹 반영·버리기 창)
+    assert_eq!(list[0]["changed"], serde_json::json!([{ "path": doc, "status": "A", "added": 3, "removed": 0 }]));
 
     // 쉼(1초) 뒤 한 번 올린다. main과 main checkout은 그대로다
     let pushed =
@@ -136,6 +137,15 @@ fn idle_design_branch_rests_without_losing_commits_and_reopens() {
         w.h.json(&["plan", "save", "repo", "docs/shop.md", "--branch", "shop", "--new", "--file", path_str(&body)])
             .unwrap_err();
     assert!(e.contains("쉬는 기획 branch"), "{e}");
+    // 쉬는 branch에 말하면(2-2) 배경 일이 branch를 다시 열고 대화 thread를 띄워 말을 보낸다. 쉼 창이 1초라 ticker가 언제
+    // 다시 쉬게 할지 모르므로, 다시 연 것은 말이 thread에 닿은 것과 그 뒤의 열림으로 본다
+    w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
+    w.h.ok(&["plan", "say", "repo", "shop", "쉼말고유"]);
+    let thread = wait_for("쉼 뒤 대화 thread", T, || branches(&w)[0]["thread"].as_str().map(str::to_string));
+    let pane =
+        w.wait_show("대화 thread brief", &thread, |v| v["brief"] == "delivered")["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&pane, "쉼말고유", T);
+    assert_eq!(git(&w.repo, &["rev-parse", "refs/heads/design/shop"]), head, "다시 열어도 그 branch의 commit 그대로");
     let reopened = w.h.ok(&["plan", "new", "repo", "shop"]);
     assert_eq!(
         (reopened["branch"]["state"].as_str(), reopened["branch"]["head"].as_str()),
@@ -149,9 +159,9 @@ fn idle_design_branch_rests_without_losing_commits_and_reopens() {
 /// 올린 기획 branch에서 갈라진 구현 thread(`--base origin/design/<주제>`)는 그 기획 commit을 받는다. 버리면 대화 thread도 끝난다
 #[test]
 fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
-    // 쉼 1초: 시험이 tick을 부를 때만 판정한다(tick_secs=3600)
-    let (mut w, env) =
-        world_files("tick_secs=3600\ndesign_push_secs=1\ndesign_rest_secs=1\n", false, Some("0"), true, |_| Vec::new());
+    // 쉼 창은 기본(14일): ticker는 git·nudge 차례로도 일찍 깨므로 짧은 쉼 창은 이 시험의 어느 단계에서나 branch를 쉬게 한다.
+    // 쉼 뒤 말하기는 `idle_design_branch_rests_without_losing_commits_and_reopens`가 본다
+    let (mut w, env) = world_files("tick_secs=3600\ndesign_push_secs=1\n", false, Some("0"), true, |_| Vec::new());
     w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
     let mut w = world_start(w, env);
     w.add_remote();
@@ -297,6 +307,36 @@ print('design-relay-ok', saved['commit'])
     git(&cwd, &["merge-base", "--is-ancestor", &commit, "HEAD"]);
     assert_eq!(std::fs::read_to_string(cwd.join("docs/boss.md")).unwrap(), "# 보스 도감\n\n## 해골 왕\n");
 
+    // 2-3: 사람이 고친 문서는 다음 말 앞에 알리고, 대화 사건(새 대화·저장·올림·사람 고침)과 고친 줄 수가 branch 보기에 실린다
+    let doc = w.h.ok(&["plan", "show", "game", "docs/boss.md", "--branch", "boss-dex"])["doc"].clone();
+    let human = w.lab.root.join("human.md");
+    std::fs::write(&human, "# 보스 도감\n\n## 해골 왕\n\n## 서리 거인\n").unwrap();
+    w.h.ok(&[
+        "plan",
+        "save",
+        "game",
+        "docs/boss.md",
+        "--branch",
+        "boss-dex",
+        "--base",
+        doc["blob"].as_str().unwrap(),
+        "--file",
+        path_str(&human),
+    ]);
+    let b = branches_of(&w, "game")[0].clone();
+    assert_eq!(b["edited"], serde_json::json!(["docs/boss.md"]), "{b}");
+    let kinds: Vec<&str> = b["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    for want in ["open", "create", "push", "edit"] {
+        assert!(kinds.contains(&want), "{want}: {kinds:?}");
+    }
+    let changed = b["changed"].as_array().unwrap().iter().find(|c| c["path"] == "docs/boss.md").unwrap().clone();
+    assert_eq!((changed["status"].as_str(), changed["added"].as_u64()), (Some("A"), Some(5)), "{changed}");
+    w.h.ok(&["plan", "say", "game", "boss-dex", "넷째말고유"]);
+    w.h.wait_output(&pane, "(문서 고침: docs/boss.md)", T);
+    wait_for("알린 고침 비움", T, || {
+        (branches_of(&w, "game")[0]["edited"] == serde_json::json!([])).then_some(())
+    });
+
     // 보류된 대화 thread는 다음 말에 같은 thread로 잇는다(이야기가 없어 쉬어 내린 것과 같은 길)
     let parked = w.h.ok(&["thread", "park", "demo", &thread, "--now"]);
     assert_eq!(parked["status"], "parked", "{parked}");
@@ -309,19 +349,18 @@ print('design-relay-ok', saved['commit'])
         (b["pending"] == 0 && b["thread"] == thread.as_str()).then_some(())
     });
 
-    // 쉬는 기획 branch에 말하면 branch를 다시 열고 같은 thread에 보낸다
-    let place = w.lab.root.join("workB/game/demo-design-boss-dex");
-    assert!(place.exists());
-    // fixed wait: 쉼 창(design_rest_secs=1)이 마지막 말·저장 뒤로 지나야 tick이 쉼으로 둔다
-    std::thread::sleep(Duration::from_millis(1100));
-    w.h.ticks(1);
-    wait_for("기획 branch 쉼", T, || (branches_of(&w, "game")[0]["state"] == "rest").then_some(()));
-    assert!(!place.exists(), "쉬면 worktree를 돌려준다");
-    w.h.ok(&["plan", "say", "game", "boss-dex", "셋째말고유"]);
-    w.h.wait_output(&pane, "셋째말고유", T);
-    let b = branches_of(&w, "game")[0].clone();
-    assert_eq!((b["state"].as_str(), b["thread"].as_str()), (Some("open"), Some(thread.as_str())), "{b}");
-    assert!(place.exists(), "다시 연 worktree");
+    // main에 반영: 올린 기획 branch에서 갈라진 worktree thread를 저장소 머신에 띄운다(그 thread가 main을 합치고 착지 창을 받는다)
+    let applied = w.h.ok(&["plan", "apply", "game", "boss-dex"]);
+    let apply = applied["branch"]["apply"].as_str().unwrap().to_string();
+    let head = applied["branch"]["head"].as_str().unwrap().to_string();
+    assert_eq!(applied["branch"]["pushed"], head.as_str(), "올린 뒤 띄운다: {applied}");
+    let shown = w.wait_show("반영 thread 준비", &apply, |v| v["cwd"].is_string() && v["status"] != "starting");
+    assert_eq!((shown["thread_kind"].as_str(), shown["machine"].as_str()), (Some("worktree"), Some("labB")), "{shown}");
+    let applied_cwd = PathBuf::from(shown["cwd"].as_str().unwrap());
+    git(&applied_cwd, &["merge-base", "--is-ancestor", &head, "HEAD"]);
+    assert!(applied_cwd.join("docs/boss.md").exists());
+    let e = w.h.json(&["plan", "apply", "game", "boss-dex"]).unwrap_err();
+    assert!(e.contains("이미 반영 중"), "{e}");
 
     // 띄우는 중에 버려도 그 thread는 뜬 뒤 끝난다(버린 branch에 남는 thread가 없다)
     w.h.ok(&["plan", "new", "game", "race"]);

@@ -70,7 +70,13 @@ mod tests {
             FrontRequest::LibraryMarkRead { reports: vec![] },
             FrontRequest::Status,
             // 기획은 자기 branch 저장만 싣는다(열기·말하기·버리기는 사람의 일)
-            FrontRequest::DesignBranchOpen { project: "demo".into(), repo: "r".into(), slug: "s".into(), title: None },
+            FrontRequest::DesignBranchOpen {
+                project: "demo".into(),
+                repo: "r".into(),
+                slug: "s".into(),
+                title: None,
+                profile: None,
+            },
             FrontRequest::DesignSay { project: "demo".into(), repo: "r".into(), branch: "s".into(), text: "x".into() },
             FrontRequest::DesignDiscard { project: "demo".into(), repo: "r".into(), branch: "s".into() },
         ] {

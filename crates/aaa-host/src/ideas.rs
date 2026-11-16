@@ -1225,7 +1225,7 @@ pub(crate) fn media_mime(name: &str) -> &'static str {
 }
 
 /// 파일 머리로 종류를 정한다(그림은 task 첨부와 같은 판정)
-fn media_ext(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn media_ext(bytes: &[u8]) -> Option<&'static str> {
     if let Some(ext) = crate::attach::sniff(bytes) {
         return Some(ext);
     }

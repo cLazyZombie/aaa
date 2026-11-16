@@ -161,6 +161,14 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
   return (await unwrap<{ path: string }>(response)).path;
 }
 
+/** 기획 「그림」(t-1894 2-3): 그 기획 branch의 문서 폴더(`dir`, 저장소 기준)에 내용 hash 이름으로 commit하고 저장소 기준 경로를 받는다 */
+export async function uploadDesignFile(project: string, repo: string, branch: string, dir: string, file: Blob): Promise<{ path: string; commit: string }> {
+  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/design-files/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}?dir=${encodeURIComponent(dir)}`, {
+    method: "POST", body: file, credentials: "same-origin",
+  });
+  return unwrap<{ path: string; commit: string }>(response);
+}
+
 /** 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다 */
 export async function uploadIdeaFile(project: string, idea: string, file: Blob): Promise<string> {
   // 원래 파일 이름은 출처 기록용이다(t-1575): 붙여 넣은 그림처럼 이름이 없으면 보내지 않는다

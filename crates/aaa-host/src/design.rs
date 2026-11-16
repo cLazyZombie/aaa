@@ -121,8 +121,8 @@ impl Host {
             R::DesignRead { project, repo, path, branch } => {
                 self.design_read(&project, &repo, &path, branch.as_deref()).await
             }
-            R::DesignBranchOpen { project, repo, slug, title } => {
-                self.design_branch_open(role, actor, &project, &repo, &slug, title).await
+            R::DesignBranchOpen { project, repo, slug, title, profile } => {
+                self.design_branch_open(role, actor, &project, &repo, &slug, title, profile).await
             }
             R::DesignSave { project, repo, branch, path, base, text, summary } => {
                 self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary).await
@@ -133,6 +133,7 @@ impl Host {
             R::DesignDiscard { project, repo, branch } => {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }
+            R::DesignApply { project, repo, branch } => self.design_apply(role, actor, &project, &repo, &branch).await,
             _ => Err(err(ErrorCode::Internal, "기획 요청이 아니다")),
         }
     }
