@@ -67,7 +67,7 @@ pub(crate) struct Chat {
 }
 
 /// 대화 사건을 남기는 상한(오래된 것부터 버린다)
-const MAX_EVENTS: usize = 300;
+const MAX_EVENTS: usize = 100;
 /// 사건 자리를 찾는 보낸 말 앞부분 길이(글자)
 const ANCHOR_CHARS: usize = 80;
 
@@ -440,7 +440,8 @@ impl Host {
             if ready {
                 // 사람이 고친 문서는 다음 말 앞에 알린다(thread가 다시 읽고 잇는다)
                 let told = chat.edited.clone();
-                let text = if told.is_empty() {
+                // 웹은 보낼 글에 이미 붙인다(보낸 말 확인이 그 글과 같아야 한다): 붙어 있으면 다시 붙이지 않는다
+                let text = if told.is_empty() || next.starts_with("(문서 고침:") {
                     next.clone()
                 } else {
                     format!("(문서 고침: {})\n{next}", told.join(", "))

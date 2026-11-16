@@ -126,12 +126,13 @@ export function addedDocs(repo: Pick<DesignRepoView, "branches" | "tree"> | unde
   return [...out].map(([path, branch]) => ({ path, branch }));
 }
 
-/** branch 이름(주제)의 꼴: 영문 소문자·숫자·`-`, 1~48자, `-`로 시작·끝나지 않는다 */
-export const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
+/** branch 이름(주제)의 꼴(host `design_slug_ok`와 같다): 영문 소문자·숫자·`-`, 1~48자, `-`로 시작·끝나지 않고 `--`가 없다. `main`은 판 고르기와 겹쳐 쓰지 않는다 */
+export const SLUG = /^(?!main$)(?!.*--)[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
 
 /** 주제에서 branch 이름을 짓는다(영문·숫자만 남긴다. 한글뿐이면 빈 글) */
 export function slugSuggest(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/, "");
+  const s = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/, "");
+  return s === "main" ? "main-1" : s;
 }
 
 /** markdown 최상위 덩어리: 빈 줄로 나누고, 코드 울타리(```·~~~) 안은 하나로 둔다 */
@@ -141,10 +142,11 @@ export function mdBlocks(text: string): string[] {
   let fence: string | null = null;
   const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
   for (const line of text.split("\n")) {
-    const mark = /^\s*(```|~~~)/.exec(line)?.[1] ?? null;
+    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
     if (fence) {
       cur.push(line);
-      if (mark === fence) { fence = null; flush(); }
+      // 같은 글자로 연 것보다 짧지 않은 울타리만 닫는다(```` 안의 ```는 글이다)
+      if (mark && mark[0] === fence[0] && mark.length >= fence.length && line.trim() === mark) { fence = null; flush(); }
       continue;
     }
     if (mark) { flush(); fence = mark; cur.push(line); continue; }

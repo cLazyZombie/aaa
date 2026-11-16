@@ -114,23 +114,31 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   // 그림: 그 branch의 문서 폴더에 commit하고 글 커서 자리에 그림 줄을 넣는다(같은 폴더라 이름만 쓴다)
   const attach = async (files: FileList | null) => {
     if (!at || !editing || !current || !files?.length) return;
+    // 올리는 동안 글은 읽기만 한다(그 사이 친 글을 잃지 않게). 올린 것만큼은 실패해도 줄을 넣는다
     setSaving(true);
+    const slug = editing.slug;
+    const cursor = editor.current?.selectionStart ?? editing.text.length;
+    const lines: string[] = [];
     try {
       const dir = at.path.slice(0, at.path.lastIndexOf("/"));
-      let text = editing.text;
-      let cursor = editor.current?.selectionStart ?? text.length;
       for (const file of [...files]) {
-        const r = await uploadDesignFile(current.project, at.repo, editing.slug, dir, file);
+        const r = await uploadDesignFile(current.project, at.repo, slug, dir, file);
         const name = r.path.slice(r.path.lastIndexOf("/") + 1);
-        const line = `${cursor > 0 && text[cursor - 1] !== "\n" ? "\n" : ""}![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${name})\n`;
-        text = text.slice(0, cursor) + line + text.slice(cursor);
-        cursor += line.length;
+        lines.push(`![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${name})`);
       }
-      setEditing({ ...editing, text });
-      onReload();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
+      // 지금 고치는 글(같은 branch일 때만)에 넣는다: 그 사이 취소했거나 다른 문서를 열었으면 넣지 않는다
+      if (lines.length > 0) {
+        setEditing((now) => {
+          if (!now || now.slug !== slug) return now;
+          const at = Math.min(cursor, now.text.length);
+          const block = `${at > 0 && now.text[at - 1] !== "\n" ? "\n" : ""}${lines.join("\n")}\n`;
+          return { ...now, text: now.text.slice(0, at) + block + now.text.slice(at) };
+        });
+        onReload();
+      }
       setSaving(false);
       if (picker.current) picker.current.value = "";
     }
@@ -145,8 +153,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
       const r = await call({ op: "design_read", repo: at.repo, path: at.path, branch: slug });
       if (r.kind === "design_doc") setEditing({ slug, text: r.doc.text, base: r.doc.blob, was: r.doc.text });
     } catch (e) {
-      // 그 branch에 없는 문서(main에만 있다)는 main 판에서 고친다
-      if (current && tab === "main") setEditing({ slug, text: current.text, base: current.blob, was: current.text });
+      // 그 branch에 없는 문서(main에만 있다)는 main 판의 글로 그 branch에 새로 만든다(기준 판 없음)
+      if (current && tab === "main") setEditing({ slug, text: current.text, base: null, was: current.text });
       else setError(e instanceof ApiError ? e.message : String(e));
     }
   };
@@ -239,7 +247,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           {error && <div className="banner err" role="alert">{error}</div>}
           {editing ? (
             <div className="design-body">
-              <textarea ref={editor} className="design-editor" value={editing.text} spellCheck={false} autoFocus aria-label="문서 글" data-testid="design-editor"
+              <textarea ref={editor} className="design-editor" value={editing.text} readOnly={saving} spellCheck={false} autoFocus aria-label="문서 글" data-testid="design-editor"
                 onChange={(e) => setEditing({ ...editing, text: e.target.value })} />
             </div>
           ) : current && (

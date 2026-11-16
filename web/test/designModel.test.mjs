@@ -69,7 +69,8 @@ describe("기획 branch 화면", () => {
     assert.equal(slugSuggest("Boss Dex 2!"), "boss-dex-2");
     assert.equal(slugSuggest("보스 도감"), "");
     for (const ok of ["a", "boss-dex", "floors-100"]) assert.ok(SLUG.test(ok), ok);
-    for (const bad of ["", "-a", "a-", "A", "a_b", "x".repeat(49)]) assert.ok(!SLUG.test(bad), bad);
+    for (const bad of ["", "-a", "a-", "A", "a_b", "a--b", "main", "x".repeat(49)]) assert.ok(!SLUG.test(bad), bad);
+    assert.equal(slugSuggest("Main"), "main-1", "판 고르기의 main과 겹치지 않게");
   });
   it("덩어리는 빈 줄로 나누고 제목 줄은 홀로, 코드 울타리 안 빈 줄은 나누지 않는다. main에 없는 덩어리만 표시", () => {
     const text = "# 제목\n본문 하나\n\n```\n코드\n\n끝\n```\n\n## 절\n새 글\n";
@@ -77,6 +78,7 @@ describe("기획 branch 화면", () => {
     assert.deepEqual(blocks, ["# 제목", "본문 하나", "```\n코드\n\n끝\n```", "## 절", "새 글"]);
     assert.deepEqual(changedBlocks("# 제목\n본문 하나\n\n## 절\n옛 글\n", blocks), [false, false, true, false, true]);
     assert.deepEqual(changedBlocks(null, blocks), blocks.map(() => true), "main에 없는 새 문서는 모두");
+    assert.deepEqual(mdBlocks("````\n```\n안\n```\n````\n\n끝\n"), ["````\n```\n안\n```\n````", "끝"], "긴 울타리 안의 짧은 울타리는 글이다");
   });
   it("대화 사건: 같은 말 뒤 thread 저장은 한 줄로 묶고, 새 대화·올림·사람 고침은 따로", () => {
     const ev = (kind, text, after, commit = "abcdef1234") => ({ kind, text, after, commit, at_ms: 0 });

@@ -156,7 +156,12 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
           pending={pending} setPending={setPending}
           connected working={status === "working"} compacting={pane?.agent?.compacting ?? false} asking={status === "blocked"}
           context={pane?.agent?.context ?? null} messages={messages}
-          prepare={(text) => (viewing ? `(보는 문서: ${viewing})\n${text}` : text)}
+          // 사람이 고친 문서 알림도 여기서 붙인다: host가 따로 붙이면 보낸 말 확인(대기 말 지우기)이 글과 맞지 않는다
+          prepare={(text) => [
+            branch.edited.length > 0 ? `(문서 고침: ${branch.edited.join(", ")})` : null,
+            viewing ? `(보는 문서: ${viewing})` : null,
+            text,
+          ].filter((x): x is string => x !== null).join("\n")}
           onSend={(text) => call({ op: "design_say", repo: repo.repo, branch: branch.slug, text }).then(() => {
             onError(null);
             onChanged();

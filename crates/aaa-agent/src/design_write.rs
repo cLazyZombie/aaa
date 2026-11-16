@@ -514,9 +514,9 @@ pub async fn close(
 }
 
 /// 그림·영상 조각을 모으는 자리(agent 상태 폴더 안, 기획 branch·경로마다 하나)
-fn attach_part(state: &Path, project: &str, slug: &str, path: &str) -> PathBuf {
+fn attach_part(state: &Path, project: &str, repo: &str, slug: &str, path: &str) -> PathBuf {
     use sha2::Digest as _;
-    let key = hex::encode(sha2::Sha256::digest(format!("{project}\0{slug}\0{path}").as_bytes()));
+    let key = hex::encode(sha2::Sha256::digest(format!("{project}\0{repo}\0{slug}\0{path}").as_bytes()));
     state.join("design-attach").join(format!("{}.part", &key[..32]))
 }
 
@@ -532,7 +532,7 @@ pub async fn attach(
     sha256: &str,
     message: &str,
 ) -> Result<AgentResponse, ErrorBody> {
-    let part = attach_part(state, project, slug, path);
+    let part = attach_part(state, project, repo, slug, path);
     let gathered = (|| -> Result<Vec<u8>> {
         std::fs::create_dir_all(part.parent().context("조각 폴더가 없다")?)?;
         let have =
@@ -570,7 +570,24 @@ pub async fn attach(
         }
     };
     aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "다 받은 조각 자리 지우기");
-    save_bytes(cfg, project, repo, folder, slug, path, None, (&bytes, DESIGN_MAX_FILE), message).await
+    match save_bytes(cfg, project, repo, folder, slug, path, None, (&bytes, DESIGN_MAX_FILE), message).await {
+        // 이름이 내용 hash다: 같은 이름이 이미 있고 내용도 같으면 붙인 것이다(같은 그림을 다시 붙이거나 이웃 문서에 붙임)
+        Err(e) if e.code == ErrorCode::Conflict => {
+            let same = async {
+                let top = toplevel(repo).await?;
+                let (cwd, _) = own_worktree(cfg, &top, project, slug).await?.context("기획 worktree가 없다")?;
+                let blob = git_told(&cwd, &["rev-parse", &format!("HEAD:{path}")], GIT_WAIT).await?;
+                let now = git(&cwd, &["cat-file", "blob", &blob], DESIGN_MAX_FILE as usize + 1).await?;
+                anyhow::Ok((now == bytes).then_some((git_told(&cwd, &["rev-parse", "HEAD"], GIT_WAIT).await?, blob)))
+            }
+            .await;
+            match same {
+                Ok(Some((commit, blob))) => Ok(AgentResponse::DesignSaved { commit, blob }),
+                _ => Err(e),
+            }
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -742,7 +759,7 @@ mod tests {
         assert!(matches!(send(0, &bytes[..1000], false, &sha).await, Ok(AgentResponse::Done)));
         let e = send(1000, &bytes[1000..2000], true, &"0".repeat(64)).await.unwrap_err();
         assert!(e.message.contains("sha256"), "{e}");
-        assert!(!attach_part(&state, "demo", "boss-dex", path).exists(), "실패한 조각 자리를 지운다");
+        assert!(!attach_part(&state, "demo", repo, "boss-dex", path).exists(), "실패한 조각 자리를 지운다");
         // 조각 셋으로 이어 받아 commit한다
         let cuts = [0, 500_000, 1_000_000, bytes.len()];
         let mut last = None;
@@ -757,8 +774,10 @@ mod tests {
             path,
             "그 파일만 commit"
         );
-        assert!(!attach_part(&state, "demo", "boss-dex", path).exists(), "다 받은 조각 자리를 지운다");
-        // 같은 이름이 이미 있으면(새 파일만 붙인다) 다른 판으로 거부한다
+        assert!(!attach_part(&state, "demo", repo, "boss-dex", path).exists(), "다 받은 조각 자리를 지운다");
+        // 이름이 내용 hash라 같은 이름·같은 내용은 이미 붙인 것이다(새 commit 없이 성공). 내용이 다르면 다른 판으로 거부한다
+        let again = send(0, &bytes, true, &sha).await.unwrap();
+        assert!(matches!(&again, AgentResponse::DesignSaved { commit: c, .. } if *c == commit), "{again:?}");
         let e = send(0, &bytes[..10], true, &hex::encode(sha2::Sha256::digest(&bytes[..10]))).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Conflict, "{e}");
         // 상한을 넘는 조각은 받지 않는다

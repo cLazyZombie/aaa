@@ -27,6 +27,8 @@ pub fn design_slug_ok(slug: &str) -> bool {
         && !slug.starts_with('-')
         && !slug.ends_with('-')
         && !slug.contains("--")
+        // 웹 판 고르기의 「main」과 겹치지 않게
+        && slug != "main"
 }
 
 /// 기획 branch 이름
@@ -272,7 +274,7 @@ mod tests {
         for ok in ["boss-dex", "a", "floors-100", &"x".repeat(48)] {
             assert!(design_slug_ok(ok), "{ok}");
         }
-        for bad in ["", "Boss", "boss_dex", "-a", "a-", "a--b", "a/b", "a.b", "보스", &"x".repeat(49)] {
+        for bad in ["", "Boss", "boss_dex", "-a", "a-", "a--b", "a/b", "a.b", "보스", "main", &"x".repeat(49)] {
             assert!(!design_slug_ok(bad), "{bad}");
         }
         assert_eq!(design_branch("boss-dex"), "design/boss-dex");

@@ -494,6 +494,16 @@ impl Host {
         rec.rest_error = None;
         self.design_branch_store(project, &rec)?;
         self.design_chat_event(project, &target.name, slug, "edit", &path, Some(commit.clone())).await;
+        let told = path.clone();
+        aaa_common::diagnostic::ignored(
+            self.design_chat_edit(project, &target.name, slug, |c| {
+                if !c.edited.contains(&told) {
+                    c.edited.push(told);
+                }
+            })
+            .await,
+            "다음 말 앞 알림만 빠진다",
+        );
         self.db.audit(
             actor,
             "design_attach",
@@ -524,10 +534,11 @@ impl Host {
         if rec.head.is_none() || rec.head != rec.pushed {
             return Err(err(
                 ErrorCode::Conflict,
-                format!(
-                    "기획 branch를 origin에 올리지 못했다{}",
-                    rec.push_error.as_deref().map(|e| format!(": {e}")).unwrap_or_default()
-                ),
+                match rec.push_error.as_deref() {
+                    Some(e) => format!("기획 branch를 origin에 올리지 못했다: {e}"),
+                    // 올린 뒤 잠금을 잡기 전에 새 저장이 들어왔다
+                    None => "올리는 사이에 새 저장이 있었다: 다시 누른다".to_string(),
+                },
             ));
         }
         if let Some(id) = rec.apply.as_deref()
