@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
-import { handable, HandoffDialog } from "./DesignHandoff";
+import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
 import { branchesByPath, calloutOf, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
@@ -285,8 +285,16 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   // 구현 맡기기(3-2): 기획 branch 판에서만. 「남은 것」에서 고른 블록과 창
   const canHand = !!branch && branch.state === "open" && canControl;
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
-  const [handoff, setHandoff] = useState<number[] | null>(null);
+  // 창은 연 때의 판과 블록으로 맡긴다: 그 사이 문서가 다시 읽혀도 고른 번호가 다른 블록을 가리키지 않는다(host가 판을 다시 본다)
+  const [handoff, setHandoff] = useState<{ initial: number[]; blob: string; blocks: HandoffBlock[] } | null>(null);
   useEffect(() => { setChecked(new Set()); setHandoff(null); }, [docKey]);
+  // 판이 바뀌면 「남은 것」에서 고른 것은 다른 블록일 수 있다: 푼다
+  useEffect(() => { setChecked(new Set()); }, [current?.blob]);
+  const openHandoff = (initial: number[]) => {
+    if (!current || !blocks) return;
+    const list = callouts.flatMap((c, i) => (c ? [{ c, i }] : [])).map((b, ordinal) => ({ ...b, ordinal, head: (blocks[b.i] ?? "").split("\n")[0]!.trim() }));
+    setHandoff({ initial, blob: current.blob, blocks: list });
+  };
   const flipCheck = (i: number) => setChecked((old) => { const next = new Set(old); if (!next.delete(i)) next.add(i); return next; });
   const discuss = (c: Callout) => { if (at) { setPicked({ path: at.path, section: c.section, title: c.title }); if (narrow) setPage("chat"); } };
   // 「지금 모습」은 표지 블록만 든 절의 제목도 숨긴다(확정 계획 §3)
@@ -305,7 +313,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     return (
       <div key={i} className={`design-block${marked?.[i] ? " is-changed" : ""}`} data-testid={marked?.[i] ? "design-changed" : undefined}>
         {c ? <DesignCallout c={c} tasks={tasks} lookup={lookup} threads={threads} onDiscuss={canControl ? () => discuss(c) : undefined}
-          onHandoff={canHand && handable(c) ? () => setHandoff([i]) : undefined}>{md}</DesignCallout> : md}
+          onHandoff={canHand && handable(c) ? () => openHandoff([i]) : undefined}>{md}</DesignCallout> : md}
       </div>
     );
   };
@@ -466,7 +474,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                         <div className="design-left-bar" data-testid="design-left-bar">
                           <span>{checked.size}개 고름 · 할 일 하나로</span><span className="spacer" />
                           <button type="button" className="ghost small" onClick={() => setChecked(new Set())}>풀기</button>
-                          <button type="button" className="btn small primary" data-testid="design-left-handoff" onClick={() => setHandoff([...checked])}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
+                          <button type="button" className="btn small primary" data-testid="design-left-handoff" onClick={() => openHandoff([...checked])}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
                         </div>
                       )}
                       {left.map((g, gi) => (
@@ -508,9 +516,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           </section>
         )}
       </div>
-      {handoff && repo && branch && at && current && (
-        <HandoffDialog repo={repo} branch={branch} path={at.path} blob={current.blob} initial={handoff}
-          blocks={callouts.flatMap((c, i) => (c ? [{ c, i }] : [])).map((b, ordinal) => ({ ...b, ordinal }))}
+      {handoff && repo && branch && at && (
+        <HandoffDialog repo={repo} branch={branch} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
           onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
       )}
       {newChat && repo && <NewChatDialog repo={repo} onClose={() => setNewChat(false)} onDone={(slug) => { setNewChat(false); pick(slug); onReload(); }} />}

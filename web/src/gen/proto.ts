@@ -810,9 +810,11 @@ pushed: boolean,
  */
 reserved: boolean,
 /**
- * 할 일은 생겼지만 표지 commit·올리기·예약 중 못한 것(할 일 메모와 대화 사건에도 남긴다)
+ * 할 일과 표지 commit은 됐지만 올리기·예약 중 못한 것(창에 보인다. 올리기 전에는 그 할 일을 시작하지 않는다)
  */
 warning: string | null, };
+
+export type DesignPick = { ordinal: number, head: string, };
 
 export type DesignDocEntry = {
 /**
@@ -1758,9 +1760,9 @@ path: string,
  */
 blob: string,
 /**
- * 고른 표지 블록의 차례(0부터, `design_marks`와 웹 `calloutOf`가 같은 차례)
+ * 고른 표지 블록(차례와 첫 줄. 차례는 `design_marks`와 웹 `calloutOf`가 같다)
  */
-blocks: Array<number>, title: string,
+blocks: Array<DesignPick>, title: string,
 /**
  * 모델(profile). 비우면 프로젝트 기본
  */

@@ -3165,8 +3165,8 @@ pub enum FrontRequest {
         path: String,
         /// 고를 때 읽은 판(blob). 그 사이 바뀌었으면 쓰지 않는다
         blob: String,
-        /// 고른 표지 블록의 차례(0부터, `design_marks`와 웹 `calloutOf`가 같은 차례)
-        blocks: Vec<u32>,
+        /// 고른 표지 블록(차례와 첫 줄. 차례는 `design_marks`와 웹 `calloutOf`가 같다)
+        blocks: Vec<crate::DesignPick>,
         title: String,
         /// 모델(profile). 비우면 프로젝트 기본
         #[serde(default)]

@@ -241,9 +241,7 @@ impl Host {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
         // 기획에서 맡긴 할 일(t-1894 3-2): 그 기획 branch 끝에서 갈라지고 brief에 맡긴 자리를 적는다. 상태 파일 읽기만 한다
-        if let Some(id) = t.short_id.as_deref() {
-            self.design_handoff_start(a, id);
-        }
+        self.design_handoff_start(a, t.short_id.as_deref(), t.id.as_deref(), t.repo.as_deref())?;
         // 메모의 그림은 그 머신 작업 폴더 `attachments/`로 넘긴다(plan §8.327): 할 일 글도 그 경로를 가리킨다
         let (attachments, missing) = self.task_attachments(&a.project, &mut a.task);
         a.attachments = attachments;

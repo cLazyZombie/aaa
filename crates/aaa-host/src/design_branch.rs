@@ -130,7 +130,7 @@ impl Host {
         }
     }
 
-    fn design_branch_store(&self, project: &str, rec: &Rec) -> Result<(), ErrorBody> {
+    pub(crate) fn design_branch_store(&self, project: &str, rec: &Rec) -> Result<(), ErrorBody> {
         let dir = self.design_branch_dir(project, &rec.repo)?;
         std::fs::create_dir_all(&dir).map_err(|e| internal(format!("{}: {e}", dir.display())))?;
         let bytes = serde_json::to_vec_pretty(rec).map_err(internal)?;
@@ -353,10 +353,11 @@ impl Host {
         text: String,
         summary: Option<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_save_event(role, actor, project, repo, slug, path, base, text, summary, None).await
+        self.design_save_event(role, actor, project, repo, slug, path, base, text, summary, None, false).await
     }
 
-    /// `design_save`와 같고, `event`를 주면 대화에 끼우는 사건을 그것으로 적는다(구현 맡기기의 「구현 맡김」)
+    /// `design_save`와 같고, `event`를 주면 대화에 끼우는 사건을 그것으로 적는다(구현 맡기기의 「구현 맡김」).
+    /// `locked`면 호출자가 이미 그 branch 잠금을 쥐고 있다(읽기부터 저장까지 한 잠금 안에서 한다)
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn design_save_event(
         self: &Arc<Self>,
@@ -370,6 +371,7 @@ impl Host {
         text: String,
         summary: Option<String>,
         event: Option<(&'static str, String)>,
+        locked: bool,
     ) -> Result<FrontResponse, ErrorBody> {
         // 저장소 이름은 그대로 찾으므로(design_target) 대화 thread의 `<저장소>/<주제>`와 바로 견준다
         let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
@@ -380,7 +382,7 @@ impl Host {
             return Err(bad("기준 판은 blob SHA다"));
         }
         let lock = self.design_branch_lock(project, &target.name, slug);
-        let _one = lock.lock().await;
+        let _one = if locked { None } else { Some(lock.lock().await) };
         let mut rec = self
             .design_branch_load(project, &target.name, slug)?
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
@@ -637,6 +639,8 @@ impl Host {
         let path = self.design_branch_dir(project, &target.name)?.join(format!("{slug}.json"));
         std::fs::remove_file(&path).map_err(|e| internal(format!("{}: {e}", path.display())))?;
         self.design_push_gen.lock().unwrap().remove(&format!("{project}/{}/{slug}", target.name));
+        // 이 branch에서 맡긴 할 일은 그 판이 사라졌다: 맡김 기록을 지워 평소처럼 시작하게 한다
+        self.design_handoff_forget(project, &target.name, slug, rec.created_ms);
         self.db.audit(actor, "design_discard", &format!("{project} {}/{slug}", target.name));
         // branch를 지운 뒤에 대화를 끝낸다(닫기가 멈추면 대화는 그대로 남는다)
         self.design_chat_retire(project, &target.name, slug, actor).await.map_err(|e| {

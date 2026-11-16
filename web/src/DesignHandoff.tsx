@@ -7,8 +7,8 @@ import type { Callout } from "./designModel";
 import type { DesignBranchView, DesignRepoView, OwnerChoice } from "./gen/proto";
 import { ideaModelChoices } from "./ideasModel";
 
-/** 표지 블록 하나: 덩어리 번호와, 표지 블록끼리의 차례(host `design_marks`와 같은 차례) */
-export type HandoffBlock = { c: Callout; i: number; ordinal: number };
+/** 표지 블록 하나: 덩어리 번호, 표지 블록끼리의 차례(host `design_marks`와 같은 차례)와 첫 줄(host가 같은 블록인지 다시 본다) */
+export type HandoffBlock = { c: Callout; i: number; ordinal: number; head: string };
 
 /** 넘길 수 있는 블록: 아직 넘기지 않은 계획만(미정은 정한 뒤에 넘긴다) */
 export const handable = (c: Callout) => c.kind === "plan" && !c.task;
@@ -70,7 +70,7 @@ export function HandoffDialog({ repo, branch, path, blob, blocks, initial, onClo
     setProblem(null);
     try {
       const r = await call({
-        op: "design_handoff", repo: repo.repo, branch: branch.slug, path, blob, blocks: picked.map((p) => p.ordinal),
+        op: "design_handoff", repo: repo.repo, branch: branch.slug, path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
         title: shownTitle.trim(), profile: profile || null, memo: shownMemo, reserve,
       });
       if (r.kind !== "design_handoff") throw new Error("예상하지 못한 답");
