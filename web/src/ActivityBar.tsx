@@ -115,7 +115,8 @@ export function ActivityBar({
         </button>
       )}
       <div className="activity-group" role="tablist" aria-orientation="vertical" aria-label="사이드바 패널" ref={tabs} onKeyDown={onTabKey}>
-        {PANELS.map((p) => {
+        {/* 아이디어는 기획 트리의 「옛 아이디어」로 옮겼다(t-1894 4단계) */}
+        {PANELS.filter((p) => p !== "ideas").map((p) => {
           const Icon = PANEL_ICON[p];
           const selected = shown && panel === p;
           const badge = badges[p];

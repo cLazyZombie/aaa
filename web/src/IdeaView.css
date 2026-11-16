@@ -8,6 +8,8 @@
 .idea-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .idea-chip { flex: none; font-size: var(--fs-xs); padding: 2px 8px; border-radius: var(--radius-pill); background: var(--accent-bg); color: var(--accent-strong); white-space: nowrap; }
 .idea-chip.is-done { background: var(--done-bg); color: var(--done); }
+.idea-chip.is-moving { background: var(--bg-elevated); color: var(--status-working); }
+.idea-chip.is-moved { background: var(--bg-elevated); color: var(--text-dim); }
 .idea-chip .app-id { color: inherit; }
 .idea-head-tools, .idea-note-tools { display: flex; align-items: center; gap: var(--space-2); flex: none; }
 .idea-note-tools { justify-content: flex-end; padding: var(--space-2) var(--space-4) 0; }

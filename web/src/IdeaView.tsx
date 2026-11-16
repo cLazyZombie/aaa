@@ -7,7 +7,8 @@ import { ProviderError } from "./ProviderError";
 // GitHub Discussions·Jira Product Discovery(아이디어 → 할 일 여럿, 양쪽 링크), spec-kit `/clarify`(MIT, 정리본 모양).
 import "./IdeaView.css";
 
-import { ArrowDown, ArrowUp, ClipboardPaste, Copy, Download, Ellipsis, ImagePlus, ListTodo, MessageSquarePlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowRightLeft, ArrowUp, BookOpen, ClipboardPaste, Download, Ellipsis, ImagePlus, ListTodo, MessageSquarePlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { ideaLegacy } from "./IdeaMove";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type DragEvent } from "react";
 import { ApiError, call, uploadIdeaFile } from "./api";
 import { ChatComposer, MAX_COMPOSER_CHARS, restorePending, savePending, type PendingSend } from "./ChatComposer";
@@ -133,7 +134,14 @@ async function clipboardMedia(): Promise<File[] | null> {
   return out;
 }
 
-export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, canControl, onOpen, onOpenLink }: {
+/** 4단계: 아이디어는 모두 옛 아이디어다(읽기 전용). 고치기·말하기 길은 옮기기 전 판을 위해 남겨 둔다 */
+const OLD_IDEAS_READONLY: boolean = true;
+
+export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, canControl, onOpen: _onOpen, onOpenLink, onMove, onOpenDesign }: {
+  /** 옛 아이디어 「기획으로 옮기기」(4단계) */
+  onMove?: (idea: IdeaSummary) => void;
+  /** 옮긴 곳(기획 문서·대화) 열기: `<저장소>/<경로>` */
+  onOpenDesign?: (target: string) => void;
   shown: boolean;
   /** 연 아이디어(`n-0001`) */
   target: string | null;
@@ -151,7 +159,9 @@ export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, ca
   const { note, setNote, error, setError, reread } = useIdeaNote(target, summary);
   const narrow = useMedia("(max-width: 768px)");
   const [page, setPage] = useState<IdeaPage>("note");
-  const done = note?.idea.status === "done";
+  // 4단계: 아이디어는 모두 옛 아이디어다(읽기 전용). 다듬던 것은 기획으로 옮긴다
+  const done = !!note && OLD_IDEAS_READONLY;
+  const legacy = note ? ideaLegacy(note.idea) : null;
   const [editing, setEditing] = useState<{ base: number; text: string } | null>(null);
   const [handoff, setHandoff] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -191,18 +201,6 @@ export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, ca
     try {
       const r = await call({ op: "idea_save", idea: note.idea.short_id, base_rev: editing.base, text: editing.text });
       if (r.kind === "idea") { setNote(r.note); setEditing(null); setError(null); }
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const copy = async () => {
-    if (!note || busy) return;
-    setBusy(true);
-    try {
-      const r = await call({ op: "idea_copy", idea: note.idea.short_id });
-      if (r.kind === "idea") onOpen(r.note.idea.short_id);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -255,9 +253,13 @@ export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, ca
       </div>
     );
   }
-  const tools = note && canControl && (done ? (
-    <button type="button" className="btn btn-primary" disabled={busy} data-testid="idea-copy" onClick={() => void copy()}><Copy className="i" aria-hidden="true" />복사해서 새 아이디어</button>
-  ) : editing ? null : (
+  const moved = note?.idea.moved;
+  const tools = note && legacy && (legacy.kind === "open" ? (canControl && onMove ? (
+    <button type="button" className="btn btn-primary" data-testid="idea-move" onClick={() => onMove(note.idea)}><ArrowRightLeft className="i" aria-hidden="true" />기획으로 옮기기</button>
+  ) : null) : moved && onOpenDesign ? (
+    <button type="button" className="btn" data-testid="idea-open-design" onClick={() => onOpenDesign(`${moved.repo}/${moved.path}`)}>
+      <BookOpen className="i" aria-hidden="true" />{legacy.kind === "moved" ? "기획에서 보기" : "기획 대화 보기"}</button>
+  ) : null) || (note && canControl && !done && (editing ? null : (
     <>
       {canAttach && (
         <>
@@ -268,7 +270,7 @@ export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, ca
       <button type="button" className="btn" data-testid="idea-edit" disabled={note.merging !== null} onClick={() => setEditing({ base: note.rev, text: note.text })}><Pencil className="i" aria-hidden="true" />고치기</button>
       <button type="button" className="btn btn-primary" data-testid="idea-handoff" disabled={note.merging !== null} onClick={() => setHandoff(true)}><ListTodo className="i" aria-hidden="true" />할 일로 넘기기</button>
     </>
-  ));
+  )));
   const badge = notes.notes.length;
   return (
     <div className={`idea-screen${shown ? "" : " is-hidden"}`} inert={!shown} data-testid="idea-view" data-shown={shown ? "true" : "false"} data-page={narrow ? page : "both"}>
@@ -290,6 +292,14 @@ export function IdeaView({ shown, target, ideas, threads, panes, hostMachine, ca
           ) : <span className="idea-head-tools">{tools}</span>}
           <HeadMore />
         </header>
+        {legacy && (
+          <div className={`banner idea-legacy is-${legacy.kind}`} role="status" data-testid="idea-legacy" data-state={legacy.kind}>
+            {legacy.kind === "open" && <>옛 아이디어다(읽기 전용). 이제 아이디어는 저장소의 기획 문서로 다듬는다: 「기획으로 옮기기」로 그 저장소의 기획 대화에 넘긴다.</>}
+            {legacy.kind === "moving" && <>기획으로 옮기는 중이다: <code>{moved?.repo}</code> · <code>design/{moved?.branch}</code>의 대화가 판 {note?.idea.rev} 노트를 기획 트리에 녹인다. 이 노트는 읽기 전용이다.</>}
+            {legacy.kind === "moved" && <>기획으로 옮겼다: <code>{moved?.repo} {moved?.path}</code>. 이제 그 문서가 정본이고 이 노트는 읽기 전용이다.</>}
+            {legacy.kind === "done" && <>완료한 옛 아이디어다(읽기 전용).</>}
+          </div>
+        )}
         {error && <div className="banner err" role="alert">{error}</div>}
         {note?.media_error && <div className="banner err" role="alert">그림을 옮기지 못했다: {note.media_error}</div>}
         <div className="idea-columns" ref={columns} style={{ "--idea-note-percent": `${notePercent}%` } as React.CSSProperties}>
@@ -334,6 +344,10 @@ function IdeaStatusChip({ note }: { note: IdeaNote }) {
         {note.idea.tasks.map((d, i) => <span key={d}>{i > 0 && ", "}<a href={`#task=${encodeURIComponent(d)}`} className="app-id">{d}</a></span>)}
       </span>
     );
+  }
+  const legacy = ideaLegacy(note.idea);
+  if (legacy.kind === "moving" || legacy.kind === "moved") {
+    return <span className={`idea-chip is-${legacy.kind}`} data-testid="idea-status">{legacy.kind === "moving" ? "옮기는 중" : "옮김"}</span>;
   }
   return (
     <span className="idea-chip" data-testid="idea-status">
@@ -625,7 +639,8 @@ function IdeaChat({ note, threads, panes, hostMachine, canControl, notes, active
   const [sent, setSent] = useState(0);
   const noteRef = useRef(note);
   noteRef.current = note;
-  const done = note.idea.status === "done";
+  // 4단계: 옛 아이디어 대화는 읽기만 한다
+  const done = true;
   const draftKey = `herdr-web-ui:composer-draft:${owner}`;
   const draft = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const [trayProblem, setTrayProblem] = useState<string | null>(null);

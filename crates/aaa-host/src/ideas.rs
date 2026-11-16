@@ -67,6 +67,8 @@ pub(crate) struct Meta {
     pub merging: Option<u32>,
     /// 전용 thread가 준비되기를 기다리는 말(idea_thread.rs)
     pub pending: Vec<String>,
+    /// 기획으로 옮겼다(t-1894 4단계)
+    pub moved: Option<aaa_proto::IdeaMoved>,
     /// 전용 thread를 띄우지 못한 까닭(다음 말에 지운다)
     pub error: Option<String>,
     /// 그림·영상 이름 → 출처(t-1575). 처음 들인 기록만 둔다(같은 내용은 같은 이름이다)
@@ -511,6 +513,7 @@ impl Host {
             thread: m.thread.clone(),
             copied_from,
             profile: Some(self.idea_profile(project, m)),
+            moved: m.moved.clone(),
         })
     }
 

@@ -13,10 +13,12 @@ import type {
   QuestionMenu,
   QuestionView,
   ThreadView,
+  IdeaSummary,
 } from "./gen/proto";
 import { WorkspaceList, WorkspaceView } from "./WorkspaceView";
 import { useWorkspaceData, workspaceRoute } from "./workspaceData";
 import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
+import { IdeaMoveDialog } from "./IdeaMove";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { RecordSearch } from "./RecordSearch";
@@ -1330,6 +1332,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const ideaPanes = new Set(allThreads.flatMap((t) => (chatOnly(t) && t.pane ? [t.pane] : [])));
   const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
   const ideas = useIdeas(up);
+  // 옛 아이디어 「기획으로 옮기기」 창(4단계)
+  const [moveIdea, setMoveIdea] = useState<IdeaSummary | null>(null);
   const design = useDesign(up, panel === "design" || designShown);
   // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
@@ -1382,7 +1386,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (asksShown && panelRef.current !== "asks") setPanel("asks");
   }, [asksShown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (ideaShown && panelRef.current !== "ideas") setPanel("ideas");
+    // 옛 아이디어는 기획 트리 아래에 있다(4단계): 아이디어를 열면 기획 패널을 보인다
+    if (ideaShown && panelRef.current !== "design") setPanel("design");
   }, [ideaShown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (designShown && panelRef.current !== "design") setPanel("design");
@@ -1692,7 +1697,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
-          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }} />}
+          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }}
+            ideas={ideas.list ?? []} ideaSelected={ideaShown ? ideaAt : null} canControl={canControl}
+            onOpenIdea={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} onMoveIdea={setMoveIdea} />}
           ideas={<IdeasPanel ideas={ideas} selected={ideaShown ? ideaAt : null} canControl={canControl} onOpen={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
@@ -1824,11 +1831,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         {designAt !== null && (
           <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
-            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
+            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)}
+              ideas={ideas.list ?? []} ideaSelected={null} canControl={canControl} onOpenIdea={(id) => goSel(`idea:${id}`)} onMoveIdea={setMoveIdea} />}
             onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
         )}
+        {moveIdea && <IdeaMoveDialog idea={moveIdea} repos={design.repos ?? []} onClose={() => setMoveIdea(null)} />}
         {ideaAt !== null && (
           <IdeaView
+            onMove={setMoveIdea}
+            onOpenDesign={(t) => goSel(`design:${t}`)}
             shown={ideaShown}
             target={ideaAt}
             ideas={ideas.list ?? []}

@@ -982,7 +982,29 @@ copied_from: string | null,
 /**
  * 진행 모델: 다음 말을 맡을 profile(고른 것, 없으면 프로젝트 기본 thread profile). FRONT_API 1.163, 옛 host는 없다
  */
-profile?: string, };
+profile?: string,
+/**
+ * 기획으로 옮겼다(t-1894 4단계): 옮긴 저장소·기획 branch·위치. 옮긴 아이디어는 읽기 전용이다
+ */
+moved?: IdeaMoved, };
+
+export type IdeaMoved = {
+/**
+ * 저장소 이름
+ */
+repo: string,
+/**
+ * 옮기는 기획 branch 주제(`design/<주제>`)
+ */
+branch: string,
+/**
+ * 기획 폴더 안 위치(폴더나 문서)
+ */
+path: string,
+/**
+ * main에 반영돼 옮기기를 마쳤다
+ */
+done: boolean, at_ms: number, };
 
 export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
 /**

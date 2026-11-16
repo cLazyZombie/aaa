@@ -184,6 +184,7 @@ pub fn typescript_bindings() -> String {
         IdeaStatus::decl(&cfg),
         IdeaAuthor::decl(&cfg),
         IdeaSummary::decl(&cfg),
+        IdeaMoved::decl(&cfg),
         IdeaRevView::decl(&cfg),
         IdeaNote::decl(&cfg),
         IdeaMediaSource::decl(&cfg),

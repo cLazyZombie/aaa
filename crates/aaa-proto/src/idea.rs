@@ -61,6 +61,26 @@ pub struct IdeaSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile: Option<String>,
+    /// 기획으로 옮겼다(t-1894 4단계): 옮긴 저장소·기획 branch·위치. 옮긴 아이디어는 읽기 전용이다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub moved: Option<IdeaMoved>,
+}
+
+/// 기획으로 옮긴 곳(t-1894 4단계)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct IdeaMoved {
+    /// 저장소 이름
+    pub repo: String,
+    /// 옮기는 기획 branch 주제(`design/<주제>`)
+    pub branch: String,
+    /// 기획 폴더 안 위치(폴더나 문서)
+    pub path: String,
+    /// main에 반영돼 옮기기를 마쳤다
+    pub done: bool,
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// 남은 판 하나
