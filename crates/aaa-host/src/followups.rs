@@ -21,7 +21,8 @@ fn is_resolve_cleanup(line: &str) -> bool {
 
 /// CLI는 실행 자리를 바꾸기 전에 후속을 처리한다. 웹의 의도적인 끝내기는 기존 카드를 남긴다.
 pub(crate) fn check_cli_resolve(rec: &ThreadRec, actor: &str) -> Result<(), ErrorBody> {
-    if !actor.starts_with("local:") || rec.automation.is_some() {
+    // 아이디어·기획 대화 thread는 할 일이 없다(옛 판이 모은 후속이 남았어도 버리기의 끝내기를 막지 않는다)
+    if !actor.starts_with("local:") || rec.automation.is_some() || rec.chat_only() {
         return Ok(());
     }
     let pending: Vec<_> =

@@ -5,7 +5,7 @@
 //! - 보낸 말은 대화 기록(host 상태 폴더 `design-chats/<프로젝트>/<저장소>/<주제>.json`, 기획 branch 기록과 따로 잠근다)에 남기고,
 //!   thread가 brief를 받은 뒤 차례로 보낸다. host가 다시 뜨면 ticker가 남은 말을 잇는다.
 //! - thread는 자기 기획 branch에만 `aaa plan save`로 쓴다(design_branch.rs `design_writer`). 다른 머신 세션은 agent 중계로 쓴다.
-//! - 쉬는 branch에 말하면 branch를 다시 연다. 버리면 대화 thread도 알림 없이 끝낸다.
+//! - 쉬는 branch에 말하면 branch를 다시 연다. 버리면 대화 thread도 알림 없이 끝낸다(띄우는 중이었으면 뜬 뒤 끝낸다).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,10 +19,14 @@ use serde::{Deserialize, Serialize};
 use crate::orch::{ResolveOpts, ResolveWhy, StartArgs, bad, internal};
 use crate::{Host, err};
 
+/// 다른 머신의 대화 thread가 `aaa plan save`를 host에 원격 전달하려면 그 머신 agent·CLI가 알아야 한다
+pub(crate) const CHAT_FEATURE: &str = "design_chat.v1";
 /// 보낸 말 한 개 상한(웹 입력창과 같다)
 const MAX_SAY: usize = 100_000;
 /// thread가 brief를 받기를 기다리는 상한. 넘으면 말은 남기고 다음 말·ticker 때 다시 보낸다
 const DELIVER_WAIT: Duration = Duration::from_secs(600);
+/// 띄우는 중인 대화 thread를 끝내려고 준비가 끝나기를 기다리는 상한
+const END_WAIT: Duration = Duration::from_secs(60);
 
 /// 기획 branch 하나의 대화
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +39,9 @@ pub(crate) struct Chat {
     pub error: Option<String>,
     /// 마지막으로 말한 때(쉼을 정할 때 마지막 저장과 함께 본다)
     pub said_ms: u64,
+    /// 버린 대화: 띄우는 중이던 배경 일이 끝나면 이것을 보고 그 thread를 끝낸다. 다시 말하면 지운다.
+    /// 같은 주제의 기획 branch를 새로 열면 기록째 지운다(`design_chat_forget`)
+    pub retired: bool,
 }
 
 /// `<저장소>/<주제>`
@@ -143,6 +150,7 @@ impl Host {
         self.design_chat_edit(project, &target.name, slug, |c| {
             c.pending.push(text.to_string());
             c.error = None;
+            c.retired = false;
             c.said_ms = aaa_common::util::now_ms();
         })
         .await?;
@@ -205,6 +213,9 @@ impl Host {
         start: bool,
     ) -> Result<Option<String>, ErrorBody> {
         let chat = self.design_chat_load(project, repo, slug)?;
+        if chat.retired {
+            return Ok(None);
+        }
         let mut again = false;
         if let Some(id) = chat.thread.as_deref() {
             match self.load(project, id) {
@@ -238,7 +249,8 @@ impl Host {
         if !start {
             return Ok(None);
         }
-        let (target, _) = self.design_target(project, repo)?;
+        let (target, mid) = self.design_target(project, repo)?;
+        self.design_chat_machine_ok(&mid)?;
         let rec = self
             .design_branch_load(project, repo, slug)?
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
@@ -256,14 +268,46 @@ impl Host {
             ..Default::default()
         };
         let view = self.thread_start_mode(args, actor, true).await?;
-        self.design_chat_edit(project, repo, slug, |c| c.thread = Some(view.id.clone())).await?;
+        let kept = self
+            .design_chat_edit(project, repo, slug, |c| {
+                if c.retired {
+                    return false;
+                }
+                c.thread = Some(view.id.clone());
+                true
+            })
+            .await?;
+        if !kept {
+            // 띄우는 사이에 버렸다: 버린 branch에 쓰지 않게 방금 띄운 thread를 끝낸다
+            tracing::info!(project, repo, slug, thread = %view.id, "띄우는 사이에 버린 기획 대화의 thread를 끝낸다");
+            self.design_chat_end(project, &view.id, actor).await?;
+            return Ok(None);
+        }
         Ok(Some(view.id))
+    }
+
+    /// 대화 thread를 띄울 머신: host 머신은 front.sock으로 쓰고, 다른 머신은 저장 원격 전달을 아는 agent여야 한다
+    /// (옛 판이면 thread가 떠도 저장이 「host가 없다」로 실패한다)
+    fn design_chat_machine_ok(&self, mid: &str) -> Result<(), ErrorBody> {
+        if self.machine_is_local(mid) || self.machine_feature(mid, CHAT_FEATURE) {
+            return Ok(());
+        }
+        Err(err(
+            ErrorCode::Unavailable,
+            format!(
+                "{} agent가 기획 대화 저장을 host에 전달하지 못한다({CHAT_FEATURE} 없음). 그 머신 aaa를 갱신한다",
+                self.machine_name(mid)
+            ),
+        ))
     }
 
     async fn design_deliver(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
         let mut events = self.thread_events.subscribe();
         loop {
             let Ok(chat) = self.design_chat_load(project, repo, slug) else { return };
+            if chat.retired {
+                return;
+            }
             let Some(next) = chat.pending.first().cloned() else { return };
             let Some(thread) = chat.thread.clone() else { return };
             let ready = self
@@ -301,7 +345,8 @@ impl Host {
         }
     }
 
-    /// 버리기: 대화 thread를 알림 없이 끝내고(대화 전용 thread라 알림함 항목이 없다) 대화 기록을 지운다
+    /// 버리기: 표지를 남기고(보낼 말은 버린다) 대화 thread를 알림 없이 끝낸다(대화 전용 thread라 알림함 항목이 없다).
+    /// 끝내지 못하면 thread를 기록에 남겨 다시 버리거나 이어 말할 수 있다
     pub(crate) async fn design_chat_retire(
         self: &Arc<Self>,
         project: &str,
@@ -309,13 +354,56 @@ impl Host {
         slug: &str,
         actor: &str,
     ) -> Result<(), ErrorBody> {
-        let chat = self.design_chat_load(project, repo, slug)?;
-        if let Some(id) = chat.thread.as_deref()
-            && let Ok(rec) = self.load(project, id)
-            && !matches!(rec.status, ThreadStatus::Resolved | ThreadStatus::Failed)
-        {
-            self.thread_resolve(project, id, ResolveOpts::default(), ResolveWhy::Manual, actor).await?;
+        let thread = self
+            .design_chat_edit(project, repo, slug, |c| {
+                c.retired = true;
+                c.pending.clear();
+                c.error = None;
+                c.thread.clone()
+            })
+            .await?;
+        if let Some(id) = thread.as_deref() {
+            self.design_chat_end(project, id, actor).await?;
         }
+        self.design_chat_edit(project, repo, slug, |c| {
+            if c.thread == thread {
+                c.thread = None;
+            }
+        })
+        .await
+    }
+
+    /// 대화 thread를 끝낸다. 띄우는 중이면(기동 일이 thread 작업 잠금을 쥐고 있다, 상태가 열림이 된 뒤에도 잠시) 놓기를
+    /// 기다려 끝낸다
+    async fn design_chat_end(self: &Arc<Self>, project: &str, id: &str, actor: &str) -> Result<(), ErrorBody> {
+        let deadline = tokio::time::Instant::now() + END_WAIT;
+        let lock = self.thread_op_lock(project, id);
+        loop {
+            let Ok(rec) = self.load(project, id) else { return Ok(()) };
+            if matches!(rec.status, ThreadStatus::Resolved | ThreadStatus::Failed) {
+                return Ok(());
+            }
+            // 기다리기만 하고 바로 놓는다: thread_resolve가 스스로 잡는다
+            drop(tokio::time::timeout_at(deadline, lock.clone().lock_owned()).await);
+            match self.thread_resolve(project, id, ResolveOpts::default(), ResolveWhy::Manual, actor).await {
+                Ok(_) => return Ok(()),
+                Err(e) if lock.try_lock().is_err() && tokio::time::Instant::now() < deadline => {
+                    tracing::info!(
+                        project,
+                        thread = id,
+                        "기획 대화 thread가 아직 다른 작업 중이라 다시 끝낸다: {}",
+                        e.message
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// 같은 주제의 기획 branch를 새로 연다: 앞서 버린 대화의 기록(표지·끝난 thread)을 잇지 않는다
+    pub(crate) async fn design_chat_forget(&self, project: &str, repo: &str, slug: &str) -> Result<(), ErrorBody> {
+        let lock = self.design_chat_lock(project, repo, slug);
+        let _one = lock.lock().await;
         let path = self.design_chat_path(project, repo, slug)?;
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
@@ -328,6 +416,47 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 다른 머신은 저장 원격 전달을 아는 agent에서만 대화 thread를 띄운다(host 머신은 front.sock이라 묻지 않는다)
+    #[test]
+    fn chat_threads_start_only_where_saves_can_reach_the_host() {
+        let root = std::env::temp_dir().join(format!("aaa-design-chat-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        for (id, local, features) in [
+            ("host-m", true, vec![]),
+            ("old", false, vec!["design_write.v1".to_string()]),
+            ("new", false, vec!["design_write.v1".to_string(), CHAT_FEATURE.to_string()]),
+        ] {
+            h.inner.lock().unwrap().machines.insert(
+                id.into(),
+                crate::MachineRt {
+                    name: format!("lab-{id}"),
+                    local,
+                    os: None,
+                    boot_id: None,
+                    dev_mode: true,
+                    conn: None,
+                    last_seen_ms: None,
+                    health: None,
+                    health_sent: None,
+                    features,
+                    identity: None,
+                    agent_pid: None,
+                    colors: None,
+                    build: Default::default(),
+                },
+            );
+        }
+        assert!(h.design_chat_machine_ok("host-m").is_ok() && h.design_chat_machine_ok("new").is_ok());
+        let e = h.design_chat_machine_ok("old").unwrap_err();
+        assert_eq!(e.code, ErrorCode::Unavailable);
+        assert!(e.message.contains("lab-old") && e.message.contains(CHAT_FEATURE), "{}", e.message);
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn task_text_points_at_branch_worktree_and_commands() {

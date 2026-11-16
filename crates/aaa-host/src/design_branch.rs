@@ -233,6 +233,9 @@ impl Host {
         let _one = lock.lock().await;
         let old = self.design_branch_load(project, &target.name, slug)?;
         let conn = self.design_write_conn(&mid)?;
+        if old.is_none() {
+            self.design_chat_forget(project, &target.name, slug).await?;
+        }
         let req = AgentRequest::DesignOpen {
             project: project.to_string(),
             repo: target.path.clone(),
@@ -469,13 +472,14 @@ impl Host {
         let rest_ms = self.cfg.projects.design_rest_secs.saturating_mul(1000);
         for t in targets.iter().filter(|t| t.folder.is_some()) {
             for rec in self.design_branch_list(project, &t.name) {
+                // 끊긴 전달을 잇는다(쉬는 branch면 배경 일이 다시 연다)
+                self.design_chat_resume(project, &t.name, &rec.slug);
                 if rec.state != DesignBranchState::Open {
                     continue;
                 }
                 // 마지막 저장과 마지막 말 중 늦은 때부터 센다(대화 중인 branch는 쉬지 않는다)
                 let said = self.design_chat_load(project, &t.name, &rec.slug).map(|c| c.said_ms).unwrap_or(0);
                 let idle = now.saturating_sub(rec.updated_ms.max(said));
-                self.design_chat_resume(project, &t.name, &rec.slug);
                 let queued =
                     self.design_push_gen.lock().unwrap().contains_key(&format!("{project}/{}/{}", t.name, rec.slug));
                 let retry = rec.push_error.is_none()

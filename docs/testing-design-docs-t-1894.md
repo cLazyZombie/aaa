@@ -28,6 +28,9 @@
 | 2-2 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니고 CLI 끝내기를 막지 않는다 | `followups::tests::chat_only_threads_collect_no_followups` | `cargo test -p aaa-host --lib followups` |
 | 2-2 대화 thread 할 일 글이 branch·worktree·checkout·읽기·저장 명령을 가리킨다 | `design_chat::tests::task_text_points_at_branch_worktree_and_commands` | `cargo test -p aaa-host --lib design_chat` |
 | 2-2 실제 host·agent 둘(TLS 원격 labB)·Git과 CLI: 저장소가 labB에 있으면 `plan say`가 labB에 대화 thread를 띄우고(할 일 없음) brief 뒤 말을 보내 `pending` 0, front.sock 없는 thread 세션이 agent 중계로 `plan save`(자기 branch)·`show --branch`·`list`, 다른 branch 저장은 「자기 branch」 거부, 열기·말하기·버리기는 CLI가 보내지 않음, commit 메시지 끝이 thread ID, 저장소 checkout 그대로, 올린 기획 branch에서 `--base origin/design/<주제>`로 시작한 worktree thread가 그 commit과 문서를 가짐, 버리면 대화 thread가 끝나고 origin branch까지 지움 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_saves_only_its_own_branch` | `cargo test -p aaa --test m13 design_branch` |
+| 2-2 같은 m13: 보류한 대화 thread에 다음 말을 하면 같은 thread로 잇고 말이 닿음, 쉼 창(1초) 뒤 tick이 branch를 쉬게 하고 다음 말이 branch를 다시 열어 같은 thread에 보냄, 띄우는 중에 버리면 그 thread가 끝나고 branch가 사라짐 | 위와 같음 | 위와 같음 |
+| 2-2 원격 전달 hook 사건은 600KiB 글을 싣고(다른 hook은 256KiB에서 거부), 연결 frame 한도를 넘으면 거부, 기획 글 한도+JSON이 들어간다 | `aaa-agent` `hooks::tests::relay_messages_carry_design_documents_but_other_hooks_keep_the_old_limit` | `cargo test -p aaa-agent --lib hooks::` |
+| 2-2 host 머신이 아닌 저장소 머신은 `design_chat.v1`을 아는 agent에서만 대화 thread를 띄우고, 아니면 머신 이름·기능 이름을 담은 Unavailable | `aaa-host` `design_chat::tests::chat_threads_start_only_where_saves_can_reach_the_host` | `cargo test -p aaa-host --lib design_chat` |
 
 - git 실험실은 `-c init.defaultBranch=main`·`-c user.*`를 주고 index에 symlink·gitlink를 직접 넣어 OS의 symlink 권한과 기본 branch 설정에 기대지 않는다.
 - 1분 받기 간격은 시험마다 새 임시 저장소(다른 toplevel)라 서로 막지 않는다. 고정 commit 시험은 clone에서 직접 `git fetch`해 시계를 기다리지 않는다.
@@ -46,6 +49,8 @@
 - 2-2: `design_writer`에서 thread의 `design`과 요청 branch 비교를 빼면 `design_chat_thread_saves_only_its_own_branch`가 다른 branch 저장이 거부되지 않아(NotFound까지 감) 실패했다.
 - 2-2: 중계 목록(`thread_relay_allowed`)에서 `DesignSave`를 빼면 m13 `design_chat_thread_on_the_repo_machine_…`의 thread 안 `plan save`가 「host가 없다(front.sock)」로 실패했다.
 - 2-2: m13을 처음 돌렸을 때 `plan discard`가 대화 thread의 [완료] 보고 Next(후속 할 일) 때문에 끝내기를 거부당했다. 대화 전용 thread는 후속을 모으지 않게 고쳤다(아이디어 thread도 같은 경로였다).
+- 2-2 advisor 확인에서 찾은 것: agent hook 소켓 한도(256KiB)가 기획 글 한도(512KiB)보다 작아 다른 머신 대화 thread가 큰 문서를 저장하지 못했다(`thread_read`만 frame 크기까지). 옛 agent의 저장소 머신에서는 thread가 떠도 저장이 「host가 없다」로 실패했다(`design_chat.v1` 확인). 말한 직후 버리면 띄우던 thread가 버린 branch에 남을 수 있었다(버림 표지).
+- 2-2: 띄우는 중에 버리는 단계를 더하자 버리기가 「준비·정리 작업 중」으로 실패했다. 상태가 열림이 된 뒤에도 기동 일이 thread 작업 잠금을 잠시 쥔다(상태만 보고 기다리게 했을 때도 같은 실패). 잠금을 기다려 끝내게 고쳤다. 이 단계는 실제로는 그 길(기동 일이 잠금을 쥔 동안 버림)을 지난다. 기록하기 전에 버리는 아주 짧은 틈(버림 표지 길)은 시험이 일부러 맞추지 못한다.
 
 ## 2-1 독립 리뷰에서 고친 것
 
