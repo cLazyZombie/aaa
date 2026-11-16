@@ -210,6 +210,16 @@ def call(*args, ok=True):
     assert (p.returncode == 0) == ok, (args, p.returncode, p.stdout, p.stderr)
     return json.loads(p.stdout) if ok else p.stderr.decode()
 assert not os.path.exists(os.path.join(os.environ['AAA_STATE_DIR'], 'host/front.sock'))
+# 한도 가까운 문서(500KiB 안팎)도 중계 전체(CLI → hook → agent → host → agent 저장)를 지나 저장·읽기가 되고, 넘으면 agent가 거절한다
+big_path = os.path.join(os.path.dirname({body:?}), 'big-from-thread.md')
+line = '해골 왕은 얼음 성의 주인이다. 서리 거인을 부린다.\n'
+big = '# 큰 문서\n' + line * ((500 * 1024) // len(line.encode()))
+assert 480 * 1024 < len(big.encode()) <= 512 * 1024, len(big.encode())
+open(big_path, 'w').write(big)
+call('plan', 'save', 'game', 'docs/big.md', '--branch', 'boss-dex', '--new', '--file', big_path, '--summary', '큰 문서')
+assert call('plan', 'show', 'game', 'docs/big.md', '--branch', 'boss-dex')['doc']['text'] == big
+open(big_path, 'w').write(big + line * 1000)
+assert '너무 크다' in call('plan', 'save', 'game', 'docs/big2.md', '--branch', 'boss-dex', '--new', '--file', big_path, ok=False)
 saved = call('plan', 'save', 'game', 'docs/boss.md', '--branch', 'boss-dex', '--new', '--file', {body:?}, '--summary', '해골 왕 정리')
 doc = call('plan', 'show', 'game', 'docs/boss.md', '--branch', 'boss-dex')['doc']
 assert doc['text'] == '# 보스 도감\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
@@ -260,7 +270,11 @@ print('design-relay-ok', saved['commit'])
         .capture_output()
         .unwrap();
     assert!(!claimed.status.success(), "{}", String::from_utf8_lossy(&claimed.stdout));
-    assert!(String::from_utf8_lossy(&claimed.stderr).contains("세션"), "{}", String::from_utf8_lossy(&claimed.stderr));
+    assert!(
+        String::from_utf8_lossy(&claimed.stderr).contains("확인하지 못했다"),
+        "{}",
+        String::from_utf8_lossy(&claimed.stderr)
+    );
     assert!(!game.join("docs/boss.md").exists());
 
     // 올린 기획 branch에서 갈라진 구현 thread는 그 기획 commit을 받는다(2-3 「main에 반영」·3단계 구현 맡기기의 바탕)

@@ -27,7 +27,7 @@
 | 2-2 원격 중계는 기획 열기·말하기·버리기를 싣지 않는다 | `thread_read::tests::relay_checks_machine_live_session_and_explicit_read_allowlist` | `cargo test -p aaa-host --lib thread_read` |
 | 2-2 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니고 CLI 끝내기를 막지 않는다 | `followups::tests::chat_only_threads_collect_no_followups` | `cargo test -p aaa-host --lib followups` |
 | 2-2 대화 thread 할 일 글이 branch·worktree·checkout·읽기·저장 명령을 가리킨다 | `design_chat::tests::task_text_points_at_branch_worktree_and_commands` | `cargo test -p aaa-host --lib design_chat` |
-| 2-2 실제 host·agent 둘(TLS 원격 labB)·Git과 CLI: 저장소가 labB에 있으면 `plan say`가 labB에 대화 thread를 띄우고(할 일 없음) brief 뒤 말을 보내 `pending` 0, front.sock 없는 thread 세션이 agent 중계로 `plan save`(자기 branch)·`show --branch`·`list`, 다른 branch 저장은 「자기 branch」 거부, 열기·말하기·버리기는 CLI가 보내지 않음, commit 메시지 끝이 thread ID, 저장소 checkout 그대로, 올린 기획 branch에서 `--base origin/design/<주제>`로 시작한 worktree thread가 그 commit과 문서를 가짐, 버리면 대화 thread가 끝나고 origin branch까지 지움 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_saves_only_its_own_branch` | `cargo test -p aaa --test m13 design_branch` |
+| 2-2 실제 host·agent 둘(TLS 원격 labB)·Git과 CLI: 저장소가 labB에 있으면 `plan say`가 labB에 대화 thread를 띄우고(할 일 없음) brief 뒤 말을 보내 `pending` 0, front.sock 없는 thread 세션이 agent 중계로 `plan save`(자기 branch, 500KiB 안팎 문서의 저장·읽기와 512KiB 넘음 거절 포함)·`show --branch`·`list`, 다른 branch 저장은 「자기 branch」 거부, 열기·말하기·버리기는 CLI가 보내지 않음, commit 메시지 끝이 thread ID, 저장소 checkout 그대로, 올린 기획 branch에서 `--base origin/design/<주제>`로 시작한 worktree thread가 그 commit과 문서를 가짐, 버리면 대화 thread가 끝나고 origin branch까지 지움 | `aaa` m13 `design_branch::design_chat_thread_on_the_repo_machine_saves_only_its_own_branch` | `cargo test -p aaa --test m13 design_branch` |
 | 2-2 같은 m13: 보류한 대화 thread에 다음 말을 하면 같은 thread로 잇고 말이 닿음, 쉼 창(1초) 뒤 tick이 branch를 쉬게 하고 다음 말이 branch를 다시 열어 같은 thread에 보냄, 띄우는 중에 버리면 그 thread가 끝나고 branch가 사라짐, pane 밖 프로세스가 대화 thread의 `AAA_SESSION_ID`를 대고 `plan save`하면 거부 | 위와 같음 | 위와 같음 |
 | 2-2 원격 전달 hook 사건은 600KiB 글을 싣고(다른 hook은 256KiB에서 거부), 연결 frame 한도를 넘으면 거부, 기획 글 한도+JSON이 들어간다 | `aaa-agent` `hooks::tests::relay_messages_carry_design_documents_but_other_hooks_keep_the_old_limit` | `cargo test -p aaa-agent --lib hooks::` |
 | 2-2 host 머신이 아닌 저장소 머신은 `design_chat.v1`을 아는 agent에서만 대화 thread를 띄우고, 아니면 머신 이름·기능 이름을 담은 Unavailable | `aaa-host` `design_chat::tests::chat_threads_start_only_where_saves_can_reach_the_host` | `cargo test -p aaa-host --lib design_chat` |
@@ -63,7 +63,7 @@
 - 쓰기 판정이 프로젝트와 대화 기록의 지금 thread를 보지 않았다: 둘 다 본다.
 - E2E 120(아이디어 갱신)은 thread 저장을 pane 밖에서 `AAA_SESSION_ID=<thread pane>`으로 흉내 냈다: 위 수리 뒤 「자기 아이디어 노트만」으로 거부되어 실패했다. 그 저장을 실제처럼 thread pane 안에서(`post-probe`) 하도록 바꿨다. 처음에는 첫 말(「준비」)의 글과 Enter 사이에 저장 줄이 끼어 한 줄로 섞였다(host 기록으로 확인): 첫 말이 전달된 뒤(`pending` 비움) 친다.
 - 재리뷰에서 더 고친 것: 쉼 판정이 대화 thread를 보류하는 사이(상태는 보류, 세션 닫기까지 thread 작업 잠금을 쥔다) 말하면 잇기가 잠금에 막혀 새 thread를 띄우고 앞 thread는 보류인 채 남았다. 잠금을 기다려 잇고, 그래도 잇지 못해 새로 띄우면 앞 thread를 끝낸다.
-- 남긴 것: 다른 머신 저장은 host의 agent 메시지 비밀 가림을 지나 등록된 비밀 조각이 든 글은 `*`로 저장된다(로컬 저장은 그대로). 띄우는 중인 thread가 60초 넘게 잠금을 쥐면 버리기의 끝내기가 실패한다(다시 버리면 잇는다). 같은 머신 thread의 CLI가 pane 자손으로 판정되지 않는 harness라면 그 thread는 자기 문서를 쓰지 못한다(보기만).
+- 남긴 것: 다른 머신 저장은 host의 agent 메시지 비밀 가림을 지나 등록된 비밀 조각이 든 글은 `*`로 저장된다(로컬 저장은 그대로). 띄우는 중인 thread가 60초 넘게 잠금을 쥐면 버리기의 끝내기가 실패한다(다시 버리면 잇는다). 같은 머신 thread의 CLI가 pane 자손으로 판정되지 않는 harness라면 그 thread는 자기 문서를 쓰지 못한다(보기만). 재리뷰가 남긴 낮은 것: `plan say`는 branch 잠금을 잡으므로 올리기(최대 420초)·버리기 뒤에서 기다릴 수 있다. 대화를 끝내지 못한 버리기 뒤 다시 버리지 않고 같은 주제를 새로 열면 앞 thread를 가리키는 기록이 지워진다(그 thread는 쓰지 못하지만 끝내는 이가 없다).
 
 ## 2-1 독립 리뷰에서 고친 것
 
@@ -100,5 +100,5 @@
 ## 2-2 실제 실행(11-16, macOS)
 
 - `verify.py develop --package aaa-proto --package aaa-agent --package aaa-host --package aaa --spec 135,130,120,131,122`(리뷰 수리 뒤 마지막 commit): Rust 시험 proto 58·agent 218·host 937·m13 104 통과, strict clippy 통과, 웹 단위 통과, E2E 120·122·130·131·135 통과, 공개 검사 통과. 그 전 판(리뷰 수리 전)에서도 같은 묶음이 통과했고, 「알린 세션」 수리 직후 판에서는 E2E 120이 위 까닭으로 실패했다.
-- m13 `design_chat_thread_on_the_repo_machine_…`는 띄우는 중 버리기 단계를 더한 뒤 다섯 번 연달아 통과했다(한 번 7.5초 안팎).
+- m13 `design_chat_thread_on_the_repo_machine_…`는 띄우는 중 버리기 단계를 더한 뒤 다섯 번 연달아 통과했다(한 번 7.5초 안팎, 리뷰 수리 전 코드).
 - Linux·Windows strict cross clippy 통과(나온 unused dependency 경고는 손대지 않은 manifest의 기존 것).
