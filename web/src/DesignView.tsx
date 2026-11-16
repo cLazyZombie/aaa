@@ -115,8 +115,10 @@ function storeChat(repo: string, slug: string) {
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-export function DesignView({ shown, target, repos, threads, panes, canControl, tree, onOpen, onReload }: {
+export function DesignView({ shown, target, repos, threads, panes, canControl, chatAsk, tree, onOpen, onReload }: {
   shown: boolean;
+  /** 이 대화를 고른다(옛 아이디어 「기획 대화 보기」, t-1894 4단계). `n`이 바뀔 때 한 번, 그 branch가 트리에 오면 */
+  chatAsk?: { repo: string; slug: string; n: number } | null;
   /** `<저장소>/<경로>`, 없으면 고른 문서 없음 */
   target: string | null;
   /** 트리(문서 안 링크가 가리키는 문서가 있는지 본다). 트리를 다시 읽어 판이 바뀌면 문서도 그 판으로 다시 읽는다 */
@@ -156,6 +158,13 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     setChatSlug(slug);
     if (repo) storeChat(repo.repo, slug);
   }, [repo]);
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!chatAsk || asked.current === chatAsk.n || repo?.repo !== chatAsk.repo || !repo.branches.some((b) => b.slug === chatAsk.slug)) return;
+    asked.current = chatAsk.n;
+    pick(chatAsk.slug);
+    if (narrow) setPage("chat");
+  }, [chatAsk, repo, pick, narrow]);
   const branch = tab === "main" ? null : repo?.branches.find((b) => b.slug === tab) ?? null;
   // 받은 문서(branch 판이면 main 판도 함께: 다른 덩어리 표시)
   const [doc, setDoc] = useState<{ key: string; doc: DesignDoc; main: string | null } | null>(null);

@@ -921,16 +921,10 @@ fs.writeFileSync(
   `#!/bin/sh
 printf 'fake> '
 while IFS= read -r line; do
+  # 받은 줄을 thread마다 남긴다(시험이 thread가 실제로 받은 글을 읽는다, 137 기획으로 옮기기)
+  printf '%s\n' "$line" >> "${root}/fake-lines/\${AAA_THREAD:-none}.log"
   case "$line" in
     post-probe\\ *) sh "\${line#post-probe }" ;;
-    *"노트에 한 줄"*)
-      # 아이디어 전용 thread(122, t-1260): 노트를 읽고 한 줄 더해 읽은 판으로 저장한다
-      id=$(printf '%s' "$line" | grep -o 'n-[0-9]*' | head -n 1)
-      out=$("${AA}" idea show "$id")
-      rev=$(printf '%s\n' "$out" | head -n 1 | grep -o '판 [0-9]*' | grep -o '[0-9]*')
-      printf '%s\n' "$out" | tail -n +3 > idea-note.md
-      printf -- '- thread가 더한 줄\n' >> idea-note.md
-      "${AA}" idea save "$id" --base "$rev" --file idea-note.md --summary '한 줄 더함' > /dev/null && echo idea-saved ;;
     *"[aaa 보류 준비]"*)
       # 보류 정리 부탁(85, plan §8.426): 맡긴 대로 Handoff 보고를 쓴다(커밋·push할 것이 없는 작업 폴더 thread)
       path=$(printf '%s' "$line" | grep -o '[.]aaa/[^)]*/report[.]md' | head -n 1)
@@ -985,6 +979,7 @@ done
 // thread 작업 폴더(work_root)는 보고서 안 파일 링크(12, plan §8.171)가 연다(기본 허용 폴더에도 work_root가 든다). 시작할 때 없는
 // 폴더는 허용 폴더가 되지 않으므로 미리 만든다
 fs.mkdirSync(`${root}/files`, { recursive: true });
+fs.mkdirSync(`${root}/fake-lines`, { recursive: true });
 fs.mkdirSync(`${root}/work`, { recursive: true });
 fs.mkdirSync(`${root}/projects`, { recursive: true });
 fs.writeFileSync(

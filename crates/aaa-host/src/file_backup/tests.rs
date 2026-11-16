@@ -1,6 +1,5 @@
 use super::*;
 use crate::Host;
-use aaa_proto::{IdeaAuthor, IdeaTaskDraft};
 use std::sync::{Arc, atomic::Ordering};
 use std::time::Duration;
 
@@ -35,26 +34,16 @@ impl Drop for Lab {
     }
 }
 
-#[tokio::test]
-async fn restores_revisions_metadata_media_handoff_uploads_and_short_ids_in_a_new_host() {
+#[test]
+fn restores_revisions_metadata_media_and_short_ids_in_a_new_host() {
     let lab = Lab::new();
     let host = lab.host();
-    let note = host.idea_create("demo", "복원 시험", "# 복원 시험\n첫 판\n", None, "test").unwrap();
-    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
-    let image = host.idea_file_save("demo", "n-0001", png, Some("fixture.png".into())).unwrap();
-    let folder = host.idea_folder("demo", "n-0001").unwrap();
-    let text = format!("# 복원 시험\n![그림]({image})\n");
-    assert!(host.idea_write("demo", &folder, 1, &text, None, IdeaAuthor::User, "test").unwrap().is_ok());
-    host.idea_handoff(
-        "demo",
-        "n-0001",
-        2,
-        vec![IdeaTaskDraft { title: "구현".into(), repo: None, notes: String::new() }],
-        "test",
-    )
-    .await
-    .unwrap();
-    let copy = host.idea_copy("demo", "n-0001", "test").unwrap();
+    // 옛 아이디어(읽기 전용, t-1894 4단계): 그림 있는 판 2 노트와 완료·옛 쓰기 칸이 남은 노트
+    crate::ideas::tests::seed_fixture_ideas(&host, "demo");
+    let folder = host.idea_folder("demo", "n-0002").unwrap();
+    let text = fs::read_to_string(folder.dir.join("note.md")).unwrap();
+    let image = "a6d715956dab435e.png";
+    let png = fs::read(folder.dir.join(image)).unwrap();
     let archive = run(&lab.state, &lab.cfg, 1).unwrap();
     let cipher = fs::read(&archive).unwrap();
     assert!(!cipher.windows(text.len()).any(|w| w == text.as_bytes()));
@@ -63,21 +52,18 @@ async fn restores_revisions_metadata_media_handoff_uploads_and_short_ids_in_a_ne
     let mut cfg = HostConfig::default();
     cfg.projects.root = out.join("projects").to_string_lossy().into();
     let restored = Host::open(cfg, out.join("host")).unwrap();
-    let f = restored.idea_folder("demo", "n-0001").unwrap();
-    assert_eq!(f.id, note.idea.id);
-    assert_eq!(fs::read(f.dir.join("note.md")).unwrap(), text.as_bytes());
-    assert_eq!(fs::read(f.dir.join("revs/0001.md")).unwrap(), note.text.as_bytes());
-    assert_eq!(fs::read(f.dir.join("revs/0002.md")).unwrap(), text.as_bytes());
-    assert_eq!(fs::read(f.dir.join("idea.json")).unwrap(), fs::read(folder.dir.join("idea.json")).unwrap());
-    assert_eq!(restored.idea_file_read("demo", &f.id, &image).unwrap(), png);
-    assert_eq!(restored.task_file_read("demo", &image).unwrap(), png);
-    assert_eq!(restored.idea_folder("demo", "n-0002").unwrap().id, copy.idea.id);
-    assert_eq!(restored.idea_create("demo", "다음", "", None, "test").unwrap().idea.short_id, "n-0003");
+    let f = restored.idea_folder("demo", "n-0002").unwrap();
+    assert_eq!(f.id, folder.id);
+    for name in ["note.md", "revs/0001.md", "revs/0002.md", "idea.json"] {
+        assert_eq!(fs::read(f.dir.join(name)).unwrap(), fs::read(folder.dir.join(name)).unwrap(), "{name}");
+    }
+    assert_eq!(restored.idea_file_read("demo", &f.id, image).unwrap(), png);
+    assert_eq!(restored.idea_list("demo").unwrap().len(), 3);
+    assert_eq!(restored.db.idea_short_id("demo", "01JD0000000000000000000000").unwrap(), "n-0004", "번호는 이어진다");
     assert!(restored.db.meta("db-backup:last-success-ms").unwrap().is_none());
     assert!(!lab.state.join("file-backup-staging/snapshot.tar").exists());
     assert!(!out.join(".snapshot.tar").exists());
     assert!(restore(&archive, &lab.key, &out).is_err());
-    assert_eq!(restored.task_file_read("demo", &image).unwrap(), png);
 }
 
 #[test]
@@ -113,7 +99,7 @@ fn keeps_thirty_completed_file_archives_and_never_rotates_db_other_hosts_or_part
 fn rejects_incomplete_snapshots_wrong_keys_and_corrupt_ciphertext_without_losing_a_good_copy() {
     let lab = Lab::new();
     let host = lab.host();
-    host.idea_create("demo", "노트", "# 노트\n", None, "test").unwrap();
+    crate::ideas::tests::seed_fixture_ideas(&host, "demo");
     let good = run(&lab.state, &lab.cfg, 1).unwrap();
     let f = host.idea_folder("demo", "n-0001").unwrap();
     fs::write(f.dir.join("note.md"), "저장 중간").unwrap();

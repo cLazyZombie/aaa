@@ -169,16 +169,6 @@ export async function uploadDesignFile(project: string, repo: string, branch: st
   return unwrap<{ path: string; commit: string }>(response);
 }
 
-/** 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다 */
-export async function uploadIdeaFile(project: string, idea: string, file: Blob): Promise<string> {
-  // 원래 파일 이름은 출처 기록용이다(t-1575): 붙여 넣은 그림처럼 이름이 없으면 보내지 않는다
-  const name = file instanceof File && file.name ? `?name=${encodeURIComponent(file.name)}` : "";
-  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/ideas/${encodeURIComponent(idea)}/files${name}`, {
-    method: "POST", body: file, credentials: "same-origin",
-  });
-  return (await unwrap<{ name: string }>(response)).name;
-}
-
 /** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.355): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
 export async function uploadReportFile(project: string, upload: string, path: string, file: Blob): Promise<{ files: number; total: number }> {
   const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {

@@ -1,38 +1,12 @@
-// 아이디어 화면(t-1260, 기획 t-1255)의 화면 밖 규칙: 목록 묶음, 휴대폰 「목록 | 노트 | 대화」 페이지 쓸기, 노트 그림 주소, 노트 고침 머리.
-import type { IdeaNote, IdeaSummary } from "./gen/proto";
+// 옛 아이디어 화면(t-1260, 읽기 전용 t-1894 4단계)의 화면 밖 규칙: 휴대폰 「노트 | 대화」 페이지 쓸기, 노트 그림 주소, 할 일 메모의
+// 아이디어 링크, 옮기기 상태와 옮긴 곳. 진행 모델 고르기는 기획 대화·구현 맡기기가 함께 쓴다.
+import type { DesignRepoView, IdeaMoved, IdeaSummary } from "./gen/proto";
 import { EDGE_PX, SWIPE_PX } from "./herdr/edgeSwipe.ts";
-
-/** 목록: 다듬는 중 먼저, 그 안에서 최근에 고친 것부터(host가 준 차례를 지킨다) */
-export function ideaGroups(ideas: readonly IdeaSummary[]): { name: string; items: IdeaSummary[] }[] {
-  const open = ideas.filter((i) => i.status === "open");
-  const done = ideas.filter((i) => i.status === "done");
-  return [
-    ...(open.length ? [{ name: "다듬는 중", items: open }] : []),
-    ...(done.length ? [{ name: "완료", items: done }] : []),
-  ];
-}
-
-export const IDEA_STATE: Record<IdeaSummary["status"], string> = { open: "다듬는 중", done: "완료" };
-
-/** 목록 줄 둘째 줄 오른쪽(thread 줄의 머신 자리): 완료는 넘긴 할 일, 다듬는 중은 전용 thread */
-export function ideaRefs(i: IdeaSummary): string {
-  return i.status === "done" ? i.tasks.join(", ") : (i.thread ?? "");
-}
 
 /** 휴대폰 본문 페이지. 목록은 앱 drawer다(노트에서 오른쪽으로 쓸면 열린다) */
 export type IdeaPage = "note" | "chat";
 
-/**
- * 진행 모델 칩(t-1581): 고른 모델과 전용 thread의 profile이 다르면 다음 말 때 바뀐다. 그동안 앞 모델을 함께 보인다.
- * 끝났거나 실패한 thread는 다음 말에 어차피 새로 뜬다. 옛 host(profile 없음)는 칩을 그리지 않는다(null).
- */
-export function ideaModel(chosen: string | undefined, thread: { profile: string; status: string } | null): { model: string; from: string | null } | null {
-  if (!chosen) return null;
-  const live = thread && thread.status !== "resolved" && thread.status !== "failed";
-  return { model: chosen, from: live && thread.profile !== chosen ? thread.profile : null };
-}
-
-/** 고를 수 있는 진행 모델: host 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
+/** 고를 수 있는 진행 모델: 그 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
 export function ideaModelChoices(owners: readonly { machine: string; profiles: string[] }[], hostMachine: string | null, chosen: string): string[] {
   const usable = owners.find((o) => o.machine === hostMachine)?.profiles ?? [];
   return [...new Set([chosen, ...usable])];
@@ -67,201 +41,28 @@ export function ideaLinkTarget(path: string): string | null {
   return m ? m[1]! : null;
 }
 
-/** 사람이 고친 노트를 아직 thread에 알리지 않았으면 다음 말 앞에 붙인다(결정 16). host도 같은 머리를 알아 두 번 붙이지 않는다 */
-export function withEditNote(note: Pick<IdeaNote, "edited"> | null, text: string): string {
-  // harness 명령(`/compact`)에는 붙이지 않는다: 머리가 붙으면 명령이 아니게 된다
-  return note?.edited && !text.startsWith("(노트 고침:") && !text.startsWith("/") ? `(노트 고침: ${note.edited})\n${text}` : text;
-}
+/** 옛 아이디어의 상태: 다듬는 중(옮길 수 있다)·옮기는 중·옮김·완료 */
+export type IdeaLegacy = { kind: "open" | "moving" | "moved" | "done"; label: string };
 
-/** 노트 칸에서 고른 자리의 `##` 절 이름: 고른 글 앞의 마지막 둘째 단계 머리(Markdown.tsx는 머리를 `data-markdown-heading`으로 그린다) */
-export function sectionBefore(root: Element, range: Range): string | null {
-  let found: string | null = null;
-  for (const h of Array.from(root.querySelectorAll('[data-markdown-heading="2"]'))) {
-    if (range.comparePoint(h, 0) > 0) break;
-    found = h.textContent?.trim() || null;
-  }
-  return found;
-}
-
-/** 할 일로 넘길 첫 초안: 제목은 아이디어 제목, 메모는 노트의 「결정」 줄(없으면 빈 메모). 저장소는 `draftRepo`가 고른다 */
-export function firstDraft(note: IdeaNote): { title: string; notes: string } {
-  const lines = note.text.split("\n");
-  const at = lines.findIndex((l) => /^##\s+결정\s*$/.test(l));
-  const decided: string[] = [];
-  if (at >= 0) {
-    for (const l of lines.slice(at + 1)) {
-      if (/^#{1,2}\s/.test(l)) break;
-      if (l.trim()) decided.push(l);
-    }
-  }
-  return { title: note.idea.title, notes: [`${note.idea.short_id} 정리본대로 한다.`, ...decided].join("\n") };
+export function ideaLegacy(idea: Pick<IdeaSummary, "status" | "moved">): IdeaLegacy {
+  const m = idea.moved;
+  if (m?.done) return { kind: "moved", label: `옮김 → ${m.repo} ${m.path}` };
+  if (m) return { kind: "moving", label: `옮기는 중 → ${m.repo} · design/${m.branch}` };
+  if (idea.status === "done") return { kind: "done", label: "완료" };
+  return { kind: "open", label: "다듬는 중" };
 }
 
 /**
- * 글에 낱말로 나온 저장소 이름들. 영문·숫자·`_`·`-`가 붙으면 다른 낱말이다(`rc-unity`는 `rc`가 아니다, `pt에서`는 `pt`다).
- * 긴 이름부터 찾고 찾은 자리는 지운다: `app.v2`에서 `app`을 또 찾지 않는다
+ * 옮긴 곳을 열 기획 문서(`<저장소>/<경로>`): 경로가 문서면 그것, 폴더면 옮기는 branch가 고친 첫 문서·그 폴더의 README·그 폴더의 첫
+ * 문서·기획 폴더 README 차례다
  */
-function reposIn(text: string, repos: readonly string[]): Set<string> {
-  let lower = text.toLowerCase();
-  const found = new Set<string>();
-  for (const repo of [...repos].sort((a, b) => b.length - a.length)) {
-    const name = repo.toLowerCase();
-    if (!name) continue;
-    for (let at = lower.indexOf(name); at >= 0; at = lower.indexOf(name, at + 1)) {
-      const before = lower[at - 1] ?? "";
-      const after = lower[at + name.length] ?? "";
-      if (/[a-z0-9_-]/.test(before) || /[a-z0-9_-]/.test(after)) continue;
-      found.add(repo);
-      lower = lower.slice(0, at) + " ".repeat(name.length) + lower.slice(at + name.length);
-    }
-  }
-  return found;
-}
-
-/**
- * 넘기기 초안의 저장소 기본값: 아이디어 제목에 나온 저장소 이름, 제목에 없으면 노트에 나온 이름.
- * 한 곳에 둘 이상 나오면 짐작하지 않고 정하지 않음(null)이다
- */
-export function draftRepo(note: Pick<IdeaNote, "text"> & { idea: Pick<IdeaNote["idea"], "title"> }, repos: readonly string[]): string | null {
-  for (const text of [note.idea.title, note.text]) {
-    const found = reposIn(text, repos);
-    if (found.size > 0) return found.size === 1 ? [...found][0]! : null;
-  }
-  return null;
-}
-
-// ── 노트 그림 붙이기·편집(t-1575) ──────────────────────────────────────────────
-
-/** 받는 그림·영상(host와 같다: 바이트 머리로 다시 본다) */
-export const IDEA_MEDIA_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm";
-/** 한 개 상한(host와 같다) */
-export const IDEA_MEDIA_MAX = 16 * 1024 * 1024;
-const MEDIA_TYPE_BY_EXT: Readonly<Record<string, string>> = {
-  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", mp4: "video/mp4", webm: "video/webm",
-};
-
-/**
- * 고른·붙인 파일을 올릴 수 있으면 형식이 붙은 파일, 아니면 못 올리는 까닭. 브라우저가 형식을 비우면(일부 파일 관리자) 확장자로 채운다
- * (herdr-web-ui composerImageMime과 같은 방식, 영상까지)
- */
-export function ideaMediaFile(file: File): File | string {
-  let type = file.type.toLowerCase();
-  if (type === "" || type === "application/octet-stream") {
-    const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
-    type = file.name.includes(".") ? (MEDIA_TYPE_BY_EXT[ext] ?? "") : "";
-    if (type !== "") file = new File([file], file.name, { type, lastModified: file.lastModified });
-  }
-  if (!Object.values(MEDIA_TYPE_BY_EXT).includes(type)) return "그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 올린다";
-  if (file.size === 0 || file.size > IDEA_MEDIA_MAX) return "1바이트부터 16MiB까지 올린다";
-  return file;
-}
-
-/** 노트 글 안 그림 하나: `![설명](<이름>)`의 자리. `nth`는 같은 이름 중 몇째인가, `alone`은 그 줄에 그림 하나뿐인가 */
-export type IdeaMediaSpot = { name: string; alt: string; start: number; end: number; nth: number; line: number; alone: boolean };
-
-const MEDIA_IMAGE = /!\[([^\]\n]*)\]\(\s*<?([0-9a-f]{16}\.(?:png|jpg|gif|webp|mp4|webm))>?(?:\s+["'][^\n]*?["'])?\s*\)/g;
-
-/** 줄마다 (시작 위치, 줄, 코드 울타리 안인가). 울타리 줄 자체도 안으로 센다 */
-function noteLines(text: string): { at: number; line: string; fenced: boolean }[] {
-  const out: { at: number; line: string; fenced: boolean }[] = [];
-  let fence: string | null = null;
-  let at = 0;
-  for (const line of text.split("\n")) {
-    const t = line.trimStart();
-    const mark = t.startsWith("```") ? "```" : t.startsWith("~~~") ? "~~~" : null;
-    if (mark) {
-      out.push({ at, line, fenced: true });
-      fence = fence === mark ? null : fence ?? mark;
-    } else out.push({ at, line, fenced: fence !== null });
-    at += line.length + 1;
-  }
-  return out;
-}
-
-/** 노트의 폴더 안 그림들(글 차례). 코드 울타리·`` ` `` 안의 예시는 빼고, host 렌더러가 그리는 차례와 같다 */
-export function ideaMediaSpots(text: string): IdeaMediaSpot[] {
-  const out: IdeaMediaSpot[] = [];
-  const seen = new Map<string, number>();
-  noteLines(text).forEach(({ at, line, fenced }, index) => {
-    if (fenced) return;
-    for (const m of line.matchAll(MEDIA_IMAGE)) {
-      const pos = m.index ?? 0;
-      if ((line.slice(0, pos).match(/`/g)?.length ?? 0) % 2 === 1) continue;
-      const name = m[2] ?? "";
-      const nth = seen.get(name) ?? 0;
-      seen.set(name, nth + 1);
-      out.push({ name, alt: m[1] ?? "", start: at + pos, end: at + pos + m[0].length, nth, line: index, alone: line.trim() === m[0] });
-    }
-  });
-  return out;
-}
-
-export function ideaMediaSpot(text: string, name: string, nth: number): IdeaMediaSpot | null {
-  return ideaMediaSpots(text).find((s) => s.name === name && s.nth === nth) ?? null;
-}
-
-/** 그림 설명(host `media_alt`와 같다): 한 줄, `[`·`]`·제어 문자는 빈칸, 200자. 비면 `그림`·`영상` */
-export function ideaMediaAlt(alt: string, name: string): string {
-  const cleaned = [...alt.replace(/[[\]\p{Cc}]/gu, " ").split(/\s+/).filter(Boolean).join(" ")].slice(0, 200).join("");
-  return cleaned || (/\.(mp4|webm)$/.test(name) ? "영상" : "그림");
-}
-
-/** 설명 바꾸기 */
-export function withMediaAlt(text: string, spot: IdeaMediaSpot, alt: string): string {
-  const head = `![${spot.alt}]`;
-  return `${text.slice(0, spot.start)}![${ideaMediaAlt(alt, spot.name)}]${text.slice(spot.start + head.length)}`;
-}
-
-/** 같은 자리의 그림을 다른 파일로 바꾸기(설명은 둔다) */
-export function withMediaName(text: string, spot: IdeaMediaSpot, name: string): string {
-  const inner = text.slice(spot.start, spot.end);
-  const at = inner.lastIndexOf(spot.name);
-  return `${text.slice(0, spot.start)}${inner.slice(0, at)}${name}${inner.slice(at + spot.name.length)}${text.slice(spot.end)}`;
-}
-
-/** 그림 지우기: 혼자 선 줄이면 줄째(남는 빈 줄 하나도), 글 가운데면 그림만 */
-export function withoutMedia(text: string, spot: IdeaMediaSpot): string {
-  if (!spot.alone) return text.slice(0, spot.start) + text.slice(spot.end);
-  const lines = text.split("\n");
-  lines.splice(spot.line, 1);
-  if (spot.line > 0 && lines[spot.line - 1]?.trim() === "" && (lines[spot.line]?.trim() ?? "") === "" && spot.line < lines.length - 1) lines.splice(spot.line, 1);
-  return lines.join("\n");
-}
-
-/**
- * 혼자 선 그림을 앞·뒤 덩이와 자리 바꾸기. 덩이는 머리 한 줄·혼자 선 그림 한 줄·코드 울타리 하나·빈 줄로 나뉜 글 묶음이고, 사이의 빈 줄은
- * 제자리에 둔다. 옮길 수 없으면 null
- */
-export function movedMedia(text: string, spot: IdeaMediaSpot, dir: -1 | 1): string | null {
-  if (!spot.alone) return null;
-  const lines = noteLines(text);
-  const units: [number, number][] = [];
-  const alone = new Set(ideaMediaSpots(text).filter((s) => s.alone).map((s) => s.line));
-  for (let i = 0; i < lines.length;) {
-    const { line, fenced } = lines[i]!;
-    if (line.trim() === "" && !fenced) { i++; continue; }
-    let j = i + 1;
-    if (fenced) {
-      while (j < lines.length && !(lines[j]!.fenced && /^\s*(```|~~~)/.test(lines[j]!.line) && j > i)) j++;
-      j = Math.min(j + 1, lines.length);
-    } else if (!/^#{1,6}(\s|$)/.test(line) && !alone.has(i)) {
-      while (j < lines.length && lines[j]!.line.trim() !== "" && !lines[j]!.fenced && !/^#{1,6}(\s|$)/.test(lines[j]!.line) && !alone.has(j)) j++;
-    }
-    units.push([i, j]);
-    i = j;
-  }
-  const at = units.findIndex(([a, b]) => spot.line >= a && spot.line < b);
-  const other = at + dir;
-  if (at < 0 || other < 0 || other >= units.length) return null;
-  const [[a0, a1], [b0, b1]] = dir < 0 ? [units[other]!, units[at]!] : [units[at]!, units[other]!];
-  const raw = text.split("\n");
-  return [...raw.slice(0, a0), ...raw.slice(b0, b1), ...raw.slice(a1, b0), ...raw.slice(a0, a1), ...raw.slice(b1)].join("\n");
-}
-
-/** 그림 출처 한 줄: `웹 · 사람 · IMG_0001.jpg · 1.2MB` */
-export function ideaMediaSource(m: { source: string; by: string; file: string | null; bytes: number }): string {
-  const source: Record<string, string> = { web: "웹", file: "파일", library: "thread library", uploads: "첨부", copy: "복사" };
-  const size = m.bytes >= 1024 * 1024 ? `${(m.bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(m.bytes / 1024))}KB`;
-  const file = m.file ? m.file.split("/").pop() ?? m.file : null;
-  return [source[m.source], m.by || null, file, m.bytes > 0 ? size : null].filter(Boolean).join(" · ");
+export function movedTarget(m: IdeaMoved, repos: DesignRepoView[]): string {
+  if (!m.path.endsWith("/")) return `${m.repo}/${m.path}`;
+  const repo = repos.find((r) => r.repo === m.repo);
+  const docs = repo?.tree?.docs.map((d) => d.path) ?? [];
+  const touched = m.done ? [] : (repo?.branches.find((b) => b.slug === m.branch)?.changed ?? [])
+    .filter((c) => c.status !== "D" && /\.md$/i.test(c.path)).map((c) => c.path);
+  const path = touched[0] ?? docs.find((p) => p === `${m.path}README.md`) ?? docs.find((p) => p.startsWith(m.path))
+    ?? (repo?.folder ? `${repo.folder}/README.md` : `${m.path}README.md`);
+  return `${m.repo}/${path}`;
 }

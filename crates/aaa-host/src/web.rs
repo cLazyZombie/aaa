@@ -167,7 +167,6 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
-        .route("/api/v1/projects/{project}/ideas/{idea}/files", post(idea_file))
         .route("/api/v1/projects/{project}/ideas/{idea}/files/{name}", get(idea_file_get))
         .route("/api/v1/projects/{project}/design/{repo}/{*path}", get(design_file_get))
         .route("/api/v1/projects/{project}/design-files/{repo}/{branch}", post(design_file_post))
@@ -722,54 +721,6 @@ async fn library_upload(
         "보고서 파일 요청");
     match result {
         Ok((files, total)) => Json(Outcome::Ok(serde_json::json!({ "files": files, "total": total }))).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// 아이디어 그림 올리기의 선택 값: 브라우저가 알린 원래 파일 이름(출처 기록용, t-1575)
-#[derive(serde::Deserialize)]
-struct IdeaFileQuery {
-    #[serde(default)]
-    name: Option<String>,
-}
-
-/// 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다(16MiB)
-async fn idea_file(
-    State(host): State<Arc<Host>>,
-    Path((project, idea)): Path<(String, String)>,
-    Query(q): Query<IdeaFileQuery>,
-    req: Request,
-) -> Response {
-    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
-    if !role.can_control() {
-        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 올릴 수 없다"));
-    }
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::task_attach::MAX_BYTES as usize)
-        .await
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
-    else {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일은 16MiB까지 올린다"))),
-        )
-            .into_response();
-    };
-    let result = tokio::task::spawn_blocking(move || {
-        let r = host.idea_file_save(&project, &idea, &bytes, q.name);
-        if let Ok(name) = &r {
-            host.db.audit(
-                &format!("device:{id}"),
-                "idea_file",
-                &format!("{project}/{idea} {name} {} bytes", bytes.len()),
-            );
-        }
-        r
-    })
-    .await
-    .map_err(crate::orch::internal)
-    .and_then(|r| r);
-    match result {
-        Ok(name) => Json(Outcome::Ok(serde_json::json!({ "name": name }))).into_response(),
         Err(e) => error_response(e),
     }
 }

@@ -982,7 +982,41 @@ copied_from: string | null,
 /**
  * 진행 모델: 다음 말을 맡을 profile(고른 것, 없으면 프로젝트 기본 thread profile). FRONT_API 1.163, 옛 host는 없다
  */
-profile?: string, };
+profile?: string,
+/**
+ * 기획으로 옮겼다(t-1894 4단계): 옮긴 저장소·기획 branch·위치. 옮긴 아이디어는 읽기 전용이다
+ */
+moved?: IdeaMoved, };
+
+export type IdeaMoved = {
+/**
+ * 저장소 이름
+ */
+repo: string,
+/**
+ * 옮기는 기획 branch 주제(`design/<주제>`)
+ */
+branch: string,
+/**
+ * 저장소 기준 경로: 옮기는 중에는 위치 폴더, 그 branch가 문서를 고치면 고친 문서(여럿이면 공통 폴더)
+ */
+path: string,
+/**
+ * 그 branch가 main에 반영돼 옮기기를 마쳤다
+ */
+done: boolean, at_ms: number,
+/**
+ * 옮긴 노트 판
+ */
+rev: number,
+/**
+ * 옮길 때 그 branch의 끝 commit(이 뒤의 commit이 main에 들어가야 마친 것이다)
+ */
+head?: string,
+/**
+ * 그 branch 기록을 만든 때(같은 이름으로 다시 만든 branch와 가른다)
+ */
+branch_ms: number, };
 
 export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
 /**
@@ -1812,7 +1846,15 @@ alt?: string,
 /**
  * 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
  */
-section?: string, store_only?: boolean, } | { "op": "idea_model", project?: string, idea: string, profile: string, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
+section?: string, store_only?: boolean, } | { "op": "idea_model", project?: string, idea: string, profile: string, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "idea_move", project?: string, idea: string,
+/**
+ * 창을 연 판(그 사이 바뀌었으면 거절)
+ */
+rev: number, repo: string, slug: string,
+/**
+ * 새 대화의 주제(이미 있는 branch면 쓰지 않는다)
+ */
+title?: string, place: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
 /**
  * 끝난 thread를 뺀다(준비·실패·보류는 포함).
  */

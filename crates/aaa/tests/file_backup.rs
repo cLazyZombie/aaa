@@ -7,7 +7,8 @@ use std::fs;
 #[test]
 fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_write_lock() {
     let mut lab = lab::Lab::new();
-    let node = lab.node("files", Some("schema=1\n[host]\nagent_listen=''\n[web]\nlisten=''\n[local_agent]\nmode='none'\n[notify]\nweb_push=false\n"));
+    let projects = lab.root.join("projects");
+    let node = lab.node("files", Some(&format!("schema=1\n[host]\nagent_listen=''\n[web]\nlisten=''\n[local_agent]\nmode='none'\n[notify]\nweb_push=false\n[projects]\nroot={}\n", serde_json::to_string(&projects.to_string_lossy()).unwrap())));
     let key = lab.root.join("identity");
     let public = aaa_host::backup::keygen(&key).unwrap();
     let config = node.cfg.join("host.toml");
@@ -21,12 +22,22 @@ fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_wr
     lab.spawn("source", &node, &["host"]);
     lab.wait_host_ready("source", &node);
     node.ok(&["project", "create", "demo"]);
-    node.ok(&["idea", "new", "복원 시험"]);
-    let png = lab.root.join("fixture.png");
-    let bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
-    fs::write(&png, bytes).unwrap();
-    node.ok(&["idea", "attach", "n-0001", png.to_str().unwrap()]);
-    let before = node.ok(&["idea", "show", "n-0001"]);
+    // 아이디어 쓰기 명령은 거뒀다(t-1894 4단계): 옛 판이 만든 노트 폴더를 놓고 읽기·복원만 본다
+    let refused = node.json(&["idea", "new", "복원 시험"]).unwrap_err();
+    assert!(refused.contains("옛 아이디어는 읽기 전용이다") && refused.contains("aaa plan"), "{refused}");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/e2e/fixtures/ideas");
+    copy_dir(&fixtures, &projects.join("demo/ideas"));
+    let ideas = node.ok(&["idea", "list"]);
+    let camp = ideas["ideas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["title"] == "캠프 게시판 의뢰")
+        .and_then(|i| i["short_id"].as_str())
+        .unwrap()
+        .to_string();
+    let before = node.ok(&["idea", "show", &camp]);
+    assert_eq!(before["note"]["rev"], 2);
     let writing = private_file::coordinated_lock(&node.state.join("host/idea-files.lock"), true).unwrap();
     assert!(node.json(&["file-backup", "run"]).is_err(), "별도 CLI도 저장 중간에 들어갈 수 없다");
     writing.unlock().unwrap();
@@ -50,8 +61,20 @@ fn cli_restores_a_live_hosts_idea_into_a_new_host_and_obeys_the_cross_process_wr
     lab.spawn_command("restored", command);
     let recovered = lab::Node { state: output.clone(), ..recovered };
     lab.wait_host_ready("restored", &recovered);
-    assert_eq!(recovered.ok(&["idea", "show", "n-0001"]), before);
+    assert_eq!(recovered.ok(&["idea", "show", &camp]), before);
     assert!(recovered.ok(&["db-backup", "status"])["last_attempt_ms"].is_null());
     lab.kill("restored");
     lab.kill("source");
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    fs::create_dir_all(to).unwrap();
+    for e in fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &to.join(e.file_name()));
+        } else {
+            fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    }
 }

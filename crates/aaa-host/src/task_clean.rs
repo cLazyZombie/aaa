@@ -321,7 +321,7 @@ impl Host {
         }
         // 보고 없음·중단은 branch가 우연히 main에 포함돼 있어도 완료로 바꾸지 않는다.
         let report = self.verified_report(rec)?;
-        let repo = rec.repo.as_deref()?;
+        rec.repo.as_deref()?;
         let dir = self
             .project_dir(&rec.project)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
@@ -332,11 +332,29 @@ impl Host {
         if !tasks::parse(&tasks).iter().any(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             return None;
         }
+        self.report_main_merge(rec, &report).await
+    }
+
+    /// 끝난 thread의 착지가 main에 들어갔나(이어진 task를 보지 않는다): 버리지 않았고 `[완료]`가 아닌 확인된 보고의 병합 commit이나
+    /// 그 branch가 origin main의 조상인지 repo 머신 agent에 묻는다. 기획 「main에 반영」 thread(t-1894 4단계)도 쓴다
+    pub(crate) async fn thread_main_merge(&self, rec: &ThreadRec) -> Option<String> {
+        if rec.task_clean.discard
+            || self.report_marker(rec) == Some("[완료]")
+            || !self.machine_feature(&rec.machine_id, "git_merged.v1")
+        {
+            return None;
+        }
+        let report = self.verified_report(rec)?;
+        self.report_main_merge(rec, &report).await
+    }
+
+    async fn report_main_merge(&self, rec: &ThreadRec, report: &str) -> Option<String> {
+        let repo = rec.repo.as_deref()?;
         let conn = self
             .live_conn(&rec.machine_id)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()?;
-        let query = aaa_proto::GitQuery::MergedIntoMain { branch: rec.branch.clone(), commits: merge_commits(&report) };
+        let query = aaa_proto::GitQuery::MergedIntoMain { branch: rec.branch.clone(), commits: merge_commits(report) };
         let response = conn
             .request_timeout(
                 aaa_proto::AgentRequest::GitQuery { cwd: repo.into(), query },

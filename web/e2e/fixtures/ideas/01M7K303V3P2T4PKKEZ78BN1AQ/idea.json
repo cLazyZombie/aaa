@@ -1,0 +1,40 @@
+{
+  "title": "캠프 게시판 의뢰",
+  "status": "open",
+  "rev": 2,
+  "seen_rev": 2,
+  "created_ms": 1794863271779,
+  "updated_ms": 1794863271801,
+  "history": [
+    {
+      "rev": 1,
+      "at_ms": 1794863271779,
+      "by": "user",
+      "summary": "만듦"
+    },
+    {
+      "rev": 2,
+      "at_ms": 1794863271801,
+      "by": "user",
+      "summary": "그림 1개 더함"
+    }
+  ],
+  "tasks": [],
+  "thread": null,
+  "copied_from": null,
+  "edited": [
+    "판 2 그림 1개 더함"
+  ],
+  "merging": null,
+  "pending": [],
+  "moved": null,
+  "error": null,
+  "media": {
+    "a6d715956dab435e.png": {
+      "source": "file",
+      "by": "사람",
+      "file": "camp-map.png",
+      "at_ms": 1794863271801
+    }
+  }
+}

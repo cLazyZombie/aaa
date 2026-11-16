@@ -23,6 +23,7 @@ async function buildUI() {
 import { createElement as h, Fragment, useEffect } from ${module("node_modules/react/index.js")};
 import { createRoot } from ${module("node_modules/react-dom/client.js")};
 import { ActivityBar } from ${module("src/ActivityBar.tsx")};
+import { ACTIVITY_ICONS } from ${module("src/activityIcons.ts")};
 import { InboxPanel } from ${module("src/InboxPanel.tsx")};
 import { Droplet } from ${module("src/herdr/Droplet.tsx")};
 import { showDroplet } from ${module("src/herdr/droplet.ts")};
@@ -34,6 +35,8 @@ function UI() {
   return h(Fragment, null,
     h(ActivityBar, { coordinator: null, panel: "asks", shown: true, onPanel() {}, badges: {}, reports: false, onReports() {}, unseenReports: 0,
       tasks: false, onTasks() {}, taskBadge: 0, up: true, reader: false, settings: null }),
+    // 옛 아이디어 알림의 기준 아이콘(활동 막대 「아이디어」는 기획에 합쳤다, t-1894 4단계)
+    h("span", { "data-testid": "activity-ideas", hidden: true }, h(ACTIVITY_ICONS.ideas, { "aria-hidden": true })),
     h("main", { style: { marginLeft: 54, padding: 12, width: "calc(100% - 54px)", height: "100vh" } }, h(InboxPanel, { canControl: false })),
     h(Droplet, { onOpen: target => { location.hash = target; } }));
 }

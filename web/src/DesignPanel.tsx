@@ -1,10 +1,11 @@
 // 기획 트리(t-1894, 확정 계획 plan §2): 활동 막대 「기획」의 사이드바 칸. 프로젝트 저장소 → 폴더 → 문서이고 폴더가 먼저 온다.
 // 기획 폴더를 정하지 않은 저장소도 한 줄로 보인다. 1단계는 읽기 전용이다(origin 기본 branch).
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, GitBranch, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, GitBranch, Lightbulb, Lock, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, splitTarget, stem, type DesignNode } from "./designModel";
-import type { DesignBranchView, DesignRepoView } from "./gen/proto";
+import type { DesignBranchView, DesignRepoView, IdeaSummary } from "./gen/proto";
+import { ideaLegacy } from "./ideasModel";
 import { onRowKey } from "./Sidebar";
 
 export type Design = { repos: DesignRepoView[] | null; error: string | null; loading: boolean; reload: () => void };
@@ -31,12 +32,19 @@ export function useDesign(up: boolean, wanted: boolean): Design {
   return { repos, error, loading, reload };
 }
 
-export function DesignPanel({ design, selected, onOpen }: {
+export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onOpenIdea, onMoveIdea, canControl = false }: {
   design: Design;
   /** 본문에 연 문서(`<저장소>/<경로>`) */
   selected: string | null;
   onOpen: (target: string) => void;
+  /** 옛 아이디어(4단계): 트리 아래 묶음. 다듬는 중인 것은 「기획으로 옮기기」 */
+  ideas?: IdeaSummary[];
+  ideaSelected?: string | null;
+  onOpenIdea?: (short: string) => void;
+  onMoveIdea?: (idea: IdeaSummary) => void;
+  canControl?: boolean;
 }) {
+  const [ideasShut, setIdeasShut] = useState(false);
   const at = selected ? splitTarget(selected) : null;
   // 접은 것(저장소 이름·폴더 경로). 처음엔 저장소는 펼치고 폴더는 접는다. 연 문서의 폴더는 펼친다
   const [open, setOpen] = useState<Set<string>>(() => new Set());
@@ -75,6 +83,35 @@ export function DesignPanel({ design, selected, onOpen }: {
             openDirs={open} onToggleDir={(p) => flip(setOpen, `${r.repo}:${p}`)} selected={at?.repo === r.repo ? at.path : null} onOpen={onOpen} />
         ))}
       </ul>
+      {ideas && ideas.length > 0 && (
+        <div className="design-ideas" data-testid="design-ideas">
+          <button type="button" className="design-row is-repo design-ideas-head" aria-expanded={!ideasShut} onClick={() => setIdeasShut(!ideasShut)}>
+            <span className="design-mark" aria-hidden="true">{ideasShut ? <ChevronRight /> : <ChevronDown />}</span>
+            <span className="design-name">옛 아이디어</span>
+            <span className="design-ideas-count">{ideas.length}</span>
+          </button>
+          {!ideasShut && (
+            <ul className="design-ideas-list" role="group">
+              {ideas.map((i) => {
+                const st = ideaLegacy(i);
+                const short = st.kind === "moving" ? `옮기는 중 → ${i.moved?.repo}` : st.kind === "moved" ? `옮김 → ${i.moved?.repo}` : st.label;
+                return (
+                  <li key={i.id} className={`design-idea is-${st.kind}${ideaSelected === i.short_id ? " is-selected" : ""}`} data-testid="design-idea" data-state={st.kind} title={`${i.short_id} · ${st.label}`}>
+                    <button type="button" className="design-idea-open" onClick={() => onOpenIdea?.(i.short_id)}>
+                      <span className="sidebar-mark" aria-hidden="true">{st.kind === "moved" || st.kind === "moving" ? <Lock /> : <Lightbulb />}</span>
+                      <span className="design-idea-title">{i.title}</span>
+                      <span className="design-file">{i.short_id}</span>
+                    </button>
+                    {st.kind === "open" && canControl && onMoveIdea
+                      ? <button type="button" className="btn small design-idea-move" data-testid="design-idea-move" onClick={() => onMoveIdea(i)}>기획으로 옮기기</button>
+                      : <span className={`design-idea-state is-${st.kind}`} data-testid="design-idea-state">{short}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
     </section>
   );
 }
