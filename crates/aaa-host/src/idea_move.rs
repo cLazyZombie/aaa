@@ -114,6 +114,12 @@ fn moved_path(tree: &DesignTree) -> Option<String> {
     }
 }
 
+/// 「main에 반영」 thread의 착지를 옮긴 것으로 셀 수 있나: 옮긴 뒤에 시작했고, 옮길 때의 끝 뒤 commit에서 갈라졌다
+/// (옮기기 전에 끝난·돌던 반영은 옮긴 글을 싣지 않는다)
+fn apply_after_move(mv: &IdeaMoved, apply_started_ms: u64, apply_head: Option<&str>) -> bool {
+    apply_started_ms >= mv.at_ms && apply_head.is_some() && apply_head != mv.head.as_deref()
+}
+
 impl Host {
     /// 「기획으로 옮기기」. 조작 권한의 사람만(thread·coordinator 세션은 `design_writer`가 거절한다)
     #[allow(clippy::too_many_arguments)]
@@ -152,7 +158,12 @@ impl Host {
         if m.rev != rev {
             return Err(err(ErrorCode::Conflict, format!("노트가 바뀌었다(판 {rev} → {}): 다시 연다", m.rev)));
         }
-        let text = f.text(None)?;
+        // 옛 판의 `library/`·`uploads/` 그림 링크는 열 때처럼 먼저 노트 폴더로 옮긴다(옮기지 못하면 그림을 빠뜨리지 않게 멈춘다)
+        let read = Box::pin(self.idea_read_note(project, &f, None)).await?;
+        if let Some(e) = read.media_error {
+            return Err(bad(format!("노트의 옛 그림 링크를 노트 폴더로 옮기지 못했다: {e}")));
+        }
+        let text = read.text;
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         // 위치는 기획 폴더 기준(비우면 기획 폴더)이고 저장소 기준 폴더로 바꿔 둔다. 문서 경로처럼 검사한다
@@ -162,7 +173,7 @@ impl Host {
             base.to_string()
         } else {
             let doc = crate::design::checked_path(&folder, &format!("{base}/{place}/x.md"))?;
-            doc.trim_end_matches("/x.md").to_string()
+            doc.strip_suffix("/x.md").unwrap_or(&doc).to_string()
         };
         // 그림·영상은 보내기 전에 모두 확인한다(하나라도 못 붙이면 아무것도 commit하지 않는다)
         let media = self.idea_move_media(&f, &text)?;
@@ -196,21 +207,22 @@ impl Host {
         }
         let tasks = self.idea_summary(project, &f, &m)?.tasks;
         let message = move_message(&short, &m.title, rev, &tasks, &place_path, &placed, &text);
-        Box::pin(self.design_say(role, actor, project, repo, slug, &message)).await?;
-        {
-            let _w = self.idea_writing()?;
-            let mut m = f.meta()?;
-            m.moved = Some(IdeaMoved {
-                repo: target.name.clone(),
-                branch: slug.to_string(),
-                path: format!("{place_path}/"),
-                done: false,
-                at_ms: aaa_common::util::now_ms(),
-                rev,
-                head,
-                branch_ms: rec.created_ms,
-            });
-            f.write_meta(&m)?;
+        // 먼저 「옮기는 중」으로 잠그고 보낸다(기록을 못 쓰면 보내지 않아 다시 옮길 때 같은 말이 두 번 가지 않는다).
+        // 보내지 못하면 풀어 준다
+        let moved = IdeaMoved {
+            repo: target.name.clone(),
+            branch: slug.to_string(),
+            path: format!("{place_path}/"),
+            done: false,
+            at_ms: aaa_common::util::now_ms(),
+            rev,
+            head,
+            branch_ms: rec.created_ms,
+        };
+        self.idea_move_write(&f, Some(moved))?;
+        if let Err(e) = Box::pin(self.design_say(role, actor, project, repo, slug, &message)).await {
+            aaa_common::diagnostic::ignored(self.idea_move_write(&f, None), "옮기는 중으로 남으면 버리기로 푼다");
+            return Err(e);
         }
         self.ideas_bump(project);
         self.db.audit(actor, "idea_move", &format!("{project} {short} → {}/{slug} {place_path}", target.name));
@@ -255,10 +267,11 @@ impl Host {
         &self,
         project: &str,
         mv: &IdeaMoved,
-        apply: Option<&str>,
+        rec: &crate::design_branch::Rec,
     ) -> Option<(bool, Option<String>)> {
-        if let Some(id) = apply
+        if let Some(id) = rec.apply.as_deref()
             && let Ok(t) = self.load(project, id)
+            && apply_after_move(mv, t.created_at_ms, rec.apply_head.as_deref())
             && t.status == aaa_proto::ThreadStatus::Resolved
             && self.thread_main_merge(&t).await.is_some()
         {
@@ -290,55 +303,139 @@ impl Host {
                 }
                 seen.insert(key, now);
             }
-            self.idea_move_settle(project, &idea.id, &mv.repo, &mv.branch, false).await;
+            aaa_common::diagnostic::ignored(
+                self.idea_move_settle(project, &idea.id, &mv.repo, &mv.branch, false).await,
+                "다음 셈에 다시 본다",
+            );
         }
     }
 
-    /// 한 아이디어의 옮기기 상태를 맞춘다. `discarding`이면 그 branch를 곧 지운다: 들어가지 않았으면 풀어 준다
-    pub(crate) async fn idea_move_settle(&self, project: &str, idea: &str, repo: &str, slug: &str, discarding: bool) {
-        let Ok(f) = self.idea_folder(project, idea) else { return };
+    /// 한 아이디어의 옮기기 상태를 맞춘다: 들어갔으면 「옮김」, 아니면 고친 문서로 경로를 잡는다. branch 기록이 없어졌으면 풀어
+    /// 준다(기록을 읽지 못한 것은 없어진 것이 아니다). `discarding`이면 그 branch를 곧 지운다: 들어갔는지 확인하지 못하면 오류로
+    /// 버리기를 멈추고, 풀어 주기는 지운 뒤(`idea_move_release`)에 한다
+    pub(crate) async fn idea_move_settle(
+        &self,
+        project: &str,
+        idea: &str,
+        repo: &str,
+        slug: &str,
+        discarding: bool,
+    ) -> Result<(), ErrorBody> {
+        let Ok(f) = self.idea_folder(project, idea) else { return Ok(()) };
         let lock = self.thread_op_lock(project, &format!("idea-move:{}", f.id));
         let _one = lock.lock().await;
         let Some(mv) = f.meta().ok().and_then(|m| m.moved).filter(|m| !m.done && m.repo == repo && m.branch == slug)
         else {
-            return;
+            return Ok(());
         };
-        let rec = self.design_branch_load(project, repo, slug).ok().flatten().filter(|r| r.created_ms == mv.branch_ms);
+        let rec = match self.design_branch_load(project, repo, slug) {
+            Ok(rec) => rec.filter(|r| r.created_ms == mv.branch_ms),
+            Err(e) => {
+                tracing::warn!(project, idea, "옮기는 branch 기록을 읽지 못했다: {}", e.message);
+                return Ok(());
+            }
+        };
         let next = match rec {
-            // 다른 길로 기록이 없어졌다(들어갔는지 물을 branch가 없다): 풀어 준다
+            // 다른 길로 기록이 없어졌거나 같은 이름으로 다시 만들었다(들어갔는지 물을 branch가 없다): 풀어 준다
+            None if discarding => return Ok(()),
             None => None,
-            Some(rec) => match self.idea_move_landed(project, &mv, rec.apply.as_deref()).await {
+            Some(rec) => match self.idea_move_landed(project, &mv, &rec).await {
                 Some((true, path)) => {
                     Some(IdeaMoved { done: true, path: path.unwrap_or(mv.path.clone()), ..mv.clone() })
                 }
-                Some((false, _)) if discarding => None,
+                // 버리기 직전에는 받은 지 1분까지 된 origin main으로 판정하지 않는다: origin main을 새로 물어 다시 본다
+                Some((false, _)) if discarding => match self.idea_move_merged_now(project, &mv).await {
+                    Some(true) => Some(IdeaMoved { done: true, ..mv.clone() }),
+                    Some(false) => return Ok(()),
+                    None => return Err(self.idea_move_unknown(project, &f)),
+                },
                 Some((false, Some(path))) => Some(IdeaMoved { path, ..mv.clone() }),
-                Some((false, None)) => return,
-                // 묻지 못했다: 버리는 중이면 들어갔는지 모른 채 풀지 않는다(다음 셈이 기록 없음으로 푼다)
-                None if discarding => return,
-                None => return,
+                Some((false, None)) => return Ok(()),
+                None if discarding => return Err(self.idea_move_unknown(project, &f)),
+                None => return Ok(()),
             },
         };
-        if next.as_ref() == Some(&mv) {
-            return;
+        if next.as_ref() != Some(&mv) {
+            self.idea_move_note(project, &f, repo, slug, next);
         }
-        let saved = (|| {
-            let _w = self.idea_writing()?;
-            let mut m = f.meta()?;
-            m.moved = next.clone();
-            f.write_meta(&m)
-        })();
-        match saved {
+        Ok(())
+    }
+
+    fn idea_move_unknown(&self, project: &str, f: &Folder) -> ErrorBody {
+        let short = self.db.idea_short_id(project, &f.id).unwrap_or_else(|_| f.id.clone());
+        err(
+            ErrorCode::Unavailable,
+            format!(
+                "옮기는 아이디어 {short}가 main에 들어갔는지 확인하지 못해 버리지 않았다(그 저장소 머신이 붙으면 다시 버린다)"
+            ),
+        )
+    }
+
+    /// 그 기획 branch 끝이 지금 origin main의 조상이고 옮길 때의 끝과 다른가(agent `git_merged.v1`이 origin main을 새로 묻는다).
+    /// 그 기능이 없는 옛 agent면 아니라고 본다(트리 판정만 쓴다). 묻지 못하면 None
+    async fn idea_move_merged_now(&self, project: &str, mv: &IdeaMoved) -> Option<bool> {
+        let (target, mid) = self.design_target(project, &mv.repo).ok()?;
+        if !self.machine_feature(&mid, "git_merged.v1") {
+            return Some(false);
+        }
+        let conn = self.design_write_conn(&mid).ok()?;
+        let query =
+            aaa_proto::GitQuery::MergedIntoMain { branch: Some(format!("design/{}", mv.branch)), commits: Vec::new() };
+        match conn
+            .request_timeout(
+                AgentRequest::GitQuery { cwd: target.path.clone(), query },
+                aaa_common::git_watch::QUERY_TIMEOUT + Duration::from_secs(5),
+            )
+            .await
+        {
+            Ok(AgentResponse::Git(answer)) => Some(
+                answer
+                    .merged_commit
+                    .filter(|sha| aaa_common::git_watch::valid_sha(sha))
+                    .is_some_and(|sha| mv.head.as_deref() != Some(sha.as_str())),
+            ),
+            Ok(other) => {
+                tracing::warn!(project, "main 포함 조회 응답이 아니다: {other:?}");
+                None
+            }
+            Err(e) => {
+                tracing::info!(project, repo = %mv.repo, slug = %mv.branch, "main 포함 조회 실패: {}", e.message);
+                None
+            }
+        }
+    }
+
+    /// 버린 branch로 옮기던 아이디어를 다시 다듬는 중으로(들어간 것·다른 branch로 옮기는 것은 그대로). `branch_ms`가 있으면 그
+    /// 기록으로 옮기던 것만
+    pub(crate) fn idea_move_release(&self, project: &str, idea: &str, repo: &str, slug: &str, branch_ms: Option<u64>) {
+        let Ok(f) = self.idea_folder(project, idea) else { return };
+        let still = f.meta().ok().and_then(|m| m.moved).is_some_and(|m| {
+            !m.done && m.repo == repo && m.branch == slug && branch_ms.is_none_or(|b| b == m.branch_ms)
+        });
+        if still {
+            self.idea_move_note(project, &f, repo, slug, None);
+        }
+    }
+
+    fn idea_move_write(&self, f: &Folder, moved: Option<IdeaMoved>) -> Result<(), ErrorBody> {
+        let _w = self.idea_writing()?;
+        let mut m = f.meta()?;
+        m.moved = moved;
+        f.write_meta(&m)
+    }
+
+    fn idea_move_note(&self, project: &str, f: &Folder, repo: &str, slug: &str, next: Option<IdeaMoved>) {
+        let what = match &next {
+            Some(n) if n.done => format!("옮김 {}", n.path),
+            Some(n) => format!("경로 {}", n.path),
+            None => "풀어 줌".to_string(),
+        };
+        match self.idea_move_write(f, next) {
             Ok(()) => {
-                let what = match &next {
-                    Some(n) if n.done => format!("옮김 {}", n.path),
-                    Some(n) => format!("경로 {}", n.path),
-                    None => "풀어 줌".to_string(),
-                };
-                self.db.audit("host", "idea_move_settle", &format!("{project} {idea} {repo}/{slug} {what}"));
+                self.db.audit("host", "idea_move_settle", &format!("{project} {} {repo}/{slug} {what}", f.id));
                 self.ideas_bump(project);
             }
-            Err(e) => tracing::warn!(project, idea, "옮기기 상태를 쓰지 못했다: {}", e.message),
+            Err(e) => tracing::warn!(project, idea = %f.id, "옮기기 상태를 쓰지 못했다: {}", e.message),
         }
     }
 
@@ -407,6 +504,16 @@ mod tests {
             "본문 울타리가 안의 울타리보다 길다: {msg}"
         );
         assert!(!msg.contains("aaa idea show"), "다 실었으면 따로 읽으라 하지 않는다");
+    }
+
+    /// 반영 thread는 옮긴 뒤에 옮길 때와 다른 끝에서 갈라졌을 때만 옮긴 것으로 센다
+    #[test]
+    fn only_an_apply_after_the_move_counts() {
+        let mv = IdeaMoved { at_ms: 1_000, head: Some("a".into()), ..Default::default() };
+        assert!(apply_after_move(&mv, 2_000, Some("b")));
+        assert!(!apply_after_move(&mv, 500, Some("b")), "옮기기 전에 시작한 반영");
+        assert!(!apply_after_move(&mv, 2_000, Some("a")), "옮긴 뒤 아무것도 쓰지 않은 끝");
+        assert!(!apply_after_move(&mv, 2_000, None), "갈라진 끝을 모르는 옛 기록");
     }
 
     #[test]

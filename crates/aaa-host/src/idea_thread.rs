@@ -47,6 +47,10 @@ impl Host {
             FrontRequest::IdeaList { project } => Ok(FrontResponse::Ideas { ideas: self.idea_list(&project)? }),
             FrontRequest::IdeaRead { project, idea, rev } => {
                 let f = self.idea_folder(&project, &idea)?;
+                // thread 세션(다른 머신에서 전달된 것 포함)은 읽기만 한다: 옛 그림 이행(노트 다시 쓰기·agent 읽기)은 사람이 열 때 한다
+                if actor.starts_with("worker:") {
+                    return Ok(FrontResponse::Idea { note: self.idea_note(&project, &f, rev)? });
+                }
                 Ok(FrontResponse::Idea { note: self.idea_read_note(&project, &f, rev).await? })
             }
             FrontRequest::IdeaSeen { project, idea, rev } => {

@@ -74,6 +74,8 @@ pub(crate) struct Rec {
     pub pushed_ms: u64,
     /// 「main에 반영」을 맡은 thread
     pub apply: Option<String>,
+    /// 그 반영이 갈라진 branch 끝(옛 아이디어 옮기기가 옮긴 뒤의 반영인지 가른다, t-1894 4단계)
+    pub apply_head: Option<String>,
 }
 
 impl Rec {
@@ -643,6 +645,7 @@ impl Host {
         // thread 시작 future는 크다: 공용 dispatcher(`call_design`)의 스택에 얹지 않게 heap에 둔다
         let view = Box::pin(self.thread_start_mode(args, actor, true)).await?;
         rec.apply = Some(view.id.clone());
+        rec.apply_head = rec.head.clone();
         self.design_branch_store(project, &rec)?;
         self.design_chat_event(project, &target.name, slug, "apply", &view.id, rec.head.clone()).await;
         self.db.audit(actor, "design_apply", &format!("{project} {}/{slug} {}", target.name, view.id));
@@ -660,17 +663,22 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
-        // 그 branch로 옮기는 옛 아이디어(t-1894 4단계): 들어갔으면 「옮김」, 아니면 다시 「다듬는 중」. branch를 지우기 전에 보고,
-        // 옮기기(아이디어 잠금 → branch 잠금)와 반대 차례로 잡지 않게 branch 잠금 밖에서 한다
-        // 판정은 agent 읽기·착지 확인을 품어 크다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
-        for idea in self.ideas_moving_to(project, &target.name, slug) {
-            Box::pin(self.idea_move_settle(project, &idea, &target.name, slug, true)).await;
+        // 그 branch로 옮기는 옛 아이디어(t-1894 4단계): branch를 지우기 전에 main에 들어갔는지 보고 들어갔으면 「옮김」으로 둔다.
+        // 확인하지 못하면 버리지 않는다(들어간 것을 풀어 주지 않게). 풀어 주기는 branch를 다 지운 뒤에 한다.
+        // 옮기기(아이디어 잠금 → branch 잠금)와 반대 차례로 잡지 않게 branch 잠금 밖에서 하고, 판정은 agent 읽기·착지 확인을 품어
+        // 크므로 공용 dispatcher 스택에 얹지 않게 heap에 둔다
+        let moving = self.ideas_moving_to(project, &target.name, slug);
+        for idea in &moving {
+            Box::pin(self.idea_move_settle(project, idea, &target.name, slug, true)).await?;
         }
         // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
         let Some(rec) = self.design_branch_load(project, &target.name, slug)? else {
             // 앞선 버리기가 branch는 지웠는데 대화 thread를 끝내지 못했으면 마저 끝낸다
+            for idea in &moving {
+                self.idea_move_release(project, idea, &target.name, slug, None);
+            }
             if self.design_chat_load(project, &target.name, slug)?.thread.is_some() {
                 self.design_chat_retire(project, &target.name, slug, actor).await?;
                 return Ok(FrontResponse::Done);
@@ -694,6 +702,9 @@ impl Host {
         };
         let path = self.design_branch_dir(project, &target.name)?.join(format!("{slug}.json"));
         std::fs::remove_file(&path).map_err(|e| internal(format!("{}: {e}", path.display())))?;
+        for idea in &moving {
+            self.idea_move_release(project, idea, &target.name, slug, Some(rec.created_ms));
+        }
         self.design_push_gen.lock().unwrap().remove(&format!("{project}/{}/{slug}", target.name));
         // 이 branch에서 맡긴 할 일은 그 판이 사라졌다: 맡김 기록을 지워 평소처럼 시작하게 한다
         self.design_handoff_forget(project, &target.name, slug, rec.created_ms);

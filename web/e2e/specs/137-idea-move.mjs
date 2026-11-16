@@ -1,7 +1,7 @@
 // 기획 4단계(t-1894, 확정 시안 library/mock7 q-3980, 규칙 q-3981~q-3985): 아이디어는 저장소 기획 문서로 옮겼다. 옛 아이디어(옛 판이 만든
 // 폴더 견본 web/e2e/fixtures/ideas)는 읽기 전용이고, 다듬던 것은 「기획으로 옮기기」로 그 저장소 기획 대화에 넘긴다.
 // 쓰기 거절(CLI·Front) → 기획 트리 「옛 아이디어」와 읽기 전용 화면 → 옮기기(그림 commit·대화가 받은 글·옮기는 중) → 버리면 풀림
-// → main에 들어가면 「옮김 → 문서」 → 할 일 메모의 아이디어 링크 → 휴대폰.
+// → main에 들어가면 「옮김 → 문서」 → 들어간 뒤 곧 버려도 옮김 → 할 일 메모의 아이디어 링크 → 휴대폰.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -112,6 +112,9 @@ export default async function () {
   });
 
   await step("기획으로 옮기기: 그림을 그 branch 위치 폴더에 commit하고 노트 본문·그림 경로·옮기는 법을 새 기획 대화가 받는다", async () => {
+    // 다른 대화를 고른 채로 두어도 옮긴 뒤에는 그 기획 대화를 연다(기억한 대화보다 앞선다)
+    aaa("plan", "new", "app", "other", "--title", "다른 대화");
+    await page.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "other"));
     await page.goto(`${base}/#idea=${ids.camp}`);
     await page.getByTestId("idea-move").click();
     const dialog = page.getByTestId("idea-move-dialog");
@@ -187,6 +190,28 @@ export default async function () {
     await domIs(page, "옮긴 문서", () => location.hash === `#design=${encodeURIComponent("app/docs/camp/board.md")}`);
     await page.getByTestId("design-body").getByText("의뢰는 셋 중에서 고른다.").waitFor();
     await domIs(page, "옮긴 그림", () => { const i = document.querySelector("[data-testid=design-body] img"); return !!i && i.complete && i.naturalWidth > 0; });
+  });
+
+  await step("main에 들어간 뒤 곧 버려도(origin을 아직 받지 않았어도) 「옮김」으로 남고, 같은 이름으로 다시 만든 대화는 앞 옮기기를 잇지 않는다", async () => {
+    // 앞에서 버린 대화와 같은 이름(idea-n-…)으로 다시 만든다
+    const slug = `idea-${ids.boss}`;
+    await page.goto(`${base}/#idea=${ids.boss}`);
+    await page.getByTestId("idea-move").click();
+    await domIs(page, "저장소 고름", () => document.querySelector("[data-testid=idea-move-repo]")?.value === "app");
+    await page.getByTestId("idea-move-where").fill("boss");
+    await page.getByTestId("idea-move-submit").click();
+    await page.getByTestId("idea-move-dialog").waitFor({ state: "detached" });
+    assert.equal(idea(ids.boss).moved?.done, false);
+    fs.writeFileSync(`${root}/boss.md`, "# 보스 연속 층\n\n91~100층은 방 하나에 보스 하나.\n");
+    aaa("plan", "save", "app", "docs/boss/README.md", "--branch", slug, "--new", "--file", `${root}/boss.md`);
+    git(seed, "fetch", "-q", "origin", "main");
+    git(seed, "reset", "-q", "--hard", "origin/main");
+    git(seed, "fetch", "-q", `${root}/app`, `design/${slug}`);
+    git(seed, "merge", "--no-ff", "-q", "-m", "병합: 보스 연속 층 옮김", "FETCH_HEAD");
+    git(seed, "push", "-q", "origin", "HEAD:main");
+    aaa("plan", "discard", "app", slug);
+    assert.equal(idea(ids.boss).moved?.done, true, "버리기 전에 origin main을 새로 물어 들어간 것을 안다");
+    assert.ok(!branches().some((b) => b.slug === slug));
   });
 
   await step("할 일 메모의 아이디어 링크는 노트와 그림을 thread 작업 폴더로 옮긴다", async () => {
