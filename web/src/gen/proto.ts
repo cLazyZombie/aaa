@@ -816,6 +816,24 @@ warning: string | null, };
 
 export type DesignPick = { ordinal: number, head: string, };
 
+export type DesignHandoffNote = {
+/**
+ * `d-NNNN`
+ */
+task: string,
+/**
+ * 저장소 기준 문서 경로
+ */
+path: string,
+/**
+ * 맡긴 블록의 글(덩어리 그대로, 표지의 d-ID는 뺌: main 판과 같은 글)
+ */
+blocks: Array<string>,
+/**
+ * 기획 branch에서 맡겼으면 그 주제(표지가 그 branch에 있다). 비면 main 문서에서 맡김(표지는 구현 branch에)
+ */
+branch: string, };
+
 export type DesignDocEntry = {
 /**
  * 저장소 기준 경로(`docs/game-loop/README.md`)
@@ -900,7 +918,11 @@ error: string | null,
 /**
  * 이 저장소의 기획 branch(FRONT_API 1.171, 만든 차례)
  */
-branches: Array<DesignBranchView>, };
+branches: Array<DesignBranchView>,
+/**
+ * main 문서에서 바로 맡겨 아직 main에 표지가 없는 블록(FRONT_API 1.176, t-1894 3-3). 표지는 구현 branch 첫 commit에 있다
+ */
+handoffs: Array<DesignHandoffNote>, };
 
 export type DesignDoc = {
 /**
@@ -1750,7 +1772,11 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string, branch: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string,
+/**
+ * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
+ */
+branch: string,
 /**
  * 저장소 기준 문서 경로
  */

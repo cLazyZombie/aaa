@@ -203,6 +203,7 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
         : e.kind === "edit" ? `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`
           : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
             : e.kind === "handoff" ? `구현 맡김 ${e.text} · ${short(e.commit)}`
+            : e.kind === "relay" ? `넘긴 블록 고침 ${e.text} · ${short(e.commit)}`
             : e.text;
     out.push({ key: `${e.kind}-${e.at_ms}`, after: e.after ?? null, kind: e.kind, text });
   }
@@ -213,7 +214,13 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
 // 3단계 블록 표지(t-1894, 확정 계획 §3): `> [!계획]`·`> [!계획] d-NNNN`·`> [!미정]` 블록과 그 상태
 
 /** 표지 블록 하나: 종류, 넘긴 할 일, 줄 이름(첫 굵은 낱말, 없으면 첫 줄), 표지를 뺀 본문, 속한 절, 그림이 있나 */
-export type Callout = { kind: "plan" | "open"; task: string | null; title: string; body: string; section: string; image: boolean };
+export type Callout = {
+  kind: "plan" | "open"; task: string | null; title: string; body: string; section: string; image: boolean;
+  /** main 문서에서 맡겨 표지가 아직 구현 branch에만 있다(3-3, 맡김 기록으로 단 할 일) */
+  pending?: boolean;
+  /** 기획 branch에서 맡겼으면 그 주제(표지는 그 branch에), 비면 main 맡김(표지는 구현 branch에) */
+  pendingBranch?: string;
+};
 
 /** 덩어리 첫 줄의 표지: 종류, 넘긴 d-ID(계획만, 정규형), 표지 뒤 글. 정규식 되돌기 없이 글자로 읽는다(agent `count_marks`와 같다) */
 function markOf(line: string): { kind: "plan" | "open"; task: string | null; rest: string } | null {

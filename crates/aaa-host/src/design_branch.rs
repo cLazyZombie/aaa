@@ -394,6 +394,8 @@ impl Host {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| if base.is_some() { format!("{path} 고침") } else { format!("{path} 새로") });
         let conn = self.design_write_conn(&mid)?;
+        // 사람·대화 thread의 저장은 맡긴 블록이 바뀌었는지 본다(구현 맡김 자신의 저장은 빼고)
+        let relay = event.is_none();
         let req_base_none = base.is_none();
         let req = AgentRequest::DesignSave {
             project: project.to_string(),
@@ -440,6 +442,18 @@ impl Host {
         self.design_branch_store(project, &rec)?;
         self.db.audit(actor, "design_save", &format!("{project} {}/{slug} {path} {commit}", target.name));
         self.design_push_later(project, &target.name, slug);
+        if relay {
+            // 넘긴 블록 고침 알림은 저장을 기다리게 하지 않는다(올리기·thread에 보내기)
+            let (host, project, repo, slug, path, commit) = (
+                self.clone(),
+                project.to_string(),
+                target.name.clone(),
+                slug.to_string(),
+                path.clone(),
+                commit.clone(),
+            );
+            tokio::spawn(async move { host.design_handoff_relay(&project, &repo, &slug, &path, &commit).await });
+        }
         Ok(FrontResponse::DesignSaved { path, commit, blob })
     }
 

@@ -2,7 +2,8 @@
 // 트리 branch 표시(저장소 수·문서 칩·branch에서 새로 만든 문서) → branch 판 보기(판 고르기·main과 다른 덩어리·다른 branch 알림)
 // → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(반영 thread) → 버리기
 // → 블록 표지(3-1, 확정 시안 library/mock4: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수와 「할 것」·대화로 정하기)
-// → 구현 맡기기(3-2, 확정 시안 library/mock5: 고른 블록 → 할 일 하나·표지 commit·바로 올림·예약한 구현 thread는 그 기획 branch에서) → 휴대폰 칸.
+// → 구현 맡기기(3-2, 확정 시안 library/mock5: 고른 블록 → 할 일 하나·표지 commit·바로 올림·예약한 구현 thread는 그 기획 branch에서)
+// → 넘긴 블록 고침 알림·main 문서에서 바로 맡기기(3-3, 확정 시안 library/mock6) → 휴대폰 칸.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -76,6 +77,9 @@ const EXIT = (d) => `# 나가기
 > [!계획]
 > **캠프 지도** — 시설 자리.
 
+> [!계획]
+> **상점 위치** — 캠프 입구 옆.
+
 ## 바뀐 것
 
 - 11-16: 통로를 ${d.work}로 넘김.
@@ -90,6 +94,8 @@ const save = (slug, path, text, base) => {
 export default async function () {
   let page;
   const tasks = {};
+  // 3-2에서 맡긴 할 일과 그 구현 thread(3-3 고침 알림이 쓴다)
+  const handed = {};
   await step("기획 branch 둘: 같은 문서를 고치고 한쪽은 새 문서를 더한다", async () => {
     const origin = `${root}/origins/app.git`, seed = `${root}/seed/app`, clone = `${root}/app`;
     for (const d of [`${root}/origins`, seed]) fs.mkdirSync(d, { recursive: true });
@@ -236,7 +242,7 @@ export default async function () {
       // 트리 줄 끝 수: 진행(같은 d-ID 한 번)·계획·미정. 「할 것」은 표지 없는 문서를 한 줄로 접는다
       const exit = p.locator('[data-testid="design-doc"][data-path="docs/exit.md"]');
       await exit.waitFor();
-      assert.deepEqual(await exit.locator("[data-testid=design-marks] span").allTextContents(), ["4", "1", "1"]);
+      assert.deepEqual(await exit.locator("[data-testid=design-marks] span").allTextContents(), ["4", "2", "1"]);
       await p.getByTestId("design-todo-on").click();
       await p.locator('[data-testid="design-doc"][data-path="docs/README.md"]').waitFor({ state: "detached" });
       assert.match(await p.getByTestId("design-plain").textContent(), /표지 없는 문서 \d+/);
@@ -257,10 +263,10 @@ export default async function () {
       assert.equal((await p.getByTestId("design-inline-state").textContent()).trim(), working);
       assert.deepEqual(
         await p.locator("[data-testid=design-callout]").evaluateAll((els) => els.map((e) => e.dataset.kind)),
-        ["plan", "plan", "open", "plan", "plan", "plan"],
+        ["plan", "plan", "open", "plan", "plan", "plan", "plan"],
       );
       assert.equal((await p.getByTestId("design-count-work").textContent()).trim(), "진행 4");
-      assert.equal((await p.getByTestId("design-count-plan").textContent()).trim(), "계획 1");
+      assert.equal((await p.getByTestId("design-count-plan").textContent()).trim(), "계획 2");
       assert.equal((await p.getByTestId("design-count-open").textContent()).trim(), "미정 1");
       // 지금 모습: 블록과 블록만 남은 절(상한)을 숨긴다
       await p.locator("[data-testid=design-look][data-look=now]").click();
@@ -271,7 +277,7 @@ export default async function () {
       await p.locator("[data-testid=design-look][data-look=left]").click();
       await p.getByTestId("design-left").waitFor();
       assert.deepEqual(await p.locator(".design-left-group h3").allTextContents(), ["통로일부 구현", "상한계획만"]);
-      assert.equal(await p.getByTestId("design-left-row").count(), 6);
+      assert.equal(await p.getByTestId("design-left-row").count(), 7);
       // 대화로 정하기: 고른 블록을 대화 입력의 맥락 칩으로 넣고, 빼면 사라진다
       await p.getByTestId("design-left").getByTestId("design-discuss").click();
       assert.equal((await p.getByTestId("design-picked").textContent()).trim(), "고른 블록 통로 · 스킬 무기가 나오는 확률");
@@ -290,13 +296,30 @@ export default async function () {
     try {
       await p.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"));
       await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/exit.md")}`);
+      // main 판에도 맡기기 단추가 있다(3-3): boss 판으로 바뀐 뒤에 센다
+      await domIs(p, "boss 판", () => !!document.querySelector("[data-testid=design-meta]")?.textContent.includes("design/boss"));
       await p.getByTestId("design-handoff").first().waitFor();
-      assert.equal(await p.getByTestId("design-handoff").count(), 2, "기획 branch 판의 넘기지 않은 계획만");
+      assert.equal(await p.getByTestId("design-handoff").count(), 3, "기획 branch 판의 넘기지 않은 계획만(캠프 지도·상점 위치·층 이벤트)");
+      // 창을 연 뒤 그 문서가 바뀌면(대화 thread·다른 기기의 저장) 맡기지 않는다: 창은 연 때의 판으로 보내고 host가 다시 본다
+      await p.getByTestId("design-handoff").first().click();
+      const first = p.getByTestId("design-hand-dialog");
+      await first.waitFor();
+      const now = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc;
+      save("boss", "docs/exit.md", now.text.replace("- 11-16: 통로를", "- 11-16: 상한 표지를 정리함.\n- 11-16: 통로를"), now.blob);
+      await p.getByTestId("design-hand-submit").click();
+      await first.locator(".confirm-error").first().waitFor();
+      assert.match(await first.locator(".confirm-error").first().textContent(), /그 사이 문서가 바뀌었다/);
+      assert.ok(!aaa("task", "list").tasks.some((t) => t.title === "캠프 지도"), "할 일을 만들지 않았다");
+      await first.getByRole("button", { name: "닫기" }).click();
+      await first.waitFor({ state: "detached" });
+      // 새 판을 읽은 뒤 고른다
+      await p.getByTestId("design-doc-reload").click();
+      await domIs(p, "새 판", () => !!document.querySelector("[data-testid=design-body]")?.textContent.includes("상한 표지를 정리함"));
       await p.locator("[data-testid=design-look][data-look=left]").click();
       const checks = p.getByTestId("design-left-check");
-      assert.equal(await checks.count(), 2, "미정·넘긴 줄은 고르지 않는다");
+      assert.equal(await checks.count(), 3, "미정·넘긴 줄은 고르지 않는다");
       await checks.nth(0).check();
-      await checks.nth(1).check();
+      await checks.nth(2).check();
       await p.getByTestId("design-left-handoff").click();
       const dialog = p.getByTestId("design-hand-dialog");
       await dialog.waitFor();
@@ -317,7 +340,7 @@ export default async function () {
       // 화면: 두 블록이 같은 할 일의 칩이 되고 대화에 「구현 맡김」 줄이 낀다
       await p.locator("[data-testid=design-look][data-look=all]").click();
       await domIs(p, "넘긴 블록 칩", (task) => document.querySelectorAll(`[data-testid=design-callout][data-task="${task}"]`).length === 2, id);
-      assert.equal(await p.getByTestId("design-handoff").count(), 0);
+      assert.equal(await p.getByTestId("design-handoff").count(), 1, "남은 계획(상점 위치)만");
       await p.getByTestId("design-mark").filter({ hasText: `구현 맡김 ${id} · 블록 2` }).waitFor();
       // 예약한 할 일은 자리가 나면 host가 띄운다. 그 thread는 기획 branch 끝에서 갈라지고 brief에 맡긴 자리가 있다
       const thread = await until("구현 thread", () => aaa("task", "list").tasks.find((t) => t.short_id === id)?.thread, 60_000)
@@ -327,6 +350,50 @@ export default async function () {
       assert.ok(brief.includes("## 기획에서 맡긴 일") && brief.includes(`기획 branch \`design/boss\``) && brief.includes(`\`[!계획] ${id}\` 표지를 풀고`), brief);
       const tree = shown.work_dir.replace(/\/\.aaa\/[^/]+\/?$/, "");
       git(tree, "merge-base", "--is-ancestor", boss.head, "HEAD");
+      Object.assign(handed, { id, thread });
+    } finally {
+      await p.context().close();
+    }
+  });
+
+  await step("넘긴 블록 고침 알림: 기획 branch에서 맡긴 블록을 고치면 올린 뒤 그 할 일의 구현 thread에 보낸다", async () => {
+    const d = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc;
+    save("boss", "docs/exit.md", d.text.replace("**층 이벤트** — 다섯 층마다 이벤트 방.", "**층 이벤트** — 다섯 층마다 이벤트 방. 보스 층에는 없다."), d.blob);
+    const note = `${handed.id} → ${handed.thread}`;
+    await until("고침 알림", () => branches().find((b) => b.slug === "boss").events.some((e) => e.kind === "relay" && e.text === note), 60_000);
+    const boss = branches().find((b) => b.slug === "boss");
+    assert.equal(boss.pushed, boss.head, "알리기 전에 올린다");
+  });
+
+  await step("main 문서에서 바로 맡기기: 기획 branch 없이 할 일·예약, 착지 전 main 판에는 「표지는 구현 branch에」 칩", async () => {
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 });
+    try {
+      // 고른 대화(shop)는 이 문서를 고치지 않았다: main 판으로 연다
+      await p.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
+      await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/exit.md")}`);
+      // boss에서 맡긴 캠프 지도는 main 판에 아직 표지가 없다: 그 할 일 칩과 「표지는 design/boss에」
+      await domIs(p, "boss 맡김 칩", (task) => !!document.querySelector(`[data-testid=design-callout][data-task="${task}"] .design-pending`), handed.id)
+        .catch(async (e) => { e.message += ` 표지=${JSON.stringify(await p.locator("[data-testid=design-callout]").evaluateAll((els) => els.map((x) => [x.dataset.task ?? null, x.textContent.slice(0, 30)])))}`; throw e; });
+      assert.match(await p.locator(`[data-testid=design-callout][data-task="${handed.id}"] .design-pending`).textContent(), /design\/boss/);
+      assert.equal(await p.getByTestId("design-handoff").count(), 1, "main 판의 아무도 맡기지 않은 계획(상점 위치)");
+      await p.getByTestId("design-handoff").click();
+      const dialog = p.getByTestId("design-hand-dialog");
+      await dialog.waitFor();
+      await p.getByTestId("design-hand-main").waitFor();
+      await p.getByTestId("design-hand-title").fill("main에서 상점 위치");
+      const before = branches().map((b) => [b.slug, b.head]);
+      await p.getByTestId("design-hand-submit").click();
+      await dialog.waitFor({ state: "detached" });
+      const id = aaa("task", "list").tasks.find((t) => t.title === "main에서 상점 위치")?.short_id;
+      assert.ok(id, "할 일");
+      assert.deepEqual(branches().map((b) => [b.slug, b.head]), before, "main 맡김은 어느 branch에도 commit하지 않는다");
+      await domIs(p, "main 맡김 칩", (task) => !!document.querySelector(`[data-testid=design-callout][data-task="${task}"] .design-pending`), id);
+      assert.equal(await p.getByTestId("design-handoff").count(), 0, "맡긴 블록은 다시 맡기지 않는다");
+      // 예약한 구현 thread: main에서 갈라지고 brief가 첫 commit으로 표지를 적으라 한다
+      const thread = await until("구현 thread", () => aaa("task", "list").tasks.find((t) => t.short_id === id)?.thread, 60_000);
+      const shown = await until("thread 작업 폴더", () => aaa("thread", "show", thread).work_dir && aaa("thread", "show", thread), 60_000);
+      const brief = fs.readFileSync(`${shown.work_dir}/brief.md`, "utf8");
+      assert.ok(brief.includes("main 문서에서 맡김") && brief.includes(`\`[!계획] ${id}\``) && brief.includes("**상점 위치**"), brief);
     } finally {
       await p.context().close();
     }

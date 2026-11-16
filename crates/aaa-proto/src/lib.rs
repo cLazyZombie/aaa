@@ -176,6 +176,7 @@ pub fn typescript_bindings() -> String {
         DesignBranchView::decl(&cfg),
         DesignHandoffView::decl(&cfg),
         DesignPick::decl(&cfg),
+        DesignHandoffNote::decl(&cfg),
         DesignDocEntry::decl(&cfg),
         DesignTree::decl(&cfg),
         DesignRepoView::decl(&cfg),

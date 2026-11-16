@@ -3160,6 +3160,7 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
         repo: String,
+        /// 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
         branch: String,
         /// 저장소 기준 문서 경로
         path: String,
