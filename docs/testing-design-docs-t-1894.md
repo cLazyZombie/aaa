@@ -102,3 +102,11 @@
 - `verify.py develop --package aaa-proto --package aaa-agent --package aaa-host --package aaa --spec 135,130,120,131,122`(리뷰 수리 뒤 마지막 commit): Rust 시험 proto 58·agent 218·host 937·m13 104 통과, strict clippy 통과, 웹 단위 통과, E2E 120·122·130·131·135 통과, 공개 검사 통과. 그 전 판(리뷰 수리 전)에서도 같은 묶음이 통과했고, 「알린 세션」 수리 직후 판에서는 E2E 120이 위 까닭으로 실패했다.
 - m13 `design_chat_thread_on_the_repo_machine_…`는 띄우는 중 버리기 단계를 더한 뒤 다섯 번 연달아 통과했다(한 번 7.5초 안팎, 리뷰 수리 전 코드).
 - Linux·Windows strict cross clippy 통과(나온 unused dependency 경고는 손대지 않은 manifest의 기존 것).
+
+## 2-2 착지 뒤 GitHub CI(main 120451b1)
+
+- Windows `aaa-host --lib`의 `pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`이 스택을 넘쳤다(착지 gate의 Windows 검사는 cross clippy라 시험을 돌리지 않는다). 이 Mac의 dev 시험(기본 2MiB)에서도 같은 시험이 넘쳤다. `RUST_MIN_STACK`으로 잰 필요 스택은 앞 main(e1742763) 1,920~2,048KiB, 2-2 뒤 2,048~2,304KiB였다. 앞 main도 2MiB의 마지막 128KiB 안이었다.
+- 원인: 기획 버리기가 대화 thread 끝내기(`thread_resolve` future, 16,224바이트)를 그대로 품어 `call_design` future가 3,880 → 20,048바이트가 됐다. `Host::call_from`은 `Box::pin` 전 그 값을 자기 poll 스택에 두므로 모든 요청의 스택이 커졌다(debug 시험 바이너리의 call_from poll 틀 0x12e000 → 0x133000).
+- 고침: 대화 thread 끝내기 future를 heap에 두고(`call_design` 4,056바이트), 큰 지역 값을 여럿 쥐는 thread 시작 갈래도 heap의 future로 따로 뒀다(call_from poll 틀 0x114000). 필요 스택은 1,792~1,920KiB가 됐다. `design::tests::design_requests_keep_the_dispatcher_stack_small`이 기획 요청 future를 8KiB 아래로 지킨다(heap에 두지 않게 되돌리면 20,048바이트로 실패).
+- 남은 위험: 공용 dispatcher의 debug poll 틀은 여전히 1.1MiB다(갈래마다 임시 값이 겹치지 않고 쌓인다). 큰 갈래를 더 넣을 때는 갈래 안에서 heap에 둔다.
+- 같은 run의 macOS web-e2e 109 「화면 복귀: Chromium 1280 … coordinator 본문이 되지 않았다」: 2-2의 웹 변경(`chatOnly`)은 기획 thread가 없는 화면에서 이전과 같고(시험 실험실에는 기획 대화가 없다), 화면 고르기·pane 경로는 바꾸지 않았다. 고친 판으로 109를 이 Mac에서 8번 돌려 8번 통과했다(부하 3 안팎, CI는 18~22). 원인은 찾지 못했고 재현하지 못했다.
