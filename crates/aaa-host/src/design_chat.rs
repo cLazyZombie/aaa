@@ -196,7 +196,7 @@ impl Host {
             .is_some_and(|c| !c.pending.is_empty())
     }
 
-    /// 사람이 기획 대화에 말한다: 말을 남기고, thread를 띄우거나 이어 brief 뒤 보낸다(배경)
+    /// 사람(또는 그 프로젝트 coordinator)이 기획 대화에 말한다: 말을 남기고, thread를 띄우거나 이어 brief 뒤 보낸다(배경)
     pub(crate) async fn design_say(
         self: &Arc<Self>,
         role: DeviceRole,
@@ -206,7 +206,7 @@ impl Host {
         slug: &str,
         text: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_writer(role, actor, project, None)?;
+        self.design_opener(role, actor, project)?;
         if text.trim().is_empty() {
             return Err(bad("글이 비었다"));
         }

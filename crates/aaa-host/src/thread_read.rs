@@ -69,7 +69,7 @@ mod tests {
             FrontRequest::EnrollOpen { minutes: 1 },
             FrontRequest::LibraryMarkRead { reports: vec![] },
             FrontRequest::Status,
-            // 기획은 자기 branch 저장만 싣는다(열기·말하기·버리기는 사람의 일)
+            // 기획은 자기 branch 저장만 싣는다(열기·말하기는 사람과 host 머신 coordinator의 일, 버리기는 사람의 일)
             FrontRequest::DesignBranchOpen {
                 project: "demo".into(),
                 repo: "r".into(),

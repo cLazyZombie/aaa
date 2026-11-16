@@ -5130,3 +5130,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [끝나는 문서의 터미널 압축 Worker(t-1894)](testing-page-leave-terminal-t-1894.md): WebKit 떠난 뒤 blob Worker 페이지 오류의 원인·RED/GREEN.
 
 E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리는 [t-1919 기록](testing-account-image-jobs-t1919.md)을 따른다.
+- [coordinator의 기획 대화 열기·말하기(t-1928)](testing-coordinator-plan-chat-t-1928.md): coordinator pane의 `plan new`·`plan say` 허용과 쓰기 거부, 실제 coordinator pane E2E.
