@@ -1,8 +1,7 @@
 // 실제 전용 thread 저장 → host 미디어 사본·읽음·푸시 → 두 브라우저의 아이디어 화면.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import { AA, env, root, base, aaa, until, step, waitOutput, showPanel, inList, webkit, pairPage, shot,
+import { AA, root, base, aaa, until, step, waitOutput, showPanel, inList, webkit, pairPage, shot,
   pushDevice, setPushKey, nextPush, pushes, setInUse, pushInUse } from "../lib/harness.mjs";
 
 export const labEnv = { AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
@@ -16,10 +15,19 @@ const call = (page, request) => page.evaluate(async request => {
 
 export default async function ({ page }) {
   let note, thread, text, device;
-  const save = (base, body) => {
+  // 전용 thread의 저장은 그 thread pane 안에서 한다(host가 연결한 프로세스로 thread를 판정한다: 세션 ID만 댄 pane 밖 CLI는
+  // 그 thread가 아니다, t-1894)
+  const save = async (base, body) => {
     fs.writeFileSync(`${root}/idea-save.md`, body);
-    return JSON.parse(execFileSync(AA, ["--json", "idea", "save", note.idea.short_id, "--base", String(base), "--file", `${root}/idea-save.md`],
-      { env: { ...env, AAA_SESSION_ID: thread.pane }, encoding: "utf8" })).note;
+    const [out, rc] = [`${root}/idea-save-${base}.json`, `${root}/idea-save-${base}.rc`];
+    fs.writeFileSync(`${root}/idea-save-${base}.sh`,
+      `"${AA}" --json idea save ${note.idea.short_id} --base ${base} --file "${root}/idea-save.md" > "${out}" 2>&1\n` +
+      `echo $? > "${rc}"\necho idea-save-done-${base}\n`);
+    aaa("pane", "run", thread.pane, `post-probe ${root}/idea-save-${base}.sh`);
+    await waitOutput(thread.pane, `idea-save-done-${base}`);
+    const text = fs.readFileSync(out, "utf8");
+    assert.equal(fs.readFileSync(rc, "utf8").trim(), "0", text);
+    return JSON.parse(text).note;
   };
   await step("아이디어 전용 thread와 푸시 구독 준비", async () => {
     aaa("project", "create", "demo", "--thread-profile", "fake");
@@ -32,6 +40,9 @@ export default async function ({ page }) {
       return thread.pane && thread.work_dir;
     });
     await waitOutput(thread.pane, "idea-ready");
+    // 첫 말(「준비」)이 pane에 다 들어간 뒤에 thread pane 안 저장 명령을 친다(글과 Enter 사이에 끼면 한 줄로 섞인다)
+    await until("첫 말 전달", async () =>
+      (await call(page, { op: "idea_read", idea: note.idea.short_id })).note.pending.length === 0);
     fs.mkdirSync(`${thread.work_dir}/library`, { recursive: true });
     fs.copyFileSync(`${root}/pic.png`, `${thread.work_dir}/library/pic.png`);
     const info = await page.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
@@ -47,7 +58,7 @@ export default async function ({ page }) {
     await setInUse(page, false);
     await until("쓰는 화면 없음", async () => await pushInUse(page) === 0);
     const from = pushes.length;
-    note = save(1, "# 그림 아이디어\n[그림 링크](library/pic.png)\n\n![시안](library/pic.png)\n");
+    note = await save(1, "# 그림 아이디어\n[그림 링크](library/pic.png)\n\n![시안](library/pic.png)\n");
     assert.equal(note.rev, 2);
     assert.equal(note.idea.unseen, true);
     assert.doesNotMatch(note.text, /library\//);
@@ -140,7 +151,7 @@ export default async function ({ page }) {
       await phone.getByTestId("idea-note").locator("img").evaluate(img => img.decode());
       assert.equal(await phone.getByTestId("idea-resizer").count(), 0);
       await phone.getByTestId("idea-tab-chat").click();
-      note = save(2, `${text}\n- 셋째 판\n`);
+      note = await save(2, `${text}\n- 셋째 판\n`);
       await phone.getByTestId("activity-badge-ideas").waitFor({ state: "attached" });
       assert.equal((await call(phone, { op: "idea_read", idea: note.idea.short_id })).note.idea.unseen, true);
       await phone.getByTestId("idea-tab-note").click();

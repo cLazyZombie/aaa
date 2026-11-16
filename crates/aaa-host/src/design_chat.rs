@@ -285,22 +285,29 @@ impl Host {
             return Ok(None);
         }
         let mut again = false;
+        // 잇지 못한 보류 thread: 새 thread를 띄우면 끝낸다(남겨 두면 아무도 끝내지 않는다)
+        let mut stale = None;
         if let Some(id) = chat.thread.as_deref() {
             match self.load(project, id) {
                 Ok(rec) => match rec.status {
                     ThreadStatus::Open | ThreadStatus::Starting => return Ok(Some(id.to_string())),
-                    ThreadStatus::Parked => match self.thread_unpark(project, id, None, None, false, actor).await {
-                        Ok(_) => return Ok(Some(id.to_string())),
-                        Err(e) => {
-                            tracing::warn!(
-                                project,
-                                thread = id,
-                                "기획 대화 thread를 잇지 못해 새로 띄운다: {}",
-                                e.message
-                            );
-                            again = true;
+                    ThreadStatus::Parked => {
+                        // 보류는 상태를 쓴 뒤에도 세션을 닫을 때까지 thread 작업 잠금을 쥔다: 놓기를 기다려 잇는다
+                        drop(tokio::time::timeout(END_WAIT, self.thread_op_lock(project, id).lock_owned()).await);
+                        match self.thread_unpark(project, id, None, None, false, actor).await {
+                            Ok(_) => return Ok(Some(id.to_string())),
+                            Err(e) => {
+                                tracing::warn!(
+                                    project,
+                                    thread = id,
+                                    "기획 대화 thread를 잇지 못해 새로 띄운다: {}",
+                                    e.message
+                                );
+                                again = true;
+                                stale = Some(id.to_string());
+                            }
                         }
-                    },
+                    }
                     ThreadStatus::Failed | ThreadStatus::Resolved => again = true,
                 },
                 Err(e) => {
@@ -335,6 +342,11 @@ impl Host {
             design: Some(chat_key(repo, slug)),
             ..Default::default()
         };
+        if let Some(old) = stale.as_deref()
+            && let Err(e) = self.design_chat_end(project, old, actor).await
+        {
+            tracing::warn!(project, thread = old, "잇지 못한 기획 대화 thread를 끝내지 못했다: {}", e.message);
+        }
         let view = self.thread_start_mode(args, actor, true).await?;
         let kept = self
             .design_chat_edit(project, repo, slug, |c| {
