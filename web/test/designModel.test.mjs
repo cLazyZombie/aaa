@@ -95,6 +95,9 @@ describe("기획 branch 화면", () => {
     assert.equal(marks[0].text, "새 대화 · design/boss-dex · main 8ebc07f 에서");
     assert.equal(marks[1].text, "문서 1 고침 · 1 새로 · 4e1a2bf");
     assert.equal(marks[3].text, "사람이 a.md 고침 · 7c9d01f");
+    // 구현 맡김(3-2)과 넘긴 블록 고침 알림(3-3)
+    const more = designMarks([ev("handoff", "d-0005 · 블록 2", "x", "f068151fff"), ev("relay", "d-0005 → t-0007", "x", "35678e3fff")], "loop-plan");
+    assert.deepEqual(more.map((m) => m.text), ["구현 맡김 d-0005 · 블록 2 · f068151", "넘긴 블록 고침 d-0005 → t-0007 · 35678e3"]);
   });
   it("그림 주소: branch 판이면 slug를 싣는다", () => {
     assert.equal(designFileUrl("p", "r", "docs/x y.png", "abc", "boss-dex"), "/api/v1/projects/p/design/r/docs/x%20y.png?c=abc&b=boss-dex");

@@ -191,6 +191,7 @@
 .design-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--radius-sm); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
 .design-pill.is-plan { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
 .design-pill.is-open { background: color-mix(in srgb, var(--design-open) 22%, transparent); color: var(--design-open); }
+.design-pending { font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; }
 .design-pill.is-draft { background: var(--warn); color: var(--bg); }
 .design-state { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid color-mix(in srgb, var(--status-working) 55%, transparent); background: color-mix(in srgb, var(--status-working) 14%, transparent); color: var(--status-working); font-family: var(--font-mono); font-size: var(--fs-xs); text-decoration: none; white-space: nowrap; }
 .design-state .i { width: 12px; height: 12px; }

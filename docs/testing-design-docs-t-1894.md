@@ -143,3 +143,10 @@
 - 계약 시험 더함: proto(붙은 표지 띄우기, BOM·U+0085 빈칸), host `start_forks_from_the_design_branch_only_for_its_task_after_the_push`(올리기 전 미룸·commit 전에 올린 판·올린 뒤 갈라짐·기준을 준 시작·다른 할 일·다른 저장소·새로 연 branch·버리기 정리).
 - 후보(0a0e49d0) 뒤 더한 시험: host `handoff_task_is_added_and_removed`(맡김 할 일 더하기·같은 제목 거절·표지를 적지 못했을 때 지우기)·`pending_record_defers_then_expires`, E2E 136에 「창을 연 뒤 문서가 바뀌면 맡기지 않고 할 일도 만들지 않는다」(창은 연 때의 판을 보내고 host가 거절). 기록 뒤 표지 commit 전에 host가 멈추면 그 할 일이 계속 미뤄졌다: 10분 넘게 commit 없이 남은 기록은 끝나지 못한 맡김으로 보고 평소처럼 시작한다. 아직 실행하지 않은 갈래: 맡김의 올리기 실패(경고·예약 안 함), 표지 commit 실패(할 일 지우기 경로는 host 시험으로 따로 봄), 쉬는 branch 거절.
 
+## 3-3 넘긴 블록 고침 알림·main 문서에서 바로 맡기기
+
+- 시안 검수(q-3964 1A) 뒤 시험을 더했다. 촬영 도구(실제 host·agent·git, 가짜 Claude)는 저장소 밖에 두었다.
+- 촬영 중 찾아 고친 것: 막 뜬 구현 thread는 brief를 받기 전이라 고침을 보내지 못했는데, 기록의 블록 글을 먼저 바꿔 두어 다음 저장에도 다시 알리지 않았다(brief 전달까지 thread 사건마다 다시 보고, 보낸 뒤에만 기록을 바꾼다). 같은 할 일의 바뀌지 않은 블록까지 보냈다(바뀐 블록만). 시험을 쓰다 찾은 것: main 판에도 맡기기 단추가 생겨 기획 branch 판으로 바뀌기 전에 단추를 세던 E2E를 판이 바뀐 뒤에 세게 했다.
+- 계약 시험: proto 블록 글·끝 줄. host `main_handoff_notes_start_and_relay_without_thread`(살아 있는 할 일의 main 기록만 싣기, main 시작 brief·기준 그대로, thread 없는 고침은 글만 바꿈)·`only_changed_blocks_are_relayed`. 웹 단위 사건 줄 글. E2E 136 「넘긴 블록 고침 알림」(3-2 단계가 맡긴 블록을 사람이 고치면 올린 뒤 `relay` 사건)·「main 문서에서 바로 맡기기」(main 판 창·어느 branch에도 commit 없음·칩·다시 맡기지 않음·예약한 구현 thread brief의 첫 commit 안내와 블록 글).
+- 실행하지 않은 것: 구현 thread가 실제로 첫 commit에 표지를 적고 착지해 main 칩이 표지로 바뀌는 흐름(가짜 harness), 고침 알림의 10분 시한 만료.
+

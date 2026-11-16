@@ -185,6 +185,20 @@ pub struct DesignRepoView {
     pub error: Option<String>,
     /// 이 저장소의 기획 branch(FRONT_API 1.171, 만든 차례)
     pub branches: Vec<DesignBranchView>,
+    /// main 문서에서 바로 맡겨 아직 main에 표지가 없는 블록(FRONT_API 1.176, t-1894 3-3). 표지는 구현 branch 첫 commit에 있다
+    pub handoffs: Vec<DesignHandoffNote>,
+}
+
+/// main 문서에서 맡긴 할 일 하나(FRONT_API 1.176): 웹은 그 문서의 같은 블록(덩어리 글)에 할 일 칩을 단다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignHandoffNote {
+    /// `d-NNNN`
+    pub task: String,
+    /// 저장소 기준 문서 경로
+    pub path: String,
+    /// 맡긴 블록의 글(맡길 때 main 판, 덩어리 그대로)
+    pub blocks: Vec<String>,
 }
 
 /// 문서 하나(읽기 전용)
@@ -238,6 +252,8 @@ pub struct DesignHandoffView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesignMark {
     pub line: usize,
+    /// 블록 끝 다음 줄 번호(블록은 `line..end`)
+    pub end: usize,
     pub open: bool,
     pub task: Option<String>,
     pub section: String,
@@ -296,15 +312,16 @@ pub fn design_marks(text: &str) -> Vec<DesignMark> {
     }
     fn tally(block: &[(usize, &str)], section: &str, out: &mut Vec<DesignMark>) {
         let Some((line, first)) = block.first() else { return };
+        let end = block.last().map_or(*line, |(n, _)| n + 1);
         if !block.iter().all(|(_, l)| l.trim_start_matches(js_space).starts_with('>')) {
             return;
         }
         let head = first.trim_start_matches(js_space)[1..].trim_start_matches(js_space);
         if let Some(rest) = head.strip_prefix("[!계획]") {
             let task = rest.trim_start_matches(js_space).strip_prefix("d-").and_then(design_task_id);
-            out.push(DesignMark { line: *line, open: false, task, section: section.to_string() });
+            out.push(DesignMark { line: *line, end, open: false, task, section: section.to_string() });
         } else if head.starts_with("[!미정]") {
-            out.push(DesignMark { line: *line, open: true, task: None, section: section.to_string() });
+            out.push(DesignMark { line: *line, end, open: true, task: None, section: section.to_string() });
         }
     }
     let mut out = Vec::new();
@@ -338,6 +355,16 @@ pub fn design_marks(text: &str) -> Vec<DesignMark> {
     }
     tally(&block, &section, &mut out);
     out
+}
+
+/// 표지 블록의 글(줄 끝 `\r`을 뺀 덩어리 그대로)
+pub fn design_mark_text(text: &str, mark: &DesignMark) -> String {
+    text.split('\n')
+        .skip(mark.line)
+        .take(mark.end - mark.line)
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 고른 표지(`design_marks`의 차례, 0부터)마다 첫 줄 `[!계획]` 바로 뒤에 ` <d-ID>`를 적는다(구현 맡기기, t-1894 3-2).
@@ -443,6 +470,8 @@ mod tests {
         for text in [raw.clone(), raw.replace('\n', "\r\n")] {
             let before = design_marks(&text);
             assert_eq!(before.len(), 8);
+            assert_eq!(design_mark_text(&text, &before[0]), "> [!계획]\n> 100층까지 늘린다.", "블록 글(CR 뺌)");
+            assert_eq!(before[0].end - before[0].line, 2);
             let sections: Vec<_> = before.iter().map(|m| m.section.as_str()).collect();
             assert_eq!(
                 sections,

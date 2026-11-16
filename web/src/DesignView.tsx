@@ -90,6 +90,7 @@ function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, childr
           <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>
         )}
         {c.image && <span className="design-pill is-draft">시안</span>}
+        {c.pending && <span className="design-pending" title="main 문서에서 맡겼다: 표지는 구현 branch 첫 commit에 있고 착지하면 main에 들어온다">표지는 구현 branch에</span>}
       </div>
       <div className="design-callout-body">{children}</div>
       {c.kind === "open" && onDiscuss && (
@@ -262,7 +263,18 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const blocks = useMemo(() => (current ? mdBlocks(current.text) : null), [current]);
   const marked = useMemo(() => (blocks && tab !== "main" ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main, tab]);
   const sections = useMemo(() => (blocks && current ? sectionsOf(blocks, current.title) : []), [blocks, current]);
-  const callouts = useMemo(() => (blocks ? blocks.map((b, i) => calloutOf(b, sections[i] ?? "")) : []), [blocks, sections]);
+  // main 문서에서 맡긴 블록(3-3): 표지는 구현 branch에만 있어 main 글에는 없다. 맡김 기록의 블록 글로 찾아 그 할 일로 본다
+  const pendingNotes = useMemo(() => {
+    const out = new Map<string, string>();
+    if (tab !== "main" || !at) return out;
+    for (const n of repo?.handoffs ?? []) if (n.path === at.path) for (const b of n.blocks) out.set(b.trim(), n.task);
+    return out;
+  }, [repo?.handoffs, tab, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const callouts = useMemo(() => (blocks ? blocks.map((b, i) => {
+    const c = calloutOf(b, sections[i] ?? "");
+    const task = c && c.kind === "plan" && !c.task ? pendingNotes.get(b.trim()) : undefined;
+    return c && task ? { ...c, task, pending: true } : c;
+  }) : []), [blocks, sections, pendingNotes]);
   const [look, setLook] = useState<Look>("all");
   // 글 어디든(표 칸 포함) `d-NNNN`은 표지와 같은 상태 칩이다(확정 계획 §3)
   const inlineTasks = useMemo(() => (current ? splitAppIds(current.text, (id) => id.kind === "task").flatMap((p) => (typeof p === "string" ? [] : [p.target])) : []), [current]);
@@ -283,7 +295,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const [picked, setPicked] = useState<{ path: string; section: string; title: string } | null>(null);
   useEffect(() => setPicked(null), [key]);
   // 구현 맡기기(3-2): 기획 branch 판에서만. 「남은 것」에서 고른 블록과 창
-  const canHand = !!branch && branch.state === "open" && canControl;
+  // 기획 branch 판, 또는 main 판(3-3: 기획 branch 없이 맡기고 표지는 구현 branch 첫 commit에)
+  const canHand = canControl && (branch ? branch.state === "open" : tab === "main");
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   // 창은 연 때의 판과 블록으로 맡긴다: 그 사이 문서가 다시 읽혀도 고른 번호가 다른 블록을 가리키지 않는다(host가 판을 다시 본다)
   const [handoff, setHandoff] = useState<{ initial: number[]; blob: string; blocks: HandoffBlock[] } | null>(null);
@@ -516,7 +529,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           </section>
         )}
       </div>
-      {handoff && repo && branch && at && (
+      {handoff && repo && at && (
         <HandoffDialog repo={repo} branch={branch} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
           onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
       )}

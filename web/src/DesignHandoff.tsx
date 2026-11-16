@@ -35,7 +35,8 @@ function autoMemo(repo: string, path: string, picked: HandoffBlock[]): string {
 
 export function HandoffDialog({ repo, branch, path, blob, blocks, initial, onClose, onDone }: {
   repo: DesignRepoView;
-  branch: DesignBranchView;
+  /** 기획 branch 판에서 맡기면 그 branch, main 판이면 없음(3-3) */
+  branch: DesignBranchView | null;
   path: string;
   /** 고를 때 읽은 판 */
   blob: string;
@@ -70,7 +71,7 @@ export function HandoffDialog({ repo, branch, path, blob, blocks, initial, onClo
     setProblem(null);
     try {
       const r = await call({
-        op: "design_handoff", repo: repo.repo, branch: branch.slug, path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
+        op: "design_handoff", repo: repo.repo, branch: branch?.slug ?? "", path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
         title: shownTitle.trim(), profile: profile || null, memo: shownMemo, reserve,
       });
       if (r.kind !== "design_handoff") throw new Error("예상하지 못한 답");
@@ -127,8 +128,13 @@ export function HandoffDialog({ repo, branch, path, blob, blocks, initial, onClo
           {warning && <p className="confirm-error" role="alert" data-testid="design-hand-warning">{warning}</p>}
         </div>
         <footer className="modal-footer">
-          <span className="design-hand-note">블록 {picked.length}개 표지에 d-ID를 적어 <code>design/{branch.slug}</code>에 commit하고 바로 올린다.
-            구현 thread는 그 끝(<code>{(branch.head ?? "").slice(0, 7)}</code>)에서 갈라진 자기 branch에서 일한다</span>
+          {branch ? (
+            <span className="design-hand-note">블록 {picked.length}개 표지에 d-ID를 적어 <code>design/{branch.slug}</code>에 commit하고 바로 올린다.
+              구현 thread는 그 끝(<code>{(branch.head ?? "").slice(0, 7)}</code>)에서 갈라진 자기 branch에서 일한다</span>
+          ) : (
+            <span className="design-hand-note" data-testid="design-hand-main">기획 branch 없이 main 문서에서 맡긴다. 구현 thread는 main에서 갈라진 자기 branch의
+              첫 commit으로 블록 {picked.length}개 표지에 d-ID를 적고, 착지하면 main에 들어온다</span>
+          )}
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>닫기</button>
           <button type="button" className="btn primary" disabled={!ok} data-testid="design-hand-submit" onClick={() => void submit()}>할 일 1개 만들기</button>

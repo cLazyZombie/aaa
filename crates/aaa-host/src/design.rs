@@ -181,6 +181,7 @@ impl Host {
             tree: None,
             error: None,
             branches: Vec::new(),
+            handoffs: self.design_handoff_notes(project, &t.name),
         };
         let Some(folder) = t.folder.clone() else { return view };
         let mid = match self.resolve_machine(t.machine.as_deref()) {

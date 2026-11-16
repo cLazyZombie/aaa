@@ -318,7 +318,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        DesignBranchView.base·pushed_ms·profile·apply·events·edited. 옛 host에는 새 요청을 보내지 않는다.
 // 1.174: DesignDocEntry.plans·open·tasks(블록 표지 수와 넘긴 d-ID)와 DesignTree.marks(셌나, t-1894 3-1).
 // 1.175: 구현 맡기기 `design_handoff`(할 일·표지 commit·예약, 구현 thread는 `origin/design/<주제>`에서, t-1894 3-2).
-pub const FRONT_API: Version = Version { major: 1, minor: 175 };
+// 1.176: main 문서에서 바로 맡기기(`design_handoff`의 빈 branch), DesignRepoView.handoffs(t-1894 3-3).
+pub const FRONT_API: Version = Version { major: 1, minor: 176 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
