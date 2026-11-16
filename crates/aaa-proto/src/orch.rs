@@ -1552,11 +1552,13 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
     let mut question_count = 0;
     let mut source_choices = 0;
     let mut card_choices = 0;
+    let mut parsed_choices = 0;
     let mut bad_order = false;
     let finish = |current: &mut Option<(String, Vec<String>, bool, usize)>,
                   out: &mut ParsedReportQuestions,
                   source_choices: &mut usize,
                   card_choices: &mut usize,
+                  parsed_choices: &mut usize,
                   bad_order: &mut bool| {
         let Some((text, block, rich, _)) = current.take() else { return };
         let mut code = false;
@@ -1608,6 +1610,7 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
             q.after = None;
         }
         *bad_order |= q.choices.len() < 2;
+        *parsed_choices += q.choices.len();
         if out.items.len() < QUESTION_MAX {
             *card_choices += q.choices.len();
             out.items.push(q);
@@ -1615,7 +1618,7 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
     };
     for line in report.lines() {
         if !fenced && let Some(head) = line.strip_prefix("## ") {
-            finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+            finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut parsed_choices, &mut bad_order);
             inside = head.trim() == "Questions";
             continue;
         }
@@ -1631,14 +1634,28 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
                 // ### 본문의 번호 목록은 본문으로 둔다. 선택지가 끝난 뒤의 N.은 다음 질문이다.
                 && (line.starts_with("### ") || current.as_ref().is_none_or(|(_, _, rich, tail_choices)| !rich || *tail_choices >= 2))
             {
-                finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+                finish(
+                    &mut current,
+                    &mut out,
+                    &mut source_choices,
+                    &mut card_choices,
+                    &mut parsed_choices,
+                    &mut bad_order,
+                );
                 question_count += 1;
                 bad_order |= n.parse::<usize>().ok() != Some(question_count);
                 current = Some((rest.trim().to_string(), Vec::new(), line.starts_with("### "), 0));
                 continue;
             }
             if line.starts_with("# ") {
-                finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+                finish(
+                    &mut current,
+                    &mut out,
+                    &mut source_choices,
+                    &mut card_choices,
+                    &mut parsed_choices,
+                    &mut bad_order,
+                );
                 inside = false;
                 continue;
             }
@@ -1657,7 +1674,7 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
             source_choices += 1;
         }
     }
-    finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+    finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut parsed_choices, &mut bad_order);
     // 첫 줄이 선언한 수 역시 검사한다. 일반 보고 글의 숫자는 질문 수로 읽지 않는다.
     let declared = report
         .lines()
@@ -1665,16 +1682,22 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
         .and_then(|l| l.split_once("질문 "))
         .and_then(|(_, r)| r.split_once("개"))
         .and_then(|(n, _)| n.parse::<usize>().ok());
-    if question_count != out.items.len()
-        || source_choices != card_choices
-        || bad_order
-        || declared.is_some_and(|n| n != out.items.len())
-    {
-        out.warning = Some(format!(
+    let mut warnings = Vec::new();
+    if question_count > QUESTION_MAX {
+        warnings.push(format!(
+            "보고당 질문 최대 {QUESTION_MAX}개: 질문 {question_count}개 중 {}개를 읽었다. {QUESTION_MAX}개 이하로 나눠 남은 질문은 기록해 다음 보고로 이어 묻는다.",
+            out.items.len()
+        ));
+    }
+    if source_choices != parsed_choices || bad_order || declared.is_some_and(|n| n != question_count) {
+        warnings.push(format!(
             "형식 확인 필요: 질문 {question_count}개 중 {}개, 선택지 {source_choices}개 중 {card_choices}개를 읽었다. 질문 번호·A부터 이어지는 선택지 글자·질문당 선택지 2~9개를 확인한다{}.",
             out.items.len(),
             declared.map(|n| format!("(선언한 질문 {n}개)")).unwrap_or_default()
         ));
+    }
+    if !warnings.is_empty() {
+        out.warning = Some(warnings.join("\n"));
     }
     if out.warning.is_some() && out.items.is_empty() {
         out.items.push(ThreadQuestion {
@@ -2532,6 +2555,44 @@ mod tests {
         assert!(parse_report_questions(code).warning.is_none());
         assert!(parse_report_questions("## Report\n- A 본문\n- B 본문\n").warning.is_none());
         assert!(parse_report_questions(include_str!("../tests/fixtures/m3-questions.md")).warning.is_none());
+    }
+
+    #[test]
+    fn report_questions_distinguish_question_limit_from_format_errors() {
+        for heading in ["### ", ""] {
+            let questions =
+                (1..=9).map(|i| format!("{heading}{i}. 질문 {i}\n- A 진행\n- B 보류\n")).collect::<String>();
+            let nine = parse_report_questions(&format!("[결정 필요] 질문 9개: 진행\n## Questions\n{questions}"));
+            assert!(nine.warning.is_none(), "{nine:?}");
+            assert_eq!(nine.items.len(), 9);
+            let ten = format!(
+                "[결정 필요] 질문 10개: 진행\n## Questions\n{questions}{heading}10. 질문 10\n- A 진행\n- B 보류\n"
+            );
+            let parsed = parse_report_questions(&ten);
+            assert_eq!(parsed.items.len(), 9);
+            assert_eq!(parsed.items[8].text, "질문 9");
+            assert!(parsed.items.iter().all(|q| q.choices.len() == 2));
+            let warning = parsed.warning.as_deref().unwrap();
+            assert!(warning.contains("보고당 질문 최대 9개") && warning.contains("질문 10개 중 9개"), "{warning}");
+            assert!(warning.contains("9개 이하로 나눠 남은 질문은 기록해 다음 보고로 이어 묻는다"), "{warning}");
+            assert!(!warning.contains("형식 확인 필요"), "{warning}");
+            // 상한 초과와 함께 생긴 형식 오류는 마지막(잘린) 질문에서도 놓치지 않는다.
+            for broken in [ten.replacen("질문 10개:", "질문 11개:", 1), ten.replace("- B 보류", "- C 보류")] {
+                let parsed = parse_report_questions(&broken);
+                let warning = parsed.warning.as_deref().unwrap();
+                assert!(warning.contains("보고당 질문 최대 9개") && warning.contains("형식 확인 필요"), "{warning}");
+            }
+            let broken_tail =
+                ten.replace("10. 질문 10\n- A 진행\n- B 보류", "10. 질문 10\n- **A 진행\n- B 보류\n- C 중단");
+            let parsed = parse_report_questions(&broken_tail);
+            assert!(parsed.warning.as_deref().unwrap().contains("형식 확인 필요"), "{parsed:?}");
+        }
+        // 선택지 상한은 별도 계약이다. 질문 수 상한으로 잘못 진단하지 않는다.
+        let choices = (b'A'..=b'J').map(|c| format!("- {} 선택\n", c as char)).collect::<String>();
+        let parsed = parse_report_questions(&format!("## Questions\n### 1. 선택\n{choices}"));
+        assert_eq!(parsed.items[0].choices.len(), 9);
+        let warning = parsed.warning.as_deref().unwrap();
+        assert!(warning.contains("형식 확인 필요") && !warning.contains("보고당 질문 최대"), "{warning}");
     }
 
     #[test]
