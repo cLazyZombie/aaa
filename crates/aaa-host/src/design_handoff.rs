@@ -1081,7 +1081,7 @@ mod tests {
             edit.contains(&b2) && !edit.contains("> B\n") && !edit.ends_with("> B") && !edit.contains("빠졌다"),
             "{edit}"
         );
-        let drop = relay_body(&[a.clone(), b.clone()], &[a.clone()]).unwrap();
+        let drop = relay_body(&[a.clone(), b.clone()], std::slice::from_ref(&a)).unwrap();
         assert!(drop.contains("블록 1개는 표지가 없어져 빠졌다") && !drop.contains("바뀐 블록"), "{drop}");
         assert_eq!(relay_body(&[a.clone(), b.clone()], &[b.clone(), a.clone()]), None, "차례만 바뀜");
         let both = relay_body(&[a.clone(), b.clone(), c.clone()], &[a.clone(), b2.clone()]).unwrap();
