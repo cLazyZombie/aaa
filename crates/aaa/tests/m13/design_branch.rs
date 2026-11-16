@@ -388,3 +388,67 @@ fn branches_of(w: &World, repo: &str) -> Value {
     let tree = w.h.ok(&["plan", "list"]);
     tree["repos"].as_array().unwrap().iter().find(|r| r["repo"] == repo).unwrap()["branches"].clone()
 }
+
+/// coordinator의 열기·말하기(t-1928): 사용자의 「아이디어」 요청을 할 일 없이 기획 대화로 넘긴다. coordinator pane 안의 실제
+/// CLI가 `plan new`·`plan say`로 branch를 열고 대화 thread를 띄워 말을 보낸다(만든 이 coordinator). 같은 pane의 저장·버리기·
+/// 반영은 거부되고, 버리기는 사람이 한다
+#[test]
+fn coordinator_opens_a_plan_chat_and_says_but_does_not_write() {
+    let w = design_world("tick_secs=3600\ndesign_push_secs=3600\n", r#"["git", "--version"]"#);
+    w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
+    let coord = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    let cpane = coord["pane"]["id"].as_str().unwrap().to_string();
+    w.wait_screen(&cpane, "fake>");
+    let said = w.lab.root.join("coord-say.md");
+    std::fs::write(&said, "사용자: 보스 도감을 만들자 코디말고유\n").unwrap();
+    let py = w.task(
+        "coord-plan-probe.py",
+        &format!(
+            r#"
+import json, subprocess
+AA = {bin:?}
+def call(*args, ok=True):
+    p = subprocess.run([AA, '--json', *args], capture_output=True)
+    assert (p.returncode == 0) == ok, (args, p.returncode, p.stdout, p.stderr)
+    return json.loads(p.stdout) if ok else p.stderr.decode()
+opened = call('plan', 'new', 'repo', 'boss-idea', '--title', '보스 도감 아이디어')['branch']
+assert (opened['slug'], opened['by']) == ('boss-idea', 'coordinator'), opened
+assert call('plan', 'say', 'repo', 'boss-idea', '--file', {said:?})['branch']['pending'] == 1
+for args in [('plan', 'save', 'repo', 'docs/x.md', '--branch', 'boss-idea', '--new', '--file', {said:?}),
+             ('plan', 'discard', 'repo', 'boss-idea'), ('plan', 'apply', 'repo', 'boss-idea')]:
+    assert '기획 branch에 쓰지 않는다' in call(*args, ok=False), args
+print('coord-plan-ok')
+"#,
+            bin = lab::BIN,
+        ),
+    );
+    let out = w.lab.root.join("coord-plan-probe.out");
+    let done = w.lab.root.join("coord-plan-probe.done");
+    let script = w.task(
+        "coord-plan-probe.sh",
+        &format!(
+            "python3 {py:?} > {out:?} 2>&1\nprintf '%s' \"$?\" > {done:?}.tmp\nmv {done:?}.tmp {done:?}\necho coord-plan-probe-done\n"
+        ),
+    );
+    w.h.ok(&["pane", "run", &cpane, &format!("post-probe {script}")]);
+    w.h.wait_output(&cpane, "coord-plan-probe-done", T);
+    let output = std::fs::read_to_string(out).unwrap();
+    assert_eq!(std::fs::read_to_string(done).unwrap(), "0", "{output}");
+    assert!(output.contains("coord-plan-ok"), "{output}");
+
+    let thread = wait_for("기획 대화 thread", T, || branches(&w)[0]["thread"].as_str().map(str::to_string));
+    let shown = w.wait_show("대화 thread brief", &thread, |v| v["brief"] == "delivered");
+    assert_eq!(shown["design"], "repo/boss-idea", "{shown}");
+    let pane = shown["pane"].as_str().unwrap().to_string();
+    w.h.wait_output(&pane, "코디말고유", T);
+    wait_for("보낸 말 비움", T, || (branches(&w)[0]["pending"] == 0).then_some(()));
+    let list = branches(&w);
+    assert_eq!((list[0]["slug"].as_str(), list[0]["by"].as_str()), (Some("boss-idea"), Some("coordinator")), "{list}");
+    assert!(
+        !w.h.ok(&["task", "list"])["tasks"].as_array().unwrap().iter().any(|t| t["thread"] == thread.as_str()),
+        "대화 thread는 할 일을 남기지 않는다"
+    );
+    w.h.ok(&["plan", "discard", "repo", "boss-idea"]);
+    assert_eq!(w.show(&thread)["status"], "resolved", "사람이 버리면 대화 thread도 끝난다");
+    assert_eq!(branches(&w), serde_json::json!([]));
+}

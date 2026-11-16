@@ -62,6 +62,9 @@ pub const TOPICS: &[GuideTopic] = &[
         text: TASKS,
     },
     GuideTopic {
+        name: "plan", audience: Audience::Coordinator, when: "아이디어·기획 요청을 받을 때", text: PLAN
+    },
+    GuideTopic {
         name: "ci", audience: Audience::Coordinator, when: "inbox `ci`·`ci_fixed`를 받았을 때", text: CI
     },
     GuideTopic {
@@ -149,7 +152,7 @@ needs_user면 대신 정하지 않고 묻는다. post는 inbox done, 맡은 thre
 post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 
 ## 메시지마다 세 가지 중 하나
-「아이디어」·「기획」 요청은 할 일·thread를 만들지 않고 웹 「기획」을 안내한다(옛 아이디어 n-ID는 읽기 전용).
+「아이디어」·「기획」 요청은 할 일·thread 없이 기획 대화로 넘긴다(`aaa guide plan`).
 
 - **그 자리에서 답한다**: context로 답할 수 있는 질문, 선호, TASKS.md 변경. 새 작업은 직접 처리하지 않는다.
 - **그 영역을 맡은 열린 thread에 넘긴다**: 아래 「이어지는 말」.
@@ -665,6 +668,19 @@ thread·post의 질문은 `aaa question answer q-NNNN B --auto --reason-file <�
 사용자가 자동 결정을 다시 정하면 inbox의 새 답을 읽는다. host는 이미 실행한 작업을 되돌리지 않는다. 병합 전이면 지시를 바꾸고, 배포 뒤면 되돌림 배포를 제안하는 등 실제 상태를 확인해 처리한다. auto mode를 꺼도 이전 결정 기록과 이미 진행한 작업은 남는다.
 "#;
 
+/// 「아이디어」·「기획」 요청(t-1928, q-4013 2B). coordinator는 기획 대화를 열고 말하기만 한다(host `design_opener`)
+const PLAN: &str = r#"# 기획 대화로 넘기기(coordinator)
+
+사용자의 「아이디어」·「기획」 요청은 할 일·thread를 만들지 않고 저장소 기획 branch의 기획 대화로 넘긴다. 대화 thread는 host가 그 저장소 머신에 띄우고, 사용자와 이야기하며 그 branch의 기획 문서를 고친다. 옛 아이디어(n-ID)는 읽기 전용이다(`aaa idea show`).
+
+1. `aaa plan list`로 저장소마다 기획 폴더와 기획 branch(`⑂ design/<주제> 「제목」`)를 본다. 기획 폴더가 없는 저장소에는 열지 못한다. 어느 저장소인지 분명하지 않으면 사용자에게 묻는다.
+2. 같은 주제의 branch가 있으면(쉼이어도) 그 주제에 말한다. 없으면 `aaa plan new <저장소> <주제> --title '<제목>'`으로 연다. 주제는 영문 소문자·숫자·`-` 1~48자(branch `design/<주제>`가 된다), 제목은 사용자 말로 짧게 쓴다.
+3. `aaa plan say <저장소> <주제> --file <파일>`로 사용자 말을 보낸다. 줄이거나 바꾸지 않고 그대로 싣고, 사용자가 준 파일·근거 경로가 있으면 함께 적는다. 처음이면 host가 대화 thread를 띄우고 brief 뒤에 보낸다.
+4. 사용자에게 저장소와 `design/<주제>`를 알리고, 웹 「기획」에서 그 대화를 이어 갈 수 있다고 한 줄로 답한다. 채팅으로 이어지는 말도 같은 주제에 `aaa plan say`로 보낸다(`aaa thread message`를 쓰지 않는다).
+
+coordinator는 열기·말하기만 한다. 문서 저장(`plan save`)·버리기(`plan discard`)·main 반영(`plan apply`)·구현 맡기기·옛 아이디어 옮기기는 사람이 웹 「기획」에서 한다(host가 coordinator 요청을 거부한다). 사용자가 그 일을 바라면 웹 「기획」을 안내한다.
+"#;
+
 /// thread가 웹 보고서를 만들 때(brief의 「보고」 절이 가리킨다). 자세한 예시는 aaa 저장소 docs/library.md에 있다.
 const WEB_REPORT: &str = r#"# 웹 보고서 만들기(thread)
 
@@ -718,6 +734,23 @@ mod tests {
         let qs = aaa_proto::report_questions(fence);
         assert_eq!((qs.len(), qs[0].choices.len(), qs[0].choices[0].recommended), (1, 2, true), "{fence}");
         assert!(qs[0].body.as_deref().unwrap_or_default().contains("![시안 영상](library/preview/a.mp4)"), "{fence}");
+    }
+
+    /// 「아이디어」·「기획」 요청은 기획 대화로 넘긴다(t-1928): 매 턴 본문이 `plan` 주제를 가리키고, 주제는 열기·말하기 명령과
+    /// coordinator가 하지 않는 쓰기를 적는다. 거둔 아이디어 쓰기 명령은 안내하지 않는다
+    #[test]
+    fn idea_requests_go_to_a_plan_chat() {
+        let guide = coordinator_guide("demo");
+        assert!(guide.contains("「아이디어」·「기획」 요청은 할 일·thread 없이 기획 대화로 넘긴다(`aaa guide plan`)."));
+        let text = topic("plan").unwrap().text;
+        for needle in
+            ["`aaa plan list`", "`aaa plan new <저장소> <주제>", "`aaa plan say <저장소> <주제> --file", "`plan save`"]
+        {
+            assert!(text.contains(needle), "{needle}");
+        }
+        for text in [guide.as_str(), text] {
+            assert!(!text.contains("aaa idea new") && !text.contains("aaa idea say"));
+        }
     }
 
     /// AGENTS.md는 매 턴 문맥이다(Claude는 세션 시작·compaction마다 다시 싣는다): Codex 기본 한도(32 KiB)보다 한참 작고
