@@ -826,9 +826,13 @@ task: string,
  */
 path: string,
 /**
- * 맡긴 블록의 글(맡길 때 main 판, 덩어리 그대로)
+ * 맡긴 블록의 글(덩어리 그대로, 표지의 d-ID는 뺌: main 판과 같은 글)
  */
-blocks: Array<string>, };
+blocks: Array<string>,
+/**
+ * 기획 branch에서 맡겼으면 그 주제(표지가 그 branch에 있다). 비면 main 문서에서 맡김(표지는 구현 branch에)
+ */
+branch: string, };
 
 export type DesignDocEntry = {
 /**

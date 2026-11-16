@@ -189,7 +189,7 @@ pub struct DesignRepoView {
     pub handoffs: Vec<DesignHandoffNote>,
 }
 
-/// main 문서에서 맡긴 할 일 하나(FRONT_API 1.176): 웹은 그 문서의 같은 블록(덩어리 글)에 할 일 칩을 단다
+/// 맡긴 할 일 하나(FRONT_API 1.176): main 판에는 아직 표지가 없을 수 있다. 웹은 main 판의 같은 블록(덩어리 글)에 할 일 칩을 단다
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DesignHandoffNote {
@@ -197,8 +197,10 @@ pub struct DesignHandoffNote {
     pub task: String,
     /// 저장소 기준 문서 경로
     pub path: String,
-    /// 맡긴 블록의 글(맡길 때 main 판, 덩어리 그대로)
+    /// 맡긴 블록의 글(덩어리 그대로, 표지의 d-ID는 뺌: main 판과 같은 글)
     pub blocks: Vec<String>,
+    /// 기획 branch에서 맡겼으면 그 주제(표지가 그 branch에 있다). 비면 main 문서에서 맡김(표지는 구현 branch에)
+    pub branch: String,
 }
 
 /// 문서 하나(읽기 전용)
@@ -367,6 +369,27 @@ pub fn design_mark_text(text: &str, mark: &DesignMark) -> String {
         .join("\n")
 }
 
+/// 블록 글 첫 줄의 `[!계획] d-NNNN`에서 d-ID를 뺀 글(맡기기 전 글과 견준다)
+pub fn design_unmark(block: &str) -> String {
+    let (first, rest) = match block.split_once('\n') {
+        Some((f, r)) => (f, Some(r)),
+        None => (block, None),
+    };
+    let Some(at) = first.find("[!계획]").map(|i| i + "[!계획]".len()) else { return block.to_string() };
+    let tail = first[at..].trim_start_matches(js_space);
+    let Some(digits) = tail.strip_prefix("d-") else { return block.to_string() };
+    let n = digits.chars().take_while(char::is_ascii_digit).count();
+    if n == 0 {
+        return block.to_string();
+    }
+    let after = digits[n..].trim_start_matches(js_space);
+    let line = if after.is_empty() { first[..at].to_string() } else { format!("{} {after}", &first[..at]) };
+    match rest {
+        Some(r) => format!("{line}\n{r}"),
+        None => line,
+    }
+}
+
 /// 고른 표지(`design_marks`의 차례, 0부터)마다 첫 줄 `[!계획]` 바로 뒤에 ` <d-ID>`를 적는다(구현 맡기기, t-1894 3-2).
 /// 고른 것이 없거나, 넘기지 않은 계획 블록이 아니면 그 까닭으로 거절한다. 다른 줄은 바이트 그대로다
 pub fn design_mark_tasks(text: &str, picks: &[usize], id: &str) -> Result<String, String> {
@@ -513,6 +536,13 @@ mod tests {
         assert_eq!(design_marks("\u{feff}> [!계획]\n> 글").len(), 1);
         assert_eq!(design_marks("\u{85}> [!계획]").len(), 0);
         assert_eq!(design_trim("\u{feff} 첫 줄 \u{a0}"), "첫 줄");
+        // d-ID 빼기: 맡기기 전 글로 돌아간다
+        assert_eq!(design_unmark("> [!계획] d-0006\n> 100층"), "> [!계획]\n> 100층");
+        assert_eq!(design_unmark("> [!계획] d-0050 100층까지"), "> [!계획] 100층까지");
+        assert_eq!(design_unmark("> [!계획]\n> 그대로"), "> [!계획]\n> 그대로");
+        let original = "> [!계획]\n> 글";
+        let marked = design_mark_tasks(original, &[0], "d-0007").unwrap();
+        assert_eq!(design_unmark(&marked), original);
     }
 
     use super::*;

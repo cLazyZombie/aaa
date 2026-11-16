@@ -90,7 +90,9 @@ function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, childr
           <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>
         )}
         {c.image && <span className="design-pill is-draft">시안</span>}
-        {c.pending && <span className="design-pending" title="main 문서에서 맡겼다: 표지는 구현 branch 첫 commit에 있고 착지하면 main에 들어온다">표지는 구현 branch에</span>}
+        {c.pending && (c.pendingBranch
+          ? <span className="design-pending" title="기획 branch에서 맡겼다: 표지는 그 branch에 있고 착지하면 main에 들어온다">표지는 design/{c.pendingBranch}에</span>
+          : <span className="design-pending" title="main 문서에서 맡겼다: 표지는 구현 branch 첫 commit에 있고 착지하면 main에 들어온다">표지는 구현 branch에</span>)}
       </div>
       <div className="design-callout-body">{children}</div>
       {c.kind === "open" && onDiscuss && (
@@ -264,16 +266,17 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const marked = useMemo(() => (blocks && tab !== "main" ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main, tab]);
   const sections = useMemo(() => (blocks && current ? sectionsOf(blocks, current.title) : []), [blocks, current]);
   // main 문서에서 맡긴 블록(3-3): 표지는 구현 branch에만 있어 main 글에는 없다. 맡김 기록의 블록 글로 찾아 그 할 일로 본다
+  // 기획 branch에서 맡긴 블록도 main 판에는 아직 표지가 없다: 그 branch를 칩 옆에 적는다
   const pendingNotes = useMemo(() => {
-    const out = new Map<string, string>();
+    const out = new Map<string, { task: string; branch: string }>();
     if (tab !== "main" || !at) return out;
-    for (const n of repo?.handoffs ?? []) if (n.path === at.path) for (const b of n.blocks) out.set(b.trim(), n.task);
+    for (const n of repo?.handoffs ?? []) if (n.path === at.path) for (const b of n.blocks) out.set(b.trim(), { task: n.task, branch: n.branch });
     return out;
   }, [repo?.handoffs, tab, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   const callouts = useMemo(() => (blocks ? blocks.map((b, i) => {
     const c = calloutOf(b, sections[i] ?? "");
-    const task = c && c.kind === "plan" && !c.task ? pendingNotes.get(b.trim()) : undefined;
-    return c && task ? { ...c, task, pending: true } : c;
+    const note = c && c.kind === "plan" && !c.task ? pendingNotes.get(b.trim()) : undefined;
+    return c && note ? { ...c, task: note.task, pending: true, pendingBranch: note.branch } : c;
   }) : []), [blocks, sections, pendingNotes]);
   const [look, setLook] = useState<Look>("all");
   // 글 어디든(표 칸 포함) `d-NNNN`은 표지와 같은 상태 칩이다(확정 계획 §3)

@@ -218,6 +218,8 @@ export type Callout = {
   kind: "plan" | "open"; task: string | null; title: string; body: string; section: string; image: boolean;
   /** main 문서에서 맡겨 표지가 아직 구현 branch에만 있다(3-3, 맡김 기록으로 단 할 일) */
   pending?: boolean;
+  /** 기획 branch에서 맡겼으면 그 주제(표지는 그 branch에), 비면 main 맡김(표지는 구현 branch에) */
+  pendingBranch?: string;
 };
 
 /** 덩어리 첫 줄의 표지: 종류, 넘긴 d-ID(계획만, 정규형), 표지 뒤 글. 정규식 되돌기 없이 글자로 읽는다(agent `count_marks`와 같다) */
