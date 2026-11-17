@@ -95,6 +95,10 @@ const save = (slug, path, text, base) => {
 export default async function () {
   let page;
   let beforeCall = async () => {};
+  let routePhase = "등록";
+  const routeTrace = (event, detail = {}) => {
+    if (process.env.AAA_E2E_ROUTE_DIAGNOSTIC === "1") console.error(JSON.stringify({ event, phase: routePhase, ...detail }));
+  };
   const tasks = {};
   // 3-2에서 맡긴 할 일과 그 구현 thread(3-3 고침 알림이 쓴다)
   const handed = {};
@@ -139,8 +143,17 @@ export default async function () {
     // 단계마다 unroute → route로 교체하면, 제거할 때 서버가 자동 통과시킨 요청의
     // 늦은 route 사건을 새 handler가 받아 다시 continue할 수 있다. 이 페이지에서 한 번만 건다.
     await page.route("**/api/v1/call", async (route) => {
-      await beforeCall(route.request());
-      await route.continue();
+      const op = route.request().postDataJSON()?.op;
+      routeTrace("route-start", { op });
+      try {
+        await beforeCall(route.request());
+        routeTrace("route-continue", { op });
+        await route.continue();
+        routeTrace("route-end", { op });
+      } catch (error) {
+        routeTrace("route-error", { op, error: error.message });
+        throw error;
+      }
     });
     await page.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
     await inList(page, "activity-design");
@@ -350,6 +363,7 @@ export default async function () {
     let release;
     const held = new Promise((r) => { release = r; });
     let holding = 0, passed = 0;
+    routePhase = "그림 읽기 보류";
     beforeCall = async (request) => {
       if (request.postDataJSON()?.op !== "design_read") return;
       holding++;
@@ -367,6 +381,7 @@ export default async function () {
     release();
     await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
     beforeCall = async () => {};
+    routePhase = "그림 읽기 해제";
     // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
     await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
     const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
@@ -409,6 +424,7 @@ export default async function () {
     await page.getByTestId("design-reload").first().evaluate((button) => {
       button.addEventListener("pointerdown", () => { button.dataset.discardReadGate = "armed"; }, { capture: true, once: true });
     });
+    routePhase = "버리기 읽기 보류";
     beforeCall = async (request) => {
       const req = request.postDataJSON();
       if (req?.op === "design_tree" && req.repo === "app" && !req.cached) {
@@ -445,8 +461,11 @@ export default async function () {
       fs.writeFileSync(`${root}/discard-gate.html`, await page.content());
       throw error;
     } finally {
+      routePhase = "버리기 종료";
+      routeTrace("unroute-start");
       release();
       await page.unrouteAll({ behavior: "wait" });
+      routeTrace("unroute-end");
       await page.context().close();
     }
   });

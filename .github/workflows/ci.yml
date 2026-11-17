@@ -10,6 +10,10 @@ on:
         description: Windows 설치 준비 반복 진단
         type: boolean
         default: false
+      e2e_route_diagnostic:
+        description: E2E 136 라우트 수명 반복 진단
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON(inputs.e2e_route_diagnostic && '[2]' || '[1,2,3]') }}
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -81,7 +85,16 @@ jobs:
         env:
           AAA_E2E_SHARD: "${{ matrix.shard }}/3"
           AAA_E2E_RETRIES: "1"
-        run: bash scripts/ci-local.sh --only e2e --logs . --tee
+        run: |
+          if [ '${{ inputs.e2e_route_diagnostic }}' = true ]; then
+            export DEBUG=pw:api AAA_E2E_ROUTE_DIAGNOSTIC=1 AAA_E2E_RETRIES=0
+            for round in 1 2 3 4 5 6 7 8; do
+              echo "E2E 136 독립 진단 $round/8"
+              bash scripts/ci-local.sh --only e2e --spec 136 --logs . --tee
+            done
+          else
+            bash scripts/ci-local.sh --only e2e --logs . --tee
+          fi
       - name: 웹 E2E 결과·진단
         if: ${{ !cancelled() && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -105,6 +118,7 @@ jobs:
           true
 
   rust:
+    if: ${{ !inputs.e2e_route_diagnostic }}
     name: ${{ matrix.os }}
     strategy:
       fail-fast: false
