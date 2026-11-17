@@ -22,3 +22,6 @@
 .task-prop > .auto-merge-switch { flex: 1 1 auto; flex-wrap: nowrap; gap: var(--space-2); color: inherit; font-size: inherit; }
 .task-prop > .auto-merge-switch .auto-merge-label { flex: 0 0 72px; color: var(--text-dim); font-size: var(--fs-xs); }
 .task-prop > .auto-merge-switch .auto-merge-error { flex-basis: auto; }
+/* pane 머리줄(t-1968): 실패 띠는 머리 아래 오른쪽에 떠서 터미널 칸 크기를 바꾸지 않는다 */
+.pane-auto-merge { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+.pane-auto-merge-error { position: absolute; top: calc(100% + var(--space-2)); right: 0; width: max-content; max-width: min(320px, 80vw); white-space: normal; }

@@ -40,6 +40,7 @@ import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedC
 import { QuestionReload } from "./questionReload";
 import { ThreadReload, readThreadPages, readSelectedThread } from "./threadReload";
 import { SummaryButton } from "./ThreadSummary";
+import { PaneAutoMerge } from "./AutoMerge";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
@@ -1911,6 +1912,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             account={threadOfPane.get(p.id)?.account ?? p.account}
             status={activePane === chatKey(p) ? (
               <>
+                {/* 자동 병합(t-1968): thread pane 머리줄의 상태 표시 왼쪽. 보고 화면에는 두지 않는다 */}
+                {threadOfPane.get(p.id) && <PaneAutoMerge t={threadOfPane.get(p.id)!} role={role} />}
                 <AgentChip p={p} />
                 {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
                 {threadOfPane.get(p.id) && (
