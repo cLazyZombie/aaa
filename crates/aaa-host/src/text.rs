@@ -229,12 +229,20 @@ impl Host {
     }
 
     /// 화면 사본의 글(Text)에 입력창 흐린 글 표지를 단 것(`prompt_box::mark_dim_box`). 글과 색을 한 잠금에서 읽어 같은 화면이다.
-    fn read_view_marked(&self, id: &str, source: ReadSource, lines: Option<u32>, kind: &str) -> Option<ReadView> {
+    fn read_view_marked(
+        &self,
+        id: &str,
+        source: ReadSource,
+        lines: Option<u32>,
+        kind: Option<&str>,
+    ) -> Option<ReadView> {
         let mut i = self.inner.lock().unwrap();
-        let m = i.panes.get_mut(id)?.mirror.as_mut()?;
+        let pane = i.panes.get_mut(id)?;
+        let kind = kind.map(str::to_owned).or_else(|| pane.info.harness.clone()).unwrap_or_default();
+        let m = pane.mirror.as_mut()?;
         let r = m.vt.read(source, lines, ReadFormat::Text);
         let ansi = m.vt.read(source, lines, ReadFormat::Ansi).text;
-        let text = crate::prompt_box::mark_dim_box(kind, &r.text, &ansi);
+        let text = crate::prompt_box::mark_dim_box(&kind, &r.text, &ansi);
         Some(ReadView { pane: id.to_string(), source, format: ReadFormat::Text, text, truncated: r.truncated })
     }
 
@@ -313,8 +321,9 @@ impl Host {
         let (rec, pid, _) = self.thread_pane(project, id)?;
         let agent = self.pane_agent(&pid).map(|a| a.activity);
         let source = if lines.is_some() { ReadSource::Recent } else { ReadSource::Visible };
-        let kind = rec.launch.map(|l| l.harness).unwrap_or_default();
-        let view = match self.read_view_marked(&pid, source, lines, &kind) {
+        // 실행 기록이 없는 thread(adopt 등)는 상태 감지가 본 harness, 그것도 없으면 pane이 띄울 때 밝힌 harness로 가른다
+        let kind = rec.launch.map(|l| l.harness).or_else(|| self.pane_agent(&pid).map(|a| a.harness));
+        let view = match self.read_view_marked(&pid, source, lines, kind.as_deref()) {
             Some(view) => view,
             None => match self.pane_read_text(&pid, source, lines, ReadFormat::Text).await? {
                 FrontResponse::Read(view) => view,

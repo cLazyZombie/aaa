@@ -2165,6 +2165,48 @@ mod tests {
         assert_eq!((a.progress, a.progress_since_ms, a.progress_at_ms), (None, None, None));
     }
 
+    /// `thread read`는 입력창의 흐린 글(Claude 다음 입력 예측)에 표지를 단다(t-1940). host 화면 사본(replay)에서 읽는 실제 길이다.
+    #[tokio::test]
+    async fn thread_read_marks_a_predicted_prompt_in_the_box() {
+        use aaa_proto::{Role, Snapshot, ThreadKind};
+        let rule = format!("\x1b[38;2;136;136;136m{}\x1b[m", "─".repeat(60));
+        for (boxed, want) in [
+            ("\u{a0}\x1b[2m바뀐 것을 main에 올려\x1b[m", "❯ [흐린 글·입력 아님] 바뀐 것을 main에 올려"),
+            ("\u{a0}바뀐 것을 main에 올려", "❯\u{a0}바뀐 것을 main에 올려"),
+        ] {
+            let (h, _tmp) = host_with_pane();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let mut r = ThreadRec::starting("demo", "읽기", "m", "claude", Role::Worker, ThreadKind::Dir, 1);
+            r.id = "t-0001".into();
+            r.pane = Some("s".into());
+            r.status = ThreadStatus::Open;
+            r.brief = BriefState::Delivered;
+            h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+            let screen = format!("⏺ 끝났습니다.\r\n\r\n{rule}\r\n❯{boxed}\r\n{rule}\r\n  status");
+            h.on_subscribed(
+                "s",
+                Some(Snapshot {
+                    compression: None,
+                    session: "s".into(),
+                    offset: 0,
+                    cols: 80,
+                    rows: 24,
+                    replay: B64(screen.into_bytes()),
+                    history_more: false,
+                }),
+                0,
+            );
+            for lines in [None, Some(20)] {
+                let aaa_proto::FrontResponse::ThreadPane(v) = h.thread_read("demo", "t-0001", lines).await.unwrap()
+                else {
+                    panic!("ThreadPane 응답이 아니다")
+                };
+                let text = v.read.unwrap().text;
+                assert!(text.lines().any(|l| l == want), "{lines:?}\n{text}");
+            }
+        }
+    }
+
     /// thread keys의 글+Enter는 Codex의 paste 판정 창을 넘긴 뒤 제출한다.
     /// 가상 시계와 실제 Agent link 경계로 바이트·순서를 본다(실제 시간을 재지 않는다).
     #[tokio::test(start_paused = true)]

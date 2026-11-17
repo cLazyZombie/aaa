@@ -311,10 +311,13 @@ const SESSION_START_MATCHER: &str = "^(startup|resume|clear|compact|fork)$";
 
 /// Claude Code에 실행마다 줄 hook 설정(`claude --settings <파일>`). 사용자 설정 파일은 고치지 않는다.
 /// 상태 hook(Stop·PermissionRequest·Notification 등)은 걸지 않는다(herdr 0.9.5가 그것들을 지우고 SessionStart만 둔다).
+/// 다음 입력 예측(prompt suggestion)은 끈다(사용자 11-17 q-4042 1A, t-1940): 턴 끝에 입력창에 흐리게 그린 예측이 색 없는
+/// 화면 글에서 보내지 못한 말로 읽혔다. aaa pane의 입력은 웹·메시지가 보내므로 예측이 쓸 데가 없다.
 pub fn claude_settings(exe: &Path) -> Value {
     let cmd = format!("'{}' hook --agent claude", exe.to_string_lossy().replace('\'', "'\\''"));
     let hook = serde_json::json!({ "type": "command", "command": cmd, "timeout": 10 });
     serde_json::json!({
+        "promptSuggestionEnabled": false,
         "hooks": {
             "SessionStart": [{ "matcher": SESSION_START_MATCHER, "hooks": [hook.clone()] }],
             "UserPromptSubmit": [{ "hooks": [hook.clone()] }],
@@ -737,6 +740,8 @@ mod tests {
         events.sort();
         // 상태 hook(Stop·PermissionRequest·Notification)은 없다. PostToolUse는 진행 알림만 한다(herdr-projects setup.rs)
         assert_eq!(events, ["PostToolUse", "SessionStart", "UserPromptSubmit"]);
+        // 다음 입력 예측은 끈다(q-4042 1A): 빠지거나 true면 Claude가 예측을 그린다
+        assert_eq!(v["promptSuggestionEnabled"], serde_json::Value::Bool(false));
     }
 
     /// herdr-projects progress.rs `helpers_and_the_reporters_own_call_do_not_trigger`. PostToolUse는 안내만 하고 host 사건은
