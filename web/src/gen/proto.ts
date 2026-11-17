@@ -756,6 +756,11 @@ changed: Array<DesignChange>,
  */
 ahead: number,
 /**
+ * `changed`·`ahead`를 agent가 그 branch에서 읽어 실었다(FRONT_API 1.178, t-1950). 거짓이면 둘 다 기록만이라 0이 「main과 같음」이
+ * 아니다(머신 끊김·시한·옛 host)
+ */
+read: boolean,
+/**
  * 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
  */
 thread: string | null,

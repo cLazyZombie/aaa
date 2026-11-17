@@ -8,7 +8,7 @@ import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
 import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
-import { branchesByPath, calloutOf, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
+import { branchesByPath, calloutOf, mergedToMain, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
 import { OpenFileContext } from "./herdr/filePaths.ts";
@@ -383,6 +383,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
   }, [blocks, sections, callouts]);
   const others = touching.filter((b) => b.slug !== tab);
   const stateOf = (b: DesignBranchView) => {
+    if (mergedToMain(b)) return "main에 들어감";
     const apply = b.apply ? threads.find((t) => t.id === b.apply) : undefined;
     if (apply && apply.status !== "resolved" && apply.status !== "failed") return "반영 대기";
     return b.state === "rest" ? `쉼 ${restDays(b, now)}일` : "대화 중";
@@ -536,7 +537,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
         {repo && repo.folder && (
           <section className="design-chat-pane" aria-label="기획 대화" hidden={!show("chat")} data-testid="design-chat-pane">
             {chatError && <div className="banner err" role="alert">{chatError}</div>}
-            <DesignChat repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
+            <DesignChat project={current?.project ?? null} repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
               picked={picked} onUnpick={() => setPicked(null)}
               active={shown && show("chat")} now={now} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
           </section>

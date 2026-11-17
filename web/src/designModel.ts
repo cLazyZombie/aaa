@@ -1,5 +1,6 @@
 // 기획 트리(t-1894): 저장소 기획 폴더의 Markdown 문서 목록을 폴더 트리로 묶고, 문서 안 상대 경로(그림·다른 문서)를 저장소 기준 경로로 푼다.
 import { canonicalShortId } from "./appIds.ts";
+import { imageMention, imagePaths } from "./herdr/composerImages.ts";
 import type { DesignBranchView, DesignDocEntry, DesignEvent, DesignRepoView, TaskView, ThreadView } from "./gen/proto";
 
 export type DesignDir = { kind: "dir"; name: string; path: string; title: string; children: DesignNode[] };
@@ -200,7 +201,7 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
     flush();
     const text = e.kind === "open" ? `새 대화 · design/${slug} · main ${short(e.commit)} 에서`
       : e.kind === "push" ? `origin에 올림 · ${clock(e.at_ms)}`
-        : e.kind === "edit" ? `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`
+        : e.kind === "edit" ? (/\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(e.text) ? `그림 ${fileOf(e.text)} 붙임 · ${short(e.commit)}` : `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`)
           : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
             : e.kind === "handoff" ? `구현 맡김 ${e.text} · ${short(e.commit)}`
             : e.kind === "relay" ? `넘긴 블록 고침 ${e.text} · ${short(e.commit)}`
@@ -337,12 +338,35 @@ export function splitContext(text: string): { chips: ContextChip[]; text: string
   const lines = text.split("\n");
   const chips: ContextChip[] = [];
   while (lines.length > 1) {
-    const m = /^\((보는 문서|문서 고침|고른 블록): (.+)\)$/.exec(lines[0]!.trim());
+    const m = /^\((보는 문서|문서 고침|고른 블록|그림): (.+)\)$/.exec(lines[0]!.trim());
     if (!m) break;
     if (m[1] === "고른 블록") chips.push({ label: "고른 블록", value: m[2]!, path: false });
+    else if (m[1] === "그림") chips.push({ label: "그림", value: m[2]!.slice(m[2]!.lastIndexOf("/") + 1), path: true });
     else if (m[1] === "문서 고침") chips.push({ label: "사람 고침", value: m[2]!.split(", ").map((p) => p.slice(p.lastIndexOf("/") + 1)).join(", "), path: true });
     else chips.push({ label: "보는 문서", value: m[2]!.split("/").slice(1).join("/") || m[2]!, path: true });
     lines.shift();
   }
   return { chips, text: lines.join("\n") };
+}
+
+/** 기획 대화 입력창이 올린 그림(t-1950): 초안의 `@<저장소 경로>`를 빼고 그 경로들을 돌려준다. 보낼 말 앞에 「(그림: …)」으로 붙인다 */
+export function takeImages(text: string): { paths: string[]; text: string } {
+  const paths = imagePaths(text);
+  if (paths.length === 0) return { paths, text };
+  let rest = text;
+  // 입력창이 넣은 꼴(`@경로 `) 그대로만 뗀다: 말의 빈칸·들여쓰기는 건드리지 않는다
+  for (const p of paths) rest = rest.split(imageMention(p)).join("").split(`@${p}`).join("");
+  return { paths, text: rest };
+}
+
+/** 기획 대화 그림을 둘 폴더(저장소 기준): 보는 문서의 폴더가 기획 폴더 안이면 거기, 아니면 기획 폴더 */
+export function chatImageDir(folder: string, viewing: string | null): string {
+  const dir = viewing && viewing.includes("/") ? viewing.slice(0, viewing.lastIndexOf("/")) : "";
+  return dir === folder || dir.startsWith(`${folder}/`) ? dir : folder;
+}
+
+/** 그 대화의 commit이 모두 main에 들어갔다(t-1950): agent가 그 branch를 읽었고, 제 commit이 있었고(끝이 갈라진 자리가 아니다)
+ * main보다 앞선 것이 없다. 읽지 못한 0(머신 끊김·시한)은 들어간 것이 아니다 */
+export function mergedToMain(b: Pick<DesignBranchView, "state" | "ahead" | "head" | "base" | "read">): boolean {
+  return b.state === "open" && b.read && b.ahead === 0 && !!b.head && !!b.base && b.head !== b.base;
 }

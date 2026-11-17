@@ -928,6 +928,7 @@ impl Host {
                         view.changed = tree.changed;
                         view.ahead = tree.ahead;
                         view.head = Some(tree.commit);
+                        view.read = true;
                     }
                     Ok(_) => {}
                     Err(e) => {
