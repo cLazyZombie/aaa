@@ -155,7 +155,10 @@ jobs:
             ~/.cargo/git/db
             target
           key: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+          # 기존 Rust 키의 OS별 아키텍처가 같은 조합만 전환 캐시로 받는다. Intel 웹은 이 예외를 쓰지 않는다.
+          restore-keys: |
+            cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+            ${{ (runner.os == 'macOS' && runner.arch == 'ARM64' || runner.os != 'macOS' && runner.arch == 'X64') && format('cargo-v1-{0}-{1}-{2}-{3}-', github.job, runner.os, steps.rust.outputs.rustc, steps.rust.outputs.week) || '' }}
       - uses: actions/setup-node@v5
         with:
           node-version: 24
