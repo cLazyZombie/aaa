@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { token } from "../../../scripts/fixture-secret.mjs";
-import { root, aaa, until, step, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
+import { root, AA, aaa, until, step, browser, webkit, pairPage, shot, waitOutput } from "../lib/harness.mjs";
 
 const config = `${root}/c/host.toml`;
 // 계정 인증은 harness가 같아야 붙는다: 가짜 agent(fake.sh)를 Claude profile로 띄운다
@@ -32,6 +32,13 @@ async function check(engine, width) {
     });
     if (width > 640) assert.deepEqual(fit, { whole: true, first: false, inside: true });
     else assert.deepEqual({ first: fit.first, inside: fit.inside }, { first: true, inside: true });
+    // 자동 병합 아이콘이 있는 휴대폰 머리줄(t-1968 q-4124 1A)은 상태 표시를 진행률 숫자만 두어 제목 칸을 남긴다
+    const status = await page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`).evaluate((h) => ({
+      merge: !!h.querySelector(".pane-auto-merge [role=switch]"), chip: h.querySelector(".chip.agent")?.innerText.trim(),
+      title: Math.round(h.querySelector(".term-title").getBoundingClientRect().width),
+    }));
+    assert.deepEqual({ merge: status.merge, numberOnly: status.chip === "50%", pct: status.chip?.endsWith("50%"), titleShown: status.title >= 30 },
+      { merge: true, numberOnly: width <= 700, pct: true, titleShown: true }, JSON.stringify(status));
 
     await page.locator(`section.term[data-pane="${thread.pane}"]`).getByTestId("summary-open").click();
     const summary = page.getByTestId("summary-account");
@@ -55,6 +62,11 @@ export default async function () {
       const v = aaa("thread", "show", t.id);
       return v.pane && v.account === "sample-claude" && v;
     });
+    // 머리줄 상태 표시의 진행률(실제 세션의 진행 보고)
+    fs.writeFileSync(`${root}/account-progress.sh`, `"${AA}" report --percent 50 --activity '계정 표시'\nprintf 'account-progress-done\\n'\n`);
+    aaa("pane", "run", thread.pane, `post-probe ${root}/account-progress.sh`);
+    await waitOutput(thread.pane, "account-progress-done");
+    thread = await until("진행률 50%", () => { const v = aaa("thread", "show", t.id); return v.agent?.percent === 50 && v; });
   });
   await step("계정을 모르는 pane은 계정을 보이지 않는다", async () => {
     const shell = aaa("pane", "list").panes.find((p) => p.name === "t1");

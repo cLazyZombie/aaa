@@ -171,13 +171,13 @@ export function AgentChip({ p, testid }: { p: PaneView; testid?: boolean }) {
   const quiet = a.activity === "idle" || a.activity === "started" || a.activity === "exited";
   return (
     <span
-      className={`chip agent ${a.activity} ${quiet ? "plain" : ""}`}
+      className={`chip agent ${a.activity} ${quiet ? "plain" : ""}${a.percent != null ? " has-pct" : ""}`}
       title={title}
       data-testid={testid ? `agent-${p.name || p.id}` : "agent-chip"}
       data-compacting={compacting || undefined}
     >
       {a.activity === "working" && <span className="dot working" aria-hidden />}
-      {compacting ? "정리 중" : ACTIVITY_LABEL[a.activity]}
+      <span className="agent-word">{compacting ? "정리 중" : ACTIVITY_LABEL[a.activity]}</span>
       {a.percent != null && <span className="pct"> {a.percent}%</span>}
     </span>
   );
