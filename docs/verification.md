@@ -64,7 +64,8 @@ Windows 변경의 실제 native owner를 확인한다. cross 성공을 Windows �
 웹 전용 착지에서도 웹 E2E 전체로 확인한다. GitHub `ci.yml`의 OS별 전체 검사와 브라우저 행렬은 유지한다.
 웹 E2E는 세 독립 macOS 러너에 spec 단위로 나누고 각 러너에서 worker 하나로 실행한다. CI에만 실패 작업의
 새 실험실 재확인을 한 번 허용하며 최초 실패·재확인 결과를 모두 보존한다. 로컬 착지는 전수·재확인 0이며
-`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES`도 거부한다. [실패 이력과 보존 범위](testing-ci-stability-t-1980.md)에 근거가 있다.
+`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES`·`AAA_CI_WINDOWS_INSTALL_RECHECK`도 거부한다.
+GitHub Windows는 확인된 ConPTY 정체 서명·세 설치 owner에만 최초 원문을 보존한 1회 재확인을 허용한다. [실패 이력과 보존 범위](testing-ci-stability-t-1980.md)에 근거가 있다.
 
 ## 전체 gate의 실행 자원
 

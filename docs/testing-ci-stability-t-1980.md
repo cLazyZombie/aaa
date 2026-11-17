@@ -55,7 +55,7 @@ GitHub 러너의 개선율을 대신하지 않는다. 최초 실패율과 재확
 | route 수명 경합 | 136 `Route is already handled!` | 착지 main의 수리 뒤에도 처음·재확인 모두 실패. HTTP route를 제거하고 실제 읽기 응답의 전달만 사건으로 보류 |
 | 같은 상태의 시점 차이 | 로컬 전수 136에서 블록 칩은 작업 중, 뒤에 읽은 글 속 칩은 검수 대기. 두 상태 모두 허용된 전이 | 한 번의 page.evaluate로 두 칩을 읽고 같은 순간의 일치를 엄격히 단언. 기다림·허용 값·시한은 유지 |
 | 실제 경과 단언 | Windows 질문 guard 5초 단언 실패 | t-1967에서 전달 완료 단언으로 이미 수리됨. 추가 완화 없음 |
-| Windows 설치 PTY 정체 | 3개 실행에서 60초. Enter 관측 후 `ReadConsoleW`가 끝나지 않는 경우와 입력 전 자식 종료 대기를 구분 | 병렬도와 runtime 수만 줄임. 시한 확대·Rust 재시도·ignore 없음. 근본 원인은 아직 미확정이므로 Windows 반복 실행으로 재관찰 |
+| Windows 설치 PTY 정체 | 3개 실행에서 60초. Enter 관측 후 `ReadConsoleW`가 끝나지 않는 경우와 입력 전 자식 종료 대기를 구분 | 부하를 줄여도 재발. Enter 도착·ReadConsoleW 대기 서명이 확인된 세 owner만 새 프로세스에서 1회 재확인. 원문 보존·경고·실패 전파. 원래 콘솔 정체의 원인은 아직 미확정 |
 | 과거 실제 결함·관찰 시점 | Windows 스택 고갈, Ubuntu sshd 준비·후속 처리, 웹 복귀·애니메이션 단언 | 원래 실패를 이력에 남김. 광범위한 무시·continue-on-error를 추가하지 않음 |
 
 ## 실행 정책과 보존 범위
@@ -64,12 +64,12 @@ GitHub 러너의 개선율을 대신하지 않는다. 최초 실패율과 재확
 | --- | --- | --- |
 | 웹 spec·기기 조합·단언 | 전부 유지, spec 안 상태를 이어서 실행 | 전부 유지 |
 | 웹 병렬도 | 3 shard × 러너별 worker 1 | 기존 CPU 예산 |
-| 실패 재확인 | 최초 전수가 끝난 뒤 실패 작업만 직렬로 1회, 새 child·host·agent·브라우저 | 0회 |
+| 실패 재확인 | 웹은 실패 작업 1회. Windows는 아래의 확인된 ConPTY 서명·세 owner만 새 프로세스 1회 | 0회 |
 | 재확인도 실패 | job 실패 | 최초 실패로 실패 |
 | 최초 실패 뒤 통과 | warning, step summary와 시도별 JSON에 별도 표시 | 해당 없음 |
-| 시간 제한 | locator 30초·단계 120초 유지, job 40분 유지. E2E step 30분으로 끝내 진단 업로드 여유 확보 | 변경 없음 |
-| Rust 선택·시한·단언 | 제외 없음, 기존 OS 전수·native 설치·SSH owner 유지 | 변경 없음 |
-| 제거·ignore·CI 제외 | 없음 | 없음 |
+| 시간 제한 | locator 30초·단계 120초 유지. 웹 job 40분·E2E step 30분. Rust는 Intel Mac job 60분·test 25분, 나머지 job 40분·test 15분 | 변경 없음 |
+| Rust 선택·시한·단언 | 시험 제외 없음. macOS Intel·Linux·Windows 전수와 native 설치·SSH 유지 | 변경 없음 |
+| 제거·ignore·CI 제외 | 시험 삭제·ignore 없음. macOS arm64 자동 실행은 명시적 진단으로 분리 | 없음 |
 
 `AAA_E2E_SHARD`는 같은 spec 목록과 시간 원장으로 긴 spec부터 세 묶음에 분배한다.
 준비와 결과를 이어 쓰는 단계를 다른 러너로 찢지 않는다. 알려지지 않은 spec은 기존 최장
@@ -90,7 +90,8 @@ CI worker 1에서는 spec 전체와 그 준비를 새 실험실에서 실행한�
 workflow_dispatch도 실제 동작함을 확인했다. 최초 push 뒤 같은 SHA를 두 번 명시적으로 dispatch한다.
 
 `ci-local.sh`는 CI 환경 없이 분할·재확인 설정을 받으면 실패한다. `verify.py landing`은
-CI 환경에서도 `AAA_E2E_ONLY`·`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES`를 거부한다.
+CI 환경에서도 `AAA_E2E_ONLY`·`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES`와
+`AAA_CI_WINDOWS_INSTALL_RECHECK`를 거부한다.
 따라서 CI에서 허용한 예외가 착지 전수 검사를 줄이지 않는다.
 
 ## 참고한 공개 구현
@@ -103,7 +104,7 @@ CI 환경에서도 `AAA_E2E_ONLY`·`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES
   개발 기본과 CI 재시도 정책을 분리하고 최초 실패와 최종 통과를 구분하는 방식을 비교했다.
 
 코드를 복사하거나 새 실행 의존성을 추가하지 않았다. 기존 독립 프로세스 runner에 최소한의
-spec 분배·재확인 기록을 더했다. 시험 삭제·기기 조합 축소·전역 timeout 확대는 채택하지 않았다.
+spec 분배·재확인 기록을 더했다. 시험 삭제·기기 조합 축소·개별 시험의 전역 timeout 확대는 채택하지 않았다.
 
 ## 검증
 
@@ -203,8 +204,11 @@ SCM 상태 전이 구분을 대조했다. 코드를 가져오거나 준비 증�
 통합 후보의 첫 전체 실행에서 macOS Rust와 웹 shard 하나는 runner 이름·단계·로그 없이 취소됐다.
 GitHub check annotation은 hosted runner를 여러 번 시도해도 얻지 못했다고 명시하고
 macOS arm64 용량 부족을 알렸다. 시험 실패나 사용자의 취소로 집계하지 않는다.
-웹 세 shard는 `macos-15-intel`로 옮겨 arm64 요청을 네 job에서 한 job으로 줄인다.
-Rust의 macOS arm64·실제 LaunchAgent·SSH 검사는 유지하며, 웹의 Chromium·WebKit·기기 조합도 유지한다.
+처음에는 웹 세 shard만 Intel로 옮기고 Rust arm64를 유지했다. 이후 같은 후보의 Rust arm64 세 작업이
+20분 넘게 한 번도 배정되지 않아 기본 Rust macOS도 Intel로 옮겼다. 실제 LaunchAgent·SSH와
+웹의 Chromium·WebKit·기기 조합은 유지한다. arm64 전수·native owner는 명시적
+`macos_arm_diagnostic` 실행으로 남기고 착지 기기(arm64)의 전수 gate도 유지한다.
+기본 CI에서 arm64 실행 결과를 얻지 못한다는 차이를 명시한다.
 Cargo 캐시에 runner.arch를 넣어 두 아키텍처의 산출물이 같은 키를 차지하지 않게 한다.
 
 [GitHub의 공식 러너 표](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)는
@@ -233,18 +237,53 @@ Intel에서도 같은 전체 CI 후보의 실제 결과를 확인하며 대기 �
 보류하는 구조를 따른다. 별도 라이브러리나 mock 응답을 추가하지 않았다.
 
 
-## Windows 반복 진단의 디스크 정리
+## Windows 반복 진단의 자원 경계
 
-준비 원인 진단 후보의 실제 SYSTEM SSH·SCM owner는 새 계정 6회 성공했다.
-일곱 번째는 서비스 검증 전에 `work_space_insufficient`로 실패했다(20GB 필요, 19.79GB 남음).
-이 실패는 원래 `service_ready_unverified`와 다르며 별도 보존한다. 후자는 아직 재현하지 못했다.
-스크립트는 사용자·서비스를 지웠지만 성공한 사용자 프로필의 설치 사본을 남겼다.
+준비 원인 진단의 실제 SYSTEM SSH·SCM owner는 새 계정 6회 성공했다. 일곱 번째는
+서비스 검증 전에 `work_space_insufficient`로 실패했다(20GB 필요, 19.79GB 남음).
+사용자·서비스를 지워도 일회 사용자 프로필의 설치 사본은 VM 종료까지 남는다.
+성공 프로필 삭제를 추가한 후보는 설치 검사 자체 3/3 성공 뒤 새 정리 guard로 실패했다.
+이 추가 정리는 철회했다. 정상 CI는 원래처럼 설치 owner 1회이고, 선택한 준비 진단만
+같은 VM 자원 안에서 3회 수행한다. 기본 20GB 조건·설치 단언·실패 중단은 유지한다.
+원래 `service_ready_unverified`는 이후 실제 owner 9회에서 재현되지 않아 안전한 필드 원인 진단을 남긴다.
 
-성공한 owner 뒤에만, 이번 New-LocalUser가 반환한 SID·일회 계정 이름·프로필 경로 끝 이름을 대조하고
-Special=false·Loaded=false인 정확한 프로필 하나를 CIM으로 제거한다. 실패한 실험실은 남긴다.
-다른 계정·다른 SID·다른 경로·특수·사용 중 프로필은 지우지 않는 비특권 검사를 추가했다.
-암호 지우기는 정리 오류가 있어도 finally에서 수행한다. 기본 20GB 조건이나 설치 단언은 바꾸지 않는다.
+## Windows ConPTY의 제한된 재확인
 
-[Win32_UserProfile의 SID·Loaded·Special](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/userprofileprov/win32-userprofile)과
-[Remove-CimInstance의 정확한 객체 삭제](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/remove-ciminstance)를 기준으로 했다.
-이 코드는 일회성 Windows GitHub VM의 소유한 시험 계정만 다룬다.
+부하를 줄인 뒤에도 승인 입력 6/6을 쓴 상태에서 Enter가 원래 입력 큐에 있고,
+원래 stdin 읽기 thread가 `ReadConsoleW` I/O pending인 정체를 다시 관찰했다.
+시한을 늘리거나 제품의 입력·승인 처리를 추측으로 바꾸지 않는다. 사용자 승인 범위에서
+GitHub Windows에만 다음 세 owner의 같은 서명이 있을 때 1회 재확인한다.
+
+| owner | 유지하는 계약 |
+| --- | --- |
+| `worker_lifetime::approved_worker_outlives_its_cli_and_records_the_same_id_after_private_display_disappears` | 실제 부모 Job 종료·breakaway 허용/거부·동일 ID 내구 기록 |
+| `wizard::both_wizards_back_from_host_choices_then_submit_the_same_agent_plan_as_explicit_cli` | 두 prompt의 뒤로 이동·같은 planner/hash·변경 없음 |
+| `recovery::closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied` | 실제 적용 파일 보존·같은 설치 ID·재개 작업 |
+
+첫 Cargo workspace 실행은 전부 끝낸다. 실패 target이 install 하나이고 실패 이름이 모두 위 목록에 있으며,
+각 실패 본문에 PTY 사건 상한·ReadConsoleW·원래 reader pending·Enter 도착이 모두 있어야 한다.
+다른 단언·다른 owner·다른 target·컴파일 오류는 재확인하지 않고 원래 실패를 반환한다.
+확인된 owner는 Cargo의 exact 선택으로 새 테스트 프로세스·새 Lab에서 딱 한 번 다시 실행한다.
+한 번 더 실패하면 job도 실패한다. 최초 원문·재확인별 원문·JSON 요약·GitHub 경고·step summary를 남긴다.
+
+로컬과 착지 gate는 이 경로를 쓰지 않는다. 로컬 ci-local과 CI 환경의 landing도 해당 flag를 거부한다.
+시험 삭제·ignore·Windows 고유 Job 사례 제외는 없다. 재확인 성공을 최초 성공으로 집계하지 않는다.
+
+실제 자식 실행 회귀는 새 PID·정확한 단일 owner·원래 실패 보존·재확인 실패 종료·
+다른 오류 거부·자식 종료 전 줄바꿈 없는 원문 보존을 사건으로 확인했다.
+실제 실패 CI의 원본 test.log도 정확히 해당 worker owner 하나로 분류됨을 대조했다.
+
+## 종료 장벽 경합의 결정적 확인
+
+수리 전 Intel 진단은 버리기 종료에서 같은 예외를 냈다. 단일 route handler의 두 요청을 보류하고
+unrouteAll(wait) 뒤 빠른 콜백만 먼저 완료시키면, Page._onRoute가 빈 client routes를 보고
+서버 interceptor를 먼저 제거해 느린 요청도 통과시킨다. 그 뒤 느린 콜백의 continue가 실패한다.
+공개 API·실제 HTTP·Promise 사건만으로 Chromium·WebKit에서 같은 예외를 재현했다.
+새 응답 보류기는 route 등록·제거를 사용하지 않는다.
+후보의 첫 GitHub 웹 전수는 세 shard 모두 성공했다.
+
+
+Intel 웹의 실제 전수는 shard별 599·643·750초였고 첫 codegen을 포함한 job은 24~29분이었다.
+새 Intel Rust는 첫 verify codegen·전수·native 설치를 한 job에서 수행하므로 집계 예산을
+60분, test 단계를 25분으로 둔다. 개별 owner·설치 준비·SSH·브라우저의 실패 시한은 늘리지 않았다.
+새 아키텍처의 전체 비용을 수용하는 집계 예산이며 원인이 있는 개별 실패를 기다려 통과시키는 변경은 아니다.
