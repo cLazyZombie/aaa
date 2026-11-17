@@ -1,14 +1,29 @@
 // 기획 트리(t-1894, 확정 계획 plan §2): 활동 막대 「기획」의 사이드바 칸. 프로젝트 저장소 → 폴더 → 문서이고 폴더가 먼저 온다.
 // 기획 폴더를 정하지 않은 저장소도 한 줄로 보인다. 1단계는 읽기 전용이다(origin 기본 branch).
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, GitBranch, Lightbulb, Lock, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, GitBranch, Layers, Lightbulb, Lock, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
-import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, splitTarget, stem, type DesignNode } from "./designModel";
+import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
 import type { DesignBranchView, DesignRepoView, IdeaSummary } from "./gen/proto";
 import { ideaLegacy } from "./ideasModel";
+import { RowMenu } from "./RowMenu";
 import { onRowKey } from "./Sidebar";
 
-export type Design = { repos: DesignRepoView[] | null; error: string | null; loading: boolean; reload: () => void };
+export type Design = {
+  repos: DesignRepoView[] | null; error: string | null; loading: boolean; reload: () => void;
+  /** 트리 저장소 필터(t-1946): 고른 저장소 이름, null이면 전부. 사이드바·drawer·문서 화면 「트리」 칸이 함께 쓴다 */
+  picked: string[] | null; setPicked: (v: string[] | null) => void;
+};
+
+/** 고른 저장소는 이 브라우저에만 남긴다(서버에 싣지 않는다). 저장소를 못 쓰면 이번 화면에서만 */
+function usePickedRepos(): [string[] | null, (v: string[] | null) => void] {
+  const [picked, setState] = useState<string[] | null>(() => { try { return parseRepoFilter(localStorage.getItem(REPO_FILTER_KEY)); } catch { return null; } });
+  const set = useCallback((v: string[] | null) => {
+    setState(v);
+    try { if (v) localStorage.setItem(REPO_FILTER_KEY, JSON.stringify(v)); else localStorage.removeItem(REPO_FILTER_KEY); } catch { /* 이 기기만의 편의 */ }
+  }, []);
+  return [picked, set];
+}
 
 /** host 기획 트리. 「기획」 칸을 처음 열 때와 「새로 읽기」에서 읽는다(origin은 agent가 1분에 한 번 받는다) */
 export function useDesign(up: boolean, wanted: boolean): Design {
@@ -18,6 +33,7 @@ export function useDesign(up: boolean, wanted: boolean): Design {
   const [rev, setRev] = useState(0);
   const reload = useCallback(() => setRev((n) => n + 1), []);
   const [asked, setAsked] = useState(false);
+  const [picked, setPicked] = usePickedRepos();
   useEffect(() => { if (wanted) setAsked(true); }, [wanted]);
   useEffect(() => {
     if (!up || !asked) return;
@@ -29,7 +45,7 @@ export function useDesign(up: boolean, wanted: boolean): Design {
     ).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [up, asked, rev]);
-  return { repos, error, loading, reload };
+  return { repos, error, loading, reload, picked, setPicked };
 }
 
 export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onOpenIdea, onMoveIdea, canControl = false }: {
@@ -60,6 +76,10 @@ export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onO
   const flip = (set: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) =>
     set((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const repos = design.repos ?? [];
+  const names = useMemo(() => repos.map((r) => r.repo), [repos]);
+  const shown = useMemo(() => shownRepos(names, design.picked), [names, design.picked]);
+  const all = shown.size === names.length;
+  const pick = (name: string | null) => design.setPicked(pickRepo(names, design.picked, name));
   // 모두 | 할 것(표지 블록이 있는 문서만). 기기에 남긴다
   const [todo, setTodoState] = useState<boolean>(() => { try { return localStorage.getItem("herdr-web-ui:design-todo") === "1"; } catch { return false; } });
   const setTodo = (v: boolean) => { setTodoState(v); try { localStorage.setItem("herdr-web-ui:design-todo", v ? "1" : "0"); } catch { /* 이 기기만의 편의 */ } };
@@ -74,11 +94,12 @@ export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onO
           <button type="button" role="tab" aria-selected={todo} className={`design-tab${todo ? " is-on" : ""}`} data-testid="design-todo-on" onClick={() => setTodo(true)}>할 것</button>
         </div>
       </div>
+      {names.length > 1 && <RepoFilter names={names} shown={shown} all={all} onPick={pick} />}
       {design.error && <p className="banner err" role="alert">{design.error}</p>}
       {design.repos === null && !design.error && <p className="tree-state" role="status">불러오는 중</p>}
       {design.repos?.length === 0 && <p className="tree-state" data-testid="design-empty">저장소 없음</p>}
       <ul className="design-tree" role="tree">
-        {repos.map((r) => (
+        {repos.filter((r) => shown.has(r.repo)).map((r) => (
           <RepoRow key={r.repo} repo={r} todo={todo} onAll={() => setTodo(false)} collapsed={shut.has(r.repo)} onToggle={() => flip(setShut, r.repo)}
             openDirs={open} onToggleDir={(p) => flip(setOpen, `${r.repo}:${p}`)} selected={at?.repo === r.repo ? at.path : null} onOpen={onOpen} />
         ))}
@@ -113,6 +134,25 @@ export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onO
         </div>
       )}
     </section>
+  );
+}
+
+/** 저장소 필터(t-1946): 「저장소: 전체 ▾」 단추와 체크 메뉴. 저장소가 많아도 한 줄이고, 메뉴는 고를 때마다 반영하며 열려 있다 */
+function RepoFilter({ names, shown, all, onPick }: { names: string[]; shown: Set<string>; all: boolean; onPick: (name: string | null) => void }) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const close = useCallback(() => setAnchor(null), []);
+  const label = all ? "전체" : names.filter((n) => shown.has(n)).join(", ");
+  return (
+    <div className="design-filter">
+      <button type="button" className={`design-filter-btn${all ? "" : " is-on"}`} aria-haspopup="menu" aria-expanded={anchor !== null} title={`저장소: ${label}`}
+        data-testid="design-repo-filter" onClick={(e) => { const el = e.currentTarget; setAnchor((a) => (a ? null : el)); }}>
+        <FolderGit2 aria-hidden="true" /><span className="design-filter-label">저장소: {label}</span><ChevronDown aria-hidden="true" />
+      </button>
+      {anchor && <RowMenu anchor={anchor} align="start" title="저장소로 거르기" closeLabel="닫기" onClose={close} items={[
+        { id: "all", label: "전체", icon: Layers, checked: all, stay: true, run: () => onPick(null) },
+        ...names.map((n) => ({ id: `repo:${n}`, label: n, icon: FolderGit2, checked: !all && shown.has(n), stay: true, run: () => onPick(n) })),
+      ]} />}
+    </div>
   );
 }
 

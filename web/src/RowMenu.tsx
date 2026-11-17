@@ -1,5 +1,6 @@
 // 목록 줄의 ⋯ 메뉴(herdr-web-ui aa624cb src/components/RowMenu.tsx, 모양 herdr/RowMenu.css·herdr/menu.css 그대로).
-// 옮기며 바꾼 것: import 경로, `t("Cancel")` → 참고 i18n.ko.ts 「취소」. 동작(데스크톱 popover·휴대폰 sheet, Esc·바깥 누름·
+// 옮기며 바꾼 것: import 경로, `t("Cancel")` → 참고 i18n.ko.ts 「취소」. 더한 것(t-1946): 눌러도 닫지 않는 항목 `stay`와
+// sheet 아래 단추 글 `closeLabel`(여러 개를 연달아 고르는 체크 메뉴). 그 밖의 동작(데스크톱 popover·휴대폰 sheet, Esc·바깥 누름·
 // focus 떠남·굴림·창 크기로 닫힘, 닫히면 단추로 focus)은 그대로다. 고지는 web/src/herdr/README.md.
 /**
  * The ⋯ menu of a sidebar row. On a desktop it is a popover under its button, drawn through a
@@ -39,6 +40,8 @@ export interface RowMenuItem {
   current?: boolean;
   /** a switch's state, when the item is one: it is then a checkbox item (a pressed button in the sheet), not a plain item */
   checked?: boolean;
+  /** 눌러도 메뉴를 닫지 않는다: 여러 개를 연달아 고르는 체크 메뉴(기획 트리 저장소 필터, t-1946) */
+  stay?: boolean;
   run: () => void;
 }
 
@@ -58,6 +61,8 @@ interface Props {
   onClose: () => void;
   /** `paths`: each hint is a path; the menu is wider and a long path gives way before its label */
   variant?: "paths";
+  /** 휴대폰 sheet 아래 단추 글(기본 「취소」). 고를 때마다 바로 반영하는 메뉴는 「닫기」 */
+  closeLabel?: string;
 }
 
 const GAP = 4;
@@ -66,7 +71,7 @@ const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 // the sheet is modal: its Cancel is one of the stops
 const SHEET_ITEMS = '.row-sheet-item, .row-sheet-cancel';
 
-export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", onClose, variant }: Props) {
+export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", onClose, variant, closeLabel = "취소" }: Props) {
   const sheet = useMediaQuery(SHEET_QUERY);
   const surface = useRef<HTMLDivElement>(null);
   useSheetSwipe(surface, sheet ? onClose : null);
@@ -177,7 +182,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
   const keepFocus = (event: ReactMouseEvent<HTMLButtonElement>): void => event.preventDefault();
 
   const run = (item: RowMenuItem): void => {
-    onClose();
+    if (!item.stay) onClose();
     item.run();
   };
 
@@ -203,7 +208,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
               </button>
             ))}
           </div>
-          <button type="button" className="btn row-sheet-cancel" onMouseDown={keepFocus} onClick={onClose}>취소</button>
+          <button type="button" className="btn row-sheet-cancel" onMouseDown={keepFocus} onClick={onClose}>{closeLabel}</button>
         </div>
       </div>,
       document.body,

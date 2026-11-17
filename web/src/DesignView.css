@@ -293,3 +293,11 @@
 .idea-legacy.is-moving { border-color: color-mix(in srgb, var(--status-working) 45%, transparent); }
 .idea-move-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-dim); }
 .idea-move-steps code { background: none; padding: 0; color: var(--text); }
+
+/* 트리 저장소 필터(t-1946): 「저장소: … ▾」 단추 하나. 고른 이름이 길면 줄임표 */
+.design-filter { display: flex; padding: var(--space-2) 0; }
+.design-filter-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: var(--fs-xs); cursor: pointer; }
+.design-filter-btn svg { flex: none; width: 12px; height: 12px; }
+.design-filter-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-filter-btn.is-on { border-color: color-mix(in srgb, var(--accent-strong) 55%, transparent); background: var(--accent-bg); color: var(--accent-strong); font-weight: 600; }
+@media (hover: hover) { .design-filter-btn:hover { background: var(--bg-hover); } .design-filter-btn.is-on:hover { background: var(--accent-bg); } }
