@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 const exec = promisify(execFile);
 const root = new URL("../e2e/", import.meta.url);
@@ -79,7 +80,7 @@ test("로컬 기본 실패는 한 번, 두 번 실패한 CI 작업은 최종 실
 });
 
 test("실제 spec 목록은 shard 셋에 빠짐·중복 없이 모두 남는다", async () => {
-  const list = async args => (await exec(process.execPath, [new URL("web.e2e.mjs", root).pathname, "--list", ...args], { env: cleanEnv() }))
+  const list = async args => (await exec(process.execPath, [fileURLToPath(new URL("web.e2e.mjs", root)), "--list", ...args], { env: cleanEnv() }))
     .stdout.split("\n").filter(line => line.startsWith("specs/"));
   const all = await list([]);
   const shards = await Promise.all([1, 2, 3].map(i => list(["--shard", `${i}/3`])));

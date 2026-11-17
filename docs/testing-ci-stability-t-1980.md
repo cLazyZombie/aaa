@@ -156,3 +156,12 @@ E2E 53의 네 준비와 공용 question-reply 시나리오를 고쳤다. 기존 
 
 선행 후보 통합과 brief 준비 수리 뒤 `ci-local --only web,e2e,public --spec 53,136`을
 `aaa verify`로 실행했다. 웹 타입·번들·750개 유닛·실제 E2E 53·136·공개 검사가 모두 통과했다.
+
+
+## 첫 진단 CI에서 발견한 Windows 목록 검사 오류
+
+[첫 실행](https://github.com/cLazyZombie/aaa/actions/runs/44100000910)의 Windows 웹 검사에서
+이번에 추가한 shard 합집합 검사가 실패했다. 파일 URL의 pathname을 CLI 인자로 써
+Windows에서 드라이브 이름이 중복된 MODULE_NOT_FOUND가 났다. OS 경로 변환은
+`fileURLToPath`로 고쳤으며 해당 runner 검사 4개를 로컬에서 다시 확인했다.
+첫 실패 원문은 보존하고 수리한 새 SHA의 CI 결과와 구분한다. 시험 제외·재시도·시한 변경은 없다.
