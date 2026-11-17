@@ -840,6 +840,21 @@ mod tests {
         assert!(e.contains("TOML에서 먼저 고친다"), "{e}");
     }
 
+    /// 웹 폼의 「기획 폴더가 있는 저장소마다」 토글: schema 2 파일에 repos 줄만 쓰고 지운다.
+    #[test]
+    fn merge_writes_and_removes_repo_spread_in_v2_file() {
+        let text = "#:schema ./automation.schema.json\nschema = 2\ntitle = \"기획\"\n\n[trigger]\nkind = \"schedule\"\ndaily = \"05:00\"\n\n# 동작\n[action]\nkind = \"thread\"\ntitle = \"{repo} 기획\"\nprofiles = [\"reviewer\"]\nbrief_file = \"automations/x.brief.md\"\n";
+        assert_eq!(merge_form("automations/x.toml", text, form(text)).unwrap(), text);
+        let mut f = form(text);
+        f["do"]["start"]["repos"] = "design".into();
+        let on = merge_form("automations/x.toml", text, f).unwrap();
+        assert!(on.contains("repos = \"design\"\n") && on.contains("# 동작\n"), "{on}");
+        assert_eq!(on.lines().count(), text.lines().count() + 1, "{on}");
+        let mut f = form(&on);
+        f["do"]["start"].as_object_mut().unwrap().remove("repos");
+        assert_eq!(merge_form("automations/x.toml", &on, f).unwrap(), text);
+    }
+
     #[test]
     fn trash_ids() {
         assert_eq!(trash_id("ci-main-1700000000000.toml"), Some(("ci-main", 1_700_000_000_000)));

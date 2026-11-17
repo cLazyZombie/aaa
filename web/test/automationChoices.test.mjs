@@ -49,6 +49,11 @@ describe("설정 보기 흐름 카드", () => {
     assert.deepEqual(f.where.rows.map((r) => [r.label, r.chips, r.empty]), [["profile", ["sol-high", "opus-high"], "없음"], ["머신", ["mac-a"], "자동"], ["저장소", [], "작업 폴더"]]);
     assert.deepEqual(f.limits, ["5시간 창 5% 아래면 쉼", "주간 10% 아래면 쉼", "동시 1", "하루 1번"]);
   });
+  it("기획 저장소 펼치기는 저장소 칸에 「기획 폴더가 있는 저장소마다」, 동시 상한은 저장소마다로 보인다", () => {
+    const f = flowOf({ on: { schedule: { daily: "05:00" } }, do: { start: { title: "{repo} 기획", profiles: ["opus-high"], repos: "design" } }, limits: {} });
+    assert.deepEqual(f.where.rows.at(-1).chips, ["기획 폴더가 있는 저장소마다"]);
+    assert.ok(f.limits.includes("저장소마다 동시 1"), f.limits.join(","));
+  });
   it("CI 조건과 명령 동작은 저장소·branch·사건과 실행 머신을 보인다", () => {
     const f = flowOf({ on: { ci: { repo: "app", branches: ["main"], events: ["failed"] } }, do: { command: { command: "make", machine: "mac-b" } }, limits: {} });
     assert.equal(f.when.title, "CI 결과");
