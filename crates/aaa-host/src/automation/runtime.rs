@@ -856,13 +856,13 @@ impl Host {
         {
             let mut chosen = None;
             for (at, event) in before.pending.iter().enumerate() {
-                if event.repo.is_some() && matches!(event.action, Action::Start(_)) {
-                    if let crate::auto_start::Decision::Wait(why) =
+                if event.repo.is_some()
+                    && matches!(event.action, Action::Start(_))
+                    && let crate::auto_start::Decision::Wait(why) =
                         self.automation_start_decision(p, r, event, now).await?
-                    {
-                        self.record_routine(p, &r.name, &event.id, "waiting", &why, None);
-                        continue;
-                    }
+                {
+                    self.record_routine(p, &r.name, &event.id, "waiting", &why, None);
+                    continue;
                 }
                 chosen = Some(at);
                 break;
