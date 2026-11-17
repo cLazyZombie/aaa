@@ -1,12 +1,33 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { planJobs, specDurations } from "../e2e/lib/jobs.mjs";
+import { planJobs, shardSpecs, specDurations } from "../e2e/lib/jobs.mjs";
 
 const source = fs.readFileSync(new URL("../e2e/specs/37-chat-pages.mjs", import.meta.url), "utf8");
 const steps = [...source.matchAll(/^ {2}await step\("((?:[^"\\]|\\.)*)"/gm)].map((m) => JSON.parse(`"${m[1]}"`));
 const spec = { name: "37-chat-pages", steps };
 const options = { repeat: 2, workers: 8, durations: { [spec.name]: 120 }, only: null };
+
+test("shard는 모든 spec을 정확히 한 번 넣고 단계 상태와 입력 목록을 보존한다", () => {
+  const specs = Array.from({ length: 7 }, (_, i) => ({ name: `spec-${i}`, steps: ["준비", "그 결과 사용"] }));
+  const durations = { "spec-0": 90, "spec-1": 60, "spec-2": 30 };
+  const groups = [1, 2, 3].map(i => shardSpecs(specs, `${i}/3`, durations));
+  assert.deepEqual(groups.flat().map(s => s.name).sort(), specs.map(s => s.name).sort());
+  assert.ok(groups.every(g => g.length > 0));
+  assert.deepEqual(shardSpecs([...specs].reverse(), "1/3", durations).map(s => s.name).sort(), groups[0].map(s => s.name).sort());
+  for (const s of groups.flat()) assert.equal(s, specs.find(original => original.name === s.name));
+  assert.equal(shardSpecs(specs, null, durations), specs);
+});
+
+test("균등한 긴 spec을 분산하고 잘못된 shard를 빈 통과로 만들지 않는다", () => {
+  const specs = ["a", "b", "c", "d", "e", "f"].map(name => ({ name }));
+  const durations = { a: 100, b: 100, c: 100, d: 10, e: 10, f: 10 };
+  for (const i of [1, 2, 3]) {
+    assert.equal(shardSpecs(specs, `${i}/3`, durations).reduce((sum, s) => sum + durations[s.name], 0), 110);
+  }
+  for (const bad of ["0/3", "4/3", "1/0", "1/7", "1", "a/3", "1/9007199254740993"])
+    assert.throws(() => shardSpecs(specs, bad, durations), /shard/);
+});
 
 test("새 기록과 긴 대화의 네 경계를 반복마다 정확히 한 번 실행한다", () => {
   const jobs = planJobs([spec], options);

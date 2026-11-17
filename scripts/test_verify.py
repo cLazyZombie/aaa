@@ -40,7 +40,7 @@ class Verification(unittest.TestCase):
         self.git("commit", "-qm", "fixture")
 
     def cli(self, *args, **env):
-        context = {k: v for k, v in os.environ.items() if k != "AAA_E2E_ONLY"}
+        context = {k: v for k, v in os.environ.items() if k not in ("AAA_E2E_ONLY", "AAA_E2E_SHARD", "AAA_E2E_RETRIES")}
         context["PYTHONIOENCODING"] = "cp1252"
         return subprocess.run([sys.executable, "scripts/verify.py", *args, "--base", self.base],
                               cwd=self.root, env={**context, **env}, capture_output=True, text=True)
@@ -56,7 +56,12 @@ class Verification(unittest.TestCase):
         self.assertEqual(data["commands"], [["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]])
         for option in (("--spec", "23"), ("--package", "aaa-host")):
             self.assertNotEqual(self.cli("landing", "--dry-run", *option).returncode, 0)
-        self.assertNotEqual(self.cli("landing", "--dry-run", AAA_E2E_ONLY="one").returncode, 0)
+        for key, value in (("AAA_E2E_ONLY", "one"), ("AAA_E2E_SHARD", "1/3"), ("AAA_E2E_RETRIES", "1")):
+            with self.subTest(key=key):
+                result = self.cli("landing", "--dry-run", GITHUB_ACTIONS="true", **{key: value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(key, result.stderr)
+        self.assertEqual(self.cli("landing", "--dry-run", AAA_E2E_RETRIES="0").returncode, 0)
 
     def test_unknown_shared_inputs_and_rename_from_backend_keep_full_gate(self):
         for path in ("Cargo.lock", "web/package-lock.json", "web/vite.config.ts", "web/patches/x.patch",

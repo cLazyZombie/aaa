@@ -474,13 +474,19 @@ export default async function () {
       assert.equal((await state(tasks.wait).textContent()).trim(), `대기 ${tasks.wait}`);
       assert.equal((await state(tasks.done).textContent()).trim(), `표지 남음 ${tasks.done}`);
       assert.equal((await state("d-9999").textContent()).trim(), "할 일 없음 d-9999");
-      const working = (await state(tasks.work).textContent()).trim();
+      // thread 상태는 작업 중→검수 대기로 바뀔 수 있다. 서로 다른 Playwright 호출로
+      // 두 칩을 읽으면 그 사이 정상 갱신이 끼므로 같은 DOM 차례의 두 표시를 비교한다.
+      const chips = await p.evaluate(id => ({
+        block: document.querySelector(`[data-testid=design-callout][data-task="${id}"] [data-testid=design-state]`)?.textContent.trim(),
+        inline: document.querySelector('[data-testid=design-inline-state]')?.textContent.trim(),
+      }), tasks.work);
+      const working = chips.block;
       assert.match(working, new RegExp(`^(작업 중|검수 대기) ${tasks.work} · ${t.id}$`), "thread가 맡은 할 일");
       assert.equal(await state(tasks.work).getAttribute("href"), `#task=${tasks.work}`);
       // main 판은 표지 사이의 보통 글을 한 번에 그린다: 빈 줄 뒤 목록의 이어지는 문단이 덩어리마다 끊기지 않는다
       assert.equal(await p.getByTestId("design-body").locator("li", { hasText: "두루마리는 상자에서만 나온다" }).count(), 1, "목록 안의 문단");
       // 글 속 d-ID는 같은 칩이다
-      assert.equal((await p.getByTestId("design-inline-state").textContent()).trim(), working);
+      assert.equal(chips.inline, working);
       assert.deepEqual(
         await p.locator("[data-testid=design-callout]").evaluateAll((els) => els.map((e) => e.dataset.kind)),
         ["plan", "plan", "open", "plan", "plan", "plan", "plan"],

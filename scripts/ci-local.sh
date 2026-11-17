@@ -61,6 +61,10 @@ while [ $# -gt 0 ]; do
     *) echo "모르는 인자: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+# CI 전용 분할·재확인이 로컬 전체 gate에 섞이지 않게 한다.
+if [ -n "${AAA_E2E_SHARD:-}" ] || [ "${AAA_E2E_RETRIES:-0}" != 0 ]; then
+  [ "${GITHUB_ACTIONS:-}" = true ] || { echo 'E2E 분할·재확인은 GitHub CI에서만 쓴다. 로컬 gate는 전수·재시도 0이다' >&2; exit 2; }
+fi
 if [ -n "$E2E_SPEC" ]; then
   case " $ONLY " in *" e2e "*) ;; *) echo '--spec은 --only e2e를 명시한 개발 검사에서만 쓴다' >&2; exit 2 ;; esac
   echo "개발 관련 검사: E2E $E2E_SPEC (전체 gate 아님)"

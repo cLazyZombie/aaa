@@ -2,6 +2,25 @@
 const independent = new Set(["37-chat-pages", "93-shell-chat", "113-bulk-actions", "114-bulk-maintenance"]);
 const exact = (name) => `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 
+// spec 안 단계는 상태를 이어 쓰므로 같은 러너에 둔다. 모르는 시간은 가장 긴
+// 기존 spec만큼 예약하고, 모든 shard가 같은 목록·원장으로 같은 배치를 만든다.
+export function shardSpecs(specs, shard, durations) {
+  if (!shard) return specs;
+  const match = /^(\d+)\/(\d+)$/.exec(shard);
+  const [index, total] = match ? match.slice(1).map(Number) : [];
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 1 || index > total || total > specs.length)
+    throw new Error("--shard(AAA_E2E_SHARD)는 1/N부터 N/N까지이며 N은 spec 수 이하다");
+  const fallback = Math.max(1, ...Object.values(durations));
+  const weight = s => durations[s.name] ?? fallback;
+  const bins = Array.from({ length: total }, () => ({ weight: 0, names: new Set() }));
+  for (const spec of [...specs].sort((a, b) => weight(b) - weight(a) || a.name.localeCompare(b.name))) {
+    const bin = bins.reduce((best, next) => next.weight < best.weight ? next : best);
+    bin.names.add(spec.name);
+    bin.weight += weight(spec);
+  }
+  return specs.filter(s => bins[index - 1].names.has(s.name));
+}
+
 export function planJobs(specs, { repeat, workers, durations, only }) {
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
