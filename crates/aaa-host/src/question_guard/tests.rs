@@ -1,5 +1,58 @@
 use super::*;
 
+/// t-1983의 네 실제 오탐 구절. 최신 카드 안내와 이미 적용한 기준만 재구성한다.
+#[test]
+fn observed_preview_card_replacements_and_corrections_do_not_require_answers() {
+    let cards = HashMap::from([
+        ("q-4026".into(), CardState::Closed),
+        ("q-4027".into(), CardState::Open),
+        ("q-4053".into(), CardState::Closed),
+        ("q-4054".into(), CardState::Open),
+    ]);
+    let mut failures = Vec::new();
+    for text in [
+        "제가 정해 둔 것(다르면 말씀해 주세요)\n돈과 마석 처리 기준으로 작업을 시작했습니다.",
+        "q-4027에서 답해 주세요.\n앞 시안 q-4026은 이 시안이 대신합니다.",
+        "q-4054에서 답해 주세요.\n앞 카드 q-4053은 이 카드가 대신합니다.",
+        "적용한 기준입니다.\n\n다르게 생각하시면 말씀해 주세요.",
+    ] {
+        let result = inspect(text, &cards);
+        if result.missing.is_some() || result.stale.is_some() {
+            failures.push(format!("{text}: missing={:?}, stale={:?}", result.missing, result.stale));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// 정정 구절만 제외한다. 미결 설정·선택과 같은 문장 앞뒤의 별개 승인은 남긴다.
+#[test]
+fn observed_corrections_preserve_pending_decisions_and_separate_approvals() {
+    let cards = cards();
+    for feedback in ["다르면 말씀해 주세요", "다르게 생각하시면 말씀해 주세요"] {
+        for text in [
+            format!("{feedback}, 배포 승인 여부를 알려 주세요."),
+            format!("배포 승인 여부를 알려 주세요, {feedback}."),
+            format!("{feedback}. 지금 배포할까요?"),
+            format!("제가 정해 둔 것({feedback})\n- A 배포 (추천)\n- B 보류"),
+            format!("{feedback}.\n\n승인 여부를 알려 주세요."),
+        ] {
+            assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        }
+        let text = format!("{feedback}.\n\n승인 여부를 알려 주세요.");
+        assert_eq!(inspect(&text, &cards).missing.unwrap().line, 3);
+    }
+    // 점검에서 정상 경고로 남긴 두 사건: 원문 전체가 없어 결정 내용과 선택지는 재구성한다.
+    for text in [
+        "기획 폴더를 docs/design으로 바꾸려면 알려 주세요.",
+        "보스 싸움 중 두루마리 허용 여부를 바꾸려면 알려 주세요.\n- A 허용 (추천)\n- B 금지",
+        "다르면 배포 승인 여부를 말씀해 주세요.",
+        "다르게 생각하시면 배포 승인 여부를 말씀해 주세요.",
+        "다르게 생각하시면 복구와 삭제 중 하나를 골라 주세요.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
+    }
+}
+
 /// t-1896에서 관측한 교체 설명. 링크는 재구성하고 교체 문장은 그대로 보존한다.
 #[test]
 fn observed_replacement_explanation_is_not_an_old_card_answer_request() {
@@ -21,6 +74,10 @@ fn replacement_explanations_keep_answer_targets_and_separate_requests() {
     for history in [
         "앞서 열려 있던 q-1003는 이 질문이 대신합니다.",
         "앞서 열려 있던 [q-1003 질문](#question=q-1003)은 이 질문이 대신합니다.",
+        "앞 시안 q-1003은 이 시안이 대신합니다.",
+        "앞 시안 [q-1003 시안](#question=q-1003)은 이 시안이 대신합니다.",
+        "앞 카드 q-1003은 이 카드가 대신합니다.",
+        "앞 카드 [q-1003 카드](#question=q-1003)은 이 카드가 대신합니다.",
     ] {
         assert!(answer_ids(history).is_empty(), "{history}");
         let linked = format!("q-1001에서 답해 주세요.\n{history}");
@@ -61,6 +118,14 @@ fn replacement_explanations_keep_answer_targets_and_separate_requests() {
         "q-1003가 이 질문을 대신합니다.",
         "q-1003는 이 질문이 대신할까요?",
         "q-1003는 이 질문이 대신합니다만 아직 답이 필요합니다.",
+        "q-1003가 이 시안을 대신합니다.",
+        "q-1003가 이 카드를 대신합니다.",
+        "q-1003는 이 시안이 대신할까요?",
+        "q-1003는 이 카드가 대신할까요?",
+        "q-1003는 이 시안이 대신합니다만 아직 답이 필요합니다.",
+        "q-1003는 이 카드가 대신합니다만 아직 답이 필요합니다.",
+        "q-1003는 이 카드가 대신합니다에서 선택해 주세요.",
+        "q-1003는 이 시안이 대신합니다에서 답해 주세요.",
     ] {
         assert_eq!(answer_ids(text), ["q-1003"], "{text}");
     }

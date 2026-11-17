@@ -1,4 +1,5 @@
 - t-1975: [기획 대화 목록의 바깥 누름·Esc 닫기](testing-design-chat-dismiss-t-1975.md)
+- t-1986: [질문 감시의 시안·카드 교체와 정정 안내](testing-question-guard-t1986.md): 네 관측 오탐·실제 미결 결정·독립 승인과 Host/DB 회귀.
 - t-1959: [옛 아이디어 지우기와 n-ID 링크 표 검증](testing-idea-removal-t-1959.md)
 - t-1917: [보고 질문 9개 상한 안내와 진단](testing-question-limit-t-1917.md)
 - t-1916: [coordinator 정기 점검 재안내 경계](testing-idle-reminders-t1916.md): 알림 경계 문구·안내 크기 제한 확인.
