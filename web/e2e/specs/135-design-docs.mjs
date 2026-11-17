@@ -6,7 +6,9 @@ import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, webkit, pairPage, inList, domIs, drawerSettled, shot } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, domIs, drawerSettled, shot, hashIs } from "../lib/harness.mjs";
+import { reachEnd } from "../lib/panel-scroll.mjs";
+import { installPanelScrollTrace } from "../lib/panel-scroll-diagnostics.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -217,4 +219,54 @@ export default async function () {
       assert.match(await p.locator('[data-testid="design-doc"][data-path="docs/loop/skills.md"]').textContent(), /기술 목록 둘/, "트리도 새 판");
     } finally { await p.context().close(); }
   });
+
+  // 긴 기획 트리(t-1934): 트리가 화면보다 길면 트리 칸만 굴러 끝 문서까지 닿는다(사이드바 칸이 높이를 받지 못해 잘리던 결함).
+  // 넓은 창은 사이드바, 휴대폰은 drawer와 문서 화면의 「트리」 칸을 실제 휠로 굴린다
+  const many = 60;
+  await step("긴 기획 트리 준비: 문서 60개 폴더가 있는 저장소를 더한다", async () => {
+    const docs = Object.fromEntries(Array.from({ length: many }, (_, i) => [`docs/monsters/m${String(i + 1).padStart(2, "0")}.md`, `# 몬스터 ${i + 1}\n`]));
+    const big = repo("big", { "README.md": "# big\n", "docs/README.md": "# 큰 기획\n", ...docs });
+    fs.appendFileSync(`${root}/projects/demo/aaa.toml`, `\n[[workspaces]]\npath = "${big.clone}"\nmachine = "labA"\ndesign = "docs"\n`);
+    const tree = aaa("plan", "list");
+    assert.deepEqual(tree.repos.map((r) => r.repo).at(-1), "big");
+    assert.equal(tree.repos.at(-1).tree.docs.length, many + 1);
+  }, { always: true });
+
+  for (const [name, width] of [["chromium", 1280], ["chromium", 390], ["webkit", 1280], ["webkit", 390]]) {
+    await step(`긴 기획 트리 ${name} ${width}px: 트리 칸이 끝 문서까지 굴러가고 연다`, async () => {
+      const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
+      const engine = wk ?? browser;
+      const phone = width < 700;
+      // 실제 휠로 굴린다. 휴대폰 흉내 WebKit은 mouse.wheel을 받지 않아 칸의 scrollTop을 직접 옮긴다(panel-scroll.mjs와 같다)
+      const wheel = !(phone && name === "webkit");
+      try {
+        const { page: p } = await pairPage(engine, aaa("web", "pair").code, { width, height: phone ? 844 : 800 }, { init: installPanelScrollTrace });
+        try {
+          const panel = '#sidebar-column [data-testid="design-panel"]';
+          await inList(p, "activity-design");
+          await inList(p, p.locator(`${panel} [data-testid="design-dir"][data-path="docs/monsters"]`));
+          await domIs(p, "폴더 펼침", (n) => document.querySelectorAll('#sidebar-column [data-testid="design-doc"][data-path^="docs/monsters/"]').length === n, many);
+          await shot(p, `design-long-tree-${name}-${width}-top`);
+          const last = await reachEnd(p, panel, '[data-testid="design-doc"]', wheel);
+          assert.equal(await last.getAttribute("data-path"), `docs/monsters/m${many}.md`);
+          await shot(p, `design-long-tree-${name}-${width}-end`);
+          await last.click();
+          await hashIs(p, `#design=${encodeURIComponent(`big/docs/monsters/m${many}.md`)}`);
+          await p.getByTestId("design-body").getByRole("heading", { name: `몬스터 ${many}`, exact: true }).waitFor();
+          if (phone) {
+            // 휴대폰 문서 화면의 「트리」 칸: 같은 트리를 칸 안에서 굴린다(연 문서의 폴더는 펼쳐져 있다)
+            await p.getByTestId("design-page-tree").click();
+            const pane = '.design-tree-pane [data-testid="design-panel"]';
+            await p.locator(`${pane} [data-testid="design-doc"][data-path="docs/monsters/m${many}.md"]`).waitFor({ state: "attached" });
+            const end = await reachEnd(p, pane, '[data-testid="design-doc"]', wheel);
+            assert.equal(await end.getAttribute("aria-current"), "true");
+            // 끝 문서 아래 여백: 칸이 화면 바닥에 붙어 끝 줄이 잘려 보이지 않는다
+            const gap = await p.evaluate(() => innerHeight - document.querySelector('.design-tree-pane [data-path="docs/monsters/m60.md"]').getBoundingClientRect().bottom);
+            assert.ok(gap >= 4, `끝 문서 아래 여백 ${gap}px`);
+            await shot(p, `design-long-tree-${name}-${width}-pane`);
+          }
+        } finally { await p.context().close(); }
+      } finally { await wk?.close(); }
+    });
+  }
 }

@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { root, aaa, step, browser, webkit, pairPage, stop, start, until, domIs, hashIs, inList, drawerSettled, shot, inTime } from "./harness.mjs";
 
 /** scrollIntoView/click의 자동 스크롤 전에 칸의 경계와 직접 스크롤을 확인한다. */
-async function reachEnd(p, selector, rowSelector, wheel, afterEnd) {
+export async function reachEnd(p, selector, rowSelector, wheel, afterEnd) {
   const list = p.locator(selector), last = list.locator(rowSelector).last();
   await last.waitFor();
   await panelRows(p, `${selector} ${rowSelector}`);
