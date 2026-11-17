@@ -1,4 +1,5 @@
 // 짧은 ID는 host가 알려 준 대상만 앱 안 링크로 그린다. 주소·경로 속 ID는 건드리지 않는다.
+// `n-NNNN`(idea)은 지운 옛 아이디어다(t-1959): host `idea_links` 표에 있는 것만 옮긴 기획 문서로 잇는다.
 export type AppId = { kind: "thread" | "task" | "question" | "report" | "automation" | "idea"; target: string; label?: string };
 const KINDS = { t: "thread", d: "task", q: "question", r: "report", a: "automation", n: "idea" } as const;
 const ID = /(?<![A-Za-z0-9_./:@%?#=&+-])([tdqran])-\d+(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])/g;

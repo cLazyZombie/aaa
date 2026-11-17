@@ -138,7 +138,9 @@ describe("의견 모음", () => {
     const store = new Map();
     const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
     assert.equal(writeNotes("p", "t-1", notes, storage), true);
-    store.set("aaa:review-notes:p/t-2", JSON.stringify([{ id: "x" }, notes[0]]));
+    // 지운 아이디어 노트의 옛 의견(note·media, t-1959)도 깨진 항목처럼 버린다
+    const oldIdea = { id: "o", at: 1, comment: "옛 노트", source: { kind: "note", idea: "n-0001", section: null, anchor: { text: "글" } } };
+    store.set("aaa:review-notes:p/t-2", JSON.stringify([{ id: "x" }, oldIdea, notes[0]]));
     assert.deepEqual(readNotes("p", "t-1", storage), notes);
     assert.deepEqual(readNotes("p", "t-2", storage), [notes[0]]);
     assert.equal(readNotes("p", "t-1", storage), readNotes("p", "t-1", storage), "바뀌지 않은 목록은 같은 객체(useSyncExternalStore)");

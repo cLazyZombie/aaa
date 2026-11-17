@@ -21,7 +21,7 @@ fn is_resolve_cleanup(line: &str) -> bool {
 
 /// CLI는 실행 자리를 바꾸기 전에 후속을 처리한다. 웹의 의도적인 끝내기는 기존 카드를 남긴다.
 pub(crate) fn check_cli_resolve(rec: &ThreadRec, actor: &str) -> Result<(), ErrorBody> {
-    // 아이디어·기획 대화 thread는 할 일이 없다(옛 판이 모은 후속이 남았어도 버리기의 끝내기를 막지 않는다)
+    // 기획 대화 thread는 할 일이 없다(옛 판이 모은 후속이 남았어도 버리기의 끝내기를 막지 않는다)
     if !actor.starts_with("local:") || rec.automation.is_some() || rec.chat_only() {
         return Ok(());
     }
@@ -80,7 +80,7 @@ pub(crate) fn handoff_automation(rec: &mut ThreadRec) {
 }
 
 pub(crate) fn capture(rec: &mut ThreadRec, revision: &str, report: &str) {
-    // 아이디어·기획 대화 thread는 할 일이 없다: Next는 대화의 다음 말이지 후속 할 일이 아니다(끝내기·버리기를 막지 않는다)
+    // 기획 대화 thread는 할 일이 없다: Next는 대화의 다음 말이지 후속 할 일이 아니다(끝내기·버리기를 막지 않는다)
     if rec.chat_only() {
         return;
     }
@@ -519,15 +519,14 @@ mod tests {
         assert!(reopened.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.item_kind != "task-followup"));
     }
 
-    /// 아이디어·기획 대화 thread의 [완료] Next는 후속 할 일이 아니다(버리기의 thread 끝내기를 막지 않는다)
+    /// 기획 대화 thread의 [완료] Next는 후속 할 일이 아니다(버리기의 thread 끝내기를 막지 않는다)
     #[test]
     fn chat_only_threads_collect_no_followups() {
-        for (idea, design) in [(Some("i-0001"), None), (None, Some("repo/boss-dex"))] {
+        {
             let mut r = ThreadRec::starting("demo", "대화", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
-            r.idea = idea.map(str::to_string);
-            r.design = design.map(str::to_string);
+            r.design = Some("repo/boss-dex".into());
             capture(&mut r, "rev", "[완료] 정리\n## Next\n- 다음 말\n");
-            assert!(r.task_clean.followups.is_empty() && !pending(&r), "{idea:?} {design:?}");
+            assert!(r.task_clean.followups.is_empty() && !pending(&r));
             assert!(check_cli_resolve(&r, "local:me").is_ok());
         }
     }

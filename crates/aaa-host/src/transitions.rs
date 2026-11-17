@@ -114,7 +114,7 @@ impl MachinePanes {
 }
 
 fn auto_resolve_eligible(r: &ThreadRec) -> bool {
-    // 아이디어 thread는 끝내지 않고 쉬게 한다(idea_thread.rs `idea_rest_pass`)
+    // 기획 대화 thread는 끝내지 않고 쉬게 한다(chat_rest.rs `chat_rest_pass`)
     r.status == ThreadStatus::Open
         && r.role != Role::Evaluator
         && !r.chat_only()

@@ -142,7 +142,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         park: None,
         brief_line: None,
         left_places: Vec::new(),
-        idea: None,
         design: None,
         launch_sent: true,
         launch_existing_slot: false,

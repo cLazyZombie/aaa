@@ -70,7 +70,6 @@ fn args(machine: &str, task: Option<aaa_proto::TaskView>) -> crate::orch::StartA
         task: "작업".into(),
         role: Role::Worker,
         attachments: vec![],
-        idea: None,
         design: None,
     }
 }

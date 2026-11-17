@@ -13,7 +13,7 @@ pub const DESIGN_MAX_TEXT: u64 = 512 * 1024;
 /// 다른 머신 대화 thread의 기획 저장 원격 전달을 기다리는 시간(초). host는 저장 전에 그 branch 올리기(검사 포함 420초)와
 /// 쓰기(120초)를 기다릴 수 있다
 pub const DESIGN_RELAY_SAVE_SECS: u64 = 600;
-/// 그림·영상 한 개 상한(바이트, 아이디어 그림과 같다). 조각마다 blob을 처음부터 풀므로 크게 두지 않는다
+/// 그림·영상 한 개 상한(바이트). 조각마다 blob을 처음부터 풀므로 크게 두지 않는다
 pub const DESIGN_MAX_FILE: u64 = 16 * 1024 * 1024;
 
 /// 기획 branch 주제(`design/<slug>`)의 글자 수 상한

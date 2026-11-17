@@ -686,7 +686,6 @@ impl Host {
             task,
             role: Role::Worker,
             attachments: Vec::new(),
-            idea: None,
             design: None,
         };
         let key = start_key(p, &r.name, &event.id);

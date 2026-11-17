@@ -946,162 +946,6 @@ commit: string,
  */
 branch: string | null, committed_ms: number, };
 
-export type IdeaStatus = "open" | "done";
-
-export type IdeaAuthor = "user" | "thread";
-
-export type IdeaSummary = {
-/**
- * 폴더 이름(ULID)
- */
-id: string,
-/**
- * `n-0001`
- */
-short_id: string, title: string, status: IdeaStatus,
-/**
- * 지금 판(1부터)
- */
-rev: number,
-/**
- * 아직 사람이 열지 않은 thread 저장 판이 있다(host에 보존).
- */
-unseen: boolean, created_ms: number, updated_ms: number,
-/**
- * 넘긴 할 일(`d-NNNN`)
- */
-tasks: Array<string>,
-/**
- * 전용 thread(`t-NNNN`). 아직 말하지 않았으면 없다
- */
-thread: string | null,
-/**
- * 복사해 온 아이디어(`n-NNNN`)
- */
-copied_from: string | null,
-/**
- * 진행 모델: 다음 말을 맡을 profile(고른 것, 없으면 프로젝트 기본 thread profile). FRONT_API 1.163, 옛 host는 없다
- */
-profile?: string,
-/**
- * 기획으로 옮겼다(t-1894 4단계): 옮긴 저장소·기획 branch·위치. 옮긴 아이디어는 읽기 전용이다
- */
-moved?: IdeaMoved, };
-
-export type IdeaMoved = {
-/**
- * 저장소 이름
- */
-repo: string,
-/**
- * 옮기는 기획 branch 주제(`design/<주제>`)
- */
-branch: string,
-/**
- * 저장소 기준 경로: 옮기는 중에는 위치 폴더, 그 branch가 문서를 고치면 고친 문서(여럿이면 공통 폴더)
- */
-path: string,
-/**
- * 그 branch가 main에 반영돼 옮기기를 마쳤다
- */
-done: boolean, at_ms: number,
-/**
- * 옮긴 노트 판
- */
-rev: number,
-/**
- * 옮길 때 그 branch의 끝 commit(이 뒤의 commit이 main에 들어가야 마친 것이다)
- */
-head?: string,
-/**
- * 그 branch 기록을 만든 때(같은 이름으로 다시 만든 branch와 가른다)
- */
-branch_ms: number, };
-
-export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
-/**
- * 바뀐 곳 요약(사람이 고친 판은 host가 절마다 센다, thread 판은 thread가 준 한 줄)
- */
-summary: string | null, };
-
-export type IdeaNote = {
-/**
- * 기존 미디어 주소를 옮기지 못한 까닭. 글은 계속 읽을 수 있다.
- */
-media_error: string | null,
-/**
- * 프로젝트(그림 주소 `/api/v1/projects/<p>/ideas/<id>/files/<이름>`)
- */
-project: string, idea: IdeaSummary,
-/**
- * 이 글의 판(옛 판을 읽으면 `idea.rev`보다 작다)
- */
-rev: number, text: string,
-/**
- * 최근 판부터
- */
-history: Array<IdeaRevView>,
-/**
- * 사람이 고친 것을 아직 thread에 알리지 않았다(다음 말 앞에 「(노트 고침: …)」이 붙는다)
- */
-edited: string | null,
-/**
- * 사람이 고친 것과 thread 판이 겹쳐 thread가 합치는 중이다(그 사람 판의 기준 판)
- */
-merging: number | null,
-/**
- * 전용 thread가 준비되기를 기다리는 말(보낸 차례). 준비되면 host가 보내고 지운다
- */
-pending: Array<string>,
-/**
- * 전용 thread를 띄우지 못한 까닭(말은 남는다. 다음 말이나 화면 열기 때 다시 띄운다)
- */
-error: string | null,
-/**
- * 이 글이 가리키는 그림·영상(처음 나온 차례, FRONT_API 1.162). 옛 host는 비운다
- */
-media: Array<IdeaMediaView>,
-/**
- * 아이디어 폴더의 그림·영상 전체 크기(옛 판이 가리키는 것 포함, 1.162)
- */
-media_bytes: number, };
-
-export type IdeaMediaSource = "unknown" | "web" | "file" | "library" | "uploads" | "copy";
-
-export type IdeaMediaView = {
-/**
- * 폴더 안 이름(`<16 hex>.<ext>`)
- */
-name: string, bytes: number, source: IdeaMediaSource,
-/**
- * 들인 쪽: `사람`·`coordinator`·`t-NNNN`. 기록이 없으면 빈 글
- */
-by: string,
-/**
- * 원래 파일 이름이나 경로(있을 때)
- */
-file: string | null, at_ms: number, };
-
-export type IdeaTaskDraft = { title: string,
-/**
- * 저장소 칸(할 일 편집과 같은 값). 비우면 정하지 않음
- */
-repo: string | null,
-/**
- * 메모(여러 줄 Markdown)
- */
-notes: string, };
-
-export type IdeaConflict = {
-/**
- * 저장하려던 글의 기준 판과 그 글
- */
-base_rev: number, base_text: string,
-/**
- * 지금 판
- */
-current: IdeaNote, };
-
 export type TaskBoard = { queue: Array<TaskReservation>, project: string,
 /**
  * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
@@ -1790,7 +1634,7 @@ user_request?: string, } | { "op": "task_attention_answer", project?: string, at
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string,
+task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "idea_links", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string,
 /**
  * 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
  */
@@ -1830,31 +1674,7 @@ profile: string | null,
 /**
  * 할 일 메모(여러 줄)
  */
-memo: string, reserve: boolean, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
-/**
- * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
- */
-summary?: string, } | { "op": "idea_say", project?: string, idea: string, text: string, } | { "op": "idea_wake", project?: string, idea: string, } | { "op": "idea_handoff", project?: string, idea: string,
-/**
- * 화면이 본 판. 그 뒤에 바뀌었으면 넘기지 않는다
- */
-base_rev: number, tasks: Array<IdeaTaskDraft>, } | { "op": "idea_attach", project?: string, idea: string, names?: Array<string>, paths?: Array<string>,
-/**
- * 설명(alt). 없으면 `그림`·`영상`
- */
-alt?: string,
-/**
- * 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
- */
-section?: string, store_only?: boolean, } | { "op": "idea_model", project?: string, idea: string, profile: string, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "idea_move", project?: string, idea: string,
-/**
- * 창을 연 판(그 사이 바뀌었으면 거절)
- */
-rev: number, repo: string, slug: string,
-/**
- * 새 대화의 주제(이미 있는 branch면 쓰지 않는다)
- */
-title?: string, place: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
+memo: string, reserve: boolean, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
 /**
  * 끝난 thread를 뺀다(준비·실패·보류는 포함).
  */
@@ -2049,7 +1869,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */
@@ -2095,7 +1915,7 @@ source: RoutineSource | null, } | { "kind": "record_search" } & RecordSearchPage
  */
 archived_size: number, size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "ideas", project: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
@@ -2285,11 +2105,7 @@ reason: string | null, actor: string | null, handled_ms: number | null, };
 
 export type ThreadView = {
 /**
- * 아이디어 전용 thread면 그 아이디어(`n-NNNN`, FRONT_API 1.147). 작업 목록·할 일 화면에 보이지 않고 아이디어 화면이 쓴다
- */
-idea?: string,
-/**
- * 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 아이디어 thread처럼 작업 목록·할 일에 보이지 않는다
+ * 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 작업 목록·할 일에 보이지 않는다
  */
 design?: string,
 /**
@@ -2806,9 +2622,9 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "idea_updated" | "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
+export type NoticeKind = "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
 
-export type NoticeView = { kind: NoticeKind, idea: string | null,
+export type NoticeView = { kind: NoticeKind,
 /**
  * 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
  */

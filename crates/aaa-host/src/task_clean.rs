@@ -335,19 +335,6 @@ impl Host {
         self.report_main_merge(rec, &report).await
     }
 
-    /// 끝난 thread의 착지가 main에 들어갔나(이어진 task를 보지 않는다): 버리지 않았고 `[완료]`가 아닌 확인된 보고의 병합 commit이나
-    /// 그 branch가 origin main의 조상인지 repo 머신 agent에 묻는다. 기획 「main에 반영」 thread(t-1894 4단계)도 쓴다
-    pub(crate) async fn thread_main_merge(&self, rec: &ThreadRec) -> Option<String> {
-        if rec.task_clean.discard
-            || self.report_marker(rec) == Some("[완료]")
-            || !self.machine_feature(&rec.machine_id, "git_merged.v1")
-        {
-            return None;
-        }
-        let report = self.verified_report(rec)?;
-        self.report_main_merge(rec, &report).await
-    }
-
     async fn report_main_merge(&self, rec: &ThreadRec, report: &str) -> Option<String> {
         let repo = rec.repo.as_deref()?;
         let conn = self

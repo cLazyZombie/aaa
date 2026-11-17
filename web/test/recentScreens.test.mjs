@@ -8,24 +8,23 @@ const pane = (id, extra = {}) => ({ id, machine_id: "m", name: id, argv: [], sta
 const thread = (id, extra = {}) => ({ id, project: "demo", title: id, machine: "mac-a", pane: id, status: "open", group: "working", ...extra });
 
 test("앱 목록·상세·설정도 방문 순서와 열 주소를 보존하며 pane 생명주기 필터와 분리한다", () => {
-  const keys = ["reports:", "reports:demo/r-0001", "tasks:", "task:d-0001", "automation:demo/daily", "idea:n-0001", "idea:demo/n-0002", "settings:", "question:q-0001", "workspace:", "workspace:m/repo"];
+  const keys = ["reports:", "reports:demo/r-0001", "tasks:", "task:d-0001", "automation:demo/daily", "settings:", "question:q-0001", "workspace:", "workspace:m/repo"];
   const panes = paletteTargets(machines, [pane("coord", { coordinator_project: "demo" }), pane("gone", { state: "exited" })], []);
   const targets = recentTargets(panes, [...keys, "reports:", "pane:gone", "https://example.com"]);
   assert.deepEqual(visitedScreens(targets, keys).map(t => t.open), keys);
   assert.equal(targets.length, keys.length + 1);
   assert.equal(targets[0].coordinator, true);
-  assert.equal(appScreenTarget("idea:n-0001").title, "아이디어 · n-0001");
+  assert.equal(appScreenTarget("task:d-0001").title, "할 일 · d-0001");
   for (const key of ["https://example.com", "pane:gone", "unknown:", "settings"]) assert.equal(appScreenTarget(key), null);
 });
 
-test("아이디어 목록은 옛 기록에서도 제외하고 오른쪽 노트만 순환한다", () => {
-  const keys = ["idea:n-0002", "ideas:", "idea:n-0001", "tasks:"];
-  assert.equal(appScreenTarget("ideas:"), null);
+test("지운 아이디어 화면(t-1959)은 옛 방문 기록에서 빼고 남은 화면만 순환한다", () => {
+  const keys = ["idea:n-0002", "ideas:", "task:d-0001", "tasks:"];
+  for (const key of ["ideas:", "idea:n-0001"]) assert.equal(appScreenTarget(key), null);
   const targets = recentTargets([], keys);
   const visited = visitedScreens(targets, keys).map(target => target.key);
-  assert.deepEqual(visited, ["idea:n-0002", "idea:n-0001", "tasks:"]);
-  assert.equal(startRecentCycle(visited, "idea:n-0002", 1).key, "idea:n-0001");
-  assert.equal(startRecentCycle(visited, "idea:n-0002", -1).key, "tasks:");
+  assert.deepEqual(visited, ["task:d-0001", "tasks:"]);
+  assert.equal(startRecentCycle(visited, "task:d-0001", 1).key, "tasks:");
 });
 
 test("자동화·답할 것 목록의 옛 기록을 제외하고 규칙·질문 본문만 순환한다", () => {

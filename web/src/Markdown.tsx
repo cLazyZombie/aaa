@@ -19,8 +19,8 @@ import { HighlightedCode } from "./HighlightedCode.tsx";
 import { browserClick } from "./reportLinks.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
 import { AppIdLink, AppRefChip, AppRefContext, type AppRefs } from "./AppRefChip.tsx";
-import { splitAppIds, type AppId } from "./appIds";
-import { ideaLinkTarget } from "./ideasModel";
+import { appIdHash, splitAppIds, type AppId } from "./appIds";
+import { ideaLinkId } from "./designModel";
 import { isVideoPath } from "./reportMedia";
 import { ReportVideo } from "./ReportVideo";
 import { ReportMediaStatus } from "./ReportMediaStatus";
@@ -29,7 +29,7 @@ import "./herdr/Markdown.css";
 /** Stats an image before it can load; null context keeps chat images as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
-/** 혼자 선 그림·영상 아래에 설명(alt)을 한 줄로 보인다(아이디어 노트, t-1575). 기본 설명 `그림`·`영상`은 보이지 않는다 */
+/** 혼자 선 그림·영상 아래에 설명(alt)을 한 줄로 보인다(기획 문서, t-1575). 기본 설명 `그림`·`영상`은 보이지 않는다 */
 export const MarkdownCaptionContext = createContext(false);
 /** library 첨부를 읽는 본문만 제공한다. */
 export const MarkdownAttachmentContext = createContext<((src: string) => string | null) | null>(null);
@@ -121,7 +121,8 @@ function Inline(props: InlineProps) {
     if (node.type === "text" || node.type === "code")
       return splitAppRefs(node.value).some((part) => typeof part !== "string")
         || splitAppIds(node.value, () => true).some((part) => typeof part !== "string");
-    return node.type === "link" && (appRefOf(node.href) !== null || appLinkOf(node.href, location.origin) !== null);
+    return node.type === "link" && (appRefOf(node.href) !== null || appLinkOf(node.href, location.origin) !== null)
+      || node.type === "file" && ideaLinkId(node.path) !== null;
   });
   return usesRefs ? <AppInline {...props} /> : <InlineContent {...props} refs={null} />;
 }
@@ -228,9 +229,15 @@ function InlineContent({ nodes, interactive = true, standalone = false, refs }: 
             );
           }
           case "file": {
-            // 할 일 메모의 아이디어 링크(`[아이디어 n-0001](ideas/n-0001)`, t-1260): 앱 안 아이디어 화면으로
-            const idea = ideaLinkTarget(node.path);
-            if (idea) return <a key={key} className="app-id" data-testid="idea-link" href={`#idea=${encodeURIComponent(idea)}`}><Inline nodes={node.children} interactive={false} /></a>;
+            // 옛 할 일 메모의 아이디어 링크(`[아이디어 n-0001](ideas/n-0001)`): 아이디어는 지웠다(t-1959). 옮긴 기획 문서가 있으면 그
+            // 문서로, 없으면 글자로 둔다
+            const idea = ideaLinkId(node.path);
+            if (idea) {
+              const id: AppId = { kind: "idea", target: idea };
+              return refs?.exists(id)
+                ? <a key={key} className="app-id" data-testid="idea-link" href={appIdHash(id)}><Inline nodes={node.children} interactive={false} /></a>
+                : <Fragment key={key}><Inline nodes={node.children} interactive={false} /></Fragment>;
+            }
             const url = attachment?.(node.path);
             if (url && interactive && isVideoPath(node.path)) return <ReportVideo key={key} src={url} label={node.children.map((n) => "value" in n ? n.value : "").join("")} />;
             if (url && interactive) return <a key={key} href={url} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} /></a>;

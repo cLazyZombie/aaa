@@ -167,7 +167,6 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
-        .route("/api/v1/projects/{project}/ideas/{idea}/files/{name}", get(idea_file_get))
         .route("/api/v1/projects/{project}/design/{repo}/{*path}", get(design_file_get))
         .route("/api/v1/projects/{project}/design-files/{repo}/{branch}", post(design_file_post))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
@@ -757,28 +756,6 @@ async fn design_file_post(
             Json(Outcome::Ok(serde_json::json!({ "path": path, "commit": commit, "blob": blob }))).into_response()
         }
         Ok(_) => error_response(ErrorBody::new(ErrorCode::Internal, "예상하지 못한 응답")),
-        Err(e) => error_response(e),
-    }
-}
-
-/// 아이디어 노트의 그림·영상(보기 권한도). 이름이 내용 hash라 오래 둔다
-async fn idea_file_get(
-    State(host): State<Arc<Host>>,
-    Path((project, idea, name)): Path<(String, String, String)>,
-    headers: HeaderMap,
-) -> Response {
-    if device(&host, &headers).is_none() {
-        return unauthorized();
-    }
-    match host.idea_file_read(&project, &idea, &name) {
-        Ok(bytes) => Response::builder()
-            .header(header::CONTENT_TYPE, crate::ideas::media_mime(&name))
-            .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
-            .header("x-content-type-options", "nosniff")
-            .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
-            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
-            .body(Body::from(bytes))
-            .unwrap(),
         Err(e) => error_response(e),
     }
 }
@@ -1466,7 +1443,6 @@ where
     let mut threads = host.thread_events.subscribe();
     let mut notices = host.notice_events.subscribe();
     let mut tasks = host.task_events.subscribe();
-    let mut ideas = host.ideas_changed.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
     let mut workspace_metrics = host.workspace_metrics_changed.subscribe();
@@ -1779,19 +1755,6 @@ where
                 match t {
                     Ok((project, sha256)) => {
                         let text = serde_json::to_string(&FrontEvent::Tasks { project, sha256 }).unwrap();
-                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
-                            break;
-                        }
-                    }
-                    Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => break,
-                }
-            }
-            // 아이디어 목록·노트가 바뀌었다(아이디어 화면이 다시 읽는다). 놓쳤으면 끊는다: 웹은 다시 붙으며 새로 읽는다
-            i = ideas.recv() => {
-                send_state = false;
-                match i {
-                    Ok(project) => {
-                        let text = serde_json::to_string(&FrontEvent::Ideas { project }).unwrap();
                         if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }

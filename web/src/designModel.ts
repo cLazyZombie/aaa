@@ -377,3 +377,15 @@ export function pickRepo(names: readonly string[], picked: readonly string[] | n
   const on = names.filter((n) => next.includes(n));
   return on.length === 0 || on.length === names.length ? null : next;
 }
+
+/** 고를 수 있는 진행 모델: 그 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
+export function modelChoices(owners: readonly { machine: string; profiles: string[] }[], hostMachine: string | null, chosen: string): string[] {
+  const usable = owners.find((o) => o.machine === hostMachine)?.profiles ?? [];
+  return [...new Set([chosen, ...usable])];
+}
+
+/** 옛 할 일 메모의 아이디어 링크(`ideas/n-0001`) → `n-0001` */
+export function ideaLinkId(path: string): string | null {
+  const m = /^ideas\/(n-\d+)$/.exec(path.trim());
+  return m ? m[1]! : null;
+}

@@ -3,9 +3,8 @@
 import { Hammer } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
-import type { Callout } from "./designModel";
+import { modelChoices, type Callout } from "./designModel";
 import type { DesignBranchView, DesignRepoView, OwnerChoice } from "./gen/proto";
-import { ideaModelChoices } from "./ideasModel";
 
 /** 표지 블록 하나: 덩어리 번호, 표지 블록끼리의 차례(host `design_marks`와 같은 차례)와 첫 줄(host가 같은 블록인지 다시 본다) */
 export type HandoffBlock = { c: Callout; i: number; ordinal: number; head: string };
@@ -60,7 +59,7 @@ export function HandoffDialog({ repo, branch, path, blob, blocks, initial, onClo
   useEffect(() => {
     call({ op: "assignable", check: null }).then((r) => { if (r.kind === "assignable") setOwners(r.owners); }, () => {});
   }, []);
-  const names = ideaModelChoices(owners, repo.machine, "").filter(Boolean);
+  const names = modelChoices(owners, repo.machine, "").filter(Boolean);
   const picked = useMemo(() => blocks.filter((b) => picks.has(b.i)), [blocks, picks]);
   const shownTitle = title ?? autoTitle(picked);
   const shownMemo = memo ?? autoMemo(repo.repo, path, picked);

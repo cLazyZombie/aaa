@@ -440,7 +440,7 @@ impl Host {
                     "backup failed",
                     match kind {
                         Kind::Database => "host DB 정기 백업에 실패했다",
-                        Kind::Files => "아이디어·첨부 정기 백업에 실패했다",
+                        Kind::Files => "첨부 정기 백업에 실패했다",
                     },
                     &detail,
                 ),

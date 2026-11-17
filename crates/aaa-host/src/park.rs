@@ -316,7 +316,7 @@ impl Host {
         }
         self.db.audit(actor, "thread_park", &format!("{project}/{id}"));
         self.flow(&rec, "thread_parked", None, notes.join("; "));
-        // 아이디어 thread는 사용자 모르게 쉰다(t-1255 결정 20): 알림함 항목을 내지 않는다
+        // 기획 대화 thread는 사용자 모르게 쉰다(t-1255 결정 20): 알림함 항목을 내지 않는다
         if !rec.chat_only() {
             self.inbox_add(
                 project,
@@ -518,19 +518,13 @@ impl Host {
                 return Err(e);
             }
         };
-        let line = match (
-            rec.idea.as_deref().and_then(|i| self.db.idea_short_id(project, i).ok()),
-            rec.design.as_deref(),
-        ) {
-            (Some(n), _) => {
-                format!("쉬었다가 이어 간다({id}). 노트를 `aaa idea show {n}`로 다시 읽고 사용자의 다음 말을 기다린다.")
-            }
-            (None, Some(branch)) => format!(
+        let line = match rec.design.as_deref() {
+            Some(branch) => format!(
                 "쉬었다가 이어 간다({id}). 기획 branch design/{}의 문서를 `aaa plan show … --branch`로 다시 읽고 사용자의 다음 말을 \
                  기다린다.",
                 branch.split_once('/').map_or(branch, |(_, slug)| slug)
             ),
-            (None, None) => format!("보류를 풀었다({id} 이어 하기). 마지막 보고의 Handoff대로 이어 간다."),
+            None => format!("보류를 풀었다({id} 이어 하기). 마지막 보고의 Handoff대로 이어 간다."),
         };
         let rec = self.update_rec(project, id, |r| {
             r.park = None;

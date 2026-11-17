@@ -99,7 +99,7 @@ pub struct HostConfig {
     pub file_backup: FileBackupSection,
 }
 
-/// 아이디어·첨부 파일 백업. 목적지·공개키는 `[backup]`에서 가져온다.
+/// 첨부 파일 백업. 목적지·공개키는 `[backup]`에서 가져온다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FileBackupSection {
@@ -411,8 +411,10 @@ pub struct ProjectsSection {
     pub routine_commands: Vec<String>,
     /// 자동 시작으로 열린 thread 상한. 생략·0은 무제한이다.
     pub max_auto_threads: u32,
-    /// 아이디어 전용 thread가 이만큼(초) 쉬면 조용히 보류한다(t-1260). 다시 말하거나 아이디어 화면을 열면 잇는다. 시험에서 줄인다.
-    pub idea_rest_secs: u64,
+    /// 기획 대화 thread가 이만큼(초) 쉬면 조용히 보류한다(t-1260 결정 20). 다시 말하면 잇는다. 시험에서 줄인다.
+    /// 옛 이름 `idea_rest_secs`도 읽는다(t-1959).
+    #[serde(alias = "idea_rest_secs")]
+    pub chat_rest_secs: u64,
     /// 기획 branch에 쓴 뒤 이만큼(초) 더 쓰지 않으면 origin에 올린다(t-1894, 묶어서 올린다). 시험에서 줄인다.
     pub design_push_secs: u64,
     /// 기획 branch를 이만큼(초) 쓰지 않으면 「쉼」으로 두고 worktree를 돌려준다(t-1894 결정 3A, 기본 14일). 시험에서 줄인다.
@@ -448,7 +450,7 @@ impl Default for ProjectsSection {
             inbox_done_days: 30,
             routine_commands: Vec::new(),
             max_auto_threads: 0,
-            idea_rest_secs: 1800,
+            chat_rest_secs: 1800,
             design_push_secs: 60,
             design_rest_secs: 14 * 86_400,
             design_check: Default::default(),
@@ -878,8 +880,8 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
             path: key(&["projects", "design_rest_secs"]), message: "1초 이상이어야 한다".into()
         });
     }
-    if c.projects.idea_rest_secs == 0 {
-        out.push(Invalid { path: key(&["projects", "idea_rest_secs"]), message: "1초 이상이어야 한다".into() });
+    if c.projects.chat_rest_secs == 0 {
+        out.push(Invalid { path: key(&["projects", "chat_rest_secs"]), message: "1초 이상이어야 한다".into() });
     }
     if c.projects.delivered_working_secs == 0 {
         out.push(Invalid {

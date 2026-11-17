@@ -114,7 +114,7 @@ impl Db {
         {
             policy.check(&tx, project, Some(id))?;
         }
-        // 자동화·아이디어 thread는 실행 한도에 세지 않는다(holds_worker_slot과 같은 규칙, t-1255 결정 19)
+        // 자동화·기획 대화 thread는 실행 한도에 세지 않는다(holds_worker_slot과 같은 규칙, t-1255 결정 19)
         if rec.automation.is_none() && !rec.chat_only() && !rec.holds_slot() {
             anyhow::ensure!(
                 slots(&tx, project, Some(id))? < limit,

@@ -1,7 +1,7 @@
-//! 기획 대화(t-1894 2-2, FRONT_API 1.172): 기획 branch마다 대화 thread 하나. 아이디어 전용 thread(idea_thread.rs)와 같은 꼴이다.
+//! 기획 대화(t-1894 2-2, FRONT_API 1.172): 기획 branch마다 대화 thread 하나.
 //!
 //! - 처음 말할 때 그 저장소 머신에 작업 폴더 thread로 띄운다(기획 worktree와 저장소 코드를 그 머신에서 읽는다). 할 일·실행
-//!   한도·coordinator 요약·자동 끝내기에서 빼고(`ThreadRec::chat_only`), 쉬면 조용히 보류한다(idea_thread.rs `idea_rest_pass`).
+//!   한도·coordinator 요약·자동 끝내기에서 빼고(`ThreadRec::chat_only`), 쉬면 조용히 보류한다(chat_rest.rs `chat_rest_pass`).
 //! - 보낸 말은 대화 기록(host 상태 폴더 `design-chats/<프로젝트>/<저장소>/<주제>.json`, 기획 branch 기록과 따로 잠근다)에 남기고,
 //!   thread가 brief를 받은 뒤 차례로 보낸다. host가 다시 뜨면 ticker가 남은 말을 잇는다.
 //! - thread는 자기 기획 branch에만 `aaa plan save`로 쓴다(design_branch.rs `design_writer`). 다른 머신 세션은 agent 중계로 쓴다.

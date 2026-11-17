@@ -570,7 +570,7 @@ impl Host {
             self.thread_stall_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
-            self.idea_rest_pass(&p.name).await;
+            self.chat_rest_pass(&p.name).await;
             self.design_rest_spawn(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, !self.coordinator_panes(dir).is_empty());

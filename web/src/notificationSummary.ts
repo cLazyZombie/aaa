@@ -3,7 +3,7 @@
 import type { InboxItem } from "./gen/proto";
 import type { DropletNotice } from "./herdr/droplet.ts";
 
-export type NotificationTopic = "asks" | "reports" | "work" | "ideas" | "tasks" | "automations" | "machines" | "workspace";
+export type NotificationTopic = "asks" | "reports" | "work" | "tasks" | "automations" | "machines" | "workspace";
 
 /** 첫 내용 줄에서 표시용 Markdown만 걷고, 이모지 묶음을 자르지 않는다. */
 export function notificationSummary(text: string, limit = 48): string {
@@ -17,9 +17,9 @@ export function notificationSummary(text: string, limit = 48): string {
 }
 
 export function dropletContent(notice: DropletNotice): { topic: NotificationTopic; label: string; summary: string; full: string } {
-  const topic = notice.topic ?? (notice.target.startsWith("idea=") ? "ideas" : notice.target.startsWith("task=") ? "tasks"
+  const topic = notice.topic ?? (notice.target.startsWith("task=") ? "tasks"
     : notice.target.startsWith("report=") || notice.libraryUrl ? "reports" : notice.kind === "blocked" ? "asks" : "work");
-  const label = notice.label ?? (topic === "ideas" ? "아이디어 갱신" : topic === "reports" ? "완료 보고"
+  const label = notice.label ?? (topic === "reports" ? "완료 보고"
     : topic === "tasks" ? "할 일" : notice.kind === "blocked" ? "입력 필요" : notice.kind === "reset" ? "한도 풀림"
     : notice.kind === "ended" ? "터미널 종료" : "작업 완료");
   const original = notice.summary?.trim() || notice.title;
@@ -35,7 +35,6 @@ export function inboxContent(item: Pick<InboxItem, "item_kind" | "event" | "subj
   if (event === "new report" || kind === "report") topic = "reports";
   else if (event === "report needs user" || event === "blocked on a prompt" || kind === "question" || kind === "routine-approval" || kind === "coordinator-check") topic = "asks";
   else if (kind === "task" || kind === "task-followup") topic = "tasks";
-  else if (kind === "idea") topic = "ideas";
   else if (kind === "routine" || kind === "automation" || kind === "deploy_proposal") topic = "automations";
   else if (kind === "outage" || kind === "health" || kind === "session") topic = "machines";
   else if (["system", "config-error", "account", "usage"].includes(kind)) topic = "workspace";

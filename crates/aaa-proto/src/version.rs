@@ -321,7 +321,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.176: main 문서에서 바로 맡기기(`design_handoff`의 빈 branch), DesignRepoView.handoffs(t-1894 3-3).
 // 1.177: 옛 아이디어 「기획으로 옮기기」(`idea_move`, IdeaSummary.moved), 아이디어 쓰기 요청(만들기·저장·말·깨우기·넘기기·첨부·모델·복사)은
 //        host가 「기획으로 옮겼다」로 거절한다(t-1894 4단계).
-pub const FRONT_API: Version = Version { major: 1, minor: 177 };
+// 1.178: 옛 아이디어를 지웠다(t-1959): Idea* 요청·응답·`ideas` 사건·ThreadView.idea·NoticeView.idea를 뺐다. `idea_links`
+//        (n-ID → 옮긴 기획 문서)를 더했다. 옛 host에는 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 178 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -31,6 +31,7 @@ mod bgwait;
 mod brief;
 mod brief_text;
 mod caller;
+mod chat_rest;
 mod chatwatch;
 mod ci;
 mod colors;
@@ -54,9 +55,6 @@ pub mod guide;
 mod harness;
 mod health;
 mod http;
-mod idea_move;
-mod idea_thread;
-mod ideas;
 mod image;
 mod image_rpc;
 mod inbox;
@@ -661,8 +659,6 @@ pub struct Host {
     pub notice_events: broadcast::Sender<aaa_proto::NoticeView>,
     /// 프로젝트 TASKS.md가 바뀌었다(프로젝트, 내용 sha256). ticker가 낸다(coord.rs `tasks_pass`)
     pub task_events: broadcast::Sender<(String, String)>,
-    /// 아이디어 목록·노트가 바뀐 프로젝트(ideas.rs). 웹 events 연결이 `ideas` 사건으로 보낸다
-    pub ideas_changed: broadcast::Sender<String>,
     /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
     tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
     queue_gate: tokio::sync::Mutex<()>,
@@ -739,8 +735,6 @@ pub struct Host {
     design_passes: Mutex<std::collections::HashSet<String>>,
     /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
     design_chatting: Mutex<std::collections::HashSet<String>>,
-    /// 옮기는 아이디어의 branch를 마지막으로 본 때(`<프로젝트>/<아이디어>`, t-1894 4단계)
-    idea_move_checked: Mutex<HashMap<String, u64>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -945,7 +939,6 @@ impl Host {
             running_sha256: rollout::running_sha()?,
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
-            ideas_changed: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
             queue_gate: tokio::sync::Mutex::new(()),
             file_locks: Default::default(),
@@ -988,7 +981,6 @@ impl Host {
             design_push_gen: Mutex::new(HashMap::new()),
             design_passes: Mutex::new(Default::default()),
             design_chatting: Mutex::new(Default::default()),
-            idea_move_checked: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             account_quota: Default::default(),
@@ -2066,7 +2058,6 @@ impl Host {
                         task,
                         role: aaa_proto::Role::Worker,
                         attachments: Vec::new(),
-                        idea: None,
                         design: None,
                     };
                     let (mut warnings, picked) = match from_task {
@@ -2196,6 +2187,7 @@ impl Host {
             }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             req @ (FrontRequest::DesignTree { .. }
+            | FrontRequest::IdeaLinks { .. }
             | FrontRequest::DesignRead { .. }
             | FrontRequest::DesignBranchOpen { .. }
             | FrontRequest::DesignSave { .. }
@@ -2203,18 +2195,6 @@ impl Host {
             | FrontRequest::DesignDiscard { .. }
             | FrontRequest::DesignApply { .. }
             | FrontRequest::DesignHandoff { .. }) => Box::pin(self.call_design(role, actor, req)).await,
-            req @ (FrontRequest::IdeaList { .. }
-            | FrontRequest::IdeaRead { .. }
-            | FrontRequest::IdeaSeen { .. }
-            | FrontRequest::IdeaCreate { .. }
-            | FrontRequest::IdeaSave { .. }
-            | FrontRequest::IdeaSay { .. }
-            | FrontRequest::IdeaWake { .. }
-            | FrontRequest::IdeaHandoff { .. }
-            | FrontRequest::IdeaCopy { .. }
-            | FrontRequest::IdeaModel { .. }
-            | FrontRequest::IdeaAttach { .. }
-            | FrontRequest::IdeaMove { .. }) => Box::pin(self.call_idea(role, actor, req)).await,
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;

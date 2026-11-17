@@ -892,7 +892,6 @@ impl Host {
                 task: String::new(),
                 role: aaa_proto::Role::Worker,
                 attachments: vec![],
-                idea: None,
                 design: None,
             };
             if a.machine.is_none() {

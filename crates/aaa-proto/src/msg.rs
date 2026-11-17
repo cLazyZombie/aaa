@@ -3079,6 +3079,13 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 지운 옛 아이디어의 짧은 ID(`n-NNNN`) → 옮긴 기획 문서(FRONT_API 1.178, t-1959, 보기 권한). 프로젝트 `idea-links.toml`에서
+    /// 읽고, 기획 폴더가 있는 프로젝트 저장소의 그 폴더 안 문서만 싣는다. 웹은 글 속 `n-NNNN`을 이 문서로 잇고, 표에 없으면 글자로 둔다
+    IdeaLinks {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
     /// 기획 문서 하나(FRONT_API 1.170, 보기 권한). `path`는 저장소 기준 경로이고 기획 폴더 안이어야 한다
     DesignRead {
         #[serde(default)]
@@ -3175,141 +3182,6 @@ pub enum FrontRequest {
         /// 할 일 메모(여러 줄)
         memo: String,
         reserve: bool,
-    },
-    /// 아이디어 목록(FRONT_API 1.147, 보기 권한). 다듬는 중을 먼저, 그 안에서는 최근에 고친 것부터
-    IdeaList {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-    },
-    /// 노트 하나(보기 권한·그 아이디어의 전용 thread). `idea`는 `n-NNNN`·ULID, `rev`가 없으면 지금 판
-    IdeaRead {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        #[serde(default)]
-        #[ts(optional)]
-        rev: Option<u32>,
-    },
-    /// 새 아이디어(조작 권한). 노트 글이 비면 `# 제목`으로 시작한다. 전용 thread는 처음 말할 때 띄운다
-    IdeaCreate {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        title: String,
-        #[serde(default)]
-        text: String,
-    },
-    /// 웹에서 실제 표시한 판까지 읽음으로 남긴다. thread의 노트 읽기는 읽음 처리가 아니다.
-    IdeaSeen {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        rev: u32,
-    },
-    /// 판을 주고 노트를 저장한다(조작 권한, 또는 그 아이디어의 전용 thread). 기준 판이 지금 판이 아니면: thread는 `idea_conflict`를
-    /// 받아 두 판을 합쳐 다시 저장하고, 사람의 글은 host가 따로 두고 전용 thread에 합치기를 맡긴다(답의 `merging`)
-    IdeaSave {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        base_rev: u32,
-        text: String,
-        /// 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
-        #[serde(default)]
-        #[ts(optional)]
-        summary: Option<String>,
-    },
-    /// 전용 thread에 말한다(조작 권한). 없으면 host 머신에 띄우고, 쉬느라 내렸으면 잇는다. 사람이 고친 노트가 있으면 앞에
-    /// 「(노트 고침: …)」을 붙인다
-    IdeaSay {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        text: String,
-    },
-    /// 아이디어 화면을 열었다(조작 권한): 쉬느라 내린 전용 thread를 조용히 잇는다. 아직 thread가 없으면 아무것도 하지 않는다
-    IdeaWake {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-    },
-    /// 할 일로 넘긴다(조작 권한): 초안마다 할 일을 더하고(메모 첫 줄에 아이디어 링크), 아이디어는 완료로 잠근다
-    IdeaHandoff {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        /// 화면이 본 판. 그 뒤에 바뀌었으면 넘기지 않는다
-        base_rev: u32,
-        tasks: Vec<crate::IdeaTaskDraft>,
-    },
-    /// 그림·영상을 노트에 붙인다(FRONT_API 1.162, 조작 권한 또는 그 아이디어의 전용 thread). `names`는 웹이 먼저 올린 폴더 안
-    /// 이름, `paths`는 host 머신의 파일 경로(CLI만: 사람·coordinator는 일반 파일, 전용 thread는 자기 작업 폴더와 프로젝트
-    /// `uploads/` 안). 노트 끝(또는 `section` 절 끝)에 한 줄씩 `![설명](<이름>)`을 더해 새 판으로 쓴다. 덧붙이기라 판을 받지 않는다.
-    /// `store_only`면 폴더에만 넣고 노트는 그대로 둔다(이름을 받아 thread가 직접 넣는다)
-    IdeaAttach {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        #[serde(default)]
-        #[ts(optional, as = "Option<Vec<String>>")]
-        names: Vec<String>,
-        #[serde(default)]
-        #[ts(optional, as = "Option<Vec<String>>")]
-        paths: Vec<String>,
-        /// 설명(alt). 없으면 `그림`·`영상`
-        #[serde(default)]
-        #[ts(optional)]
-        alt: Option<String>,
-        /// 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
-        #[serde(default)]
-        #[ts(optional)]
-        section: Option<String>,
-        #[serde(default)]
-        #[ts(optional)]
-        store_only: Option<bool>,
-    },
-    /// 진행 모델을 바꾼다(FRONT_API 1.163, 조작 권한, thread 세션 밖). host 머신이 맡을 수 있는 profile만 받는다. 지금 thread는
-    /// 그대로 두고, 다음 말부터 그 profile의 새 thread가 노트를 읽고 이어 간다
-    IdeaModel {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        profile: String,
-    },
-    /// 노트를 복사해 새 아이디어로(조작 권한). 완료한 것을 다시 다듬을 때
-    IdeaCopy {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-    },
-    /// 옛 아이디어를 기획으로 옮긴다(FRONT_API 1.177, t-1894 4단계, 조작 권한의 사람만). host가 그 저장소의 기획 branch를 열고(`slug`가
-    /// 없으면 `title`로 새로 만든다) 노트가 쓰는 그림·영상을 위치 폴더(`place`, 기획 폴더 기준, 비우면 기획 폴더)에 내용 hash 이름으로
-    /// commit한 뒤 노트 본문과 옮기는 법을 그 대화에 보낸다. 아이디어는 「옮기는 중」이 되고 그 branch가 main에 반영되면 「옮김」이다
-    IdeaMove {
-        #[serde(default)]
-        #[ts(optional, as = "Option<String>")]
-        project: String,
-        idea: String,
-        /// 창을 연 판(그 사이 바뀌었으면 거절)
-        rev: u32,
-        repo: String,
-        slug: String,
-        /// 새 대화의 주제(이미 있는 branch면 쓰지 않는다)
-        #[serde(default)]
-        #[ts(optional)]
-        title: Option<String>,
-        #[serde(default)]
-        place: String,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -4063,6 +3935,7 @@ impl FrontRequest {
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
             | FrontRequest::DesignTree { project }
+            | FrontRequest::IdeaLinks { project }
             | FrontRequest::DesignRead { project, .. }
             | FrontRequest::DesignBranchOpen { project, .. }
             | FrontRequest::DesignSave { project, .. }
@@ -4070,18 +3943,6 @@ impl FrontRequest {
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
             | FrontRequest::DesignHandoff { project, .. }
-            | FrontRequest::IdeaList { project }
-            | FrontRequest::IdeaRead { project, .. }
-            | FrontRequest::IdeaSeen { project, .. }
-            | FrontRequest::IdeaCreate { project, .. }
-            | FrontRequest::IdeaSave { project, .. }
-            | FrontRequest::IdeaSay { project, .. }
-            | FrontRequest::IdeaWake { project, .. }
-            | FrontRequest::IdeaHandoff { project, .. }
-            | FrontRequest::IdeaCopy { project, .. }
-            | FrontRequest::IdeaMove { project, .. }
-            | FrontRequest::IdeaModel { project, .. }
-            | FrontRequest::IdeaAttach { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
@@ -4155,18 +4016,10 @@ impl FrontRequest {
 
     /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
     /// host 밖 머신 thread 세션의 CLI가 agent를 거쳐 host에 보낼 수 있는 요청(`thread_read.v1`): 위 읽기와 기획 읽기, 그리고 자기
-    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다), 옛 아이디어 읽기(4단계)
+    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다)
     pub fn thread_relay_allowed(&self) -> bool {
         self.thread_read_allowed()
-            || matches!(
-                self,
-                Self::DesignTree { .. }
-                    | Self::DesignRead { .. }
-                    | Self::DesignSave { .. }
-                    // 옛 아이디어 읽기(t-1894 4단계): 기획 대화 thread가 옮기는 노트 전체를 읽는다
-                    | Self::IdeaList { .. }
-                    | Self::IdeaRead { .. }
-            )
+            || matches!(self, Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignSave { .. })
     }
 
     pub fn thread_read_allowed(&self) -> bool {
@@ -4236,15 +4089,10 @@ impl FrontRequest {
                 | FrontRequest::TaskArchive { restore: None, .. }
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::DesignTree { .. }
+                | FrontRequest::IdeaLinks { .. }
                 | FrontRequest::DesignRead { .. }
                 // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::DesignSave { .. }
-                | FrontRequest::IdeaList { .. }
-                | FrontRequest::IdeaRead { .. }
-                | FrontRequest::IdeaSeen { .. }
-                // 옛 아이디어 thread의 노트 저장(보기 권한): host가 「기획으로 옮겼다」 까닭으로 거절한다(t-1894 4단계)
-                | FrontRequest::IdeaSave { .. }
-                | FrontRequest::IdeaAttach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -4453,6 +4301,10 @@ pub enum FrontResponse {
     DesignTree {
         repos: Vec<crate::DesignRepoView>,
     },
+    /// `idea_links`의 답(FRONT_API 1.178): n-ID → 기획 문서(`<저장소>/<경로>`)
+    IdeaLinks {
+        links: std::collections::BTreeMap<String, String>,
+    },
     /// `design_read`의 답(FRONT_API 1.170)
     DesignDoc {
         doc: crate::DesignDoc,
@@ -4470,21 +4322,6 @@ pub enum FrontResponse {
     /// `design_handoff`의 답(FRONT_API 1.175)
     DesignHandoff {
         handoff: crate::DesignHandoffView,
-    },
-    /// `idea_list`의 답(FRONT_API 1.147)
-    Ideas {
-        ideas: Vec<crate::IdeaSummary>,
-    },
-    /// 노트 하나(`idea_read`·`idea_create`·`idea_save`·`idea_say`·`idea_wake`·`idea_handoff`·`idea_copy`)
-    Idea {
-        note: crate::IdeaNote,
-    },
-    /// 전용 thread의 `idea_save`가 다른 판과 겹쳤다(쓰지 않음)
-    IdeaConflict(crate::IdeaConflict),
-    /// `idea_attach`의 답(FRONT_API 1.162): 붙인 이름(준 차례)과 지금 노트
-    IdeaAttached {
-        names: Vec<String>,
-        note: crate::IdeaNote,
     },
     TaskQueue {
         entries: Vec<crate::TaskReservation>,
@@ -4844,8 +4681,6 @@ pub enum FrontEvent {
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },
-    /// FRONT_API 1.147. 아이디어 목록이나 노트가 바뀌었다(웹은 `idea_list`와 연 노트를 다시 읽는다). 웹 events 연결에만 보낸다
-    Ideas { project: String },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },
     /// 웹 연결 처음과 배포 내구 상태가 바뀔 때 주는 최신 요약. 조회만 하며 진행기를 재개하지 않는다.

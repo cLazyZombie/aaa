@@ -63,7 +63,6 @@ pub(crate) fn finish_notice(
     turn_ms: Option<u64>,
 ) -> NoticeView {
     NoticeView {
-        idea: None,
         kind: NoticeKind::Finished,
         pane: Some(pane.to_string()),
         machine: p.machine_id.clone(),
@@ -149,7 +148,6 @@ impl Host {
             p.turn_reported = true;
         }
         self.send_notice(NoticeView {
-            idea: None,
             kind: NoticeKind::Report,
             pane: r.pane.clone(),
             machine: r.machine_id.clone(),

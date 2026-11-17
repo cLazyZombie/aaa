@@ -225,7 +225,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
             format!("{}:{s}", r.as_str())
         }
         // 알린 세션만으로 정한 thread 범위(pane 밖·떼어 낸 프로세스·다른 pane): 보기로 줄이되 그 thread의 신원은 주지 않는다
-        // (기획 대화·아이디어 thread의 자기 문서 쓰기는 `worker:<세션>`이 그 thread pane일 때만이다)
+        // (기획 대화 thread의 자기 문서 쓰기는 `worker:<세션>`이 그 thread pane일 때만이다)
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => {
             format!("{}:{s}@unverified", r.as_str())
         }
@@ -590,7 +590,6 @@ mod tests {
         assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Event(FrontEvent::State { .. })));
         for kind in [NoticeKind::RolloutFinished, NoticeKind::RolloutFailed, NoticeKind::Finished] {
             h.send_notice(NoticeView {
-                idea: None,
                 kind,
                 pane: None,
                 machine: String::new(),

@@ -118,6 +118,7 @@ impl Host {
         use aaa_proto::FrontRequest as R;
         match req {
             R::DesignTree { project } => self.design_tree(&project).await,
+            R::IdeaLinks { project } => Ok(FrontResponse::IdeaLinks { links: self.idea_links(&project)? }),
             R::DesignRead { project, repo, path, branch } => {
                 self.design_read(&project, &repo, &path, branch.as_deref()).await
             }
@@ -171,6 +172,37 @@ impl Host {
         }
         repos.sort_by_key(|(i, _)| *i);
         Ok(FrontResponse::DesignTree { repos: repos.into_iter().map(|(_, v)| v).collect() })
+    }
+
+    /// 지운 옛 아이디어의 n-ID → 옮긴 기획 문서(`<저장소>/<경로>`, t-1959). 프로젝트 폴더 `idea-links.toml`의 한 단 표다.
+    /// 없으면 빈 표다. 꼴이 틀리면 경고만 남기고 빈 표로 둔다(글 속 n-ID는 글자로 보인다). 기획 폴더가 있는 프로젝트 저장소의
+    /// 그 폴더 안 문서만 싣는다(열 수 없는 문서로 잇지 않는다)
+    pub(crate) fn idea_links(&self, project: &str) -> Result<std::collections::BTreeMap<String, String>, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let path = dir.join(IDEA_LINKS);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+            Err(e) => {
+                tracing::warn!(project, "{} 읽기 실패: {e}", path.display());
+                return Ok(Default::default());
+            }
+        };
+        let links = parse_idea_links(&text).unwrap_or_else(|e| {
+            tracing::warn!(project, "{} 꼴이 틀렸다: {e}", path.display());
+            Default::default()
+        });
+        let targets = self.design_targets(project)?;
+        Ok(links
+            .into_iter()
+            .filter(|(_, doc)| {
+                let (repo, path) = doc.split_once('/').unwrap_or_default();
+                targets.iter().any(|t| {
+                    t.name == repo
+                        && t.folder.as_deref().is_some_and(|f| path.starts_with(&format!("{}/", f.trim_matches('/'))))
+                })
+            })
+            .collect())
     }
 
     async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
@@ -394,9 +426,54 @@ pub(crate) fn mime(path: &str) -> &'static str {
     }
 }
 
+/// 프로젝트 폴더의 n-ID 링크 표 파일 이름
+pub(crate) const IDEA_LINKS: &str = "idea-links.toml";
+
+/// `"n-0010" = "pt/docs/design/game-loop.md"` 줄들. 키는 정규 n-ID, 값은 `<저장소>/<Markdown 경로>`(`..`·절대 경로 없음)만 받는다
+pub(crate) fn parse_idea_links(text: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let table: std::collections::BTreeMap<String, String> = toml::from_str(text).map_err(|e| e.to_string())?;
+    let mut out = std::collections::BTreeMap::new();
+    for (id, doc) in table {
+        if aaa_proto::canonical_short_id(&id, 'n').as_deref() != Some(id.as_str()) {
+            return Err(format!("n-ID가 아니다: {id}"));
+        }
+        let ok = doc.len() <= 512
+            && doc.ends_with(".md")
+            && doc.split_once('/').is_some_and(|(repo, path)| !repo.is_empty() && !path.is_empty())
+            && doc.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !p.contains('\\'));
+        if !ok {
+            return Err(format!("{id}: 문서는 `<저장소>/<경로>.md`로 쓴다: {doc}"));
+        }
+        out.insert(id, doc);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// n-ID 링크 표(t-1959): 정규 n-ID와 `<저장소>/<경로>.md`만 받고, 틀린 줄이 있으면 표 전체를 버린다
+    #[test]
+    fn idea_links_accept_only_ids_and_repo_docs() {
+        let ok =
+            parse_idea_links("\"n-0010\" = \"pt/docs/design/game-loop.md\"\n\"n-0004\" = \"engine/doc/design/a.md\"\n")
+                .unwrap();
+        assert_eq!(ok.get("n-0010").map(String::as_str), Some("pt/docs/design/game-loop.md"));
+        assert_eq!(ok.len(), 2);
+        for bad in [
+            "\"n-10\" = \"pt/a.md\"",
+            "\"d-0010\" = \"pt/a.md\"",
+            "\"n-0010\" = \"pt/../a.md\"",
+            "\"n-0010\" = \"/abs/a.md\"",
+            "\"n-0010\" = \"a.md\"",
+            "\"n-0010\" = \"pt/a.png\"",
+            "\"n-0010\" = 3",
+        ] {
+            assert!(parse_idea_links(bad).is_err(), "{bad}");
+        }
+        assert!(parse_idea_links("").unwrap().is_empty());
+    }
     use crate::project::ProjectSettings;
 
     fn settings(toml: &str) -> ProjectSettings {
