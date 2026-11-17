@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
-import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, resolveDocPath, sectionsOf, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
+import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -215,5 +215,35 @@ describe("블록 표지(3-1)", () => {
     sectionsOf([`# a${" ".repeat(200_000)}x`], "s");
     mdBlocks(`> [!계획]${" ".repeat(200_000)}x\r\n> 끝`);
     assert.ok(performance.now() - started < 1000, `${performance.now() - started}ms`);
+  });
+});
+
+// 트리 저장소 필터(t-1946): 이 브라우저에 남긴 값은 믿지 않고 읽는다. 저장소가 빠지면 무시하고, 다 빠지면 전부 보인다
+describe("기획 트리 저장소 필터", () => {
+  const names = ["game", "engine", "tool", "puzzle"];
+  const seen = (picked) => [...shownRepos(names, picked)];
+
+  it("남긴 값: 없음·깨짐·배열 아님·빈 배열은 전부(null), 문자열만 겹침 없이", () => {
+    for (const raw of [null, "", "{", "\"game\"", "{}", "[]", "[1, null, \"\"]"]) assert.equal(parseRepoFilter(raw), null, String(raw));
+    assert.deepEqual(parseRepoFilter('["game", 3, "puzzle", "game"]'), ["game", "puzzle"]);
+  });
+
+  it("보일 저장소: 고른 것 중 지금 있는 것만, 하나도 없으면 전부", () => {
+    assert.deepEqual(seen(null), names);
+    assert.deepEqual(seen(["puzzle", "game"]), ["game", "puzzle"], "트리 차례");
+    assert.deepEqual(seen(["game", "gone"]), ["game"], "없는 저장소는 무시");
+    assert.deepEqual(seen(["gone"]), names, "고른 것이 다 빠지면 전부");
+    assert.deepEqual([...shownRepos([], ["game"])], [], "목록이 비면 비어 있다");
+  });
+
+  it("누름: 전체에서 누르면 그것만, 그 뒤 더하고 빼기, 다 빼거나 다 고르면 전체", () => {
+    assert.deepEqual(pickRepo(names, null, "game"), ["game"]);
+    assert.deepEqual(pickRepo(names, ["gone"], "tool"), ["tool"], "남긴 것이 다 빠진 전체에서도 그것만");
+    assert.deepEqual(pickRepo(names, ["game"], "puzzle"), ["game", "puzzle"]);
+    assert.deepEqual(pickRepo(names, ["game", "puzzle"], "game"), ["puzzle"]);
+    assert.equal(pickRepo(names, ["game"], "game"), null, "다 빼면 전체");
+    assert.equal(pickRepo(names, ["game", "engine", "tool"], "puzzle"), null, "다 고르면 전체(새 저장소도 보인다)");
+    assert.equal(pickRepo(names, ["game"], null), null, "「전체」");
+    assert.deepEqual(pickRepo(names, ["game", "gone"], "tool"), ["game", "gone", "tool"], "잠시 빠진 저장소는 누름으로 지우지 않는다");
   });
 });

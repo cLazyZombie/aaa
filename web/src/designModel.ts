@@ -346,3 +346,34 @@ export function splitContext(text: string): { chips: ContextChip[]; text: string
   }
   return { chips, text: lines.join("\n") };
 }
+
+/** 트리 저장소 필터(t-1946): 이 브라우저에만 남기는 열쇠. 값은 고른 저장소 이름의 JSON 배열이고 없으면 전부 */
+export const REPO_FILTER_KEY = "herdr-web-ui:design-repos";
+
+/** 남긴 값 읽기: 없거나·깨졌거나·빈 배열이면 null(전부) */
+export function parseRepoFilter(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!Array.isArray(v)) return null;
+    const names = [...new Set(v.filter((x): x is string => typeof x === "string" && x !== ""))];
+    return names.length > 0 ? names : null;
+  } catch { return null; }
+}
+
+/** 트리에 보일 저장소 이름. 고른 것 중 지금 목록에 있는 것만 보이고, 하나도 없으면(저장소가 빠짐) 전부 */
+export function shownRepos(names: readonly string[], picked: readonly string[] | null): Set<string> {
+  const hit = picked ? names.filter((n) => picked.includes(n)) : [];
+  return new Set(hit.length > 0 ? hit : names);
+}
+
+/** 칩 누름 뒤 고른 것. `name`이 null이면 「전체」. 전부 보이는 중에 누르면 그 저장소만, 다 고르거나 다 빼면 전체(null).
+ *  지금 목록에 없는 저장소(머신이 잠시 빠짐)는 누름으로 지우지 않는다 */
+export function pickRepo(names: readonly string[], picked: readonly string[] | null, name: string | null): string[] | null {
+  if (name === null) return null;
+  const now = names.filter((n) => picked?.includes(n));
+  if (now.length === 0) return [name];
+  const next = now.includes(name) ? (picked ?? []).filter((n) => n !== name) : [...(picked ?? []), name];
+  const on = names.filter((n) => next.includes(n));
+  return on.length === 0 || on.length === names.length ? null : next;
+}
