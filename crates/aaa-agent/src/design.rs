@@ -2,8 +2,9 @@
 //! 1분에 한 번, FETCH_HEAD를 쓰지 않는다) origin 기본 branch commit의 git 객체에서 읽는다. origin이 없는 저장소는 `HEAD`다.
 use aaa_common::child_process::TokioCommandExt as _;
 use aaa_proto::{
-    AgentResponse, B64, DESIGN_MAX_DOCS, DESIGN_MAX_FILE, DESIGN_MAX_TEXT, DesignChange, DesignDocEntry, DesignTree,
-    ErrorBody, ErrorCode, design_branch, design_clean_path, design_inside, design_slug_ok, design_title,
+    AgentResponse, B64, DESIGN_ID_BYTES, DESIGN_MAX_DOCS, DESIGN_MAX_FILE, DESIGN_MAX_TEXT, DesignChange,
+    DesignDocEntry, DesignTree, ErrorBody, ErrorCode, design_branch, design_clean_path, design_doc_id, design_inside,
+    design_slug_ok, design_title,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
@@ -400,7 +401,7 @@ async fn list(
     docs.sort_by(|a, b| a.path.cmp(&b.path));
     let truncated = docs.len() > DESIGN_MAX_DOCS;
     docs.truncate(DESIGN_MAX_DOCS);
-    let titles = titles(top, &docs).await?;
+    let heads = heads(top, &docs).await?;
     // 표지 세기는 따로 짧은 시한이다: 못 세면 수를 모른다고 알리고 트리는 그대로 보인다
     let counted = if count {
         tokio::time::timeout(MARKS_TIMEOUT, marks(top, &commit, folder, &docs)).await.ok().flatten()
@@ -411,13 +412,25 @@ async fn list(
     let mut marks = counted.unwrap_or_default();
     let docs = docs
         .into_iter()
-        .zip(titles)
-        .map(|(e, title)| {
+        .zip(heads)
+        .map(|(e, (title, id))| {
             let Marks { plans, open, tasks } = marks.remove(&e.path).unwrap_or_default();
-            DesignDocEntry { path: e.path, title, bytes: e.size, plans, open, tasks }
+            let id_marked = id.is_some();
+            let id_file = id.clone();
+            DesignDocEntry { path: e.path, title, bytes: e.size, plans, open, tasks, id, id_marked, id_file }
         })
         .collect();
-    Ok(DesignTree { commit, committed_ms, base, docs, truncated, fetch_error, marks: marked, ..Default::default() })
+    Ok(DesignTree {
+        commit,
+        committed_ms,
+        base,
+        docs,
+        truncated,
+        fetch_error,
+        marks: marked,
+        ids: true,
+        ..Default::default()
+    })
 }
 
 /// 문서 하나의 블록 표지 수(계획·미정)와 넘긴 계획의 d-ID(나온 차례)
@@ -516,12 +529,15 @@ async fn changes(top: &Path, folder: &str, main: &str, tip: &str) -> Result<(Vec
     Ok((changed, ahead))
 }
 
-/// 문서마다 앞부분만 읽어 첫 `# ` 제목을 찾는다(`cat-file --batch` 한 번)
-async fn titles(top: &Path, docs: &[Entry]) -> Result<Vec<String>> {
+/// 문서마다 앞부분만 읽어 첫 `# ` 제목과 ID 표지(t-1957)를 찾는다(`cat-file --batch` 한 번)
+async fn heads(top: &Path, docs: &[Entry]) -> Result<Vec<(String, Option<String>)>> {
     let shas: Vec<&str> = docs.iter().map(|e| e.sha.as_str()).collect();
-    let mut titles = Vec::with_capacity(docs.len());
-    each_head(top, &shas, TITLE_BYTES, |_, head| titles.push(design_title(&String::from_utf8_lossy(head)))).await?;
-    Ok(titles)
+    let mut heads = Vec::with_capacity(docs.len());
+    each_head(top, &shas, TITLE_BYTES.max(DESIGN_ID_BYTES), |i, head| {
+        heads.push((design_title(&String::from_utf8_lossy(head)), design_doc_id(head, docs[i].size)))
+    })
+    .await?;
+    Ok(heads)
 }
 
 /// blob 여럿의 앞 `keep`바이트를 준 차례대로 하나씩 넘긴다(`cat-file --batch` 한 번, 한 번에 하나만 쥔다)

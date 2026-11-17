@@ -152,6 +152,9 @@ impl Host {
                 // 할 일·저장·올리기·예약을 차례로 기다리는 큰 future다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
                 Box::pin(self.design_handoff(role, actor, &project, pick)).await
             }
+            R::DesignIds { project } => self.design_ids_list(&project),
+            // 트리 읽기·branch 열기·agent 쓰기를 차례로 기다리는 큰 future다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
+            R::DesignMarkIds { project, repo } => Box::pin(self.design_mark_ids(role, actor, &project, &repo)).await,
             _ => Err(err(ErrorCode::Internal, "기획 요청이 아니다")),
         }
     }
@@ -176,7 +179,7 @@ impl Host {
         Ok(FrontResponse::DesignTree { repos: repos.into_iter().map(|(_, v)| v).collect() })
     }
 
-    async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
+    pub(crate) async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
         let mut view = DesignRepoView {
             repo: t.name.clone(),
             machine: t.machine.clone().unwrap_or_default(),
@@ -206,7 +209,8 @@ impl Host {
         }
         .await;
         match fresh {
-            Ok(tree) => {
+            Ok(mut tree) => {
+                self.design_ids_fill(project, &t.name, &mut tree);
                 self.design_trees.lock().unwrap().insert(key, tree.clone());
                 view.tree = Some(tree);
             }
@@ -218,6 +222,12 @@ impl Host {
         }
         view.branches = self.design_branch_views(project, &t.name, &t.path, &folder, &mid).await;
         view
+    }
+
+    /// 마지막으로 읽은 그 저장소 트리에서 그 문서의 ID
+    fn design_tree_id(&self, project: &str, repo: &str, path: &str) -> Option<String> {
+        let trees = self.design_trees.lock().unwrap();
+        trees.get(&format!("{project}/{repo}"))?.docs.iter().find(|d| d.path == path)?.id.clone()
     }
 
     /// 마지막으로 읽은 그 저장소 트리의 commit(문서·그림을 같은 판으로 읽는다)
@@ -256,6 +266,15 @@ impl Host {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
         let title = aaa_proto::design_title(&text);
+        // 문서 안 표지, 없으면 원장의 그 경로 번호(main 판만: 기획 branch의 새 문서는 저장할 때 번호를 받는다)
+        // main 판은 트리와 같은 ID(원장으로 맞춘 번호: 복사본의 표지는 원본 번호라 그대로 쓰지 않는다)
+        let tree_id = branch.is_none().then(|| self.design_tree_id(project, &target.name, &path)).flatten();
+        let id = tree_id.or_else(|| aaa_proto::design_text_id(&text)).or_else(|| {
+            (branch.is_none())
+                .then(|| self.db.design_id_of_path(project, &target.name, &path).ok().flatten())
+                .flatten()
+                .map(crate::db::design_id_text)
+        });
         Ok(FrontResponse::DesignDoc {
             doc: DesignDoc {
                 project: project.to_string(),
@@ -267,6 +286,7 @@ impl Host {
                 commit,
                 committed_ms,
                 branch: branch.map(str::to_string),
+                id,
             },
         })
     }

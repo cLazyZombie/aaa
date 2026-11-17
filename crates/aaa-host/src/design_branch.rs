@@ -29,7 +29,7 @@ pub(crate) const WRITE_FEATURE: &str = "design_write.v1";
 /// 기획 branch에 그림·영상을 조각으로 넘기는 agent 기능(t-1894 2-3)
 pub(crate) const ATTACH_FEATURE: &str = "design_attach.v1";
 /// worktree 만들기(origin 받기 포함)·commit·내리기를 기다리는 상한
-const WRITE_WAIT: Duration = Duration::from_secs(120);
+pub(crate) const WRITE_WAIT: Duration = Duration::from_secs(120);
 /// 올리기(agent의 검사 300초 + 올리기 60초보다 길게)
 const PUSH_WAIT: Duration = Duration::from_secs(420);
 /// 실패한 올리기를 다시 하기까지(쉼 창의 10배, 적어도 10분, 거듭 실패하면 두 배씩 최대 64배)
@@ -421,6 +421,9 @@ impl Host {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| if base.is_some() { format!("{path} 고침") } else { format!("{path} 새로") });
         let conn = self.design_write_conn(&mid)?;
+        // 기획서 ID(t-1957): 표지가 없는 문서는 원장 번호의 표지를 넣어 저장한다(있는 표지는 고쳐 쓰지 않는다). 그 branch의
+        // 옛 글을 읽을 수 있어 heap에 둔다(공용 dispatcher 스택)
+        let text = Box::pin(self.design_text_with_id(project, &target.name, slug, &path, base.is_some(), text)).await;
         // 사람·대화 thread의 저장은 맡긴 블록이 바뀌었는지 본다(구현 맡김 자신의 저장은 빼고)
         let relay = event.is_none();
         let req_base_none = base.is_none();
@@ -665,7 +668,7 @@ impl Host {
     }
 
     /// 끝나지 않은 반영 thread
-    fn design_applying(&self, project: &str, rec: &Rec) -> Option<String> {
+    pub(crate) fn design_applying(&self, project: &str, rec: &Rec) -> Option<String> {
         rec.apply.clone().filter(|id| {
             self.load(project, id)
                 .is_ok_and(|t| !matches!(t.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Failed))
@@ -695,7 +698,7 @@ impl Host {
             task: format!(
                 "기획 branch `design/{slug}`(주제 「{}」)의 기획 문서를 main에 반영한다. 이 worktree는 그 branch에서 갈라졌다.\n\n\
                  - origin main을 받아 합친다. 겹치면 양쪽 내용을 살려 고친다.\n\
-                 - 기획 폴더(`{folder}/`) 밖은 바꾸지 않는다. 문서 표기(`[!계획]`·`[!미정]`·「바뀐 것」)를 지킨다.\n\
+                 - 기획 폴더(`{folder}/`) 밖은 바꾸지 않는다. 문서 표기(`[!계획]`·`[!미정]`·「바뀐 것」·제목 아래 ID 표지 `<!-- aaa-id: k-NNNN -->`)를 지킨다.\n\
                  - 저장소 검사를 돌려 통과시킨 뒤 `[병합 준비됨]`으로 보고하고 착지 창을 기다린다.\n",
                 rec.title
             ),
@@ -902,7 +905,7 @@ impl Host {
     }
 
     /// 저장 뒤 쉼(`design_push_secs`)이 지나도록 다음 저장이 없으면 origin에 올린다
-    fn design_push_later(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
+    pub(crate) fn design_push_later(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
         let key = format!("{project}/{repo}/{slug}");
         let generation = {
             let mut map = self.design_push_gen.lock().unwrap();

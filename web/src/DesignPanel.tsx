@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, Gi
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
-import type { DesignBranchView, DesignRepoView, IdeaSummary } from "./gen/proto";
+import type { DesignBranchView, DesignIdView, DesignRepoView, IdeaSummary } from "./gen/proto";
 import { ideaLegacy } from "./ideasModel";
 import { RowMenu } from "./RowMenu";
 import { onRowKey } from "./Sidebar";
@@ -46,6 +46,24 @@ export function useDesign(up: boolean, wanted: boolean): Design {
     return () => { live = false; };
   }, [up, asked, rev]);
   return { repos, error, loading, reload, picked, setPicked };
+}
+
+/**
+ * 기획서 ID(`k-NNNN`, t-1957): 지금 main 트리에 있는 문서의 ID. 대화·보고 글의 `k-NNNN`은 이 목록에 있을 때만 링크다. host 원장에서
+ * 읽고(agent를 거치지 않는다), 기획 트리를 새로 읽을 때마다(원장이 맞춰진다) 다시 읽는다
+ */
+export function useDesignIds(up: boolean, repos: DesignRepoView[] | null): Map<string, DesignIdView> {
+  const [ids, setIds] = useState<Map<string, DesignIdView>>(() => new Map());
+  useEffect(() => {
+    if (!up) return;
+    let live = true;
+    call({ op: "design_ids" }).then(
+      (r) => { if (live && r.kind === "design_ids") setIds(new Map(r.ids.map((i) => [i.id, i]))); },
+      () => { /* 옛 host: 기획서 ID 링크 없이 */ },
+    );
+    return () => { live = false; };
+  }, [up, repos]);
+  return ids;
 }
 
 export function DesignPanel({ design, selected, onOpen, ideas, ideaSelected, onOpenIdea, onMoveIdea, canControl = false }: {
@@ -186,7 +204,7 @@ function RepoRow({ repo: r, todo, onAll, collapsed, onToggle, openDirs, onToggle
   const added = useMemo(() => addedDocs(r), [r]);
   const marks = useMemo(() => branchesByPath(r), [r]);
   const nodes = useMemo(() => (r.folder && r.tree
-    ? designTree(r.folder, [...r.tree.docs, ...added.map((a) => ({ path: a.path, title: "", bytes: 0, plans: 0, open: 0, tasks: [] }))])
+    ? designTree(r.folder, [...r.tree.docs, ...added.map((a) => ({ path: a.path, title: "", bytes: 0, plans: 0, open: 0, tasks: [], id_marked: false }))])
     : []), [r.folder, r.tree, added]);
   const fresh = useMemo(() => new Set(added.map((a) => a.path)), [added]);
   const total = useMemo(() => markCounts(nodes.flatMap(docsUnder)), [nodes]);
@@ -258,7 +276,7 @@ function NodeRow({ node, depth, repo, todo, marks, fresh, openDirs, onToggleDir,
     return (
       <li role="treeitem" aria-selected={sel}>
         <div className={`design-row is-doc${sel ? " is-selected" : ""}`} style={pad} role="button" tabIndex={0} aria-current={sel ? "true" : undefined}
-          title={node.doc.path} data-testid="design-doc" data-path={node.doc.path} onClick={go} onKeyDown={(e) => onRowKey(e, go)}>
+          title={node.doc.id ? `${node.doc.id} · ${node.doc.path}` : node.doc.path} data-testid="design-doc" data-path={node.doc.path} data-id={node.doc.id} onClick={go} onKeyDown={(e) => onRowKey(e, go)}>
           <span className={`design-mark${isNew ? " is-new" : ""}`} aria-hidden="true">{isNew ? <Plus /> : <FileText />}</span>
           <span className="design-name">{docLabel(node.doc)}{node.doc.title && <span className="design-file">{stem(node.doc.path)}</span>}</span>
           <Counts n={markCounts([node.doc])} />

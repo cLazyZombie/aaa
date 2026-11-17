@@ -66,7 +66,9 @@ fn design_branch_saves_on_its_own_branch_pushes_after_rest_and_discards() {
     let head = second["commit"].as_str().unwrap().to_string();
 
     let shown = w.h.ok(&["plan", "show", "repo", doc, "--branch", "boss-dex"]);
-    assert_eq!(shown["doc"]["text"], "# 보스 도감\n\n## 해골 왕\n");
+    // 표지 없는 문서는 저장할 때 host가 원장 번호의 ID 표지를 제목 아래 넣는다(t-1957)
+    assert_eq!(shown["doc"]["id"], "k-0001");
+    assert_eq!(shown["doc"]["text"], "# 보스 도감\n<!-- aaa-id: k-0001 -->\n\n## 해골 왕\n");
     assert_eq!(
         (shown["doc"]["commit"].as_str(), shown["doc"]["branch"].as_str()),
         (Some(head.as_str()), Some("boss-dex"))
@@ -74,8 +76,8 @@ fn design_branch_saves_on_its_own_branch_pushes_after_rest_and_discards() {
     assert!(w.h.json(&["plan", "show", "repo", doc]).is_err(), "main에는 없다");
     let list = branches(&w);
     assert_eq!(list[0]["ahead"], 2, "{list}");
-    // 2-3: 고친 파일마다 더하고 뺀 줄 수(웹 반영·버리기 창)
-    assert_eq!(list[0]["changed"], serde_json::json!([{ "path": doc, "status": "A", "added": 3, "removed": 0 }]));
+    // 2-3: 고친 파일마다 더하고 뺀 줄 수(웹 반영·버리기 창). ID 표지 줄도 센다
+    assert_eq!(list[0]["changed"], serde_json::json!([{ "path": doc, "status": "A", "added": 4, "removed": 0 }]));
 
     // 쉼(1초) 뒤 한 번 올린다. main과 main checkout은 그대로다
     let pushed =
@@ -227,12 +229,14 @@ big = '# 큰 문서\n' + line * ((500 * 1024) // len(line.encode()))
 assert 480 * 1024 < len(big.encode()) <= 512 * 1024, len(big.encode())
 open(big_path, 'w').write(big)
 call('plan', 'save', 'game', 'docs/big.md', '--branch', 'boss-dex', '--new', '--file', big_path, '--summary', '큰 문서')
-assert call('plan', 'show', 'game', 'docs/big.md', '--branch', 'boss-dex')['doc']['text'] == big
+# 저장할 때 host가 제목 아래 ID 표지를 넣는다(다음 줄과 빈 줄로 띄운다, t-1957)
+got = call('plan', 'show', 'game', 'docs/big.md', '--branch', 'boss-dex')['doc']
+assert got['text'] == big.replace('\n', '\n<!-- aaa-id: ' + got['id'] + ' -->\n\n', 1), got['id']
 open(big_path, 'w').write(big + line * 1000)
 assert '너무 크다' in call('plan', 'save', 'game', 'docs/big2.md', '--branch', 'boss-dex', '--new', '--file', big_path, ok=False)
 saved = call('plan', 'save', 'game', 'docs/boss.md', '--branch', 'boss-dex', '--new', '--file', {body:?}, '--summary', '해골 왕 정리')
 doc = call('plan', 'show', 'game', 'docs/boss.md', '--branch', 'boss-dex')['doc']
-assert doc['text'] == '# 보스 도감\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
+assert doc['text'] == '# 보스 도감\n<!-- aaa-id: ' + doc['id'] + ' -->\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
 assert any(r['repo'] == 'game' for r in call('plan', 'list')['repos'])
 assert '자기 branch' in call('plan', 'save', 'game', 'docs/x.md', '--branch', 'other', '--new', '--file', {body:?}, ok=False)
 # 열기·말하기·버리기는 중계 목록 밖이라 CLI가 보내지 않는다(host·agent 중계 검사는 단위 시험)
@@ -305,7 +309,9 @@ print('design-relay-ok', saved['commit'])
     ]);
     let cwd = PathBuf::from(built["cwd"].as_str().unwrap());
     git(&cwd, &["merge-base", "--is-ancestor", &commit, "HEAD"]);
-    assert_eq!(std::fs::read_to_string(cwd.join("docs/boss.md")).unwrap(), "# 보스 도감\n\n## 해골 왕\n");
+    let boss = std::fs::read_to_string(cwd.join("docs/boss.md")).unwrap();
+    let id = aaa_proto::design_text_id(&boss).expect("저장한 문서의 ID 표지");
+    assert_eq!(boss, format!("# 보스 도감\n<!-- aaa-id: {id} -->\n\n## 해골 왕\n"));
 
     // 2-3: 사람이 고친 문서는 다음 말 앞에 알리고, 대화 사건(새 대화·저장·올림·사람 고침)과 고친 줄 수가 branch 보기에 실린다
     let doc = w.h.ok(&["plan", "show", "game", "docs/boss.md", "--branch", "boss-dex"])["doc"].clone();
@@ -330,7 +336,10 @@ print('design-relay-ok', saved['commit'])
         assert!(kinds.contains(&want), "{want}: {kinds:?}");
     }
     let changed = b["changed"].as_array().unwrap().iter().find(|c| c["path"] == "docs/boss.md").unwrap().clone();
-    assert_eq!((changed["status"].as_str(), changed["added"].as_u64()), (Some("A"), Some(5)), "{changed}");
+    // 사람 글에 표지 줄이 없어도 같은 경로의 번호로 다시 넣는다(ID 표지 줄 하나가 더해진 6줄, t-1957)
+    assert_eq!((changed["status"].as_str(), changed["added"].as_u64()), (Some("A"), Some(6)), "{changed}");
+    let again = w.h.ok(&["plan", "show", "game", "docs/boss.md", "--branch", "boss-dex"])["doc"].clone();
+    assert_eq!(again["id"].as_str(), Some(id.as_str()), "같은 번호");
     w.h.ok(&["plan", "say", "game", "boss-dex", "넷째말고유"]);
     w.h.wait_output(&pane, "(문서 고침: docs/boss.md)", T);
     wait_for("알린 고침 비움", T, || {
@@ -535,7 +544,10 @@ fn apply_over_the_thread_limit_waits_for_a_slot_and_starts_itself() {
     assert_eq!(shown["thread_kind"], "worktree", "{shown}");
     let cwd = PathBuf::from(shown["cwd"].as_str().unwrap());
     git(&cwd, &["merge-base", "--is-ancestor", &later, "HEAD"]);
-    assert_eq!(std::fs::read_to_string(cwd.join("docs/shop.md")).unwrap(), "# 상점\n\n## 물약\n");
+    // 저장할 때 host가 넣은 ID 표지(t-1957)와 함께
+    let shop = std::fs::read_to_string(cwd.join("docs/shop.md")).unwrap();
+    let id = aaa_proto::design_text_id(&shop).expect("저장한 문서의 ID 표지");
+    assert_eq!(shop, format!("# 상점\n<!-- aaa-id: {id} -->\n\n## 물약\n"));
     w.h.ticks(1);
     assert_eq!(branches(&w)[0]["apply"], apply.as_str(), "한 번만 띄운다");
     assert_eq!(

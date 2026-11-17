@@ -378,6 +378,110 @@ pub async fn save_bytes(
     )
 }
 
+/// 기획서 ID 한 번에 달기(design_ids.v1, t-1957): 기획 branch worktree의 문서마다 표지가 없으면 넣고, 바뀐 파일만 한 commit으로
+/// 남긴다. 이미 표지가 있는 문서는 그대로다(다시 돌려도 안전하다). 검사는 `save_bytes`와 같고(그 branch·깨끗한 worktree·일반
+/// 파일·symlink 없는 폴더), commit하지 못하면 쓴 파일을 모두 HEAD로 되돌린다
+pub async fn mark_ids(
+    cfg: &ThreadsConfig,
+    (project, repo, folder, slug): (&str, &str, &str, &str),
+    ids: &[aaa_proto::DesignIdMark],
+    message: &str,
+) -> Result<AgentResponse, ErrorBody> {
+    reply(
+        async {
+            let branch = checked(project, slug)?;
+            let folder = design_clean_path(folder).context("기획 폴더 경로가 잘못됐다")?;
+            if message.trim().is_empty() {
+                bail!("commit 메시지가 비었다");
+            }
+            let mut picks = Vec::with_capacity(ids.len());
+            for m in ids {
+                let path = design_clean_path(&m.path).context("문서 경로가 잘못됐다")?;
+                if !design_inside(&folder, &path) {
+                    bail!("기획 폴더 밖 경로다: {path}");
+                }
+                let id = aaa_proto::canonical_short_id(&m.id, aaa_proto::DESIGN_ID_PREFIX)
+                    .with_context(|| format!("기획서 ID가 아니다: {}", m.id))?;
+                picks.push((path, id));
+            }
+            let top = toplevel(repo).await?;
+            let (cwd, _) = own_worktree(cfg, &top, project, slug)
+                .await?
+                .ok_or_else(|| Missing(format!("{branch}의 worktree가 없다(쉬는 branch면 먼저 연다)")))?;
+            let head = git_told(&cwd, &["symbolic-ref", "-q", "HEAD"], GIT_WAIT).await.unwrap_or_default();
+            if head != format!("refs/heads/{branch}") {
+                bail!("기획 worktree가 {branch}에 있지 않다({head})");
+            }
+            let dirty = git_told(&cwd, &["status", "--porcelain", "--untracked-files=all"], GIT_WAIT).await?;
+            if !dirty.is_empty() {
+                bail!("기획 worktree에 commit하지 않은 변경이 있다: 사람이 확인한다({})", cwd.display());
+            }
+            let listed = entries(
+                &git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?,
+            )?;
+            // 검사와 새 글을 먼저 모두 만든 뒤 쓴다: 검사 실패로 반쯤 쓴 worktree를 남기지 않는다
+            let mut writes: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+            for (path, id) in &picks {
+                // vendor 폴더(남의 원문)는 host가 고르지 않지만 agent도 고치지 않는다
+                if aaa_proto::design_id_unmarked_path(path) {
+                    continue;
+                }
+                // 이 branch에 없는 문서(그 사이 지웠다·옮겼다)는 건너뛴다: 답의 수가 줄어 host가 알린다
+                let Some(e) = listed.iter().find(|e| e.path == *path) else { continue };
+                if !e.regular() {
+                    bail!("일반 파일이 아니다: {path}");
+                }
+                if !Path::new(path).extension().is_some_and(|x| x.eq_ignore_ascii_case("md")) {
+                    continue;
+                }
+                plain_parents(&cwd, path)?;
+                let target = cwd.join(path);
+                let text = std::fs::read(&target).with_context(|| format!("문서를 읽지 못했다: {path}"))?;
+                let Ok(text) = String::from_utf8(text) else { continue };
+                let out = aaa_proto::design_put_id(&text, id);
+                if out == text || out.len() as u64 > DESIGN_MAX_TEXT {
+                    continue;
+                }
+                writes.push((path.clone(), target, out));
+            }
+            let mut marked = Vec::new();
+            for (path, target, out) in writes {
+                marked.push(path.clone());
+                if let Err(e) = std::fs::write(&target, out) {
+                    restore(&cwd, &marked).await;
+                    return Err(anyhow!(e).context(format!("문서를 쓰지 못했다: {path}")));
+                }
+            }
+            if marked.is_empty() {
+                return Ok(AgentResponse::DesignIdsMarked { commit: None, marked });
+            }
+            let mut add: Vec<&str> = vec!["add", "--"];
+            add.extend(marked.iter().map(String::as_str));
+            let mut commit: Vec<&str> = vec!["commit", "--quiet", "--no-verify", "-m", message, "--"];
+            commit.extend(marked.iter().map(String::as_str));
+            let committed = async {
+                git_told(&cwd, &add, GIT_WAIT).await?;
+                git_told(&cwd, &commit, GIT_WAIT).await
+            }
+            .await;
+            if let Err(e) = committed {
+                restore(&cwd, &marked).await;
+                return Err(e);
+            }
+            let commit = git_told(&cwd, &["rev-parse", "HEAD"], GIT_WAIT).await?;
+            Ok(AgentResponse::DesignIdsMarked { commit: Some(commit), marked })
+        }
+        .await,
+    )
+}
+
+/// 한 번에 달기에서 쓴 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
+async fn restore(cwd: &Path, paths: &[String]) {
+    let mut args: Vec<&str> = vec!["checkout", "--quiet", "HEAD", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획서 ID 달기 되돌리기");
+}
+
 /// 저장소 기획 검사를 그 worktree에서 셸 없이 돌린다(출력은 받지 않는다: 비밀값이 섞일 수 있다)
 async fn run_check(cwd: &Path, check: &[String]) -> Result<()> {
     use aaa_common::child_process::TokioCommandExt as _;
@@ -605,6 +709,91 @@ mod tests {
     }
 
     /// 기획 branch를 열어 쓰고 올리고, 쉬느라 내렸다 다시 열고, 버린다. main checkout과 main은 그대로다
+    /// 기획서 ID 한 번에 달기(t-1957): 표지 없는 문서만 한 commit, vendor·없는 문서·이미 단 문서는 건너뛰고, 다시 해도 그대로
+    #[tokio::test]
+    async fn mark_ids_adds_markers_in_one_commit() {
+        use aaa_proto::DesignIdMark;
+        let (t, clone) = lab().await;
+        let repo = clone.to_str().unwrap();
+        let cfg = cfg(t.path());
+        sh(&clone, &["config", "user.name", "t"]).await;
+        sh(&clone, &["config", "user.email", "t@example.com"]).await;
+        let Ok(AgentResponse::DesignTree(main)) = crate::design::tree(repo, "docs", None).await else {
+            panic!("트리")
+        };
+        assert!(main.ids, "트리는 ID 표지를 읽었다");
+        assert!(main.docs.iter().all(|d| d.id.is_none() && !d.id_marked));
+        let Ok(AgentResponse::DesignBranch { cwd, head, .. }) = open(&cfg, "demo", repo, "aaa-ids").await else {
+            panic!("열기")
+        };
+        let mark = |path: &str, id: &str| DesignIdMark { path: path.into(), id: id.into() };
+        let ids = [
+            mark("docs/overview.md", "k-1"),
+            mark("docs/game-loop/README.md", "k-0002"),
+            mark("docs/missing.md", "k-0003"),
+            mark("docs/vendor/LICENSE.md", "k-0004"),
+        ];
+        let Ok(AgentResponse::DesignIdsMarked { commit: Some(commit), marked }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &ids, "기획: 기획서 ID 표지 4개 (사람)").await
+        else {
+            panic!("달기")
+        };
+        assert_eq!(marked, ["docs/overview.md", "docs/game-loop/README.md"]);
+        let cwd = Path::new(&cwd);
+        assert_eq!(out(cwd, &["rev-list", "--count", &format!("{head}..{commit}")], b"").await, "1", "한 commit");
+        assert_eq!(std::fs::read_to_string(cwd.join("docs/overview.md")).unwrap(), "# 개요\n<!-- aaa-id: k-0001 -->\n");
+        assert_eq!(
+            std::fs::read_to_string(cwd.join("docs/game-loop/README.md")).unwrap(),
+            "---\nx: 1\n---\n# 게임 루프\n<!-- aaa-id: k-0002 -->\n\n![그림](media/a.png)\n",
+            "YAML 머리 뒤 제목 아래"
+        );
+        assert_eq!(out(cwd, &["status", "--porcelain"], b"").await, "", "남은 변경 없음");
+        let Ok(AgentResponse::DesignIdsMarked { commit: None, marked }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &ids, "기획: 다시").await
+        else {
+            panic!("다시 달기")
+        };
+        assert!(marked.is_empty(), "이미 단 문서는 그대로");
+        let Ok(AgentResponse::DesignTree(branch)) = crate::design::tree(repo, "docs", Some("aaa-ids")).await else {
+            panic!("branch 트리")
+        };
+        let got: Vec<_> = branch.docs.iter().map(|d| (d.path.as_str(), d.id.as_deref(), d.id_marked)).collect();
+        assert_eq!(
+            got,
+            [("docs/game-loop/README.md", Some("k-0002"), true), ("docs/overview.md", Some("k-0001"), true)]
+        );
+        let e = mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &[mark("docs/overview.md", "d-1")], "기획: x")
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadRequest, "{e}");
+        // 뒤 문서가 일반 파일이 아니면 앞 문서도 쓰지 않는다(반쯤 쓴 worktree를 남기지 않는다, symlink는 Unix에서)
+        #[cfg(unix)]
+        {
+            std::fs::write(cwd.join("docs/new.md"), "# 새 문서\n").unwrap();
+            std::os::unix::fs::symlink("overview.md", cwd.join("docs/link.md")).unwrap();
+            sh(cwd, &["add", "docs/new.md", "docs/link.md"]).await;
+            sh(cwd, &["commit", "-q", "-m", "더함"]).await;
+            let e = mark_ids(
+                &cfg,
+                ("demo", repo, "docs", "aaa-ids"),
+                &[mark("docs/new.md", "k-5"), mark("docs/link.md", "k-6")],
+                "기획: x",
+            )
+            .await
+            .unwrap_err();
+            assert!(e.message.contains("일반 파일이 아니다"), "{e}");
+            assert_eq!(std::fs::read_to_string(cwd.join("docs/new.md")).unwrap(), "# 새 문서\n");
+            assert_eq!(out(cwd, &["status", "--porcelain"], b"").await, "", "남은 변경 없음");
+        }
+        // 그림은 고르지 않는다
+        let Ok(AgentResponse::DesignIdsMarked { commit: None, .. }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &[mark("docs/game-loop/media/a.png", "k-7")], "기획: x")
+                .await
+        else {
+            panic!("그림은 건너뛴다")
+        };
+    }
+
     #[tokio::test]
     async fn open_save_push_rest_and_discard() {
         let (t, clone) = lab().await;

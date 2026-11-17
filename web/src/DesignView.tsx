@@ -8,7 +8,7 @@ import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
 import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
-import { branchesByPath, calloutOf, mergedToMain, changedBlocks, designFileUrl, designTarget, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, type ArchiveLookup, type Callout } from "./designModel";
+import { branchesByPath, calloutOf, mergedToMain, changedBlocks, designFileUrl, designTarget, idLineOf, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, withoutIdLines, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
 import { OpenFileContext } from "./herdr/filePaths.ts";
@@ -334,6 +334,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
     return plans;
   };
   const renderBlock = (b: string, i: number) => {
+    // ID 표지 줄은 그리지 않는다(머리의 ID로 보인다, t-1957)
+    if (idLineOf(b) !== null) return null;
     const c = callouts[i];
     const md = <ReportMarkdown base={null} image={image} text={c ? c.body : b} onImages={lightbox.open} captions />;
     return (
@@ -347,7 +349,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
   // 표지가 없으면 문서 전체를 그대로 그린다. branch 판은 main과 다른 덩어리를 표시하므로 덩어리마다 그린다(2-3과 같다)
   const renderBody = (): ReactNode => {
     if (!blocks || !current) return null;
-    if (!marked && callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={current.text} onImages={lightbox.open} captions />;
+    if (!marked && callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={withoutIdLines(current.text)} onImages={lightbox.open} captions />;
     const shown = (i: number) => !(look === "now" && (callouts[i] || onlyPlans(i)));
     if (marked) return blocks.map((b, i) => (shown(i) ? renderBlock(b, i) : null));
     const out: ReactNode[] = [];
@@ -358,7 +360,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
       run = [];
     };
     blocks.forEach((b, i) => {
-      if (!shown(i)) return;
+      if (!shown(i) || idLineOf(b) !== null) return;
       if (callouts[i]) { flush(); out.push(renderBlock(b, i)); return; }
       if (run.length === 0) start = i;
       run.push(b);
@@ -459,6 +461,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
           ) : current && (
             <div className="design-body" data-testid="design-body">
               <div className="design-meta" data-testid="design-meta">
+                {current.id && <span className="design-id-chip" title="기획서 ID" data-testid="design-id">{current.id}</span>}
                 {branch ? (
                   <>
                     <span className="design-branch-chip"><GitBranch aria-hidden="true" />design/{branch.slug}</span>

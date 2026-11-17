@@ -326,7 +326,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.179: DesignBranchView.read(agent가 읽은 차이를 실었나: 「main에 들어감」 판정, t-1950).
 // 1.180: 자동화 thread 동작의 저장소 펼치기 `AutomationThread.repos = "design"`와 AutomationExecution.repo(선택, t-1960).
 //        옛 host는 모르는 칸으로 거절한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 180 };
+// 1.181: 기획서 ID(t-1957): `design_ids`(지금 트리의 k-NNNN 목록)·`design_mark_ids`(한 번에 달기), DesignDocEntry.id·id_marked·
+//        id_file, DesignTree.ids, DesignDoc.id. 옛 host의 `design_ids` 거절은 웹이 무시한다(링크 없이).
+pub const FRONT_API: Version = Version { major: 1, minor: 181 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

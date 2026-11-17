@@ -137,6 +137,26 @@ export function slugSuggest(title: string): string {
   return s === "main" ? "main-1" : s;
 }
 
+/** 기획서 ID 표지 줄(`<!-- aaa-id: k-0012 -->`, t-1957)이면 정규형 ID. Rust `design_id_line`과 같은 규칙이다 */
+export function idLineOf(line: string): string | null {
+  const m = /^\s*<!--\s*aaa-id:\s*(k-\d+)\s*-->\s*$/.exec(line);
+  return m ? canonicalShortId(m[1]!, "k") : null;
+}
+
+/** 그릴 글: 코드 울타리 밖의 ID 표지 줄을 뺀다(표지는 화면에 보이지 않고 머리의 ID로 보인다) */
+export function withoutIdLines(text: string): string {
+  let fence: string | null = null;
+  return text.split("\n").filter((line) => {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
+    if (fence) {
+      if (mark && mark[0] === fence[0] && mark.length >= fence.length && line.trim() === mark) fence = null;
+      return true;
+    }
+    if (mark) { fence = mark; return true; }
+    return idLineOf(line) === null;
+  }).join("\n");
+}
+
 /** markdown 최상위 덩어리: 빈 줄로 나누고, 코드 울타리(```·~~~) 안은 하나로 둔다 */
 export function mdBlocks(text: string): string[] {
   const out: string[] = [];
@@ -156,6 +176,8 @@ export function mdBlocks(text: string): string[] {
     if (line.trim() === "") { flush(); continue; }
     // 제목 줄은 홀로 한 덩어리(바로 아래 글과 따로 표시한다)
     if (/^#{1,6}\s/.test(line)) { flush(); out.push(line); continue; }
+    // ID 표지 줄도 홀로 한 덩어리다(Rust `design_marks`와 같다): 그리지 않는다
+    if (idLineOf(line) !== null) { flush(); out.push(line); continue; }
     cur.push(line);
   }
   flush();

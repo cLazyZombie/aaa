@@ -1,4 +1,4 @@
-<!-- 표지 세기 공용 견본(t-1894 3-1): agent count_marks와 웹 mdBlocks·calloutOf가 같아야 한다. 시험은 CRLF로 바꾼 판도 본다. expect plans=6 open=2 tasks=d-0012,d-0013,d-0014,d-0012 -->
+<!-- 표지 세기 공용 견본(t-1894 3-1): agent count_marks와 웹 mdBlocks·calloutOf가 같아야 한다. 시험은 CRLF로 바꾼 판도 본다. expect plans=7 open=2 tasks=d-0012,d-0013,d-0014,d-0012,d-0015 -->
 # 견본
 
 본문 d-0007은 칩일 뿐 표지가 아니다.
@@ -42,3 +42,7 @@
 
 ####### 일곱 개는 제목이 아니다
 > [!미정] 앞 줄과 한 덩어리라 표지가 아니다
+
+<!-- aaa-id: k-0003 -->
+> [!계획] d-0015
+> ID 표지 줄 바로 아래 블록도 표지다(t-1957).

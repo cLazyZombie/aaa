@@ -75,7 +75,7 @@ import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs, type ChipAsk } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
-import { DesignPanel, useDesign } from "./DesignPanel";
+import { DesignPanel, useDesign, useDesignIds } from "./DesignPanel";
 import { DesignView } from "./DesignView";
 import { IdeaView } from "./IdeaView";
 import { useIdeas } from "./IdeasPanel";
@@ -321,7 +321,7 @@ function selectedFromHash(): string | null {
   if (r) return `reports:${decodeURIComponent(r[1])}`;
   const m = /^#(pane|thread|task|question|ask|automation|workspace|machine|idea|design)=(.+)$/.exec(location.hash);
   if (!m) return null;
-  const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a", idea: "n" };
+  const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a", idea: "n", design: "k" };
   return `${m[1]}:${normalizeAppTarget(decodeURIComponent(m[2]), prefixes[m[1]!] ?? "")}`;
 }
 
@@ -1338,6 +1338,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [moveIdea, setMoveIdea] = useState<IdeaSummary | null>(null);
   // 옛 아이디어 화면도 기획 트리를 쓴다(옮기기 창의 저장소·대화, 옮긴 곳 열기)
   const design = useDesign(up, panel === "design" || designShown || ideaShown);
+  const designIds = useDesignIds(up, design.repos);
+  // 기획서 ID 주소(`#design=k-0012`)는 ID 목록을 받으면 `<저장소>/<경로>`로 바꾼다(t-1957)
+  useEffect(() => {
+    if (!sel?.startsWith("design:k-")) return;
+    const d = designIds.get(sel.slice("design:".length));
+    if (d) setSel(`design:${d.repo}/${d.path}`);
+  }, [sel, designIds]); // eslint-disable-line react-hooks/exhaustive-deps
   // 기획 화면에서 고를 대화(옮기는 아이디어의 「기획 대화 보기」·옮긴 뒤): 바뀔 때 한 번 고른다
   const [designChat, setDesignChat] = useState<{ repo: string; slug: string; n: number } | null>(null);
   const openMoved = (m: IdeaMoved) => {
@@ -1458,12 +1465,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     ...uniqueAppTargets(allThreads, t => t.project, t => t.id).keys(),
     ...automationIds.keys(),
     ...(ideas.list ?? []).map((i) => i.short_id),
+    ...designIds.keys(),
     ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
     ...[...reportNames.keys()].filter(id => /^r-/.test(id)),
     ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
     ...asksIndex.flatMap((r) => [r.question_id, ...questionIds(r)]),
-  ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list, designIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
     ...askThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
@@ -1495,6 +1503,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     }
     if (ref.kind === "automation") return goSel(`automation:${ref.target}`);
     if (ref.kind === "idea") return goSel(`idea:${ref.target}`);
+    if (ref.kind === "design") {
+      const d = designIds.get(ref.target);
+      return goSel(`design:${d ? `${d.repo}/${d.path}` : ref.target}`);
+    }
     if (ref.kind === "task") return goSel(`task:${ref.target}`);
     if (ref.kind === "question") return goSel(`question:${ref.target}`);
     const raw = "rawTarget" in ref ? ref.rawTarget : "label" in ref ? ref.label : undefined;

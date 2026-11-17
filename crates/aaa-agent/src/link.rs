@@ -216,6 +216,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "design_chat.v1".into(),
             // 기획 branch에 그림·영상을 조각으로 넘겨 commit한다(DesignAttach, t-1894 2-3)
             "design_attach.v1".into(),
+            // 기획서 ID(t-1957): 트리 문서마다 ID 표지를 읽고(DesignTree.ids), 표지를 한 commit으로 넣는다(DesignMarkIds)
+            "design_ids.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
