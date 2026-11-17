@@ -134,6 +134,9 @@ impl Host {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }
             R::DesignApply { project, repo, branch } => self.design_apply(role, actor, &project, &repo, &branch).await,
+            R::DesignApplyCancel { project, repo, branch } => {
+                self.design_apply_cancel(role, actor, &project, &repo, &branch).await
+            }
             R::DesignHandoff { project, repo, branch, path, blob, blocks, title, profile, memo, reserve } => {
                 let pick = crate::design_handoff::Handoff {
                     repo,

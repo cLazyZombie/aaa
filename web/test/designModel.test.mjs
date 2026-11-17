@@ -98,6 +98,11 @@ describe("기획 branch 화면", () => {
     // 구현 맡김(3-2)과 넘긴 블록 고침 알림(3-3)
     const more = designMarks([ev("handoff", "d-0005 · 블록 2", "x", "f068151fff"), ev("relay", "d-0005 → t-0007", "x", "35678e3fff")], "loop-plan");
     assert.deepEqual(more.map((m) => m.text), ["구현 맡김 d-0005 · 블록 2 · f068151", "넘긴 블록 고침 d-0005 → t-0007 · 35678e3"]);
+    // 「main에 반영」 예약(t-1955): 예약·취소·시작 못 함(까닭은 host 글)
+    const waits = designMarks([ev("apply_wait", "", "x"), ev("apply_cancel", "", "x"), ev("apply_fail", "이미 반영 중이다: t-0009", "x")], "shop");
+    assert.match(waits[0].text, /^main에 반영 예약 · 자리 나면 시작 · \d{2}:\d{2}$/);
+    assert.match(waits[1].text, /^반영 예약 취소 · \d{2}:\d{2}$/);
+    assert.equal(waits[2].text, "예약한 반영을 시작하지 못함 · 이미 반영 중이다: t-0009");
   });
   it("그림 주소: branch 판이면 slug를 싣는다", () => {
     assert.equal(designFileUrl("p", "r", "docs/x y.png", "abc", "boss-dex"), "/api/v1/projects/p/design/r/docs/x%20y.png?c=abc&b=boss-dex");

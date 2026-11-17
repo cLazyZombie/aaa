@@ -1,6 +1,7 @@
 // 기획 2-3(t-1894, 확정 시안 library/mock2): 실제 host·agent·git origin으로 기획 branch 웹 화면을 본다.
 // 트리 branch 표시(저장소 수·문서 칩·branch에서 새로 만든 문서) → branch 판 보기(판 고르기·main과 다른 덩어리·다른 branch 알림)
-// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(반영 thread) → 버리기
+// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(실행 한도면 예약·취소·자리 나면
+// host가 시작, t-1955) → 버리기
 // → 블록 표지(3-1, 확정 시안 library/mock4: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수와 「할 것」·대화로 정하기)
 // → 구현 맡기기(3-2, 확정 시안 library/mock5: 고른 블록 → 할 일 하나·표지 commit·바로 올림·예약한 구현 thread는 그 기획 branch에서)
 // → 넘긴 블록 고침 알림·main 문서에서 바로 맡기기(3-3, 확정 시안 library/mock6) → 휴대폰 칸.
@@ -8,7 +9,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until, shot, finishFixtureFollowups } from "../lib/harness.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -198,7 +199,11 @@ export default async function () {
     assert.match(await page.getByTestId("design-mark").first().textContent(), /새 대화 · design\/boss · main [0-9a-f]{7} 에서/);
   });
 
-  await step("main에 반영: 고친 파일·줄 수를 보이고 그 branch에서 갈라진 thread를 띄운다", async () => {
+  await step("main에 반영: 실행 한도에 걸리면 예약하고, 자리가 나면 host가 그 branch에서 갈라진 thread를 띄운다", async () => {
+    // 자리 하나를 다른 thread가 쥔다(기획 대화 thread는 한도에 세지 않는다)
+    fs.writeFileSync(`${root}/busy.md`, "자리\n");
+    const busy = aaa("thread", "start", "demo", "--title", "자리", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/busy.md`);
+    aaa("project", "set", "demo", "max_parallel_threads", "1");
     await page.getByTestId("design-pick").click();
     await page.getByTestId("design-pick-row").filter({ hasText: "중간 상점" }).click();
     await page.getByTestId("design-apply").click();
@@ -206,15 +211,44 @@ export default async function () {
     await dialog.waitFor();
     assert.match(await dialog.getByTestId("design-files").textContent(), /loop\/README\.md\+\d+−\d+/);
     await page.getByTestId("design-apply-submit").click();
-    await domIs(page, "반영 요청 끝", () => !!document.querySelector("[data-testid=design-applying]") || !!document.querySelector("[data-testid=design-apply-dialog] .confirm-error"));
+    await domIs(page, "반영 요청 끝", () => !!document.querySelector("[data-testid=design-apply-reserved]") || !!document.querySelector("[data-testid=design-apply-dialog] .confirm-error"));
     const problem = (await dialog.locator(".confirm-error").count()) ? await dialog.locator(".confirm-error").textContent() : null;
-    assert.equal(problem, null, "반영 요청이 거부되지 않는다");
+    assert.equal(problem, null, "한도에서 거절하지 않는다");
+    assert.match(await dialog.getByTestId("design-apply-reserved").textContent(), /예약됨 · 자리 나면 시작프로젝트 실행 한도 1/);
+    assert.equal(await dialog.getByTestId("design-apply-submit").count(), 0, "예약한 뒤에는 다시 요청하지 않는다");
+    await shot(page, "design-apply-reserved");
+    let shop = branches().find((b) => b.slug === "shop");
+    assert.equal(shop.apply, null);
+    assert.equal(shop.pushed, shop.head, "올리기는 먼저 한다");
+    // 창의 예약 취소: 창이 닫히고 머리는 다시 「main에 반영」
+    await dialog.getByTestId("design-apply-cancel").click();
+    await dialog.waitFor({ state: "detached" });
+    await page.getByTestId("design-apply").waitFor();
+    assert.equal(branches().find((b) => b.slug === "shop").apply_wait, null);
+    // 다시 예약하고 닫으면 머리에 「예약됨」이 남고, 누르면 같은 창이 예약을 보인다
+    await page.getByTestId("design-apply").click();
+    await page.getByTestId("design-apply-submit").click();
+    await dialog.getByTestId("design-apply-reserved").waitFor();
+    await dialog.getByRole("button", { name: "닫기" }).click();
+    await dialog.waitFor({ state: "detached" });
+    const chip = page.getByTestId("design-apply-wait");
+    assert.equal((await chip.textContent()).trim(), "예약됨 · 자리 나면 시작");
+    await shot(page, "design-apply-wait-chip");
+    await chip.click();
+    await dialog.getByTestId("design-apply-reserved").waitFor();
+    await dialog.getByRole("button", { name: "닫기" }).click();
+    // 자리가 나면 다음 tick에 host가 띄우고, 화면은 새로 읽지 않아도 「반영 대기」로 바뀐다
+    await until("자리 thread 보고", () => aaa("thread", "show", busy.id).report_hash, 60_000);
+    finishFixtureFollowups(busy.id);
+    aaa("thread", "resolve", busy.id, "--skip-copy");
+    aaa("ticker", "tick");
     await page.getByTestId("design-applying").waitFor();
-    const shop = branches().find((b) => b.slug === "shop");
+    shop = branches().find((b) => b.slug === "shop");
     assert.ok(shop.apply, "반영 thread");
-    assert.equal(shop.pushed, shop.head, "올린 뒤 띄운다");
+    assert.equal(shop.apply_wait, null);
     const t = aaa("thread", "show", shop.apply);
     assert.equal(t.thread_kind, "worktree");
+    aaa("project", "set", "demo", "max_parallel_threads", "10");
   });
 
   await step("버리기: 그 대화의 branch를 지우고 트리에서 사라진다", async () => {

@@ -109,7 +109,9 @@
 .design-pick-text span { color: var(--text-dim); font-family: var(--font-mono); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .design-apply { gap: 6px; }
 .design-apply .i { width: 14px; height: 14px; }
-.design-applying { flex: none; height: 22px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: var(--radius-md); background: var(--accent-bg); color: var(--accent-strong); font-size: var(--fs-xs); font-weight: 600; }
+.design-applying { flex: none; gap: 4px; border: 0; font-family: inherit; height: 22px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: var(--radius-md); background: var(--accent-bg); color: var(--accent-strong); font-size: var(--fs-xs); font-weight: 600; }
+.design-applying .i { width: 12px; height: 12px; }
+.design-applying.is-wait { cursor: pointer; background: var(--warn-bg); color: var(--text); }
 .design-more { position: relative; }
 .design-chat-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .design-chat-body > .chat { flex: 1 1 auto; min-height: 0; }

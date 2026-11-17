@@ -202,6 +202,9 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
       : e.kind === "push" ? `origin에 올림 · ${clock(e.at_ms)}`
         : e.kind === "edit" ? `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`
           : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
+          : e.kind === "apply_wait" ? `main에 반영 예약 · 자리 나면 시작 · ${clock(e.at_ms)}`
+          : e.kind === "apply_cancel" ? `반영 예약 취소 · ${clock(e.at_ms)}`
+          : e.kind === "apply_fail" ? `예약한 반영을 시작하지 못함 · ${e.text}`
             : e.kind === "handoff" ? `구현 맡김 ${e.text} · ${short(e.commit)}`
             : e.kind === "relay" ? `넘긴 블록 고침 ${e.text} · ${short(e.commit)}`
             : e.text;

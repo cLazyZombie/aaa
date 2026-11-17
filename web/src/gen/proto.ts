@@ -704,7 +704,7 @@ added?: number, removed?: number, };
 
 export type DesignEvent = {
 /**
- * `open`·`save`·`push`·`edit`·`apply`
+ * `open`·`save`·`push`·`edit`·`apply`, 반영 예약 `apply_wait`·`apply_cancel`·`apply_fail`(FRONT_API 1.178)
  */
 kind: string,
 /**
@@ -715,6 +715,16 @@ text: string, commit: string | null,
  * 이 사건 전에 대화에 보낸 마지막 사람 말의 앞부분(그 말의 답 뒤에 끼운다). 없으면 대화 처음
  */
 after: string | null, at_ms: number, };
+
+export type DesignApplyWait = {
+/**
+ * 요청한 이(반영 thread를 띄울 때도 이 이름으로 띄운다)
+ */
+by: string, requested_ms: number,
+/**
+ * 지금 기다리는 까닭(자리·올리기·머신 연결)
+ */
+reason: string, };
 
 export type DesignBranchState = "open" | "rest";
 
@@ -783,6 +793,10 @@ profile: string | null,
  * 「main에 반영」을 맡은 thread
  */
 apply: string | null,
+/**
+ * 자리(프로젝트 실행 한도)를 기다리는 「main에 반영」 예약(FRONT_API 1.178, t-1955). 자리가 나면 host가 반영 thread를 띄운다
+ */
+apply_wait: DesignApplyWait | null,
 /**
  * 대화에 끼우는 host 사건(오래된 차례)
  */
@@ -1806,7 +1820,7 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */

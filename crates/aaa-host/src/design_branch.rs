@@ -38,6 +38,13 @@ fn push_retry_ms(push_ms: u64, failures: u32) -> u64 {
 }
 /// 쉼으로 내리지 못한 branch를 다시 해 보기까지(하루)
 const REST_RETRY_MS: u64 = 86_400_000;
+/// 프로젝트 실행 한도 오류의 머리(할 일 예약 판정 `queue_pass`와 같은 판정)
+const LIMIT_WAIT: &str = "start_wait: 프로젝트 실행 한도 ";
+/// 한도 오류에서 예약 까닭(「`aaa task reserve`로 예약한다」 안내는 반영 예약에 맞지 않아 뺀다)
+fn limit_reason(message: &str) -> String {
+    let rest = message.strip_prefix("start_wait: ").unwrap_or(message);
+    rest.split_once('.').map_or(rest, |(head, _)| head).trim().to_string()
+}
 /// 주제·요약 글자 수 상한
 const TITLE_MAX: usize = 80;
 const SUMMARY_MAX: usize = 200;
@@ -77,6 +84,8 @@ pub(crate) struct Rec {
     pub apply: Option<String>,
     /// 그 반영이 갈라진 branch 끝(옛 아이디어 옮기기가 옮긴 뒤의 반영인지 가른다, t-1894 4단계)
     pub apply_head: Option<String>,
+    /// 실행 한도로 자리를 기다리는 「main에 반영」 요청(t-1955). 자리가 나면 ticker가 그때 올린 판에서 반영 thread를 띄운다
+    pub apply_wait: Option<aaa_proto::DesignApplyWait>,
 }
 
 impl Rec {
@@ -95,6 +104,7 @@ impl Rec {
             base: self.base.clone(),
             pushed_ms: self.pushed_ms,
             apply: self.apply.clone(),
+            apply_wait: self.apply_wait.clone(),
             ..Default::default()
         }
     }
@@ -602,7 +612,8 @@ impl Host {
     }
 
     /// 「main에 반영」: 올리지 않은 저장을 먼저 올리고, `origin/design/<주제>`에서 갈라진 worktree thread를 띄운다. 그 thread가
-    /// main을 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다
+    /// main을 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다. 프로젝트 실행 한도에 걸리면 거절하지 않고 예약한다
+    /// (t-1955, 사용자의 반영 요청이 승인이다): 자리가 나면 ticker(`design_apply_pass`)가 띄운다
     pub(crate) async fn design_apply(
         self: &Arc<Self>,
         role: DeviceRole,
@@ -619,6 +630,9 @@ impl Host {
         let mut rec = self
             .design_branch_load(project, &target.name, slug)?
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
+        if rec.apply_wait.is_some() {
+            return Err(err(ErrorCode::Conflict, "이미 반영을 예약했다: 자리가 나면 시작한다(취소는 예약 취소)"));
+        }
         if rec.head.is_none() || rec.head != rec.pushed {
             return Err(err(
                 ErrorCode::Conflict,
@@ -629,16 +643,47 @@ impl Host {
                 },
             ));
         }
-        if let Some(id) = rec.apply.as_deref()
-            && self
-                .load(project, id)
-                .is_ok_and(|t| !matches!(t.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Failed))
-        {
+        if let Some(id) = self.design_applying(project, &rec) {
             return Err(err(ErrorCode::Conflict, format!("이미 반영 중이다: {id}")));
         }
+        // thread 시작 future는 크다: 공용 dispatcher(`call_design`)의 스택에 얹지 않게 heap에 둔다
+        match Box::pin(self.design_apply_start(project, &target, &mut rec, actor)).await {
+            Ok(()) => {}
+            Err(e) if e.message.starts_with(LIMIT_WAIT) => {
+                rec.apply_wait = Some(aaa_proto::DesignApplyWait {
+                    by: actor.to_string(),
+                    requested_ms: aaa_common::util::now_ms(),
+                    reason: limit_reason(&e.message),
+                });
+                self.design_branch_store(project, &rec)?;
+                self.design_chat_event(project, &target.name, slug, "apply_wait", "", rec.head.clone()).await;
+                self.db.audit(actor, "design_apply_wait", &format!("{project} {}/{slug}", target.name));
+            }
+            Err(e) => return Err(e),
+        }
+        Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
+    }
+
+    /// 끝나지 않은 반영 thread
+    fn design_applying(&self, project: &str, rec: &Rec) -> Option<String> {
+        rec.apply.clone().filter(|id| {
+            self.load(project, id)
+                .is_ok_and(|t| !matches!(t.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Failed))
+        })
+    }
+
+    /// 반영 thread를 띄우고 기록에 적는다(잠금 안, 올린 판이 끝일 때). 띄우면 예약은 풀린다
+    async fn design_apply_start(
+        self: &Arc<Self>,
+        project: &str,
+        target: &crate::design::Target,
+        rec: &mut Rec,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let slug = rec.slug.clone();
         let folder = target.folder.clone().unwrap_or_default();
         let profile =
-            self.design_chat_load(project, &target.name, slug).ok().and_then(|c| c.profile).unwrap_or_default();
+            self.design_chat_load(project, &target.name, &slug).ok().and_then(|c| c.profile).unwrap_or_default();
         let args = crate::orch::StartArgs {
             project: project.to_string(),
             title: format!("main에 반영 {} {}", target.name, rec.title),
@@ -657,14 +702,123 @@ impl Host {
             role: aaa_proto::Role::Worker,
             ..Default::default()
         };
-        // thread 시작 future는 크다: 공용 dispatcher(`call_design`)의 스택에 얹지 않게 heap에 둔다
-        let view = Box::pin(self.thread_start_mode(args, actor, true)).await?;
+        let view = self.thread_start_mode(args, actor, true).await?;
         rec.apply = Some(view.id.clone());
         rec.apply_head = rec.head.clone();
-        self.design_branch_store(project, &rec)?;
-        self.design_chat_event(project, &target.name, slug, "apply", &view.id, rec.head.clone()).await;
+        rec.apply_wait = None;
+        self.design_branch_store(project, rec)?;
+        self.design_chat_event(project, &target.name, &slug, "apply", &view.id, rec.head.clone()).await;
         self.db.audit(actor, "design_apply", &format!("{project} {}/{slug} {}", target.name, view.id));
+        Ok(())
+    }
+
+    /// 「main에 반영」 예약을 거둔다
+    pub(crate) async fn design_apply_cancel(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.design_writer(role, actor, project, None)?;
+        let (target, _) = self.design_target(project, repo)?;
+        let lock = self.design_branch_lock(project, &target.name, slug);
+        let _one = lock.lock().await;
+        let mut rec = self
+            .design_branch_load(project, &target.name, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
+        if rec.apply_wait.take().is_none() {
+            return Err(err(
+                ErrorCode::Conflict,
+                match self.design_applying(project, &rec) {
+                    Some(id) => format!("반영 예약이 없다: 이미 {id}가 반영 중이다"),
+                    None => "반영 예약이 없다".to_string(),
+                },
+            ));
+        }
+        self.design_branch_store(project, &rec)?;
+        self.design_chat_event(project, &target.name, slug, "apply_cancel", "", None).await;
+        self.db.audit(actor, "design_apply_cancel", &format!("{project} {}/{slug}", target.name));
         Ok(FrontResponse::DesignBranch { branch: self.design_view(project, &rec) })
+    }
+
+    /// ticker(할 일 예약 판정 앞, t-1955): 자리를 기다리는 「main에 반영」 예약을 요청 차례대로 띄운다. 자리가 없으면 다음 tick까지
+    /// 기다린다. 올리기가 남았으면 배경 일(`design_rest_pass`)이 올린 뒤에 띄운다. 기다릴 까닭이 아닌 실패는 예약을 풀고 대화에 알린다
+    pub(crate) async fn design_apply_pass(self: &Arc<Self>, project: &str) {
+        let Ok(targets) = self.design_targets(project) else { return };
+        let mut waits: Vec<(u64, String, String)> = targets
+            .iter()
+            .filter(|t| t.folder.is_some())
+            .flat_map(|t| self.design_branch_list(project, &t.name))
+            .filter_map(|r| r.apply_wait.as_ref().map(|w| (w.requested_ms, r.repo.clone(), r.slug.clone())))
+            .collect();
+        waits.sort();
+        for (_, repo, slug) in waits {
+            let limit = self.settings(project).max_parallel_threads;
+            if self.open_worker_threads(project) >= limit {
+                // 자리가 없다: 뒤 예약도 기다린다(앞 예약을 건너뛰지 않는다)
+                return;
+            }
+            Box::pin(self.design_apply_try(project, &repo, &slug)).await;
+        }
+    }
+
+    async fn design_apply_try(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
+        let Ok((target, _)) = self.design_target(project, repo) else { return };
+        let lock = self.design_branch_lock(project, &target.name, slug);
+        let _one = lock.lock().await;
+        let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, slug) else { return };
+        let Some(wait) = rec.apply_wait.clone() else { return };
+        let reason = if rec.head.is_none() || rec.head != rec.pushed {
+            Ok(match rec.push_error.as_deref() {
+                Some(e) => format!("올리기 실패 · 다시 올린 뒤 시작: {}", one_line(e, SUMMARY_MAX)),
+                None => "올리기 대기".to_string(),
+            })
+        } else if let Some(id) = self.design_applying(project, &rec) {
+            // 예약 뒤 다른 길로 반영 thread가 섰다: 예약은 할 일을 다 했다
+            Err(err(ErrorCode::Conflict, format!("이미 반영 중이다: {id}")))
+        } else {
+            match self.design_apply_start(project, &target, &mut rec, &wait.by).await {
+                Ok(()) => return,
+                Err(e) if e.message.starts_with(LIMIT_WAIT) => Ok(limit_reason(&e.message)),
+                Err(e)
+                    if e.message.starts_with("start_wait:")
+                        || matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Unavailable) =>
+                {
+                    Ok(e.message.strip_prefix("start_wait: ").unwrap_or(&e.message).to_string())
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match reason {
+            Ok(reason) => {
+                if wait.reason != reason {
+                    rec.apply_wait = Some(aaa_proto::DesignApplyWait { reason, ..wait });
+                    if let Err(e) = self.design_branch_store(project, &rec) {
+                        tracing::warn!(project, repo, slug, "기획 branch 기록을 쓰지 못했다: {}", e.message);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(project, repo, slug, "예약한 반영을 시작하지 못해 예약을 푼다: {}", e.message);
+                rec.apply_wait = None;
+                if let Err(e) = self.design_branch_store(project, &rec) {
+                    tracing::warn!(project, repo, slug, "기획 branch 기록을 쓰지 못했다: {}", e.message);
+                    return;
+                }
+                self.design_chat_event(
+                    project,
+                    &target.name,
+                    slug,
+                    "apply_fail",
+                    &one_line(&e.message, SUMMARY_MAX),
+                    None,
+                )
+                .await;
+                self.db.audit(&wait.by, "design_apply_fail", &format!("{project} {}/{slug}", target.name));
+            }
+        }
     }
 
     /// 기획 branch를 버린다: worktree·로컬 branch와 host가 올린 origin branch를 지우고 기록을 지운다
@@ -842,8 +996,14 @@ impl Host {
                 let retry = rec.push_error.is_none()
                     || now.saturating_sub(rec.push_tried_ms) >= push_retry_ms(push_ms, rec.push_failures);
                 let unpushed = rec.head != rec.pushed && rec.head == rec.own_head;
-                if unpushed && retry && idle >= push_ms && !queued {
+                // 반영을 예약한 branch는 쉼 창을 기다리지 않고 올린다(올린 판에서 반영 thread가 갈라진다)
+                let waiting = rec.apply_wait.is_some();
+                if unpushed && retry && (idle >= push_ms || waiting) && !queued {
                     self.design_push_now(project, &t.name, &rec.slug).await;
+                }
+                if waiting {
+                    // 반영을 기다리는 branch는 쉬지 않는다
+                    continue;
                 }
                 let rest_again = rec.rest_error.is_none() || now.saturating_sub(rec.rest_tried_ms) >= REST_RETRY_MS;
                 if idle >= rest_ms && rest_again {
@@ -863,11 +1023,12 @@ impl Host {
         let lock = self.design_branch_lock(project, repo, slug);
         let _one = lock.lock().await;
         let Ok(Some(mut rec)) = self.design_branch_load(project, repo, slug) else { return };
-        // 잠금을 기다리는 사이 쓰거나 다시 열었으면 쉬지 않는다
+        // 잠금을 기다리는 사이 쓰거나 다시 열었거나 반영을 예약했으면 쉬지 않는다
         let rest_ms = self.cfg.projects.design_rest_secs.saturating_mul(1000);
         let now = aaa_common::util::now_ms();
         let said = self.design_chat_load(project, repo, slug).map(|c| c.said_ms).unwrap_or(0);
         if rec.state != DesignBranchState::Open
+            || rec.apply_wait.is_some()
             || now.saturating_sub(rec.updated_ms.max(said)) < rest_ms
             || (rec.rest_error.is_some() && now.saturating_sub(rec.rest_tried_ms) < REST_RETRY_MS)
         {
@@ -985,6 +1146,11 @@ mod tests {
                     branch: "boss-dex".into(),
                     text: "말".into(),
                 },
+                FrontRequest::DesignApplyCancel {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                },
             ];
             for req in reqs {
                 let e = h.call(role, actor, req).await.unwrap_err();
@@ -1095,6 +1261,11 @@ mod tests {
                 },
                 FrontRequest::DesignDiscard { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
                 FrontRequest::DesignApply { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() },
+                FrontRequest::DesignApplyCancel {
+                    project: "demo".into(),
+                    repo: "repo".into(),
+                    branch: "boss-dex".into(),
+                },
                 FrontRequest::DesignHandoff {
                     project: "demo".into(),
                     repo: "repo".into(),
