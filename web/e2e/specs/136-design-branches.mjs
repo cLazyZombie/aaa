@@ -394,16 +394,33 @@ export default async function () {
     await domIs(page, "직전 트리 읽기 완료", () => !document.querySelector("[data-testid=design-reload]")?.disabled);
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
+    let sawBackground, sawHeld;
+    const background = new Promise((resolve) => { sawBackground = resolve; });
+    const held = new Promise((resolve) => { sawHeld = resolve; });
+    // 단추 누름 전의 갱신을 막으면 loading=true인 단추를 기다리며 시험 스스로 교착한다.
+    // 실제 pointerdown부터 보류한다. 그 전의 배경 갱신은 끝나야 단추를 누를 수 있다.
+    await page.getByTestId("design-reload").first().evaluate((button) => {
+      button.addEventListener("pointerdown", () => { button.dataset.discardReadGate = "armed"; }, { capture: true, once: true });
+    });
     const hold = async (route) => {
       const req = route.request().postDataJSON();
-      if (req?.op === "design_tree" && req.repo === "app" && !req.cached) await gate;
+      if (req?.op === "design_tree" && req.repo === "app" && !req.cached) {
+        if (await page.getByTestId("design-reload").first().getAttribute("data-discard-read-gate") === "armed") {
+          sawHeld();
+          await gate;
+        } else {
+          sawBackground();
+        }
+      }
       await route.continue();
     };
     await page.route("**/api/v1/call", hold);
     try {
-      const arrived = page.waitForRequest((req) => req.url().endsWith("/api/v1/call") && req.postDataJSON()?.repo === "app" && req.postDataJSON()?.op === "design_tree");
+      // 먼저 시작한 갱신을 반드시 만들어 완료 확인과 실제 누름 사이의 경합을 고정한다.
+      await page.getByTestId("design-doc-reload").click();
+      await background;
       await page.getByTestId("design-reload").first().click();
-      await arrived;
+      await held;
       await page.getByTestId("design-pick").click();
       await page.getByTestId("design-pick-row").filter({ hasText: "100층까지" }).click();
       await domIs(page, "아직 읽지 않은 branch 통계", () => document.querySelector("[data-testid=design-chat]")?.dataset.statistics === "pending");
