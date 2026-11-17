@@ -1,22 +1,23 @@
 // 기획 대화(t-1894 2-3, 확정 시안 library/mock2): 기획 문서 화면 오른쪽 칸. 저장소의 기획 branch마다 대화 하나이고, 대화 thread의
 // 기록 사이에 host 사건(새 대화·저장·올림·사람 고침·반영)을 끼운다. 말은 host가 thread 준비 뒤 보낸다(`design_say`).
-import { Check, ChevronDown, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Clock, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { ChatPanel } from "./Chat";
 import { designMarks, restDays, slugSuggest, splitContext, SLUG } from "./designModel";
-import type { ChatMessage, DesignBranchView, DesignRepoView, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
+import type { ChatMessage, DesignBranchView, DesignRepoView, FrontRequest, FrontResponse, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
 import { ideaModelChoices } from "./ideasModel";
 import { ProviderError } from "./ProviderError";
 import { paneAgentStatus } from "./sidebarModel";
 
-const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge, handoff: Hammer, relay: Send };
+const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: FileText, push: GitMerge, edit: Pencil, apply: GitMerge, apply_wait: Clock, apply_cancel: X, apply_fail: X, handoff: Hammer, relay: Send };
 
 /** 대화 고르기 줄의 상태 */
 function branchState(b: DesignBranchView, threads: readonly ThreadView[], now: number): string {
   const apply = b.apply ? threads.find((t) => t.id === b.apply) : undefined;
   if (apply && apply.status !== "resolved" && apply.status !== "failed") return "반영 대기";
+  if (b.apply_wait) return "반영 예약";
   if (b.state === "rest") return `쉼 ${restDays(b, now)}일`;
   return "지금";
 }
@@ -58,6 +59,14 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
   const status = pane ? paneAgentStatus(pane) : undefined;
   const apply = branch?.apply ? threads.find((t) => t.id === branch.apply) : undefined;
   const applying = !!apply && apply.status !== "resolved" && apply.status !== "failed";
+  const waiting = branch?.apply_wait ?? null;
+  // 예약한 반영은 host가 자리 나면 띄운다: 새 thread가 보이면(또는 30초마다) 트리를 다시 읽어 예약 표시를 바꾼다
+  useEffect(() => { if (waiting) onChanged(); }, [threads.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!waiting) return;
+    const id = window.setInterval(onChanged, 30_000);
+    return () => window.clearInterval(id);
+  }, [!!waiting, onChanged]); // eslint-disable-line react-hooks/exhaustive-deps
   const marks = useMemo(() => branch ? designMarks(branch.events, branch.slug).map((m) => {
     const Icon = MARK_ICON[m.kind] ?? FileText;
     return { key: m.key, after: m.after, node: <span className={`design-mark-chip is-${m.kind}`} data-testid="design-mark"><Icon aria-hidden="true" />{m.text}</span> };
@@ -97,6 +106,8 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
         <span className="spacer" />
         {branch && branch.state === "open" && (applying
           ? <span className="design-applying" data-testid="design-applying" title={apply?.id}>반영 대기</span>
+          : waiting
+            ? <button type="button" className="design-applying is-wait" data-testid="design-apply-wait" title={waiting.reason} onClick={() => setDialog("apply")}><Clock className="i" aria-hidden="true" />예약됨 · 자리 나면 시작</button>
           : canControl && <button type="button" className="btn primary design-apply" data-testid="design-apply" onClick={() => setDialog("apply")}><GitMerge className="i" aria-hidden="true" />main에 반영</button>)}
         {branch && (
           <div className="design-more">
@@ -188,7 +199,7 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
           onCtrlEnter={() => false} onInputTrace={() => {}} onCancelSend={() => Promise.resolve(null)}
           onSent={() => setSent((n) => n + 1)} onInspect={() => {}} />
       )}
-      {dialog === "apply" && branch && <ApplyDialog repo={repo.repo} branch={branch} onClose={() => setDialog(null)} onDone={() => { setDialog(null); onChanged(); }} />}
+      {dialog === "apply" && branch && <ApplyDialog repo={repo.repo} branch={branch} canControl={canControl} onClose={() => setDialog(null)} onChanged={onChanged} onDone={() => { setDialog(null); onChanged(); }} />}
       {dialog === "discard" && branch && <DiscardDialog repo={repo.repo} branch={branch} onClose={() => setDialog(null)} onDone={() => { setDialog(null); onChanged(); }} />}
     </div>
   );
@@ -212,21 +223,34 @@ function ChangedFiles({ branch, folder }: { branch: DesignBranchView; folder: st
   );
 }
 
-function ApplyDialog({ repo, branch, onClose, onDone }: { repo: string; branch: DesignBranchView; onClose: () => void; onDone: () => void }) {
+function ApplyDialog({ repo, branch: given, canControl, onClose, onChanged, onDone }: { repo: string; branch: DesignBranchView; canControl: boolean; onClose: () => void; onChanged: () => void; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // 한도에 걸려 예약한 반영. 방금 예약했으면 답의 올린 판·예약을 덮는다(답에는 고친 파일 목록이 없다: 트리 읽기가 채운다)
+  const [reserved, setReserved] = useState<DesignBranchView | null>(null);
+  const branch = reserved
+    ? { ...given, head: reserved.head, pushed: reserved.pushed, push_error: reserved.push_error, apply_wait: given.apply_wait ?? reserved.apply_wait }
+    : given;
+  const wait = branch.apply_wait ?? null;
   const pushed = !!branch.head && branch.head === branch.pushed;
-  const submit = async () => {
+  const run = async (req: FrontRequest, then: (r: FrontResponse) => void) => {
     setBusy(true);
+    setProblem(null);
     try {
-      await call({ op: "design_apply", repo, branch: branch.slug });
-      onDone();
+      then(await call(req));
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+  const submit = () => run({ op: "design_apply", repo, branch: branch.slug }, (r) => {
+    if (r.kind === "design_branch" && r.branch.apply_wait) {
+      setReserved(r.branch);
+      onChanged();
+    } else onDone();
+  });
+  const cancel = () => run({ op: "design_apply_cancel", repo, branch: branch.slug }, () => onDone());
   return (
     <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
       <div className="modal design-dialog" role="dialog" aria-modal="true" aria-label="main에 반영" data-testid="design-apply-dialog">
@@ -238,13 +262,18 @@ function ApplyDialog({ repo, branch, onClose, onDone }: { repo: string; branch: 
               {pushed ? <>origin에 올림 <code>{branch.pushed?.slice(0, 7)}</code></> : "올리지 않은 저장은 먼저 올린다"}</li>
             <li className={branch.push_error ? "is-bad" : "is-ok"}>{branch.push_error ? <X className="i" aria-hidden="true" /> : <Check className="i" aria-hidden="true" />}
               저장소 기획 검사 <code>design_check</code>{branch.push_error && <span className="design-check-why">{branch.push_error}</span>}</li>
+            {wait && (
+              <li className="is-wait" role="status" data-testid="design-apply-reserved"><Clock className="i" aria-hidden="true" />
+                <strong>예약됨 · 자리 나면 시작</strong><span className="design-check-why">{wait.reason}</span></li>
+            )}
           </ul>
           {problem && <p className="confirm-error" role="alert">{problem}</p>}
         </div>
         <footer className="modal-footer">
+          {wait && canControl && <button type="button" className="btn" disabled={busy} data-testid="design-apply-cancel" onClick={() => void cancel()}><X className="i" aria-hidden="true" />예약 취소</button>}
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>닫기</button>
-          <button type="button" className="btn primary" disabled={busy} data-testid="design-apply-submit" onClick={() => void submit()}><GitMerge className="i" aria-hidden="true" />착지 창 요청</button>
+          {!wait && canControl && <button type="button" className="btn primary" disabled={busy} data-testid="design-apply-submit" onClick={() => void submit()}><GitMerge className="i" aria-hidden="true" />착지 창 요청</button>}
         </footer>
       </div>
     </div>

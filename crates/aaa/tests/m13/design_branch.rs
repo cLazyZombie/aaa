@@ -457,3 +457,89 @@ print('coord-plan-ok')
     assert_eq!(w.show(&thread)["status"], "resolved", "사람이 버리면 대화 thread도 끝난다");
     assert_eq!(branches(&w), serde_json::json!([]));
 }
+
+/// 「main에 반영」이 프로젝트 실행 한도에 걸리면(t-1955) 거절하지 않고 예약한다: 같은 branch 거듭 예약은 막고, 취소할 수 있고,
+/// host가 다시 떠도 남고, 자리가 나면 host가 그때의 올린 판에서 반영 thread를 띄운다
+#[test]
+fn apply_over_the_thread_limit_waits_for_a_slot_and_starts_itself() {
+    let mut w = design_world("tick_secs=3600\ndesign_push_secs=3600\n", r#"["git", "--version"]"#);
+    w.h.ok(&["project", "set", "demo", "max_parallel_threads", "1"]);
+    w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
+    let busy = w.start(&[
+        "--title",
+        "자리",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("busy.md", "noreport"),
+    ]);
+    let busy = busy["id"].as_str().unwrap().to_string();
+    w.h.ok(&["plan", "new", "repo", "shop", "--title", "상점"]);
+    let body = w.lab.root.join("shop.md");
+    std::fs::write(&body, "# 상점\n").unwrap();
+    let saved =
+        w.h.ok(&["plan", "save", "repo", "docs/shop.md", "--branch", "shop", "--new", "--file", path_str(&body)]);
+
+    let applied = w.h.json(&["plan", "apply", "repo", "shop"]).unwrap_or_else(|e| panic!("한도에서 거절했다: {e}"));
+    let b = &applied["branch"];
+    assert!(b["apply"].is_null(), "아직 띄우지 않는다: {applied}");
+    assert_eq!(b["pushed"], saved["commit"], "올리기는 먼저 한다: {applied}");
+    assert!(b["apply_wait"]["reason"].as_str().is_some_and(|r| r.contains("프로젝트 실행 한도 1")), "{applied}");
+    let e = w.h.json(&["plan", "apply", "repo", "shop"]).unwrap_err();
+    assert!(e.contains("이미 반영을 예약했다"), "같은 branch는 한 번만 예약한다: {e}");
+
+    // 취소하면 예약이 사라지고, 다시 취소하면 없다고 알린다
+    let cancelled = w.h.ok(&["plan", "apply", "repo", "shop", "--cancel"]);
+    assert!(cancelled["branch"]["apply_wait"].is_null(), "{cancelled}");
+    assert!(w.h.json(&["plan", "apply", "repo", "shop", "--cancel"]).unwrap_err().contains("반영 예약이 없다"));
+    w.h.ticks(1);
+    assert!(branches(&w)[0]["apply"].is_null(), "취소한 예약은 띄우지 않는다");
+
+    // 다시 예약하고, 기다리는 사이 더 쓰고, host가 다시 떠도 예약은 남는다
+    w.h.ok(&["plan", "apply", "repo", "shop"]);
+    std::fs::write(&body, "# 상점\n\n## 물약\n").unwrap();
+    let later = w.h.ok(&[
+        "plan",
+        "save",
+        "repo",
+        "docs/shop.md",
+        "--branch",
+        "shop",
+        "--base",
+        saved["blob"].as_str().unwrap(),
+        "--file",
+        path_str(&body),
+    ]);
+    let later = later["commit"].as_str().unwrap().to_string();
+    w.lab.kill("host");
+    w.spawn_host("host-apply-wait");
+    wait_for("재연결", T, || w.h.connected("labA").then_some(()));
+    w.h.ticks(1);
+    let b = branches(&w)[0].clone();
+    assert!(b["apply"].is_null() && b["apply_wait"]["reason"].is_string(), "자리가 없으면 계속 기다린다: {b}");
+    let kinds: Vec<&str> = b["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    assert!(kinds.contains(&"apply_wait") && kinds.contains(&"apply_cancel"), "{kinds:?}");
+
+    // 예약한 branch는 쉼 창(3600초)을 기다리지 않고 배경 일이 올린다. 올리는 동안 ticker는 그 branch를 기다리지 않고 넘긴다
+    wait_for("예약 중 쓴 판 올림", T, || (branches(&w)[0]["pushed"] == later.as_str()).then_some(()));
+    // 자리가 나면 host가 띄운다: 기다리는 사이 쓴 것까지 올린 판에서 갈라진다
+    w.h.ok(&["thread", "resolve", &busy, "--skip-copy"]);
+    w.h.ticks(1);
+    let apply = wait_for("예약한 반영 thread", T, || branches(&w)[0]["apply"].as_str().map(str::to_string));
+    let b = branches(&w)[0].clone();
+    assert!(b["apply_wait"].is_null(), "{b}");
+    assert_eq!(b["pushed"], later.as_str(), "{b}");
+    let shown = w.wait_show("반영 thread 준비", &apply, |v| v["cwd"].is_string() && v["status"] != "starting");
+    assert_eq!(shown["thread_kind"], "worktree", "{shown}");
+    let cwd = PathBuf::from(shown["cwd"].as_str().unwrap());
+    git(&cwd, &["merge-base", "--is-ancestor", &later, "HEAD"]);
+    assert_eq!(std::fs::read_to_string(cwd.join("docs/shop.md")).unwrap(), "# 상점\n\n## 물약\n");
+    w.h.ticks(1);
+    assert_eq!(branches(&w)[0]["apply"], apply.as_str(), "한 번만 띄운다");
+    assert_eq!(
+        w.h.ok(&["thread", "list"])["threads"].as_array().unwrap().iter().filter(|t| t["status"] != "resolved").count(),
+        1
+    );
+}

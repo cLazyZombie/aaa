@@ -56,7 +56,7 @@ pub struct DesignChange {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DesignEvent {
-    /// `open`·`save`·`push`·`edit`·`apply`
+    /// `open`·`save`·`push`·`edit`·`apply`, 반영 예약 `apply_wait`·`apply_cancel`·`apply_fail`(FRONT_API 1.178)
     pub kind: String,
     /// 한 줄(「문서 2 고침 · 1 새로」 같은 꼴은 웹이 짓는다: 여기는 경로·판 같은 자료)
     pub text: String,
@@ -120,10 +120,24 @@ pub struct DesignBranchView {
     pub profile: Option<String>,
     /// 「main에 반영」을 맡은 thread
     pub apply: Option<String>,
+    /// 자리(프로젝트 실행 한도)를 기다리는 「main에 반영」 예약(FRONT_API 1.178, t-1955). 자리가 나면 host가 반영 thread를 띄운다
+    pub apply_wait: Option<DesignApplyWait>,
     /// 대화에 끼우는 host 사건(오래된 차례)
     pub events: Vec<DesignEvent>,
     /// 사람이 고쳤고 아직 대화 thread에 알리지 않은 문서(다음 말 앞에 붙는다)
     pub edited: Vec<String>,
+}
+
+/// 「main에 반영」 예약(FRONT_API 1.178): 반영 요청이 프로젝트 실행 한도에 걸려 자리를 기다린다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignApplyWait {
+    /// 요청한 이(반영 thread를 띄울 때도 이 이름으로 띄운다)
+    pub by: String,
+    #[ts(type = "number")]
+    pub requested_ms: u64,
+    /// 지금 기다리는 까닭(자리·올리기·머신 연결)
+    pub reason: String,
 }
 
 /// 기획 폴더 안 Markdown 문서 한 개

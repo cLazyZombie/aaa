@@ -3144,8 +3144,17 @@ pub enum FrontRequest {
         branch: String,
     },
     /// 「main에 반영」(FRONT_API 1.173, 조작): 기획 branch를 올린 뒤 `origin/design/<주제>`에서 갈라진 worktree thread가 main을
-    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다
+    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다. 프로젝트 실행 한도에 걸리면 거절하지 않고 예약한다
+    /// (FRONT_API 1.178, `DesignBranchView.apply_wait`): 자리가 나면 host가 띄운다
     DesignApply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+    },
+    /// 「main에 반영」 예약 취소(FRONT_API 1.178, 조작, t-1955): 한도에 걸려 자리를 기다리는 반영 요청을 거둔다. 답은 `design_branch`
+    DesignApplyCancel {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
@@ -4069,6 +4078,7 @@ impl FrontRequest {
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
+            | FrontRequest::DesignApplyCancel { project, .. }
             | FrontRequest::DesignHandoff { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
