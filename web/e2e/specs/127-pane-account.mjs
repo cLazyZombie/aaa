@@ -79,6 +79,21 @@ export default async function () {
     } finally { await page.context().close(); }
   });
   await step("PC Chromium 머리 줄·요약 창의 계정", async () => { await check(browser, 1280); });
+  // 목록이 옆에 붙은 중간 폭 창(t-1968): 머리줄이 451px이라 휴대폰처럼 아이콘·숫자로 줄여 제목 칸을 남기고 넘치지 않는다
+  await step("중간 폭 Chromium 머리 줄의 자동 병합", async () => {
+    const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 800 }, { hash: `#pane=${thread.pane}` });
+    try {
+      const head = page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`);
+      await head.locator(".pane-auto-merge[data-narrow] button.auto-merge-head-btn").waitFor();
+      const got = await head.evaluate((h) => ({
+        chip: h.querySelector(".chip.agent")?.innerText.trim(),
+        titleShown: h.querySelector(".term-title").getBoundingClientRect().width >= 30,
+        over: [...h.children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > h.getBoundingClientRect().right + 0.5).map((c) => c.className),
+      }));
+      assert.deepEqual(got, { chip: "50%", titleShown: true, over: [] });
+      assert.deepEqual(errors, []);
+    } finally { await page.context().close(); }
+  });
   await step("휴대폰 WebKit 머리 줄·요약 시트의 계정", async () => {
     const wk = await webkit.launch();
     try { await check(wk, 390); } finally { await wk.close(); }
