@@ -165,3 +165,12 @@ E2E 53의 네 준비와 공용 question-reply 시나리오를 고쳤다. 기존 
 Windows에서 드라이브 이름이 중복된 MODULE_NOT_FOUND가 났다. OS 경로 변환은
 `fileURLToPath`로 고쳤으며 해당 runner 검사 4개를 로컬에서 다시 확인했다.
 첫 실패 원문은 보존하고 수리한 새 SHA의 CI 결과와 구분한다. 시험 제외·재시도·시한 변경은 없다.
+
+
+## 착지 main 통합
+
+coordinator 지시에 따라 main `35ebd550`을 진단 branch에 통합했다. t-1978의
+route 수리와 brief 전달 수리가 포함된다. 독립적으로 같은 준비 조건을 고친 두 파일의
+충돌은 main 판을 사용해 해소했다. 조건은 같고 대기 이름·주석 차이만 있었다.
+testing.md는 양쪽 검증 문서 링크를 모두 남겼다. 칩 비교·CI 분산·Windows URL 수리는 유지한다.
+이전 두 후보의 CI는 별도 기록으로 보존하고, 이 통합 뒤 같은 SHA에서 전체 CI 3회 성공을 확인한다.
