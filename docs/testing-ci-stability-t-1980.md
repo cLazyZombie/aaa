@@ -174,3 +174,27 @@ route 수리와 brief 전달 수리가 포함된다. 독립적으로 같은 준�
 충돌은 main 판을 사용해 해소했다. 조건은 같고 대기 이름·주석 차이만 있었다.
 testing.md는 양쪽 검증 문서 링크를 모두 남겼다. 칩 비교·CI 분산·Windows URL 수리는 유지한다.
 이전 두 후보의 CI는 별도 기록으로 보존하고, 이 통합 뒤 같은 SHA에서 전체 CI 3회 성공을 확인한다.
+
+
+## Windows SCM 준비 검사의 추가 실패
+
+최종 후보 `d01e3aab`의 [세 번째 실행](https://github.com/cLazyZombie/aaa/actions/runs/44104967730)은
+Windows 기본 시험을 통과했으나, SYSTEM SSH 실제 owner에서 `service_ready_unverified`로 실패했다.
+실제 owner 37.43초, 원격 install은 exit 3·NeedsUser였고 시험은 Installed를 요구해 실패했다.
+시한 만료 코드와는 다르다. 첫 두 Windows 전체는 성공했으며 이 실패를 성공 횟수에 넣지 않는다.
+
+기존 오류는 준비 증명의 PID·context·account·profile·binary·session·boot와 연결·프로세스 관측을
+한 코드로 뭉쳤다. 추가로 worker가 NeedsUser 문구를 다시 쓰며 하위 원인을 지웠다.
+실패한 고정 검사 이름만 Cause에 보존하고 worker에서도 유지하도록 진단을 보강한다.
+실제 계정·경로·해시 값은 출력하지 않는다. 모든 거부 조건·시한·실패 종료는 유지한다.
+
+관련 실제 backend/영수증 owner 7개가 통과했다. 변조한 필드가 해당 원인 이름으로 거부되는지 검사했다.
+원래 실패 VM의 proof는 보존되어 있지 않아 어느 필드가 실제로 달랐는지는 아직 모른다.
+Windows만 실행하는 명시적 진단 모드에서는 서로 다른 일회 사용자·실험실로 실제 SYSTEM SSH owner를
+최대 12회 수행하되 첫 실패에서 중단한다. 이 부분 진단을 전체 CI 성공으로 집계하지 않는다.
+
+Windows 서비스 진단은 [WinSW 문제 해결](https://github.com/winsw/winsw/blob/v3/docs/troubleshooting.md)
+([MIT](https://github.com/winsw/winsw/blob/v3/LICENSE.txt))의 wrapper/backend 관찰 분리와
+[windows-service-rs](https://github.com/mullvad/windows-service-rs)
+([MIT/Apache-2.0](https://github.com/mullvad/windows-service-rs/blob/master/README.md))의
+SCM 상태 전이 구분을 대조했다. 코드를 가져오거나 준비 증명 검사를 약화하지 않는다.

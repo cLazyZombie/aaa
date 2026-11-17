@@ -355,8 +355,15 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
                                     result.needs_user.push(InstallNeedsUser {
                                         code: fault.code.into(),
                                         target: "service".into(),
-                                        message: "이 계정의 OS 권한·보호 암호 입력을 준비한 뒤 같은 ID로 재개하세요"
-                                            .into(),
+                                        message: {
+                                            let mut message =
+                                                "이 계정의 OS 권한·보호 암호 입력을 준비한 뒤 같은 ID로 재개하세요"
+                                                    .to_string();
+                                            if let Some(cause) = fault.cause {
+                                                message.push_str(&format!(": {cause}"));
+                                            }
+                                            message
+                                        },
                                     });
                                 }
                             }

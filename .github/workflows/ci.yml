@@ -5,6 +5,11 @@ on:
     branches: [main, "hp/**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_native_diagnostic:
+        description: Windows 설치 준비 반복 진단
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ jobs:
   # 웹 front E2E(web/e2e/web.e2e.mjs): 실제 host·agent와 headless Chromium·WebKit. 터미널 한글 IME 기록 재생
   # (macOS Safari·iPad 하드웨어 키보드·화면 키보드가 올라온 iPad)이 웹·터미널 코드를 바꾸는 모든 commit에서 돈다.
   web-e2e:
+    if: ${{ !inputs.windows_native_diagnostic }}
     name: web-e2e (macos-15, ${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
@@ -103,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-2025]
+        os: ${{ fromJSON(inputs.windows_native_diagnostic && '["windows-2025"]' || '["macos-15","ubuntu-24.04","windows-2025"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -197,7 +203,13 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'windows-2025' && steps.build.outcome == 'success' }}
         timeout-minutes: 20
         shell: pwsh
-        run: ./scripts/ci-windows-sshd.ps1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $count = if ('${{ inputs.windows_native_diagnostic }}' -eq 'true') { 12 } else { 1 }
+          for ($round = 1; $round -le $count; $round++) {
+            Write-Host "M4 independent round=$round/$count"
+            ./scripts/ci-windows-sshd.ps1
+          }
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).

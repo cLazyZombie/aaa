@@ -579,6 +579,36 @@ struct Ready {
     boot: String,
 }
 
+#[track_caller]
+fn ready_unverified(check: &'static str) -> Fault {
+    use aaa_common::diagnostic::{Cause, WithCause};
+    // 계정·경로·해시 원문 대신 실패한 고정 검사 이름만 공개한다.
+    failure("service_ready_unverified", 3).with_cause(Cause {
+        kind: check,
+        os_code: None,
+        position: None,
+        at: std::panic::Location::caller(),
+    })
+}
+
+fn verify_ready_identity(spec: &Spec, observed: &Observation, ready: &Ready) -> Result<()> {
+    for (check, matches) in [
+        ("ready.schema", ready.schema == 1),
+        ("ready.pid", ready.pid == observed.pid),
+        ("ready.context", ready.context_sha256 == spec.sha()),
+        ("ready.account", ready.account_sha256 == hash(spec.account.as_bytes())),
+        ("ready.profile", ready.profile_sha256 == hash(spec.profile.to_string_lossy().as_bytes())),
+        ("ready.binary", ready.binary_sha256 == spec.binary_sha256),
+        ("ready.session", spec.launchd.is_some() || ready.session == 0),
+        ("ready.boot", ready.boot == aaa_common::util::boot_id()),
+    ] {
+        if !matches {
+            return Err(ready_unverified(check));
+        }
+    }
+    Ok(())
+}
+
 fn credentials_verified(record: &Record, process: Process) -> bool {
     !record.credentials_restart_unverified
         || record
@@ -829,21 +859,17 @@ fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation)
     })?;
     let ready: Ready = serde_json::from_slice(&bytes)
         .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
-    if !observed.running
-        || observed.pid == 0
-        || !ready.connected
-        || ready.schema != 1
-        || ready.pid != observed.pid
-        || ready.context_sha256 != spec.sha()
-        || ready.account_sha256 != hash(spec.account.as_bytes())
-        || ready.profile_sha256 != hash(spec.profile.to_string_lossy().as_bytes())
-        || ready.binary_sha256 != spec.binary_sha256
-        || (spec.launchd.is_none() && ready.session != 0)
-        || ready.boot != aaa_common::util::boot_id()
-        || manager.process(spec, ready.pid)?
-            != Some(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
+    if !observed.running || observed.pid == 0 {
+        return Err(ready_unverified("ready.service_running"));
+    }
+    if !ready.connected {
+        return Err(ready_unverified("ready.connected"));
+    }
+    verify_ready_identity(spec, observed, &ready)?;
+    if manager.process(spec, ready.pid)?
+        != Some(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
     {
-        return Err(failure("service_ready_unverified", 3));
+        return Err(ready_unverified("ready.process_identity"));
     }
     Ok(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
 }
