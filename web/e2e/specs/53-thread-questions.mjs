@@ -28,7 +28,8 @@ export default async function ({ page }) {
     if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-icon-notes.md`, "선택지 뒤 설명 회귀 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "단추 아이콘 원문", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-icon-notes.md`);
-    await until("첫 아이콘 보고", () => aaa("thread", "show", t.id).report_hash);
+    // 보고는 brief 받음 확인보다 먼저 수집될 수 있다. 답 전송이 허용된 상태까지 기다린다.
+    await until("첫 아이콘 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
     const original = fs.readFileSync(fileURLToPath(new URL("../../../crates/aaa-proto/tests/fixtures/t0621-questions.md", import.meta.url)), "utf8");
     for (const name of new Set([...original.matchAll(/library\/([a-z-]+\.png)/g)].map((m) => m[1]))) {
       // 실제 보고의 글은 그대로, 그림 bytes는 독립 실험실의 fixture다.
@@ -80,7 +81,7 @@ export default async function ({ page }) {
     if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-answer-lines.md`, "여러 줄 답 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "여러 줄 답", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-answer-lines.md`);
-    await until("첫 여러 줄 보고", () => aaa("thread", "show", t.id).report_hash);
+    await until("첫 여러 줄 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
     const body = "[결정 필요] 질문 1개: 궤적\n\n## Questions\n### 1. 궤적을 이대로 둘까\n- A 그대로 (추천)\n- B 고친다\n";
     fs.writeFileSync(`${t.work_dir}/report.md`, body);
     const hash = createHash("sha256").update(body).digest("hex");
@@ -161,7 +162,7 @@ export default async function ({ page }) {
     if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-answer-now.md`, "답한 카드 바로 보기 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "답한 카드 바로 보기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-answer-now.md`);
-    await until("첫 보고", () => aaa("thread", "show", t.id).report_hash);
+    await until("첫 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
     const body = "[결정 필요] 질문 1개: 자리\n\n## Questions\n### 1. 자리를 이대로 둘까\n- A 그대로 (추천)\n- B 고친다\n";
     fs.writeFileSync(`${t.work_dir}/report.md`, body);
     const hash = createHash("sha256").update(body).digest("hex");
@@ -222,7 +223,7 @@ export default async function ({ page }) {
   await step("근거가 Questions 위에만: thread 카드는 근거 경고·보고서 열기 r-ID(PC·휴대폰 폭), thread pane에 고칠 방법, post는 거절", async () => {
     fs.writeFileSync(`${root}/task-evidence.md`, "근거 위치 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "근거 위치", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-evidence.md`);
-    await until("첫 근거 보고", () => aaa("thread", "show", t.id).report_hash);
+    await until("첫 근거 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
     for (const name of ["above-a.png", "above-b.png"]) fs.copyFileSync(`${root}/pic.png`, `${t.work_dir}/library/${name}`);
     // fake thread의 HTML 보고서를 빼야 「보고서 열기」가 그 판의 report.md 본문(그림 포함)을 보인다.
     fs.rmSync(`${t.work_dir}/library/index.html`, { force: true });

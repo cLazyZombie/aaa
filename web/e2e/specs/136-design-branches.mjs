@@ -94,6 +94,7 @@ const save = (slug, path, text, base) => {
 
 export default async function () {
   let page;
+  let beforeCall = async () => {};
   const tasks = {};
   // 3-2에서 맡긴 할 일과 그 구현 thread(3-3 고침 알림이 쓴다)
   const handed = {};
@@ -135,6 +136,12 @@ export default async function () {
 
   await step("트리 branch 표시와 branch 판 보기", async () => {
     ({ page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, { serviceWorkers: "block" }));
+    // 단계마다 unroute → route로 교체하면, 제거할 때 서버가 자동 통과시킨 요청의
+    // 늦은 route 사건을 새 handler가 받아 다시 continue할 수 있다. 이 페이지에서 한 번만 건다.
+    await page.route("**/api/v1/call", async (route) => {
+      await beforeCall(route.request());
+      await route.continue();
+    });
     await page.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
     await inList(page, "activity-design");
     const repoRow = page.locator('[data-testid="design-repo"][data-repo="app"]');
@@ -273,6 +280,8 @@ export default async function () {
     await page.getByTestId("design-apply").click();
     const dialog = page.getByTestId("design-apply-dialog");
     await dialog.waitFor();
+    // cached 목록으로 창이 먼저 열릴 수 있다. 저장소 통계가 실제 행을 채운 뒤 단언한다.
+    await dialog.getByTestId("design-files").locator(".design-minus").first().waitFor();
     assert.match(await dialog.getByTestId("design-files").textContent(), /loop\/README\.md\+\d+−\d+/);
     await page.getByTestId("design-apply-submit").click();
     await domIs(page, "반영 요청 끝", () => !!document.querySelector("[data-testid=design-apply-reserved]") || !!document.querySelector("[data-testid=design-apply-dialog] .confirm-error"));
@@ -341,14 +350,12 @@ export default async function () {
     let release;
     const held = new Promise((r) => { release = r; });
     let holding = 0, passed = 0;
-    const hold = async (route) => {
-      if (route.request().postDataJSON()?.op !== "design_read") return route.fallback();
+    beforeCall = async (request) => {
+      if (request.postDataJSON()?.op !== "design_read") return;
       holding++;
       await held;
-      await route.fallback();
       passed++;
     };
-    await page.route("**/api/v1/call", hold);
     await page.getByTestId("design-pick").click();
     await page.getByTestId("design-pick-row").filter({ hasText: "그림 대화" }).click();
     await page.getByTestId("design-chat-branch").filter({ hasText: "pics" }).waitFor();
@@ -359,7 +366,7 @@ export default async function () {
     assert.ok(holding > 0 && await page.getByTestId("design-body").count() === 0, "문서를 다시 읽는 중에 올렸다");
     release();
     await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
-    await page.unroute("**/api/v1/call", hold);
+    beforeCall = async () => {};
     // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
     await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
     const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
@@ -402,8 +409,8 @@ export default async function () {
     await page.getByTestId("design-reload").first().evaluate((button) => {
       button.addEventListener("pointerdown", () => { button.dataset.discardReadGate = "armed"; }, { capture: true, once: true });
     });
-    const hold = async (route) => {
-      const req = route.request().postDataJSON();
+    beforeCall = async (request) => {
+      const req = request.postDataJSON();
       if (req?.op === "design_tree" && req.repo === "app" && !req.cached) {
         if (await page.getByTestId("design-reload").first().getAttribute("data-discard-read-gate") === "armed") {
           sawHeld();
@@ -412,9 +419,7 @@ export default async function () {
           sawBackground();
         }
       }
-      await route.continue();
     };
-    await page.route("**/api/v1/call", hold);
     try {
       // 먼저 시작한 갱신을 반드시 만들어 완료 확인과 실제 누름 사이의 경합을 고정한다.
       await page.getByTestId("design-doc-reload").click();

@@ -5141,3 +5141,5 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - CI 웹 조작 준비·질문 guard 수리(t-1967): [실패 원문·회귀·검증 범위](testing-ci-interaction-readiness-t1967.md).
 
 - [기획 트리 전송 실패 격리(t-1969)](testing-design-load-t-1969.md): 저장소별 HTTP·지난 트리·느린 응답·Chromium/WebKit 전송 끊김과 수동 복구.
+- t-1978: [기획 branch E2E의 route 수명 경합](testing-design-route-lifetime-t-1978.md)
+- t-1978: [질문 답 E2E의 brief 준비 경합](testing-question-brief-ready-t-1978.md)

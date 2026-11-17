@@ -12,7 +12,8 @@ export async function questionReplyScenario(engine, width) {
   if (!aaa("project", "list").projects.some(p => p.name === "demo")) aaa("project", "create", "demo");
   fs.writeFileSync(`${root}/reply-task.md`, "늦은 질문 답 응답 회귀\n");
   const t = aaa("thread", "start", "demo", "--title", "직접 답 응답 순서", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/reply-task.md`);
-  await until("첫 보고", () => aaa("thread", "show", t.id).report_hash);
+  // 첫 보고와 host의 brief 전달 확정은 별개다. 답 API가 허용된 뒤 보고를 바꾼다.
+  await until("첫 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
   const gate = responseGate();
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, {
     hash: `#question=${t.id}`, serviceWorkers: "block", setup: gate.setup,
