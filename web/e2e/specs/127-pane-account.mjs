@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { token } from "../../../scripts/fixture-secret.mjs";
-import { root, aaa, until, step, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
+import { root, AA, aaa, until, step, browser, webkit, pairPage, shot, waitOutput } from "../lib/harness.mjs";
 
 const config = `${root}/c/host.toml`;
 // 계정 인증은 harness가 같아야 붙는다: 가짜 agent(fake.sh)를 Claude profile로 띄운다
@@ -32,6 +32,13 @@ async function check(engine, width) {
     });
     if (width > 640) assert.deepEqual(fit, { whole: true, first: false, inside: true });
     else assert.deepEqual({ first: fit.first, inside: fit.inside }, { first: true, inside: true });
+    // 자동 병합 아이콘이 있는 휴대폰 머리줄(t-1968 q-4124 1A)은 상태 표시를 진행률 숫자만 두어 제목 칸을 남긴다
+    const status = await page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`).evaluate((h) => ({
+      merge: !!h.querySelector(".pane-auto-merge [role=switch]"), chip: h.querySelector(".chip.agent")?.innerText.trim(),
+      title: Math.round(h.querySelector(".term-title").getBoundingClientRect().width),
+    }));
+    assert.deepEqual({ merge: status.merge, numberOnly: status.chip === "50%", pct: status.chip?.endsWith("50%"), titleShown: status.title >= 30 },
+      { merge: true, numberOnly: width <= 700, pct: true, titleShown: true }, JSON.stringify(status));
 
     await page.locator(`section.term[data-pane="${thread.pane}"]`).getByTestId("summary-open").click();
     const summary = page.getByTestId("summary-account");
@@ -55,6 +62,11 @@ export default async function () {
       const v = aaa("thread", "show", t.id);
       return v.pane && v.account === "sample-claude" && v;
     });
+    // 머리줄 상태 표시의 진행률(실제 세션의 진행 보고)
+    fs.writeFileSync(`${root}/account-progress.sh`, `"${AA}" report --percent 50 --activity '계정 표시'\nprintf 'account-progress-done\\n'\n`);
+    aaa("pane", "run", thread.pane, `post-probe ${root}/account-progress.sh`);
+    await waitOutput(thread.pane, "account-progress-done");
+    thread = await until("진행률 50%", () => { const v = aaa("thread", "show", t.id); return v.agent?.percent === 50 && v; });
   });
   await step("계정을 모르는 pane은 계정을 보이지 않는다", async () => {
     const shell = aaa("pane", "list").panes.find((p) => p.name === "t1");
@@ -67,6 +79,21 @@ export default async function () {
     } finally { await page.context().close(); }
   });
   await step("PC Chromium 머리 줄·요약 창의 계정", async () => { await check(browser, 1280); });
+  // 목록이 옆에 붙은 중간 폭 창(t-1968): 머리줄이 451px이라 휴대폰처럼 아이콘·숫자로 줄여 제목 칸을 남기고 넘치지 않는다
+  await step("중간 폭 Chromium 머리 줄의 자동 병합", async () => {
+    const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 800 }, { hash: `#pane=${thread.pane}` });
+    try {
+      const head = page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`);
+      await head.locator(".pane-auto-merge[data-narrow] button.auto-merge-head-btn").waitFor();
+      const got = await head.evaluate((h) => ({
+        chip: h.querySelector(".chip.agent")?.innerText.trim(),
+        titleShown: h.querySelector(".term-title").getBoundingClientRect().width >= 30,
+        over: [...h.children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > h.getBoundingClientRect().right + 0.5).map((c) => c.className),
+      }));
+      assert.deepEqual(got, { chip: "50%", titleShown: true, over: [] });
+      assert.deepEqual(errors, []);
+    } finally { await page.context().close(); }
+  });
   await step("휴대폰 WebKit 머리 줄·요약 시트의 계정", async () => {
     const wk = await webkit.launch();
     try { await check(wk, 390); } finally { await wk.close(); }

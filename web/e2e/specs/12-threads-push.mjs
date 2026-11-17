@@ -222,27 +222,37 @@ export default async function ({ page }) {
     });
     if (split.length) throw new Error(`휴대폰 폭 표 칸에서 한글 낱말이 갈렸다: ${split.join(", ")}`);
     await shot(page, "phone-report-markdown");
-    // 자동 병합(t-1495 D안): 맨 윗줄 상태 표시 자리에 둔다. 휴대폰은 아이콘 단추라 「확인(ack)」이 있는 머리줄도 화면 안이다
-    const merge = page.locator(".thread-view .term-head").getByRole("switch", { name: "자동 병합" });
+    // 자동 병합(t-1968): 도는 thread는 pane 머리줄(제목 줄)의 상태 표시 왼쪽에만 있고 보고 화면에는 없다.
+    // 휴대폰은 아이콘 단추라 보고·요약·대화 전환이 함께 있는 머리줄도 화면 안이다
+    await domIs(page, "보고 화면에 자동 병합 없음", () => !!document.querySelector("[data-testid='thread-view'] [data-testid='report']")
+      && !document.querySelector("[data-testid='thread-view'] [data-testid='auto-merge-switch'], [data-testid='thread-view'] [data-testid='auto-merge-badge']"));
+    await page.locator(".thread-view .term-head").getByTestId("open-terminal").click();
+    const paneHead = ".term:not([hidden]) > .term-head";
+    const merge = page.locator(paneHead).getByRole("switch", { name: "자동 병합" });
     const phoneHead = await merge.evaluate((el) => ({
       icon: el.matches("button.auto-merge-head-btn") && !el.textContent.trim(),
-      inMeta: !!document.querySelector(".t-meta [data-testid='auto-merge-switch']"),
-      over: [...el.parentElement.children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > window.innerWidth + 0.5).map((c) => c.className),
+      // 상태 표시(fake harness는 없다)·「보고」 단추 앞
+      beforeChip: !!el.closest(".pane-auto-merge")?.nextElementSibling?.matches(".chip.agent, [data-testid='open-report']"),
+      over: [...el.closest(".term-head").children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > window.innerWidth + 0.5).map((c) => c.className),
     }));
-    if (!phoneHead.icon || phoneHead.inMeta || phoneHead.over.length) throw new Error(`휴대폰 머리줄 자동 병합 ${JSON.stringify(phoneHead)}`);
+    if (!phoneHead.icon || !phoneHead.beforeChip || phoneHead.over.length) throw new Error(`휴대폰 머리줄 자동 병합 ${JSON.stringify(phoneHead)}`);
     await merge.click();
     await until("휴대폰에서 켠 자동 병합", () => aaa("thread", "show", "demo", t.id).auto_merge === true);
-    await domIs(page, "켠 아이콘 단추", () => document.querySelector(".term-head [data-testid='auto-merge-switch']")?.getAttribute("aria-checked") === "true");
+    await domIs(page, "켠 아이콘 단추", (sel) => document.querySelector(`${sel} [data-testid='auto-merge-switch']`)?.getAttribute("aria-checked") === "true", paneHead);
+    await shot(page, "phone-pane-head-auto-merge");
     await page.setViewportSize({ width: 1280, height: 800 });
     // 넓은 화면은 글자와 스위치가 상태 표시 바로 왼쪽이다
-    await domIs(page, "PC 머리줄 자동 병합", () => {
-      const el = document.querySelector(".term-head [data-testid='auto-merge-switch']");
-      return el?.matches(".auto-merge-head") && el.textContent === "자동 병합" && el.nextElementSibling?.matches(".head-chip")
+    await domIs(page, "PC 머리줄 자동 병합", (sel) => {
+      const el = document.querySelector(`${sel} [data-testid='auto-merge-switch']`);
+      return el?.matches(".auto-merge-head") && el.textContent === "자동 병합" && el.parentElement?.nextElementSibling?.matches(".chip.agent, [data-testid='open-report']")
         && el.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true";
-    });
+    }, paneHead);
+    await shot(page, "desktop-pane-head-auto-merge");
     await merge.click();
     // thread show는 꺼진 값을 싣지 않는다(기본 off)
     await until("PC에서 끈 자동 병합", () => !aaa("thread", "show", "demo", t.id).auto_merge);
+    await page.locator(paneHead).getByTestId("open-report").click();
+    await domIs(page, "보고 화면으로 돌아옴", () => !!document.querySelector("[data-testid='thread-view'] [data-testid='report']"));
     // thread 보고는 앱 안에 남는다. 외부 알림은 별도로 coordinator가 판단한 사용자 post다.
     await coordinatorPost();
     await until("coordinator 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
