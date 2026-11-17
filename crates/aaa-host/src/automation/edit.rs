@@ -741,16 +741,22 @@ impl Host {
             original: None,
             repo: None,
         };
-        if let super::Action::Start(a) = &r.action
-            && self.automation_start_scope(p, &r, a)?.spread_repos().is_some_and(|names| names.is_empty())
-        {
+        // 펼치는 규칙은 저장소마다 입력 `<id>#<저장소>`가 된다: 대기 기록도 그 id로 남긴다
+        let spread = match &r.action {
+            super::Action::Start(a) => self.automation_start_scope(p, &r, a)?.spread_repos(),
+            _ => None,
+        };
+        if spread.as_ref().is_some_and(Vec::is_empty) {
             return Err(bad("기획 폴더가 있는 저장소가 없어 띄울 thread가 없다"));
         }
         let accepted = self.automation_accept(p, &r, event)?;
         if !accepted {
             return Ok((false, "이미 받은 실행이다".into()));
         }
-        self.record_routine(p, name, &id, "waiting", "지금 실행 · 차례 기다림", None);
+        let ids = spread.map_or_else(|| vec![id.clone()], |names| names.iter().map(|n| format!("{id}#{n}")).collect());
+        for id in &ids {
+            self.record_routine(p, name, id, "waiting", "지금 실행 · 차례 기다림", None);
+        }
         self.db.audit(actor, "automation_run", &format!("{p}/{name}"));
         self.flow_project(p, "automation_run", Some(r.file.clone()), name.to_string());
         self.tick_wake.notify_one();

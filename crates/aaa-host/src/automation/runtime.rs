@@ -1450,8 +1450,13 @@ impl Host {
                     if s.inflight.as_ref().is_some_and(|b| b.id == batch.id) {
                         s.inflight = None;
                         let mut events = batch.events.clone();
-                        events.append(&mut s.pending);
-                        s.pending = events;
+                        if events.iter().any(|e| e.repo.is_some()) {
+                            // 펼친 입력은 뒤로 보낸다: 시작이 계속 실패하는 저장소가 다른 저장소의 차례를 막지 않는다
+                            s.pending.append(&mut events);
+                        } else {
+                            events.append(&mut s.pending);
+                            s.pending = events;
+                        }
                         if s.day == batch.day {
                             s.count = s.count.saturating_sub(1);
                         }

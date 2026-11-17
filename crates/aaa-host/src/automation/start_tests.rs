@@ -1623,4 +1623,50 @@ async fn spread_without_machines_uses_each_repo_workspace_permission() {
             .iter()
             .any(|run| run.id == "schedule:1#game" && run.detail.contains("game 저장소가 있는 후보 머신 없음"))
     );
+    // 지금 실행도 저장소마다 입력 하나다. 대기 기록은 펼친 id로만 남아 끝나지 않는 「대기」 줄이 없다
+    let rev = l.h.workspace_access_view("demo", "mac-b").unwrap().revision;
+    l.h.workspace_access_set("demo", "mac-b", "game", true, &rev, "local:cli").unwrap();
+    let (accepted, _) = l.h.automation_run("demo", "check", "k1", "local:cli").await.unwrap();
+    assert!(accepted);
+    for _ in 0..3 {
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    }
+    let runs = l.h.routine_history("demo", "check").unwrap().runs;
+    assert!(!runs.iter().any(|run| run.id == "manual:k1"), "{runs:?}");
+    assert!(started("schedule:1#game").is_some() || started("manual:k1#game").is_some(), "{runs:?}");
+    assert!(runs.iter().any(|run| run.id == "manual:k1#app"), "{runs:?}");
+}
+
+/// 펼친 입력의 시작이 대기가 아닌 오류로 끝나면 큐 뒤로 간다: 계속 실패하는 저장소가 다른 저장소를 막지 않는다.
+#[tokio::test]
+async fn spread_start_failure_does_not_block_other_repos() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let dir = l.h.project_dir("demo").unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "schema = 1\n\n[[repos]]\nmachine = 'mac-a'\npath = '/work/app'\ndesign = 'docs/design'\n\n[[repos]]\nmachine = 'mac-b'\npath = '/w/game'\ndesign = 'game-design'\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let text = "[on.schedule]\nevery='10m'\n[do.start]\ntitle='{repo} 기획'\ntext='기획서를 최신화한다'\nprofiles=['claude']\nmachines=['mac-a','mac-b']\nrepos='design'\n";
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+    let r = automation::parse(&dir, "check", text).unwrap();
+    approve(&l, &r);
+    let sql = rusqlite::Connection::open(l.root.join("host/host.db")).unwrap();
+    sql.execute_batch(
+        "CREATE TRIGGER reject_app BEFORE INSERT ON threads WHEN NEW.data LIKE '%/work/app%' BEGIN SELECT RAISE(ABORT,'app start rejected'); END;",
+    )
+    .unwrap();
+    let started = |key: &str| l.h.db.meta(&crate::auto_start::start_key("demo", "check", key)).unwrap();
+    l.h.automation_submit("demo", &r, "schedule:1", String::new(), None).unwrap();
+    for _ in 0..3 {
+        let _ = l.h.automation_drain_at("demo", &r, util::now_ms()).await;
+    }
+    assert!(started("schedule:1#app").is_none());
+    assert!(started("schedule:1#game").is_some(), "앞 저장소 app의 시작 실패가 game을 막았다");
+    sql.execute_batch("DROP TRIGGER reject_app").unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert!(started("schedule:1#app").is_some(), "실패한 저장소도 입력을 보존해 다시 띄운다");
 }
