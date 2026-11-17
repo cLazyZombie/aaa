@@ -22,6 +22,9 @@
 .task-prop > .auto-merge-switch { flex: 1 1 auto; flex-wrap: nowrap; gap: var(--space-2); color: inherit; font-size: inherit; }
 .task-prop > .auto-merge-switch .auto-merge-label { flex: 0 0 72px; color: var(--text-dim); font-size: var(--fs-xs); }
 .task-prop > .auto-merge-switch .auto-merge-error { flex-basis: auto; }
-/* pane 머리줄(t-1968): 실패 띠는 머리 아래 오른쪽에 떠서 터미널 칸 크기를 바꾸지 않는다 */
-.pane-auto-merge { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
-.pane-auto-merge-error { position: absolute; top: calc(100% + var(--space-2)); right: 0; width: max-content; max-width: min(320px, 80vw); white-space: normal; }
+/* pane 머리줄(t-1968): 실패 띠는 머리(sticky) 아래 오른쪽 끝에 떠서 터미널 칸 크기를 바꾸지 않는다. 스위치 기준으로 두면 휴대폰에서
+   긴 글이 화면 왼쪽 밖으로 나갔다(390px 실측 left −214px) */
+.pane-auto-merge { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.term-head .banner.pane-auto-merge-error { position: absolute; top: calc(100% + var(--space-2)); right: calc(var(--space-2) + var(--inset-r, 0px)); width: max-content; max-width: min(360px, calc(100vw - 2 * var(--space-2))); white-space: normal;
+  /* 아래 터미널·띠가 비치지 않게 불투명 바탕 위에 오류 색을 얹는다 */
+  background: linear-gradient(var(--blocked-bg), var(--blocked-bg)), var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 4px 16px rgb(0 0 0 / 0.35); }

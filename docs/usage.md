@@ -232,7 +232,7 @@ thread는 이어진 할 일의 값을 보이므로 다시 시작·이어 하기�
 
 - 웹: 할 일 상세의 「자동 병합」 스위치, 새 할 일 폼·「바로 시작」·예약 확인의 칸, thread 터미널 화면 맨 윗줄(제목·위치 줄) 상태 표시 왼쪽의 스위치(휴대폰은 병합 아이콘 단추, 켜면 청록 바탕).
   보고 화면에는 스위치가 없다. 터미널 pane이 없는 thread만 보고 화면 맨 윗줄에 둔다.
-  할 일 줄·「모든 thread」 목록·thread 제목·작업 요약 카드에 「자동 병합」 표지가, 「작업」 목록 thread 줄에는 병합 아이콘이 보인다.
+  할 일 줄·「모든 thread」 목록·작업 요약 카드(스위치가 없는 화면은 thread 제목·머리줄)에 「자동 병합」 표지가, 「작업」 목록 thread 줄에는 병합 아이콘이 보인다.
   「작업」 목록 줄의 첫 줄은 「번호 · 제목」만 두고, 표지(병합 대기·병합 중·자동 병합 아이콘 등)는 둘째 줄 상태 말 앞에 둔다(한 줄 모드는 이름 뒤).
 - CLI: `aaa task add|edit|reserve … --auto-merge on|off`, `aaa thread start --auto-merge on|off`,
   `aaa thread auto-merge <thread> [on|off]`(생략하면 thread show).
