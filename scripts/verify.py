@@ -91,8 +91,11 @@ def main():
         head = git("rev-parse", "HEAD").decode().strip()
         if args.phase == "landing" and git("status", "--porcelain"):
             raise ValueError("착지는 변경을 커밋한 뒤 최종 통합 SHA에서 실행한다")
-        if args.phase == "landing" and os.environ.get("AAA_E2E_ONLY"):
-            raise ValueError("착지에서는 AAA_E2E_ONLY로 E2E를 줄일 수 없다")
+        if args.phase == "landing":
+            for key in ("AAA_E2E_ONLY", "AAA_E2E_SHARD", "AAA_E2E_RETRIES", "AAA_CI_WINDOWS_INSTALL_RECHECK"):
+                value = os.environ.get(key)
+                if value and not (key in ("AAA_E2E_RETRIES", "AAA_CI_WINDOWS_INSTALL_RECHECK") and value == "0"):
+                    raise ValueError(f"착지에서는 {key}로 E2E를 줄이거나 재확인할 수 없다")
         data = dict(phase=args.phase, scope=scope, base=base, commit=head, paths=paths, commands=plan)
         print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
         if args.dry_run:

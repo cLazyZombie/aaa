@@ -124,10 +124,37 @@ class CiLocal(unittest.TestCase):
         self.env = dict(os.environ, FIXTURE_ROOT=str(self.root), AAA_CI_MACHINE_LOCK=str(self.root / "machine.lock"),
                         PATH=str(self.root / "tools") + os.pathsep + os.environ["PATH"])
         self.env.pop("GITHUB_ACTIONS", None)
+        self.env.pop("AAA_E2E_SHARD", None)
+        self.env.pop("AAA_E2E_RETRIES", None)
+        self.env.pop("AAA_CI_WINDOWS_INSTALL_RECHECK", None)
 
     def write_tool(self, path):
         path.write_text(f"#!{sys.executable}\n" + TOOL)
         path.chmod(0o755)
+
+    def test_local_gate_rejects_ci_sharding_and_retry_but_keeps_zero_retry(self):
+        for key, value in (("AAA_E2E_SHARD", "1/3"), ("AAA_E2E_RETRIES", "1")):
+            with self.subTest(key=key):
+                self.env[key] = value
+                result = self.run_ci("--only", "e2e")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("로컬 gate는 전수", result.stderr)
+                self.env.pop(key)
+        self.env["AAA_E2E_RETRIES"] = "0"
+        self.assertEqual(self.run_ci("--only", "e2e").returncode, 0)
+
+    def test_windows_recheck_is_rejected_outside_ci_and_unknown_modes_fail(self):
+        for ci, value in ((None, "1"), ("true", "2"), ("true", "invalid")):
+            with self.subTest(ci=ci, value=value):
+                self.env["AAA_CI_WINDOWS_INSTALL_RECHECK"] = value
+                if ci:
+                    self.env["GITHUB_ACTIONS"] = ci
+                result = self.run_ci("--only", "e2e")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("Windows 설치 재확인", result.stderr)
+        self.env.pop("GITHUB_ACTIONS", None)
+        self.env["AAA_CI_WINDOWS_INSTALL_RECHECK"] = "0"
+        self.assertEqual(self.run_ci("--only", "e2e").returncode, 0)
 
     def run_ci(self, *args, gate=False, stages=("test", "e2e"), live_output=True):
         command = ["bash", "scripts/ci-local.sh", "--logs", "logs", *args]

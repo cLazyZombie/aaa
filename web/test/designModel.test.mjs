@@ -2,6 +2,8 @@
 // 경로 풀기는 그림 주소·앱 안 문서 열기가 저장소 밖을 가리키지 않게 하는 계약이다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { addedDocs, ancestors, branchesByPath, calloutOf, idLineOf, withoutIdLines, changedBlocks, chatImageDir, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, mergedToMain, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, SLUG, slugSuggest, splitContext, splitTarget, takeImages, taskState } from "../src/designModel.ts";
 
@@ -249,13 +251,14 @@ describe("블록 표지(3-1)", () => {
     assert.equal(headingOf("####### 일곱"), null);
   });
 
-  it("긴 줄에서도 되돌기 없이 바로 끝난다", () => {
-    const started = performance.now();
-    calloutOf(`> [!계획]${" ".repeat(200_000)}x`, "s");
-    calloutOf(`> [!계획] ${"![".repeat(100_000)}](a)`, "s");
-    sectionsOf([`# a${" ".repeat(200_000)}x`], "s");
-    mdBlocks(`> [!계획]${" ".repeat(200_000)}x\r\n> 끝`);
-    assert.ok(performance.now() - started < 1000, `${performance.now() - started}ms`);
+  it("긴 줄의 해석 결과를 확인하고 과도한 되돌기는 별도 프로세스에서 차단한다", () => {
+    // 동기 정규식은 node:test의 JS timer도 막는다. 소유한 자식의 종료 사건을 기다리고,
+    // 진짜 되돌기 정체 때만 자식을 끝낸다. 러너의 1초 벽시계 성능을 단언하지 않는다.
+    const fixture = fileURLToPath(new URL("./fixtures/design-long-lines.mjs", import.meta.url));
+    const result = execFileSync(process.execPath, ["--experimental-strip-types", fixture], {
+      timeout: 30_000, killSignal: "SIGKILL", encoding: "utf8",
+    });
+    assert.equal(result.trim(), "긴 줄 4개 해석 확인");
   });
 });
 

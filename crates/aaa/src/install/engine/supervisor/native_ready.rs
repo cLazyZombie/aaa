@@ -65,17 +65,7 @@ impl Waiting {
                     let ready: Ready = serde_json::from_slice(&bytes)
                         .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
                     // 잘못된 PID/context는 기다려 성공시키지 않는다. 정상 중간 connected=false만 pending이다.
-                    if ready.schema != 1
-                        || ready.pid != observed.pid
-                        || ready.context_sha256 != spec.sha()
-                        || ready.account_sha256 != hash(spec.account.as_bytes())
-                        || ready.profile_sha256 != hash(spec.profile.to_string_lossy().as_bytes())
-                        || ready.binary_sha256 != spec.binary_sha256
-                        || ready.session != 0
-                        || ready.boot != aaa_common::util::boot_id()
-                    {
-                        return Err(failure("service_ready_unverified", 3));
-                    }
+                    verify_ready_identity(spec, observed, &ready)?;
                     if ready.connected {
                         verify_ready(spec, manager, observed)?;
                         return Ok(());

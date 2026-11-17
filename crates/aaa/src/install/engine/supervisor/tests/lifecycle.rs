@@ -227,7 +227,22 @@ fn offline_backend_initializes_and_stops() {
         }
         let bytes = serde_json::to_vec(&altered).unwrap();
         private::write(&proof, &bytes).unwrap();
-        assert_eq!(verify_ready(&spec, &mut os, &observed).unwrap_err().code, "service_ready_unverified", "{field}");
+        let fault = verify_ready(&spec, &mut os, &observed).unwrap_err();
+        assert_eq!(fault.code, "service_ready_unverified", "{field}");
+        let check = match field {
+            "context_sha256" => "ready.context",
+            "account_sha256" => "ready.account",
+            "profile_sha256" => "ready.profile",
+            "binary_sha256" => "ready.binary",
+            "elevated" | "process_created" => "ready.process_identity",
+            "schema" => "ready.schema",
+            "pid" => "ready.pid",
+            "session" => "ready.session",
+            "boot" => "ready.boot",
+            "connected" => "ready.connected",
+            _ => unreachable!(),
+        };
+        assert_eq!(fault.cause.unwrap().kind, check, "{field}");
         assert_eq!(private::read(&proof, 128 * 1024).unwrap(), bytes, "조회가 영수증을 고치지 않는다");
     }
     private::write(&proof, &valid).unwrap();

@@ -4,6 +4,20 @@ on:
   push:
     branches: [main, "hp/**"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      windows_native_diagnostic:
+        description: Windows 설치 준비 반복 진단
+        type: boolean
+        default: false
+      e2e_route_diagnostic:
+        description: E2E 136 라우트 수명 반복 진단
+        type: boolean
+        default: false
+      macos_arm_diagnostic:
+        description: macOS arm64 전수·실제 설치 진단
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,14 +34,19 @@ jobs:
   # 웹 front E2E(web/e2e/web.e2e.mjs): 실제 host·agent와 headless Chromium·WebKit. 터미널 한글 IME 기록 재생
   # (macOS Safari·iPad 하드웨어 키보드·화면 키보드가 올라온 iPad)이 웹·터미널 코드를 바꾸는 모든 commit에서 돈다.
   web-e2e:
-    name: web-e2e (macos-15)
-    runs-on: macos-15
+    if: ${{ !inputs.windows_native_diagnostic && !inputs.macos_arm_diagnostic }}
+    name: web-e2e (macos-15-intel, ${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.e2e_route_diagnostic && '[2]' || '[1,2,3]') }}
+    runs-on: macos-15-intel
     timeout-minutes: 40
     env:
       PLAYWRIGHT_VERSION: "1.64.1"
-      # 공개 macos-15 arm64는 3 CPU다. 로컬 기본(core/2 내림)은 1이라 40분을 넘었다.
-      # 3 worker 진단은 24분에 끝났지만 E2E66이 120초를 넘었다. 2개로 CPU 여유를 두며 모든 조합·시한을 유지한다.
-      AAA_E2E_WORKERS: "2"
+      # 4 CPU Intel 러너에서 host·agent·두 브라우저를 두 벌 돌리지 않는다. 모든 spec·기기는
+      # 세 독립 러너에 나누고 한 러너는 하나씩 실행한다. 로컬 착지 gate는 전수·재시도 0이다.
+      AAA_E2E_WORKERS: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Rust stable
@@ -45,8 +64,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+          key: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -65,12 +84,26 @@ jobs:
         run: bash scripts/ci-local.sh --only web --logs . --tee
       - name: 웹 E2E(aaa 빌드 포함)
         id: e2e
-        run: bash scripts/ci-local.sh --only e2e --logs . --tee
+        # job 전체가 취소되기 전에 실패로 끝내 최초 로그·시도 요약을 올린다.
+        timeout-minutes: 30
+        env:
+          AAA_E2E_SHARD: "${{ matrix.shard }}/3"
+          AAA_E2E_RETRIES: "1"
+        run: |
+          if [ '${{ inputs.e2e_route_diagnostic }}' = true ]; then
+            export DEBUG=pw:api AAA_E2E_ROUTE_DIAGNOSTIC=1 AAA_E2E_RETRIES=0
+            for round in 1 2 3 4 5 6 7 8; do
+              echo "E2E 136 독립 진단 $round/8"
+              bash scripts/ci-local.sh --only e2e --spec 136 --logs . --tee
+            done
+          else
+            bash scripts/ci-local.sh --only e2e --logs . --tee
+          fi
       - name: 웹 E2E 결과·진단
         if: ${{ !cancelled() && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: web-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}
+          name: web-e2e-result-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             e2e.log
             e2e-binary.log
@@ -89,13 +122,15 @@ jobs:
           true
 
   rust:
+    if: ${{ inputs.windows_native_diagnostic || inputs.macos_arm_diagnostic || !inputs.e2e_route_diagnostic }}
     name: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-2025]
+        os: ${{ fromJSON(inputs.windows_native_diagnostic && '["windows-2025"]' || inputs.macos_arm_diagnostic && '["macos-15"]' || '["macos-15-intel","ubuntu-24.04","windows-2025"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # Intel 전수의 첫 verify codegen·실제 설치까지 수용한다. 개별 owner의 시한은 그대로다.
+    timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 60 || 40 }}
     steps:
       # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
       - run: git config --global core.autocrlf false
@@ -124,8 +159,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+          key: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          # 기존 Rust 키의 OS별 아키텍처가 같은 조합만 전환 캐시로 받는다. Intel 웹은 이 예외를 쓰지 않는다.
+          restore-keys: |
+            cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+            ${{ (runner.os == 'macOS' && runner.arch == 'ARM64' || runner.os != 'macOS' && runner.arch == 'X64') && format('cargo-v1-{0}-{1}-{2}-{3}-', github.job, runner.os, steps.rust.outputs.rustc, steps.rust.outputs.week) || '' }}
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -150,11 +188,14 @@ jobs:
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
-        timeout-minutes: 15
-        # 시험 binary 안의 동시 수(결정 D2). 기본은 러너 코어 수(3~4)인데 m13 등은 대부분 host·agent 사건을 기다리는
-        # 시험이라 코어보다 많이 돌려도 된다(개발 Mac m13: 3개 72.6초, 8개 39.0초). 시간 단언은 사건·기록 기준으로 바꿨다.
+        timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 25 || 15 }}
+        # Unix는 owner 실행기가 CPU 수만큼 binary를 이미 나눈다. 안쪽까지 8개씩
+        # 돌리면 3 CPU에 24개 시험이 겹친다. Windows는 단일 Cargo 실행이므로 2개다.
+        # 가짜 host·agent·CLI마다 만드는 Tokio runtime도 2 thread로 제한한다.
         env:
-          RUST_TEST_THREADS: "8"
+          RUST_TEST_THREADS: ${{ matrix.os == 'windows-2025' && '2' || '1' }}
+          TOKIO_WORKER_THREADS: "2"
+          AAA_CI_WINDOWS_INSTALL_RECHECK: ${{ matrix.os == 'windows-2025' && !inputs.windows_native_diagnostic && '1' || '0' }}
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 완료를 기다려 출력하던 shard는 단계 중단 시 사라졌다. 준비/목록/실행 중 원문과
       # 원자 상태·사건 기록을 후속 설치 시험보다 먼저 보존한다. 중단을 성공으로 바꾸지 않는다.
@@ -167,17 +208,18 @@ jobs:
             test.log
             python.log
             rust/
+            windows-install/
           if-no-files-found: ignore
           retention-days: 7
       # 운영 Mac에는 등록하지 않는다. 기존 일회성 CI 계정에서만 필수 실제 등록 owner를 돈다.
       - name: macOS LaunchAgent 실제 등록·ready·instance 보존
-        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && startsWith(matrix.os, 'macos-') && steps.build.outcome == 'success' }}
         timeout-minutes: 15
         run: cargo test --profile verify -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
       # 「SSH로 추가」 실제 경로(plan §8.420): install 검증 SSH 입구가 믿는 root sshd를 이 일회성 계정에만 띄운다. 원격 HOME은 실험실이고
       # 시험이 runner 실제 HOME이 그대로인지 본다. 운영 Mac에서는 돌리지 않는다(스크립트가 GITHUB_ACTIONS가 아니면 멈춘다).
       - name: SSH로 설치·등록 실제 root sshd·LaunchAgent
-        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && startsWith(matrix.os, 'macos-') && steps.build.outcome == 'success' }}
         timeout-minutes: 20
         run: bash scripts/ci-root-sshd.sh 2>&1 | tee ssh-install.log
       # 암호는 일회성 시험 계정의 가짜 값이며 anonymous stdin만 쓴다. 기존 runner 계정/sshd 설정은 보존한다.
@@ -185,7 +227,14 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'windows-2025' && steps.build.outcome == 'success' }}
         timeout-minutes: 20
         shell: pwsh
-        run: ./scripts/ci-windows-sshd.ps1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 일회 계정의 프로필은 증거로 남는다. 같은 VM의 기본 20GB 여유 조건 안에서 진단한다.
+          $count = if ('${{ inputs.windows_native_diagnostic }}' -eq 'true') { 3 } else { 1 }
+          for ($round = 1; $round -le $count; $round++) {
+            Write-Host "M4 independent round=$round/$count"
+            ./scripts/ci-windows-sshd.ps1
+          }
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
@@ -196,7 +245,7 @@ jobs:
         run: bash scripts/ci-local.sh --only public --logs . --tee
       # annotation은 길이가 잘린다. 최초 owner 출력과 pipe 단계 기록은 원문 그대로 보존한다.
       - name: macOS pipe owner 원문·trace
-        if: ${{ failure() && matrix.os == 'macos-15' }}
+        if: ${{ failure() && startsWith(matrix.os, 'macos-') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos-pipe-owner-${{ github.run_attempt }}

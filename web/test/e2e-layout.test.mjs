@@ -84,6 +84,7 @@ test("목록은 pipe에 남은 출력까지 모두 전달하고 끝난다", (t) 
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "specs"));
   fs.mkdirSync(path.join(root, "lib"));
+  fs.writeFileSync(path.join(root, "durations.json"), "{}");
   fs.copyFileSync(path.join(repo, "web/e2e/web.e2e.mjs"), path.join(root, "runner.mjs"));
   fs.copyFileSync(path.join(repo, "web/e2e/lib/jobs.mjs"), path.join(root, "lib/jobs.mjs"));
   const names = Array.from({ length: 400 }, (_, i) => `${String(i).padStart(3, "0")}-fixture.mjs`);

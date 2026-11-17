@@ -61,6 +61,13 @@ while [ $# -gt 0 ]; do
     *) echo "모르는 인자: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+# CI 전용 분할·재확인이 로컬 전체 gate에 섞이지 않게 한다.
+if [ -n "${AAA_E2E_SHARD:-}" ] || [ "${AAA_E2E_RETRIES:-0}" != 0 ]; then
+  [ "${GITHUB_ACTIONS:-}" = true ] || { echo 'E2E 분할·재확인은 GitHub CI에서만 쓴다. 로컬 gate는 전수·재시도 0이다' >&2; exit 2; }
+fi
+if [ "${AAA_CI_WINDOWS_INSTALL_RECHECK:-0}" != 0 ]; then
+  [ "${AAA_CI_WINDOWS_INSTALL_RECHECK:-}" = 1 ] && [ "${GITHUB_ACTIONS:-}" = true ] || { echo 'Windows 설치 재확인은 명시한 GitHub CI에서만 쓴다' >&2; exit 2; }
+fi
 if [ -n "$E2E_SPEC" ]; then
   case " $ONLY " in *" e2e "*) ;; *) echo '--spec은 --only e2e를 명시한 개발 검사에서만 쓴다' >&2; exit 2 ;; esac
   echo "개발 관련 검사: E2E $E2E_SPEC (전체 gate 아님)"
@@ -137,11 +144,14 @@ step_test() {
   python3 scripts/check_fixture_secrets.py || return $?
   if [ "$OS" = windows ]; then
     pwsh -NoProfile -File scripts/test-windows-sshd-command.ps1 || return $?
+    if [ "${AAA_CI_WINDOWS_INSTALL_RECHECK:-0}" = 1 ]; then
+      python3 scripts/windows_install_recheck.py --logs "$LOGS/windows-install"; return $?
+    fi
     cargo test --profile verify --workspace --locked --no-fail-fast; return $?
   fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_ci_resources scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases scripts.test_verify scripts.test_windows_production >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_ci_resources scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases scripts.test_verify scripts.test_windows_production scripts.test_windows_install_recheck >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
