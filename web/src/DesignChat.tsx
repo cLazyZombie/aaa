@@ -1,7 +1,7 @@
 // 기획 대화(t-1894 2-3, 확정 시안 library/mock2): 기획 문서 화면 오른쪽 칸. 저장소의 기획 branch마다 대화 하나이고, 대화 thread의
 // 기록 사이에 host 사건(새 대화·저장·올림·사람 고침·반영)을 끼운다. 말은 host가 thread 준비 뒤 보낸다(`design_say`).
 import { Check, ChevronDown, Clock, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, call, uploadDesignChatImage } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { ChatPanel } from "./Chat";
@@ -47,6 +47,30 @@ export function DesignChat({ project, repo, branch, threads, panes, canControl, 
   onOpenLink?: (href: string) => boolean;
 }) {
   const [menu, setMenu] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const menuSurface = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    // RowMenu와 같이 capture 단계에서 닫되 바깥에서 누른 곳의 동작은 막지 않는다.
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuSurface.current?.contains(target) || menuButton.current?.contains(target)) return;
+      setMenu(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      event.preventDefault();
+      setMenu(false);
+      menuButton.current?.focus();
+    };
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [menu]);
   const [more, setMore] = useState(false);
   const [dialog, setDialog] = useState<"apply" | "discard" | null>(null);
   const thread = branch?.thread ? threads.find((t) => t.id === branch.thread) ?? null : null;
@@ -88,12 +112,12 @@ export function DesignChat({ project, repo, branch, threads, panes, canControl, 
     <div className="design-chat" data-testid="design-chat" data-statistics={branch?.read ? "ready" : "pending"}>
       <header className="design-chat-head">
         <div className="design-pick">
-          <button type="button" className="design-pick-btn" aria-haspopup="menu" aria-expanded={menu} data-testid="design-pick" onClick={() => setMenu((v) => !v)}>
+          <button ref={menuButton} type="button" className="design-pick-btn" aria-haspopup="menu" aria-expanded={menu} data-testid="design-pick" onClick={() => setMenu((v) => !v)}>
             <MessageSquare className="i" aria-hidden="true" /><strong>{branch?.title ?? "기획 대화"}</strong><ChevronDown className="i" aria-hidden="true" />
           </button>
           {branch && <span className="design-branch-chip" data-testid="design-chat-branch"><GitBranch aria-hidden="true" />{branch.slug}</span>}
           {menu && (
-            <div className="design-pick-menu" role="menu" data-testid="design-pick-menu">
+            <div ref={menuSurface} className="design-pick-menu" role="menu" data-testid="design-pick-menu">
               <p className="design-pick-label">{repo.repo} 기획 대화</p>
               {repo.branches.map((b) => (
                 <button key={b.slug} type="button" role="menuitem" className={`design-pick-row${b.slug === branch?.slug ? " is-current" : ""}`} data-testid="design-pick-row"

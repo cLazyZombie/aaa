@@ -157,6 +157,70 @@ export default async function () {
     await domIs(page, "main 판", () => !document.querySelector("[data-testid=design-changed]") && !document.querySelector("[data-testid=design-body]")?.textContent.includes("중간 상점"));
   });
 
+  // t-1975: 대화 목록의 바깥 누름은 선택을 바꾸지 않으며, 누른 곳의 동작도 그대로 실행한다.
+  for (const name of ["chromium", "webkit"]) for (const width of [1280, 390]) {
+    await step(`대화 목록 닫기 ${name} ${width}px: 바깥 누름·Esc·제목 재누름·선택·새 대화`, async () => {
+      const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
+      let p;
+      try {
+        ({ page: p } = await pairPage(wk ?? browser, aaa("web", "pair").code, { width, height: 900 }, {
+          hash: `#design=${encodeURIComponent("app/docs/loop/README.md")}`,
+          init: () => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"),
+        }));
+        const press = (locator) => width === 390 ? locator.tap() : locator.click();
+        if (width === 390) await press(p.getByTestId("design-page-chat"));
+        const button = p.getByTestId("design-pick"), menu = p.getByTestId("design-pick-menu");
+        const selected = p.getByTestId("design-chat-branch");
+        await domIs(p, "대화 shop 선택", () => document.querySelector("[data-testid=design-chat-branch]")?.textContent === "shop");
+        const open = async () => { await press(button.locator("svg").first()); await menu.waitFor(); };
+        const closed = async () => {
+          await menu.waitFor({ state: "detached" });
+          assert.equal(await button.getAttribute("aria-expanded"), "false");
+          assert.equal(await selected.textContent(), "shop", "닫기만 하면 대화 선택을 유지한다");
+        };
+        await open();
+        await press(menu.locator(".design-pick-label"));
+        assert.equal(await menu.isVisible(), true, "목록 안 빈 곳은 닫지 않는다");
+        await press(p.getByTestId("design-chat-idle"));
+        await closed();
+        await open();
+        await press(selected);
+        await closed();
+        await open();
+        await p.keyboard.press("Escape");
+        await closed();
+        assert.equal(await button.evaluate((b) => document.activeElement === b), true, "Esc 뒤 제목 단추에 초점");
+        await open();
+        await press(button.locator("svg").first());
+        await closed();
+        await open();
+        await press(p.getByTestId("design-chat-more"));
+        await closed();
+        await p.getByTestId("design-discard-open").waitFor();
+        assert.equal(await p.getByTestId("design-chat-more").getAttribute("aria-expanded"), "true", "바깥 단추가 한 번에 실행된다");
+        await press(p.getByTestId("design-chat-more"));
+        await open();
+        await press(p.getByTestId("design-pick-row").filter({ hasText: "100층까지" }));
+        await menu.waitFor({ state: "detached" });
+        await domIs(p, "대화 floors 선택", () => document.querySelector("[data-testid=design-chat-branch]")?.textContent === "floors");
+        await open();
+        await press(p.getByTestId("design-pick-row").filter({ hasText: "중간 상점" }));
+        await closed();
+        await open();
+        await press(p.getByTestId("design-new"));
+        await closed();
+        const dialog = p.getByTestId("design-new-dialog");
+        await dialog.waitFor();
+        await press(dialog.getByRole("button", { name: "닫기", exact: true }));
+        await dialog.waitFor({ state: "detached" });
+        await shot(p, `design-pick-closed-${name}-${width}`);
+      } finally {
+        await p?.context().close();
+        await wk?.close();
+      }
+    });
+  }
+
   await step("고치기와 그림 붙이기: 그 branch에 commit하고 그림은 그 판 주소로 보인다", async () => {
     await page.getByTestId("design-tab").filter({ hasText: "shop" }).click();
     await page.getByTestId("design-body").getByText("중간 상점").first().waitFor();
