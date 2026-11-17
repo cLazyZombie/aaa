@@ -198,3 +198,17 @@ Windows 서비스 진단은 [WinSW 문제 해결](https://github.com/winsw/winsw
 [windows-service-rs](https://github.com/mullvad/windows-service-rs)
 ([MIT/Apache-2.0](https://github.com/mullvad/windows-service-rs/blob/master/README.md))의
 SCM 상태 전이 구분을 대조했다. 코드를 가져오거나 준비 증명 검사를 약화하지 않는다.
+
+
+## 러너 배정 실패 분리
+
+통합 후보의 첫 전체 실행에서 macOS Rust와 웹 shard 하나는 runner 이름·단계·로그 없이 취소됐다.
+GitHub check annotation은 hosted runner를 여러 번 시도해도 얻지 못했다고 명시하고
+macOS arm64 용량 부족을 알렸다. 시험 실패나 사용자의 취소로 집계하지 않는다.
+웹 세 shard는 `macos-15-intel`로 옮겨 arm64 요청을 네 job에서 한 job으로 줄인다.
+Rust의 macOS arm64·실제 LaunchAgent·SSH 검사는 유지하며, 웹의 Chromium·WebKit·기기 조합도 유지한다.
+Cargo 캐시에 runner.arch를 넣어 두 아키텍처의 산출물이 같은 키를 차지하지 않게 한다.
+
+[GitHub의 공식 러너 표](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)는
+macos-15-intel을 Intel 4 CPU·14 GB RAM, macos-15를 arm64 3 CPU·7 GB RAM으로 명시한다.
+Intel에서도 같은 전체 CI 후보의 실제 결과를 확인하며 대기 실패가 없어졌다고 미리 단정하지 않는다.
