@@ -309,7 +309,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
     </Section>
     {executions.length > 0 && <Section title="실행 원장" testid="automation-executions">
       {executions.map(run => <details key={run.id} data-testid="automation-execution">
-        <summary>{short(run.updated_at_ms)} · {executionWord(run)} · {run.reason}</summary>
+        <summary>{short(run.updated_at_ms)} · {executionWord(run)}{run.repo ? ` · ${run.repo}` : ""} · {run.reason}</summary>
         <Facts rows={[["실행",<code>{run.id}</code>],["원인",<code>{run.source} · {run.input_id}</code>],["설정 판",<code>{run.revision || "옛 입력"}</code>],
           ["후속 작업",run.thread ? <button type="button" className="ghost small" onClick={() => onThread?.(run.thread!)}>{run.thread}</button> : "미연결"],
           ["할 일",run.task ?? "미연결"],["입력 처리",run.processed ? "확인됨(작업 성공과 별도)" : "미확인"],["후속 결과",run.outcome ? ({completed:"완료 신고",failed:"실패 신고",needs_decision:"결정 필요 신고"}[run.outcome] ?? run.outcome) : "미연결"],["보고",run.report ?? "미연결"]]} />

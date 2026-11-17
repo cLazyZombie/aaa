@@ -150,6 +150,10 @@ pub struct AutomationThread {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// 저장소 펼치기. `design`이면 project.toml에서 design 폴더를 적은 저장소마다 thread를 하나씩 띄운다(repo와 함께 쓰지 않는다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repos: Option<AutomationRepos>,
     pub profiles: Vec<String>,
     /// 비우거나 생략하면 자동 머신(workspace 허용·독점 예약·착지 중·비중으로 host가 고른다)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -177,6 +181,13 @@ pub struct AutomationThread {
     pub text_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief_file: Option<String>,
+}
+/// thread 동작을 저장소마다 펼치는 기준
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationRepos {
+    /// project.toml `[[repos]]`에 design 폴더가 있는 저장소(이름이 같으면 머신이 달라도 하나)
+    Design,
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -255,6 +266,10 @@ pub struct AutomationExecution {
     pub reason: String,
     pub receipt: Option<AutomationReceipt>,
     pub thread: Option<String>,
+    /// 펼친 thread 동작의 저장소 이름(`repos = "design"`). 펼치지 않은 입력은 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo: Option<String>,
     pub task: Option<String>,
     pub report: Option<String>,
     pub input_file: Option<String>,

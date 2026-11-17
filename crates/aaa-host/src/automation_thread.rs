@@ -208,13 +208,20 @@ impl Host {
         let Some(name) = &rec.automation else { return Ok(None) };
         let dir = self.project_dir(&rec.project)?;
         let (rules, _) = crate::routine::load_all(&dir);
-        let cap = rules.iter().find(|r| &r.name == name).and_then(|r| r.limits.max_running);
+        let rule = rules.iter().find(|r| &r.name == name);
+        let cap = rule.and_then(|r| r.limits.max_running);
+        // 펼친 규칙은 다시 띄우는 thread의 저장소 몫으로 센다
+        let spread =
+            rule.is_some_and(|r| matches!(&r.action, crate::automation::Action::Start(a) if a.repos.is_some()));
         Ok(Some(crate::db::StartAdmission {
             machine: rec.machine_id.clone(),
             holds: vec![],
             rule: name.clone(),
             max_running: cap,
             max_auto_threads: self.cfg.projects.max_auto_threads,
+            repo: spread
+                .then(|| rec.repo.as_deref().and_then(crate::task_repo::repo_name).map(str::to_owned))
+                .flatten(),
         }))
     }
     pub(crate) fn automation_open(&self, p: &str, name: &str) -> Result<Option<ThreadRec>, ErrorBody> {

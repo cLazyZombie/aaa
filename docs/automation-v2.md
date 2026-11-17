@@ -30,6 +30,8 @@ text_file = "automations/nightly-coverage.brief.md"
 
 안내 등록·thread 시작은 본래 작업의 완료가 아니다. 실행 원장은 queued/waiting/running/succeeded/failed/skipped/cancelled/unknown과 단계·사유·설정 판·입력·thread·처리 신고·보고를 구분한다. 옛 routine의 `done`은 관측 기록으로만 표시한다. 명령이나 메시지를 보낸 뒤 결과를 잃으면 unknown으로 보존하며 자동으로 재전송하지 않는다. 사람의 `automation unblock --batch`도 결과를 성공으로 바꾸지 않는다.
 
+thread 동작의 `repos = "design"`은 project.toml에 design 폴더가 있는 저장소마다 thread 하나를 띄운다. 상한·기다림·실행 기록은 저장소마다 따로이고 저장소 추가는 그 저장소만 재승인한다([자동화 보기](automations.md)의 「저장소마다 펼치기」).
+
 정책은 policy.batch/min_gap/max_per_day/max_running/usage_session_below/usage_week_below다. `min_gap=0`, `max_per_day=0`은 무제한이며 thread 동시 상한의 기본은 1이다. 기억·재사용·close_idle·기다릴 조건은 thread action에 둔다. 조회 명령의 종료 실패도 출력 변화에 포함해 기존 오류 안내를 보존한다.
 
 ```sh

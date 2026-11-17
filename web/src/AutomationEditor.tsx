@@ -108,13 +108,14 @@ function ActionFields({ form, update, choices }: { form: Form; update: (f: Form)
     case "inbox": return <Toggle label="휴대폰에도 알린다(앱 안 알림)" value={a.notify} onChange={(v) => set("notify", v)} />;
     case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" testid="automation-form-thread" />;
     case "start": return <>
-      <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo_path}를 채운다" testid="automation-form-start-title" />
+      <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo}·{repo_path}를 채운다" testid="automation-form-start-title" />
       {!choices ? <Loading label="profile 후보" /> : choices.profiles.length ? <ProfilePicker label="profile 후보" value={strings(a.profiles)} choices={choices.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
         : <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />}
       {!choices ? <Loading label="머신 후보" /> : choices.machines.length ? <ChipSelect label="머신 후보" options={machineOptions(choices.machines)} value={strings(a.machines)} onChange={(v) => set("machines", v)} empty="자동" testid="automation-form-machines" />
         : <List label="머신 후보(비우면 자동)" value={a.machines ?? []} onChange={(v) => set("machines", v)} testid="automation-form-machines" />}
-      <Repo value={a.repo} onChange={(v) => set("repo", v)} empty="작업 폴더(저장소 없음)" choices={choices} />
-      <Field label="열린 thread"><select className="input" value={a.reuse === "open" ? "open" : "new"} onChange={(e) => update(e.target.value === "open" ? setField(form, "do", "reuse", "open") : setField(setField(setField(form, "do", "reuse", "new"), "do", "memory", null), "do", "close_idle", null))}><option value="new">사건마다 새 thread</option><option value="open">같은 규칙의 열린 thread에 이어 보낸다</option></select></Field>
+      <Toggle label="기획 폴더가 있는 저장소마다 thread 하나" value={a.repos === "design"} onChange={(v) => update(v ? setField(setField(setField(form, "do", "repo", null), "do", "reuse", "new"), "do", "repos", "design") : setField(form, "do", "repos", null))} />
+      {a.repos !== "design" && <Repo value={a.repo} onChange={(v) => set("repo", v)} empty="작업 폴더(저장소 없음)" choices={choices} />}
+      {a.repos !== "design" && <Field label="열린 thread"><select className="input" value={a.reuse === "open" ? "open" : "new"} onChange={(e) => update(e.target.value === "open" ? setField(form, "do", "reuse", "open") : setField(setField(setField(form, "do", "reuse", "new"), "do", "memory", null), "do", "close_idle", null))}><option value="new">사건마다 새 thread</option><option value="open">같은 규칙의 열린 thread에 이어 보낸다</option></select></Field>}
       {a.reuse === "open" && <>
         <Toggle label="규칙 기억(memory) 쓰기" value={a.memory} onChange={(v) => set("memory", v)} />
         <Text label="조용하면 끝내기" value={a.close_idle} onChange={(v) => set("close_idle", v)} placeholder="예: 30m" />

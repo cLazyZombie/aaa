@@ -38,6 +38,8 @@ pub(crate) struct StartAdmission {
     pub rule: String,
     pub max_running: Option<u32>,
     pub max_auto_threads: u32,
+    /// 펼친 규칙(`repos = "design"`)의 저장소 이름: 규칙 상한을 이 저장소 thread만으로 센다
+    pub repo: Option<String>,
 }
 
 impl StartAdmission {
@@ -56,9 +58,10 @@ impl StartAdmission {
             if rec.machine_id == self.machine && rec.holds.iter().any(|h| self.holds.contains(h)) {
                 anyhow::bail!("start_wait: {}의 측정 표지({id})", self.machine);
             }
+            let same_repo = crate::auto_start::same_repo(&rec, self.repo.as_deref());
             if let Some(name) = rec.automation {
                 auto_count += 1;
-                rule_count += usize::from(name == self.rule);
+                rule_count += usize::from(name == self.rule && same_repo);
             }
         }
         let cap = self.max_running.filter(|n| *n > 0).unwrap_or(1);

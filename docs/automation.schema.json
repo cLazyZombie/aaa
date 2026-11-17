@@ -114,6 +114,17 @@
               "default": false,
               "type": "boolean"
             },
+            "repos": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AutomationRepos"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "저장소 펼치기. `design`이면 project.toml에서 design 폴더를 적은 저장소마다 thread를 하나씩 띄운다(repo와 함께 쓰지 않는다)"
+            },
             "reuse": {
               "$ref": "#/$defs/AutomationReuse",
               "default": "new"
@@ -368,6 +379,16 @@
       ],
       "type": "string"
     },
+    "AutomationRepos": {
+      "description": "thread 동작을 저장소마다 펼치는 기준",
+      "oneOf": [
+        {
+          "const": "design",
+          "description": "project.toml `[[repos]]`에 design 폴더가 있는 저장소(이름이 같으면 머신이 달라도 하나)",
+          "type": "string"
+        }
+      ]
+    },
     "AutomationReuse": {
       "enum": [
         "new",
@@ -376,6 +397,27 @@
       "type": "string"
     },
     "AutomationThread": {
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "repos",
+              "repo"
+            ]
+          },
+          {
+            "properties": {
+              "reuse": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "repos",
+              "reuse"
+            ]
+          }
+        ]
+      },
       "oneOf": [
         {
           "not": {

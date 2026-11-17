@@ -739,7 +739,13 @@ impl Host {
             observe: None,
             revision: String::new(),
             original: None,
+            repo: None,
         };
+        if let super::Action::Start(a) = &r.action
+            && self.automation_start_scope(p, &r, a)?.spread_repos().is_some_and(|names| names.is_empty())
+        {
+            return Err(bad("기획 폴더가 있는 저장소가 없어 띄울 thread가 없다"));
+        }
         let accepted = self.automation_accept(p, &r, event)?;
         if !accepted {
             return Ok((false, "이미 받은 실행이다".into()));

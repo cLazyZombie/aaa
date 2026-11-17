@@ -45,6 +45,7 @@ fn fresh(name: &str, e: &Value, now: u64) -> Result<Run> {
         reason: "입력 접수".into(),
         receipt: None,
         thread: None,
+        repo: e["repo"].as_str().map(str::to_owned),
         task: None,
         report: None,
         input_file: None,

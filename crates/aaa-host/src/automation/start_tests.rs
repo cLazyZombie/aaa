@@ -482,6 +482,7 @@ async fn failed_start_admission_rolls_back_the_row_and_releases_the_claim() {
         observe: None,
         revision: String::new(),
         original: None,
+        repo: None,
     };
     let error =
         l.h.automation_start("demo", &r, &event, now, "rejected-input", &[]).await.err().expect("입장 SQL 오류");
@@ -701,6 +702,7 @@ fn start_transaction_rechecks_late_hold_and_durable_receipt_before_insert() {
         rule: "check".into(),
         max_running: None,
         max_auto_threads: 0,
+        repo: None,
     };
     let insert = |key: &str, policy: &crate::db::StartAdmission| {
         l.h.db.thread_insert_marked("demo", Some(key), Some(policy), |id| {
@@ -1481,4 +1483,143 @@ async fn start_without_machines_skips_reserved_and_landing_machines() {
     l.h.machine_release("mac-a", None, "local:cli").unwrap();
     l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.load("demo", &started("due:2").unwrap()).unwrap().machine_id, "m");
+}
+
+/// 펼치기(`repos = "design"`): 기획 폴더가 있는 저장소마다 thread 하나, 저장소별 동시 상한·기다림, 저장소 추가만 재승인.
+#[tokio::test]
+async fn spread_starts_one_thread_per_design_repo_and_waits_per_repo() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let dir = l.h.project_dir("demo").unwrap();
+    let repos = |extra: &str| {
+        std::fs::write(
+            dir.join("project.toml"),
+            format!(
+                "schema = 1\n\n[[repos]]\nmachine = 'mac-a'\npath = '/work/app'\ndesign = 'docs/design'\n\n[[repos]]\nmachine = 'mac-b'\npath = '/w/app'\ndesign = 'docs/design'\n\n[[repos]]\nmachine = 'mac-b'\npath = '/w/game'\ndesign = 'game-design'\n\n[[repos]]\nmachine = 'mac-a'\npath = '/work/lib'\n{extra}"
+            ),
+        )
+        .unwrap();
+    };
+    repos("");
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let text = "[on.schedule]\nevery='10m'\n[do.start]\ntitle='{repo} 기획 최신화'\ntext='기획서를 최신화한다'\nprofiles=['claude']\nmachines=['mac-a','mac-b']\nrepos='design'\n";
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+    let r = automation::parse(&dir, "check", text).unwrap();
+    for bad in ["repo='app'\n", "reuse='open'\n"] {
+        let wrong = text.replace("repos='design'\n", &format!("repos='design'\n{bad}"));
+        assert!(automation::parse(&dir, "check", &wrong).unwrap_err().contains("do.start.repos"), "{bad}");
+    }
+    // 펼치지 않는 규칙의 범위 직렬화(승인 hash 입력)에는 새 칸이 없다: 기존 승인 hash가 그대로다
+    let plain = rule(&l, "");
+    let Action::Start(start) = &plain.action else { panic!() };
+    let plain_scope = serde_json::to_string(&l.h.automation_start_scope("demo", &plain, start).unwrap()).unwrap();
+    assert!(!plain_scope.contains("spread"), "{plain_scope}");
+    let scope = l.h.automation_start_scope_text("demo", &r).unwrap().unwrap();
+    assert!(scope.contains("저장소 app마다") && scope.contains("저장소 game마다") && !scope.contains("lib"), "{scope}");
+    approve(&l, &r);
+    let threads = || -> Vec<ThreadRec> {
+        l.h.db
+            .threads(Some("demo"))
+            .unwrap()
+            .iter()
+            .map(|s| serde_json::from_str::<ThreadRec>(s).unwrap())
+            .filter(|t| t.automation.is_some())
+            .collect()
+    };
+    let started = |key: &str| l.h.db.meta(&crate::auto_start::start_key("demo", "check", key)).unwrap();
+
+    // 일정 한 차례가 저장소마다 입력 하나가 되고, 저장소마다 thread 하나를 띄운다(기본 상한 1은 저장소마다 센다)
+    l.h.automation_submit("demo", &r, "schedule:1", String::new(), None).unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert_eq!(threads().len(), 2);
+    let game = l.h.load("demo", &started("schedule:1#game").unwrap()).unwrap();
+    assert_eq!((game.machine_id.as_str(), game.repo.as_deref()), ("b", Some("/w/game")));
+    assert_eq!(game.title, "game 기획 최신화");
+    let app = l.h.load("demo", &started("schedule:1#app").unwrap()).unwrap();
+    assert!(matches!(app.repo.as_deref(), Some("/work/app" | "/w/app")), "{:?}", app.repo);
+    assert_eq!(app.title, "app 기획 최신화");
+    let runs = l.h.db.automation_executions("demo", Some("check"), None).unwrap();
+    let mut repos_seen: Vec<_> = runs.iter().filter_map(|run| run.repo.clone()).collect();
+    repos_seen.sort();
+    assert_eq!(repos_seen, ["app", "game"]);
+
+    // 다음 차례: 두 저장소 모두 자기 thread가 열려 기다린다. 앞(app)이 기다려도 game이 끝나면 game부터 띄운다
+    l.h.automation_submit("demo", &r, "schedule:2", String::new(), None).unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert_eq!(threads().len(), 2);
+    let history = l.h.routine_history("demo", "check").unwrap();
+    for name in ["app", "game"] {
+        assert!(
+            history.runs.iter().any(|run| run.id == format!("schedule:2#{name}")
+                && run.detail.contains(&format!("규칙 동시 실행 상한 1 · 저장소 {name}"))),
+            "{name}: {:?}",
+            history.runs
+        );
+    }
+    l.h.update_rec("demo", &game.id, |rec| rec.status = ThreadStatus::Resolved).unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert!(started("schedule:2#app").is_none());
+    assert_eq!(l.h.load("demo", &started("schedule:2#game").unwrap()).unwrap().repo.as_deref(), Some("/w/game"));
+
+    // 기획 저장소를 더하면 범위가 넓어진다: 규칙은 승인 필요로 보이고 새 저장소만 기다린다. 승인한 저장소는 계속 돈다
+    repos("\n[[repos]]\nmachine = 'mac-b'\npath = '/w/tool'\ndesign = 'docs'\n");
+    assert!(!l.h.automation_start_approval("demo", &r).unwrap().unwrap().1);
+    l.h.update_rec("demo", &app.id, |rec| rec.status = ThreadStatus::Resolved).unwrap();
+    l.h.automation_submit("demo", &r, "schedule:3", String::new(), None).unwrap();
+    for _ in 0..3 {
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    }
+    assert!(started("schedule:2#app").is_some(), "앞 차례 app은 범위가 그대로라 이어 띄운다");
+    assert!(started("schedule:3#tool").is_none());
+    assert!(
+        l.h.routine_history("demo", "check")
+            .unwrap()
+            .runs
+            .iter()
+            .any(|run| run.id == "schedule:3#tool" && run.detail.contains("승인 필요")),
+    );
+    approve(&l, &r);
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert_eq!(l.h.load("demo", &started("schedule:3#tool").unwrap()).unwrap().repo.as_deref(), Some("/w/tool"));
+    // 저장소를 빼는 것은 좁힘이라 승인을 다시 묻지 않는다
+    repos("");
+    assert!(l.h.automation_start_approval("demo", &r).unwrap().unwrap().1);
+}
+
+/// 펼치기 + 자동 머신: 저장소마다 그 저장소 workspace 자동 배정을 허용한 머신에서만 고른다.
+#[tokio::test]
+async fn spread_without_machines_uses_each_repo_workspace_permission() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let dir = l.h.project_dir("demo").unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "schema = 1\n\n[[repos]]\nmachine = 'mac-a'\npath = '/work/app'\ndesign = 'docs/design'\n\n[[repos]]\nmachine = 'mac-b'\npath = '/w/app'\ndesign = 'docs/design'\n\n[[repos]]\nmachine = 'mac-b'\npath = '/w/game'\ndesign = 'game-design'\n",
+    )
+    .unwrap();
+    let rev = l.h.workspace_access_view("demo", "mac-b").unwrap().revision;
+    l.h.workspace_access_set("demo", "mac-b", "app", true, &rev, "local:cli").unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let text = "[on.schedule]\nevery='10m'\n[do.start]\ntitle='{repo} 기획'\ntext='기획서를 최신화한다'\nprofiles=['claude']\nrepos='design'\n";
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+    let r = automation::parse(&dir, "check", text).unwrap();
+    approve(&l, &r);
+    let started = |key: &str| l.h.db.meta(&crate::auto_start::start_key("demo", "check", key)).unwrap();
+    l.h.automation_submit("demo", &r, "schedule:1", String::new(), None).unwrap();
+    for _ in 0..2 {
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    }
+    let app = l.h.load("demo", &started("schedule:1#app").unwrap()).unwrap();
+    assert_eq!((app.machine_id.as_str(), app.repo.as_deref()), ("b", Some("/w/app")), "허용한 mac-b의 app만 후보");
+    assert!(started("schedule:1#game").is_none(), "game 자동 배정은 어느 머신에도 허용하지 않았다");
+    assert!(
+        l.h.routine_history("demo", "check")
+            .unwrap()
+            .runs
+            .iter()
+            .any(|run| run.id == "schedule:1#game" && run.detail.contains("game 저장소가 있는 후보 머신 없음"))
+    );
 }

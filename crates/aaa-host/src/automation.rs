@@ -224,6 +224,9 @@ pub(crate) struct Start {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// `design`: project.toml에 design 폴더가 있는 저장소마다 thread 하나(repo·reuse = open과 함께 쓰지 않는다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repos: Option<aaa_proto::AutomationRepos>,
     pub profiles: Vec<String>,
     /// 비우거나 생략하면 자동 머신: workspace 자동 배정을 허용한 머신 가운데 독점 예약·착지 중을 빼고 열린 thread÷비중으로 고른다.
     #[serde(default)]
@@ -403,6 +406,7 @@ impl Action {
             Self::Command(_) => "명령 실행".into(),
             Self::Inbox(_) => "coordinator 안내".into(),
             Self::Message(a) => format!("{} thread에 글", if a.thread == "owner" { "주인" } else { &a.thread }),
+            Self::Start(a) if a.repos.is_some() => format!("기획 저장소마다 새 thread · {}", a.title),
             Self::Start(a) => format!("새 thread · {}", a.title),
         }
     }
@@ -481,6 +485,12 @@ pub(crate) fn parse_with(
         }
         if a.repo.as_ref().is_some_and(|s| s.trim().is_empty()) {
             return Err(bad("do.start.repo", "repo가 비었다"));
+        }
+        if a.repos.is_some() && a.repo.is_some() {
+            return Err(bad("do.start.repos", "repos(저장소 펼치기)와 repo는 함께 쓸 수 없다"));
+        }
+        if a.repos.is_some() && a.reuse == Reuse::Open {
+            return Err(bad("do.start.repos", "repos(저장소 펼치기)는 reuse = new에서만 쓴다"));
         }
         if a.wait.iter().any(|n| !aaa_proto::valid_project(n)) {
             return Err(bad("do.start.wait", "timing 같은 표지 이름 목록을 쓴다"));
@@ -644,6 +654,11 @@ pub(crate) fn schema() -> serde_json::Value {
         {"required":["text_file"],"not":{"anyOf":[{"required":["text"]},{"required":["brief_file"]}]}},
         {"required":["brief_file"],"not":{"anyOf":[{"required":["text"]},{"required":["text_file"]}]}}
     ]);
+    // 저장소 펼치기는 고정 저장소·열린 thread 이어 보내기와 함께 쓰지 않는다
+    schema["$defs"]["AutomationThread"]["not"] = serde_json::json!({"anyOf":[
+        {"required":["repos","repo"]},
+        {"required":["repos","reuse"],"properties":{"reuse":{"const":"open"}}}
+    ]});
     schema
 }
 

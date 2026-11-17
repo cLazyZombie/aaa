@@ -2925,11 +2925,17 @@ export type AutomationNotice = { text: string | null, text_file: string | null, 
 
 export type AutomationMessage = { thread: string, text?: string | null, text_file?: string | null, };
 
-export type AutomationThread = { title: string, repo?: string | null, profiles: Array<string>,
+export type AutomationThread = { title: string, repo?: string | null,
+/**
+ * 저장소 펼치기. `design`이면 project.toml에서 design 폴더를 적은 저장소마다 thread를 하나씩 띄운다(repo와 함께 쓰지 않는다)
+ */
+repos?: AutomationRepos, profiles: Array<string>,
 /**
  * 비우거나 생략하면 자동 머신(workspace 허용·독점 예약·착지 중·비중으로 host가 고른다)
  */
 machines?: Array<string>, reuse: AutomationReuse, memory: boolean, reports: boolean, close_idle?: string | null, profile_pick: AutomationProfilePick, machine_pick: AutomationMachinePick, wait: Array<string>, wait_max?: string | null, text?: string | null, text_file?: string | null, brief_file?: string | null, };
+
+export type AutomationRepos = "design";
 
 export type AutomationReuse = "new" | "open";
 
@@ -2945,7 +2951,11 @@ export type AutomationReceipt = "notice_created" | "message_delivered" | "thread
 
 export type AutomationRunEvent = { at_ms: number, stage: AutomationStage, state: AutomationRunState, reason: string, };
 
-export type AutomationExecution = { id: string, name: string, input_id: string, revision: string, source: string, created_at_ms: number, updated_at_ms: number, state: AutomationRunState, stage: AutomationStage, reason: string, receipt: AutomationReceipt | null, thread: string | null, task: string | null, report: string | null, input_file: string | null, processed: boolean, outcome: string | null, legacy: boolean, events: Array<AutomationRunEvent>, };
+export type AutomationExecution = { id: string, name: string, input_id: string, revision: string, source: string, created_at_ms: number, updated_at_ms: number, state: AutomationRunState, stage: AutomationStage, reason: string, receipt: AutomationReceipt | null, thread: string | null,
+/**
+ * 펼친 thread 동작의 저장소 이름(`repos = "design"`). 펼치지 않은 입력은 없다
+ */
+repo?: string, task: string | null, report: string | null, input_file: string | null, processed: boolean, outcome: string | null, legacy: boolean, events: Array<AutomationRunEvent>, };
 
 export type RoutineView = {
 /**
