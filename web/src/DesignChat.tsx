@@ -85,7 +85,7 @@ export function DesignChat({ project, repo, branch, threads, panes, canControl, 
       (e: unknown) => onError(e instanceof ApiError ? e.message : String(e)));
   };
   return (
-    <div className="design-chat" data-testid="design-chat">
+    <div className="design-chat" data-testid="design-chat" data-statistics={branch?.read ? "ready" : "pending"}>
       <header className="design-chat-head">
         <div className="design-pick">
           <button type="button" className="design-pick-btn" aria-haspopup="menu" aria-expanded={menu} data-testid="design-pick" onClick={() => setMenu((v) => !v)}>
@@ -125,7 +125,7 @@ export function DesignChat({ project, repo, branch, threads, panes, canControl, 
             {more && (
               <div className="design-pick-menu is-right" role="menu">
                 {thread && <a role="menuitem" className="design-pick-row" href={`#thread=${encodeURIComponent(thread.id)}`} onClick={() => setMore(false)}>thread {thread.id} · {thread.machine}</a>}
-                {canControl && <button type="button" role="menuitem" className="design-pick-row is-danger" data-testid="design-discard-open" onClick={() => { setMore(false); setDialog("discard"); }}><Trash2 className="i" aria-hidden="true" />버리기</button>}
+                {canControl && <button type="button" role="menuitem" className="design-pick-row is-danger" data-testid="design-discard-open" disabled={!branch.read} onClick={() => { setMore(false); setDialog("discard"); }}><Trash2 className="i" aria-hidden="true" />버리기</button>}
               </div>
             )}
           </div>
@@ -144,7 +144,7 @@ export function DesignChat({ project, repo, branch, threads, panes, canControl, 
             {canControl && (
               <div className="design-rest-actions">
                 <button type="button" className="btn primary" data-testid="design-reopen" onClick={reopen}><Play className="i" aria-hidden="true" />다시 열기</button>
-                <button type="button" className="btn danger" onClick={() => setDialog("discard")}><Trash2 className="i" aria-hidden="true" />버리기</button>
+                <button type="button" className="btn danger" disabled={!branch.read} onClick={() => setDialog("discard")}><Trash2 className="i" aria-hidden="true" />버리기</button>
               </div>
             )}
           </div>
@@ -303,6 +303,7 @@ function DiscardDialog({ repo, branch, onClose, onDone }: { repo: string; branch
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const submit = async () => {
+    if (!branch.read) return;
     setBusy(true);
     try {
       await call({ op: "design_discard", repo, branch: branch.slug });
@@ -318,14 +319,16 @@ function DiscardDialog({ repo, branch, onClose, onDone }: { repo: string; branch
       <div className="modal design-dialog" role="dialog" aria-modal="true" aria-label="기획 대화 버리기" data-testid="design-discard-dialog">
         <header className="modal-header"><h2 className="modal-title is-danger"><Trash2 className="i" aria-hidden="true" />기획 대화 버리기 <code>design/{branch.slug}</code></h2></header>
         <div className="modal-body">
-          <ChangedFiles branch={branch} folder={null} />
-          <p className="design-discard-what"><X className="i" aria-hidden="true" />main에 없는 commit {branch.ahead}개와 branch·worktree를 지움</p>
+          {branch.read ? <>
+            <ChangedFiles branch={branch} folder={null} />
+            <p className="design-discard-what"><X className="i" aria-hidden="true" />main에 없는 commit {branch.ahead}개와 branch·worktree를 지움</p>
+          </> : <p role="status">branch 통계를 읽는 중</p>}
           {problem && <p className="confirm-error" role="alert">{problem}</p>}
         </div>
         <footer className="modal-footer">
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>닫기</button>
-          <button type="button" className="btn danger" disabled={busy} data-testid="design-discard-submit" onClick={() => void submit()}><Trash2 className="i" aria-hidden="true" />버리기</button>
+          <button type="button" className="btn danger" disabled={busy || !branch.read} data-testid="design-discard-submit" onClick={() => void submit()}><Trash2 className="i" aria-hidden="true" />버리기</button>
         </footer>
       </div>
     </div>
