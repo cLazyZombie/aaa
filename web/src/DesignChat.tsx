@@ -273,7 +273,7 @@ function ApplyDialog({ repo, branch: given, canControl, onClose, onChanged, onDo
           {wait && canControl && <button type="button" className="btn" disabled={busy} data-testid="design-apply-cancel" onClick={() => void cancel()}><X className="i" aria-hidden="true" />예약 취소</button>}
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>닫기</button>
-          {!wait && <button type="button" className="btn primary" disabled={busy} data-testid="design-apply-submit" onClick={() => void submit()}><GitMerge className="i" aria-hidden="true" />착지 창 요청</button>}
+          {!wait && canControl && <button type="button" className="btn primary" disabled={busy} data-testid="design-apply-submit" onClick={() => void submit()}><GitMerge className="i" aria-hidden="true" />착지 창 요청</button>}
         </footer>
       </div>
     </div>

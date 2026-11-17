@@ -760,16 +760,28 @@ impl Host {
                 // 자리가 없다: 뒤 예약도 기다린다(앞 예약을 건너뛰지 않는다)
                 return;
             }
-            Box::pin(self.design_apply_try(project, &repo, &slug)).await;
+            if !Box::pin(self.design_apply_try(project, &repo, &slug)).await {
+                return;
+            }
         }
     }
 
-    async fn design_apply_try(self: &Arc<Self>, project: &str, repo: &str, slug: &str) {
-        let Ok((target, _)) = self.design_target(project, repo) else { return };
+    /// 예약 하나를 띄워 본다. 그 branch를 다른 일(올리기·저장·버리기)이 쥐고 있으면 ticker를 막지 않게 기다리지 않고 false를
+    /// 돌려준다: 그 tick의 판정은 거기서 끝난다(뒤 예약이 앞지르지 않는다)
+    async fn design_apply_try(self: &Arc<Self>, project: &str, repo: &str, slug: &str) -> bool {
+        let Ok((target, _)) = self.design_target(project, repo) else { return true };
         let lock = self.design_branch_lock(project, &target.name, slug);
-        let _one = lock.lock().await;
-        let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, slug) else { return };
-        let Some(wait) = rec.apply_wait.clone() else { return };
+        let Ok(_one) = lock.try_lock() else {
+            tracing::debug!(
+                project,
+                repo,
+                slug,
+                "기획 branch를 다른 일이 쥐고 있어 반영 예약 판정을 다음 tick으로 미룬다"
+            );
+            return false;
+        };
+        let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, slug) else { return true };
+        let Some(wait) = rec.apply_wait.clone() else { return true };
         let reason = if rec.head.is_none() || rec.head != rec.pushed {
             Ok(match rec.push_error.as_deref() {
                 Some(e) => format!("올리기 실패 · 다시 올린 뒤 시작: {}", one_line(e, SUMMARY_MAX)),
@@ -780,7 +792,7 @@ impl Host {
             Err(err(ErrorCode::Conflict, format!("이미 반영 중이다: {id}")))
         } else {
             match self.design_apply_start(project, &target, &mut rec, &wait.by).await {
-                Ok(()) => return,
+                Ok(()) => return true,
                 Err(e) if e.message.starts_with(LIMIT_WAIT) => Ok(limit_reason(&e.message)),
                 Err(e)
                     if e.message.starts_with("start_wait:")
@@ -805,7 +817,7 @@ impl Host {
                 rec.apply_wait = None;
                 if let Err(e) = self.design_branch_store(project, &rec) {
                     tracing::warn!(project, repo, slug, "기획 branch 기록을 쓰지 못했다: {}", e.message);
-                    return;
+                    return true;
                 }
                 self.design_chat_event(
                     project,
@@ -819,6 +831,7 @@ impl Host {
                 self.db.audit(&wait.by, "design_apply_fail", &format!("{project} {}/{slug}", target.name));
             }
         }
+        true
     }
 
     /// 기획 branch를 버린다: worktree·로컬 branch와 host가 올린 origin branch를 지우고 기록을 지운다

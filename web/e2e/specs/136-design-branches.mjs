@@ -237,6 +237,21 @@ export default async function () {
     await chip.click();
     await dialog.getByTestId("design-apply-reserved").waitFor();
     await dialog.getByRole("button", { name: "닫기" }).click();
+    // 휴대폰 대화 칸 머리에서도 칩이 넘치지 않는다
+    const { page: phone } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    try {
+      await phone.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
+      await phone.goto(`${new URL(phone.url()).origin}/#design=${encodeURIComponent("app/docs/loop/README.md")}`);
+      await phone.getByTestId("design-page-chat").click();
+      await phone.getByTestId("design-apply-wait").waitFor();
+      const fit = await phone.evaluate(() => {
+        const head = document.querySelector(".design-chat-head");
+        const chip = document.querySelector("[data-testid=design-apply-wait]").getBoundingClientRect();
+        return { over: head.scrollWidth - head.clientWidth, right: chip.right, width: window.innerWidth };
+      });
+      assert.ok(fit.over <= 0 && fit.right <= fit.width, `대화 머리가 넘친다: ${JSON.stringify(fit)}`);
+      await shot(phone, "design-apply-wait-phone");
+    } finally { await phone.context().close(); }
     // 자리가 나면 다음 tick에 host가 띄우고, 화면은 새로 읽지 않아도 「반영 대기」로 바뀐다
     await until("자리 thread 보고", () => aaa("thread", "show", busy.id).report_hash, 60_000);
     finishFixtureFollowups(busy.id);

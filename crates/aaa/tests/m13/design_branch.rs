@@ -522,6 +522,8 @@ fn apply_over_the_thread_limit_waits_for_a_slot_and_starts_itself() {
     let kinds: Vec<&str> = b["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
     assert!(kinds.contains(&"apply_wait") && kinds.contains(&"apply_cancel"), "{kinds:?}");
 
+    // 예약한 branch는 쉼 창(3600초)을 기다리지 않고 배경 일이 올린다. 올리는 동안 ticker는 그 branch를 기다리지 않고 넘긴다
+    wait_for("예약 중 쓴 판 올림", T, || (branches(&w)[0]["pushed"] == later.as_str()).then_some(()));
     // 자리가 나면 host가 띄운다: 기다리는 사이 쓴 것까지 올린 판에서 갈라진다
     w.h.ok(&["thread", "resolve", &busy, "--skip-copy"]);
     w.h.ticks(1);
