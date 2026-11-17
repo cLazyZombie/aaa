@@ -142,6 +142,13 @@ pub struct DesignDocEntry {
     pub open: u32,
     /// 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
     pub tasks: Vec<String>,
+    /// 기획서 ID(`k-NNNN`, FRONT_API 1.178, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
+    /// 문서도 번호가 있다). 옛 agent가 읽은 트리면 없다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub id: Option<String>,
+    /// `id`가 문서 안 표지에 적혀 있다. 거짓이면 host 원장의 번호이고 다음 저장이나 「한 번에 달기」가 적는다
+    pub id_marked: bool,
 }
 
 /// agent가 읽은 기획 폴더(한 commit 기준)
@@ -167,6 +174,8 @@ pub struct DesignTree {
     pub ahead: u32,
     /// 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
     pub marks: bool,
+    /// 문서마다 ID 표지를 읽었다(FRONT_API 1.178, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
+    pub ids: bool,
 }
 
 /// 프로젝트 저장소 하나의 기획 폴더
@@ -222,6 +231,30 @@ pub struct DesignDoc {
     pub branch: Option<String>,
     #[ts(type = "number")]
     pub committed_ms: u64,
+    /// 기획서 ID(FRONT_API 1.178): 문서 안 표지, 없으면 host 원장의 번호
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub id: Option<String>,
+}
+
+/// 지금 기획 트리(main 판)에 있는 문서의 ID 하나(FRONT_API 1.178, `design_ids`의 답). 웹은 이 목록에 있는 `k-NNNN`만 링크한다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignIdView {
+    /// `k-NNNN`
+    pub id: String,
+    pub repo: String,
+    /// 저장소 기준 경로
+    pub path: String,
+    pub title: String,
+}
+
+/// 「한 번에 달기」로 agent에 넘기는 문서 하나와 그 ID(agent `design_ids.v1`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignIdMark {
+    pub path: String,
+    pub id: String,
 }
 
 /// 구현 맡기기에서 고른 표지 블록(FRONT_API 1.175): 표지 블록끼리의 차례(0부터)와 그 첫 줄(앞뒤 빈칸 뺌).
@@ -285,16 +318,23 @@ pub fn design_task_id(digits: &str) -> Option<String> {
     Some(format!("d-{value:0>4}"))
 }
 
+/// 코드 울타리 줄(```·~~~ 셋 이상)이면 그 글자와 길이
+fn fence_of(line: &str) -> Option<(char, usize)> {
+    let t = line.trim_start_matches(js_space);
+    let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let n = t.chars().take_while(|x| *x == c).count();
+    (n >= 3).then_some((c, n))
+}
+
+/// 열린 울타리 `(c, len)`을 이 줄이 닫는가: 같은 글자로 연 것보다 짧지 않은 울타리만
+fn fence_closes(line: &str, (c, len): (char, usize)) -> bool {
+    fence_of(line).is_some_and(|(c2, len2)| c2 == c && len2 >= len) && design_trim(line).chars().all(|x| x == c)
+}
+
 /// 문서의 표지 블록(나온 차례). 웹(`designModel.ts`의 `mdBlocks`·`calloutOf`)과 같은 규칙이다: CRLF도 같고,
 /// 빈 줄·제목·코드 울타리로 나눈 덩어리 중 모든 줄이 인용(`>`)이고 첫 줄이 `> [!계획]`·`> [!미정]`인 것만 표지다.
 /// 울타리 안의 표기 예시는 표지가 아니고, d-ID는 `[!계획]` 뒤만 읽는다. 두 쪽은 공용 견본(`web/test/fixtures/design-marks.md`)으로 맞춘다
 pub fn design_marks(text: &str) -> Vec<DesignMark> {
-    fn fence_of(line: &str) -> Option<(char, usize)> {
-        let t = line.trim_start_matches(js_space);
-        let c = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
-        let n = t.chars().take_while(|x| *x == c).count();
-        (n >= 3).then_some((c, n))
-    }
     /// 제목 줄의 글(닫는 `#`은 뺀다, 웹 `headingOf`와 같다)
     fn heading(line: &str) -> Option<String> {
         let n = line.chars().take_while(|c| *c == '#').count();
@@ -332,15 +372,16 @@ pub fn design_marks(text: &str) -> Vec<DesignMark> {
     let mut section = String::new();
     for (n, line) in text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).enumerate() {
         let mark = fence_of(line);
-        if let Some((c, len)) = fence {
-            // 같은 글자로 연 것보다 짧지 않은 울타리만 닫는다
-            if let Some((c2, len2)) = mark
-                && c2 == c
-                && len2 >= len
-                && design_trim(line).chars().all(|x| x == c)
-            {
+        if let Some(open) = fence {
+            if fence_closes(line, open) {
                 fence = None;
             }
+            continue;
+        }
+        // ID 표지 줄(t-1957)은 홀로 한 덩어리다: 웹 `mdBlocks`와 같다(제목 아래 빈 줄 없이 붙은 표지 블록을 삼키지 않는다)
+        if design_id_line(line).is_some() {
+            tally(&block, &section, &mut out);
+            block.clear();
             continue;
         }
         let title = heading(line);
@@ -417,6 +458,113 @@ pub fn design_mark_tasks(text: &str, picks: &[usize], id: &str) -> Result<String
         line.insert_str(at, &if glued { format!(" {id} ") } else { format!(" {id}") });
     }
     Ok(lines.join("\n"))
+}
+
+/// 기획서 ID 접두어(t-1957): `k-NNNN`. 번호는 host 원장이 낸다(전역, 재사용하지 않는다)
+pub const DESIGN_ID_PREFIX: char = 'k';
+/// ID 표지를 찾는 문서 앞부분(바이트). agent 트리는 문서마다 이만큼만 읽으므로 전문을 읽는 쪽도 같은 범위만 본다
+pub const DESIGN_ID_BYTES: usize = 8 * 1024;
+
+/// 줄이 ID 표지(`<!-- aaa-id: k-0012 -->`, 앞뒤 빈칸·CR 무시)면 정규형 ID. 번호가 아니면(`k-0`) 표지가 아니다
+pub fn design_id_line(line: &str) -> Option<String> {
+    let inner = design_trim(line).strip_prefix("<!--")?.strip_suffix("-->")?;
+    let id = design_trim(inner).strip_prefix("aaa-id:")?;
+    crate::canonical_short_id(design_trim(id), DESIGN_ID_PREFIX)
+}
+
+/// 코드 울타리 밖의 ID 표지 줄(줄 번호, ID)
+fn design_id_lines(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut fence = None;
+    for (n, line) in text.split('\n').enumerate() {
+        if let Some(open) = fence {
+            if fence_closes(line, open) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(open) = fence_of(line) {
+            fence = Some(open);
+            continue;
+        }
+        if let Some(id) = design_id_line(line) {
+            out.push((n, id));
+        }
+    }
+    out
+}
+
+/// 문서의 ID: 앞 [`DESIGN_ID_BYTES`] 안에서 끝난 줄 가운데 코드 울타리 밖 첫 표지. `head`는 문서 앞부분(전문이어도 된다),
+/// `total`은 문서 전체 바이트다. 앞부분이 잘렸으면 끝나지 않은 마지막 줄은 보지 않는다: agent 트리(앞부분)와 전문 읽기가 같은 답을 낸다
+pub fn design_doc_id(head: &[u8], total: u64) -> Option<String> {
+    let head = &head[..head.len().min(DESIGN_ID_BYTES)];
+    let head = if total > head.len() as u64 { &head[..head.iter().rposition(|b| *b == b'\n')?] } else { head };
+    design_id_lines(&String::from_utf8_lossy(head)).into_iter().next().map(|(_, id)| id)
+}
+
+/// 글의 ID(`design_doc_id`를 전문에)
+pub fn design_text_id(text: &str) -> Option<String> {
+    design_doc_id(text.as_bytes(), text.len() as u64)
+}
+
+/// 문서에 ID 표지가 없으면 넣는다. 이미 있으면(번호가 달라도) 글 그대로다: 기존 표지는 고쳐 쓰지 않는다.
+/// 자리는 앞 [`DESIGN_ID_BYTES`] 안 첫 `# ` 제목(코드 울타리 밖) 바로 아래, 없으면 맨 앞(닫힌 YAML 머리 뒤)이다. 표지 다음 줄이
+/// 빈 줄이 아니면 빈 줄을 넣어 아래 덩어리와 붙지 않게 한다. 줄바꿈은 문서의 것(CRLF)을 따른다
+pub fn design_put_id(text: &str, id: &str) -> String {
+    if design_text_id(text).is_some() {
+        return text.to_string();
+    }
+    let cr = if text.contains("\r\n") { "\r" } else { "" };
+    let marker = format!("<!-- aaa-id: {id} -->");
+    let lines: Vec<&str> = text.split('\n').collect();
+    let bare = |l: &str| l.strip_suffix('\r').unwrap_or(l).to_string();
+    // 닫힌 YAML 머리 뒤부터
+    let mut start = 0;
+    if lines.first().map(|l| bare(l)) == Some("---".into())
+        && let Some(end) = lines.iter().skip(1).position(|l| matches!(bare(l).as_str(), "---" | "..."))
+    {
+        start = end + 2;
+    }
+    let mut at = start;
+    let mut used: usize = lines[..start].iter().map(|l| l.len() + 1).sum();
+    let mut fence = None;
+    for (n, line) in lines.iter().enumerate().skip(start) {
+        used += line.len() + 1;
+        // 표지 줄까지 앞부분 안에 들어가야 읽힌다
+        if used + marker.len() + 2 > DESIGN_ID_BYTES {
+            break;
+        }
+        if let Some(open) = fence {
+            if fence_closes(line, open) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(open) = fence_of(line) {
+            fence = Some(open);
+            continue;
+        }
+        if bare(line).starts_with("# ") {
+            at = n + 1;
+            break;
+        }
+    }
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let blank_next = out.get(at).is_some_and(|l| design_trim(l).is_empty());
+    let mut add = vec![format!("{marker}{cr}")];
+    if !blank_next {
+        add.push(cr.to_string());
+    }
+    out.splice(at..at, add);
+    let joined = out.join("\n");
+    // 맨 끝에 넣었으면(마지막 줄이 줄바꿈 없이 끝난 제목) 빈 줄 대신 끝 줄바꿈 하나
+    let joined = if at == lines.len() { joined.trim_end_matches(['\r', '\n']).to_string() + cr + "\n" } else { joined };
+    if design_text_id(&joined).as_deref() == Some(id) {
+        joined
+    } else {
+        // 앞자리에 둘 수 없으면(긴 YAML 머리 등) 맨 앞
+        format!("{marker}{cr}\n{cr}\n{text}")
+    }
 }
 
 /// 첫 `# ` 제목. 앞 YAML front matter(`---`)는 건너뛴다

@@ -378,6 +378,97 @@ pub async fn save_bytes(
     )
 }
 
+/// 기획서 ID 한 번에 달기(design_ids.v1, t-1957): 기획 branch worktree의 문서마다 표지가 없으면 넣고, 바뀐 파일만 한 commit으로
+/// 남긴다. 이미 표지가 있는 문서는 그대로다(다시 돌려도 안전하다). 검사는 `save_bytes`와 같고(그 branch·깨끗한 worktree·일반
+/// 파일·symlink 없는 폴더), commit하지 못하면 쓴 파일을 모두 HEAD로 되돌린다
+pub async fn mark_ids(
+    cfg: &ThreadsConfig,
+    (project, repo, folder, slug): (&str, &str, &str, &str),
+    ids: &[aaa_proto::DesignIdMark],
+    message: &str,
+) -> Result<AgentResponse, ErrorBody> {
+    reply(
+        async {
+            let branch = checked(project, slug)?;
+            let folder = design_clean_path(folder).context("기획 폴더 경로가 잘못됐다")?;
+            if message.trim().is_empty() {
+                bail!("commit 메시지가 비었다");
+            }
+            let mut picks = Vec::with_capacity(ids.len());
+            for m in ids {
+                let path = design_clean_path(&m.path).context("문서 경로가 잘못됐다")?;
+                if !design_inside(&folder, &path) {
+                    bail!("기획 폴더 밖 경로다: {path}");
+                }
+                let id = aaa_proto::canonical_short_id(&m.id, aaa_proto::DESIGN_ID_PREFIX)
+                    .with_context(|| format!("기획서 ID가 아니다: {}", m.id))?;
+                picks.push((path, id));
+            }
+            let top = toplevel(repo).await?;
+            let (cwd, _) = own_worktree(cfg, &top, project, slug)
+                .await?
+                .ok_or_else(|| Missing(format!("{branch}의 worktree가 없다(쉬는 branch면 먼저 연다)")))?;
+            let head = git_told(&cwd, &["symbolic-ref", "-q", "HEAD"], GIT_WAIT).await.unwrap_or_default();
+            if head != format!("refs/heads/{branch}") {
+                bail!("기획 worktree가 {branch}에 있지 않다({head})");
+            }
+            let dirty = git_told(&cwd, &["status", "--porcelain", "--untracked-files=all"], GIT_WAIT).await?;
+            if !dirty.is_empty() {
+                bail!("기획 worktree에 commit하지 않은 변경이 있다: 사람이 확인한다({})", cwd.display());
+            }
+            let listed =
+                entries(&git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?)?;
+            let mut marked = Vec::new();
+            for (path, id) in &picks {
+                // 이 branch에 없는 문서(그 사이 지웠다)는 건너뛴다
+                let Some(e) = listed.iter().find(|e| e.path == *path) else { continue };
+                if !e.regular() {
+                    bail!("일반 파일이 아니다: {path}");
+                }
+                plain_parents(&cwd, path)?;
+                let target = cwd.join(path);
+                let text = std::fs::read(&target).with_context(|| format!("문서를 읽지 못했다: {path}"))?;
+                let Ok(text) = String::from_utf8(text) else { continue };
+                let out = aaa_proto::design_put_id(&text, id);
+                if out == text || out.len() as u64 > DESIGN_MAX_TEXT {
+                    continue;
+                }
+                marked.push(path.clone());
+                if let Err(e) = std::fs::write(&target, out) {
+                    restore(&cwd, &marked).await;
+                    return Err(anyhow!(e).context(format!("문서를 쓰지 못했다: {path}")));
+                }
+            }
+            if marked.is_empty() {
+                return Ok(AgentResponse::DesignIdsMarked { commit: None, marked });
+            }
+            let mut add: Vec<&str> = vec!["add", "--"];
+            add.extend(marked.iter().map(String::as_str));
+            let mut commit: Vec<&str> = vec!["commit", "--quiet", "--no-verify", "-m", message, "--"];
+            commit.extend(marked.iter().map(String::as_str));
+            let committed = async {
+                git_told(&cwd, &add, GIT_WAIT).await?;
+                git_told(&cwd, &commit, GIT_WAIT).await
+            }
+            .await;
+            if let Err(e) = committed {
+                restore(&cwd, &marked).await;
+                return Err(e);
+            }
+            let commit = git_told(&cwd, &["rev-parse", "HEAD"], GIT_WAIT).await?;
+            Ok(AgentResponse::DesignIdsMarked { commit: Some(commit), marked })
+        }
+        .await,
+    )
+}
+
+/// 한 번에 달기에서 쓴 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
+async fn restore(cwd: &Path, paths: &[String]) {
+    let mut args: Vec<&str> = vec!["checkout", "--quiet", "HEAD", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획서 ID 달기 되돌리기");
+}
+
 /// 저장소 기획 검사를 그 worktree에서 셸 없이 돌린다(출력은 받지 않는다: 비밀값이 섞일 수 있다)
 async fn run_check(cwd: &Path, check: &[String]) -> Result<()> {
     use aaa_common::child_process::TokioCommandExt as _;

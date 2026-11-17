@@ -1189,6 +1189,16 @@ pub enum AgentRequest {
         sha256: String,
         message: String,
     },
+    /// design_ids.v1(t-1957): 기획 branch worktree의 문서 여럿에 ID 표지(`design_put_id`)를 넣고 바뀐 파일만 한 commit으로 남긴다.
+    /// 이미 표지가 있는 문서는 그대로 둔다(다시 돌려도 안전하다). 답은 `DesignIdsMarked`다
+    DesignMarkIds {
+        project: String,
+        repo: String,
+        folder: String,
+        slug: String,
+        ids: Vec<crate::DesignIdMark>,
+        message: String,
+    },
     /// design_write.v1: 기획 branch를 origin의 같은 이름으로 올린다(force 없음). `check`가 있으면 먼저 그 worktree에서 셸 없이 돌려
     /// 통과해야 올린다(저장소의 `design_check`, 공개 저장소의 공개 검사). 답은 `DesignPushed`다
     DesignPush {
@@ -1343,6 +1353,11 @@ pub enum AgentResponse {
     DesignSaved {
         commit: String,
         blob: String,
+    },
+    /// design_ids.v1 `DesignMarkIds`의 답: 표지를 넣은 문서(경로)와 그 commit(넣은 것이 없으면 없음)
+    DesignIdsMarked {
+        commit: Option<String>,
+        marked: Vec<String>,
     },
     /// design_write.v1 `DesignPush`의 답: 올린 commit
     DesignPushed {
@@ -3152,6 +3167,21 @@ pub enum FrontRequest {
         repo: String,
         branch: String,
     },
+    /// 기획서 ID 목록(FRONT_API 1.178, 보기 권한, t-1957): 지금 main 기획 트리에 있는 문서의 `k-NNNN`. host 원장에서 읽는다(agent를
+    /// 거치지 않는다)
+    DesignIds {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// 기획서 ID 한 번에 달기(FRONT_API 1.178, 조작·사람만, t-1957): main 기획 트리에서 표지가 없는 문서마다 원장 번호의 표지를
+    /// 기획 branch `design/aaa-ids`에 한 commit으로 넣는다. main에는 그 branch의 「main에 반영」(착지 창)으로 들어간다
+    DesignMarkIds {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+    },
     /// 구현 맡기기(FRONT_API 1.175, 조작, t-1894 3-2): 기획 branch 판 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
     /// 할 일을 만들고 고른 블록 표지에 그 d-ID를 적어 그 branch에 commit해 바로 올린다. 그 할 일의 구현 thread는
     /// `origin/design/<주제>`에서 갈라진 worktree에서 일한다. `reserve`면 예약한다(자리가 나면 host가 띄운다). 답은 `design_handoff`
@@ -4070,6 +4100,8 @@ impl FrontRequest {
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
             | FrontRequest::DesignHandoff { project, .. }
+            | FrontRequest::DesignIds { project }
+            | FrontRequest::DesignMarkIds { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
             | FrontRequest::IdeaSeen { project, .. }
@@ -4162,6 +4194,7 @@ impl FrontRequest {
                 self,
                 Self::DesignTree { .. }
                     | Self::DesignRead { .. }
+                    | Self::DesignIds { .. }
                     | Self::DesignSave { .. }
                     // 옛 아이디어 읽기(t-1894 4단계): 기획 대화 thread가 옮기는 노트 전체를 읽는다
                     | Self::IdeaList { .. }
@@ -4237,6 +4270,7 @@ impl FrontRequest {
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::DesignTree { .. }
                 | FrontRequest::DesignRead { .. }
+                | FrontRequest::DesignIds { .. }
                 // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::DesignSave { .. }
                 | FrontRequest::IdeaList { .. }
@@ -4466,6 +4500,16 @@ pub enum FrontResponse {
         path: String,
         commit: String,
         blob: String,
+    },
+    /// `design_ids`의 답(FRONT_API 1.178)
+    DesignIds {
+        ids: Vec<crate::DesignIdView>,
+    },
+    /// `design_mark_ids`의 답(FRONT_API 1.178): 표지를 넣은 기획 branch(`aaa-ids`), 넣은 문서 수, commit(넣은 것이 없으면 없음)
+    DesignIdsMarked {
+        branch: String,
+        marked: u32,
+        commit: Option<String>,
     },
     /// `design_handoff`의 답(FRONT_API 1.175)
     DesignHandoff {

@@ -181,6 +181,8 @@ pub fn typescript_bindings() -> String {
         DesignTree::decl(&cfg),
         DesignRepoView::decl(&cfg),
         DesignDoc::decl(&cfg),
+        DesignIdView::decl(&cfg),
+        DesignIdMark::decl(&cfg),
         IdeaStatus::decl(&cfg),
         IdeaAuthor::decl(&cfg),
         IdeaSummary::decl(&cfg),

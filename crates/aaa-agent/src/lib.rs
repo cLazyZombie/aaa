@@ -2164,6 +2164,10 @@ impl Agent {
                 design_write::save(&cfg, &project, &repo, &folder, &slug, &path, base.as_deref(), (&text, &message))
                     .await
             }
+            AgentRequest::DesignMarkIds { project, repo, folder, slug, ids, message } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                Box::pin(design_write::mark_ids(&cfg, (&project, &repo, &folder, &slug), &ids, &message)).await
+            }
             AgentRequest::DesignAttach { project, repo, folder, slug, path, offset, data, eof, sha256, message } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 design_write::attach(

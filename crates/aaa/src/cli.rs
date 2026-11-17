@@ -683,12 +683,12 @@ enum InboxCmd {
 enum PlanCmd {
     /// 저장소마다 기획 폴더와 문서(경로·제목)
     List,
-    /// 문서 글. 첫 줄에 저장소·경로·commit·blob(저장의 기준 판), 빈 줄 뒤에 글이다
+    /// 문서 글. 첫 줄에 저장소·경로·ID·commit·blob(저장의 기준 판), 빈 줄 뒤에 글이다. `aaa plan show k-0012`처럼 기획서 ID로도 연다
     Show {
-        /// 저장소 이름(경로 끝 폴더 이름)
+        /// 저장소 이름(경로 끝 폴더 이름), 또는 기획서 ID(`k-NNNN`)
         repo: String,
-        /// 저장소 기준 문서 경로(기획 폴더 안)
-        path: String,
+        /// 저장소 기준 문서 경로(기획 폴더 안). 기획서 ID로 열면 주지 않는다
+        path: Option<String>,
         /// 기획 branch `design/<주제>`의 주제(없으면 main)
         #[arg(long)]
         branch: Option<String>,
@@ -741,6 +741,9 @@ enum PlanCmd {
     Discard { repo: String, slug: String },
     /// main에 반영: 기획 branch를 올리고 그 branch에서 갈라진 thread가 main을 합치고 검사를 지나 착지 창을 받는다
     Apply { repo: String, slug: String },
+    /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 기획 branch `design/aaa-ids` 한 commit으로 넣는다.
+    /// main에는 `aaa plan apply <저장소> aaa-ids`(또는 웹 「main에 반영」)로 들어간다
+    Ids { repo: String },
 }
 
 #[derive(Subcommand)]
@@ -2360,9 +2363,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let project = project_or_here(None)?;
             match cmd {
                 PlanCmd::List => front(json, FrontRequest::DesignTree { project }),
-                PlanCmd::Show { repo, path, branch } => {
+                PlanCmd::Show { repo, path: Some(path), branch } => {
                     front(json, FrontRequest::DesignRead { project, repo, path, branch })
                 }
+                PlanCmd::Show { repo: id, path: None, branch } => {
+                    let (repo, path) = design_id_target(&project, &id)?;
+                    front(json, FrontRequest::DesignRead { project, repo, path, branch })
+                }
+                PlanCmd::Ids { repo } => front(json, FrontRequest::DesignMarkIds { project, repo }),
                 PlanCmd::New { repo, slug, title, profile } => {
                     front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title, profile })
                 }
@@ -4209,6 +4217,22 @@ fn threads_cli(
         }
         anyhow::ensure!(next_after != query.after, "thread 목록 페이지 커서가 나아가지 않았다");
         query.after = next_after;
+    }
+}
+
+/// 기획서 ID(`k-NNNN`)의 저장소·경로: host 원장의 지금 main 트리 목록에서 찾는다(t-1957)
+fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
+    let Some(want) = aaa_proto::canonical_short_id(id, aaa_proto::DESIGN_ID_PREFIX) else {
+        anyhow::bail!("문서 경로를 준다: `aaa plan show <저장소> <경로>` 또는 `aaa plan show k-NNNN`");
+    };
+    match front_call(FrontRequest::DesignIds { project: project.to_string() })? {
+        Ok(FrontResponse::DesignIds { ids }) => ids
+            .into_iter()
+            .find(|i| i.id == want)
+            .map(|i| (i.repo, i.path))
+            .ok_or_else(|| anyhow::anyhow!("지금 기획 트리에 없는 ID다: {want}(`aaa plan list`로 트리를 새로 읽는다)")),
+        Ok(_) => anyhow::bail!("예상하지 못한 응답"),
+        Err(e) => anyhow::bail!("{}", e.message),
     }
 }
 
@@ -6312,7 +6336,13 @@ fn render_front(r: &FrontResponse) -> String {
                     r.error.as_deref().map(|e| format!(" · {e}")).unwrap_or_default()
                 );
                 for d in r.tree.iter().flat_map(|t| &t.docs) {
-                    let _ = writeln!(s, "  {}\t{}", d.path, d.title);
+                    // 기획서 ID(t-1957): 표지가 아직 없으면 원장 번호에 「표지 없음」
+                    let id = match (&d.id, d.id_marked) {
+                        (Some(id), true) => format!("\t{id}"),
+                        (Some(id), false) => format!("\t{id}(표지 없음)"),
+                        (None, _) => String::new(),
+                    };
+                    let _ = writeln!(s, "  {}\t{}{id}", d.path, d.title);
                 }
                 if let Some(e) = r.tree.as_ref().and_then(|t| t.fetch_error.as_deref()) {
                     let _ = writeln!(s, "  (origin을 받지 못해 가진 판: {e})");
@@ -6326,6 +6356,19 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::DesignBranch { branch } => print_design_branch(&mut s, branch),
+        FrontResponse::DesignIds { ids } => {
+            for i in ids {
+                let _ = writeln!(s, "{}\t{}\t{}\t{}", i.id, i.repo, i.path, i.title);
+            }
+        }
+        FrontResponse::DesignIdsMarked { branch, marked, commit } => match commit {
+            Some(c) => {
+                let _ = writeln!(s, "표지 {marked}개 · design/{branch} · commit {c}");
+            }
+            None => {
+                let _ = writeln!(s, "표지를 달 문서가 없다");
+            }
+        },
         FrontResponse::DesignSaved { path, commit, blob } => {
             let _ = writeln!(s, "{path} · commit {commit} · blob {blob}");
         }
@@ -6344,7 +6387,8 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::DesignDoc { doc } => {
             let on = doc.branch.as_deref().map(|b| format!(" · design/{b}")).unwrap_or_default();
-            let _ = writeln!(s, "{} {}{on} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);
+            let id = doc.id.as_deref().map(|i| format!(" · {i}")).unwrap_or_default();
+            let _ = writeln!(s, "{} {}{id}{on} · commit {} · blob {}", doc.repo, doc.path, doc.commit, doc.blob);
             let _ = write!(s, "\n{}", doc.text);
             if !doc.text.ends_with('\n') {
                 s.push('\n');

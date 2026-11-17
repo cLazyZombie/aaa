@@ -61,6 +61,8 @@
 
 .design-branch-chip { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid color-mix(in srgb, var(--accent-strong) 55%, transparent); background: var(--accent-bg); color: var(--accent-strong); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; }
 .design-branch-chip svg { width: 12px; height: 12px; }
+/* 기획서 ID(t-1957): 고르기 쉽게 한 번 누르면 통째로 고른다 */
+.design-id-chip { flex: none; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; user-select: all; }
 .design-branch-chip.is-dim { border-color: var(--border); background: transparent; color: var(--text-dim); }
 .design-count { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: var(--radius-pill); background: var(--accent-bg); color: var(--accent-strong); font-size: var(--fs-xs); }
 .design-count svg { width: 12px; height: 12px; }

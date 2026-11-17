@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 mod account_rename;
 mod auto_merge;
 mod automation_ids;
+mod design_ids;
 pub(crate) mod automation_runs;
 mod idea_ids;
 mod inbox_ids;
@@ -28,6 +29,7 @@ mod task_queue;
 mod web_publication;
 mod workspace_metrics;
 
+pub(crate) use design_ids::{DesignIdDoc, design_id_text};
 pub(crate) use library_catalog::LibraryCatalog;
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -426,6 +428,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS automation_ids(project TEXT NOT NULL, name TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,name), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS idea_ids(project TEXT NOT NULL, idea_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,idea_id), UNIQUE(project,number));
+             CREATE TABLE IF NOT EXISTS design_ids(number INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', present INTEGER NOT NULL DEFAULT 0);
+             CREATE INDEX IF NOT EXISTS design_ids_path ON design_ids(project,repo,path);
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
@@ -1851,7 +1855,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 26] = [
+const PROJECT_TABLES: [&str; 27] = [
     "work_records",
     "work_record_sources",
     "threads",
@@ -1872,6 +1876,7 @@ const PROJECT_TABLES: [&str; 26] = [
     "task_log",
     "task_ids",
     "idea_ids",
+    "design_ids",
     "automation_ids",
     "automation_runs",
     "task_queue",

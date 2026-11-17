@@ -854,7 +854,16 @@ open: number,
 /**
  * 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
  */
-tasks: Array<string>, };
+tasks: Array<string>,
+/**
+ * 기획서 ID(`k-NNNN`, FRONT_API 1.178, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
+ * 문서도 번호가 있다). 옛 agent가 읽은 트리면 없다
+ */
+id?: string,
+/**
+ * `id`가 문서 안 표지에 적혀 있다. 거짓이면 host 원장의 번호이고 다음 저장이나 「한 번에 달기」가 적는다
+ */
+id_marked: boolean, };
 
 export type DesignTree = {
 /**
@@ -892,7 +901,11 @@ ahead: number,
 /**
  * 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
  */
-marks: boolean, };
+marks: boolean,
+/**
+ * 문서마다 ID 표지를 읽었다(FRONT_API 1.178, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
+ */
+ids: boolean, };
 
 export type DesignRepoView = {
 /**
@@ -944,7 +957,23 @@ commit: string,
 /**
  * 기획 branch에서 읽었으면 그 slug(FRONT_API 1.171)
  */
-branch: string | null, committed_ms: number, };
+branch: string | null, committed_ms: number,
+/**
+ * 기획서 ID(FRONT_API 1.178): 문서 안 표지, 없으면 host 원장의 번호
+ */
+id?: string, };
+
+export type DesignIdView = {
+/**
+ * `k-NNNN`
+ */
+id: string, repo: string,
+/**
+ * 저장소 기준 경로
+ */
+path: string, title: string, };
+
+export type DesignIdMark = { path: string, id: string, };
 
 export type IdeaStatus = "open" | "done";
 
@@ -1806,7 +1835,7 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_handoff", project?: string, repo: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */
@@ -2049,7 +2078,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number, commit: string | null, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */
