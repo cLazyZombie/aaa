@@ -450,6 +450,21 @@ mod tests {
         assert_eq!(step(&look(&placeholder, 0, IDLE, Sender::Ticker)), Step::Type);
     }
 
+    /// Claude 다음 입력 예측(흐린 글, t-1940)은 입력창에 남은 글이 아니다: Enter만 보내지 않는다(Enter가 예측을 제출할 수 있다)
+    #[test]
+    fn a_predicted_next_prompt_is_not_a_line_left_in_the_box() {
+        let suggestion = |text: &str| format!("\u{a0}\x1b[2m{text}\x1b[m");
+        let first = claude("", &suggestion("main에 반영해"));
+        assert_eq!(step(&look(&first, 0, IDLE, Sender::Ticker)), Step::Type);
+        let taken = claude(&format!("❯ {LINE}\n⏺ 읽는 중"), &suggestion("main에 반영해"));
+        assert_eq!(step(&look(&taken, 1, IDLE, Sender::Ticker)), Step::Delivered);
+        // 예측이 brief 줄과 같아도 남은 글로 보지 않는다
+        let same = claude(&format!("❯ {LINE}"), &suggestion(LINE));
+        assert_ne!(step(&look(&same, 1, IDLE, Sender::Ticker)), Step::Enter);
+        let gone = claude("", &suggestion(LINE));
+        assert_ne!(step(&look(&gone, 1, IDLE, Sender::Ticker)), Step::Enter);
+    }
+
     #[test]
     fn retries_look_at_the_screen_first() {
         // 대화에 있고 입력창은 비었다: 받았다

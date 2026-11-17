@@ -1,6 +1,7 @@
 //! herdr-projects 0.2.35(`1f05c00`) `src/prompt_box.rs`를 그대로 옮겼다(MIT, Copyright (c) 2026 Elias Stravik).
 //! 바꾼 것: 이 머리말, 저장소 rustfmt가 나눈 긴 줄 둘, fixture를 aaa vt로 다시 그려도 같게 읽는지 보는 시험 하나(fixture도 같은 상대 경로
-//! `tests/fixtures/prompt_box/`에 그대로 옮겼다). 화면은 agent session host가 `ScreenText.ansi`(herdr `agent read --format ansi`와 같은 모양)로 보낸다
+//! `tests/fixtures/prompt_box/`에 그대로 옮겼다). `input_box`가 상자 첫 줄의 번호도 돌려주게 하고, 그 번호로 흐린 글만 있는 입력 줄에
+//! 표지를 다는 `mark_dim_box`(t-1940: Claude 다음 입력 예측을 색 없는 글에서 친 글로 오인)를 더했다. 화면은 agent session host가 `ScreenText.ansi`(herdr `agent read --format ansi`와 같은 모양)로 보낸다
 //! (plan §8.77). kind는 thread launch의 harness(`claude`·`codex` …)다.
 //!
 //! Is an agent's input box empty? Read from the pane's screen (`agent read
@@ -167,9 +168,9 @@ fn typed(cells: &[Cell]) -> String {
     out
 }
 
-/// The input box's cells, one entry per line, or `None` when it is not on
-/// the screen.
-fn input_box(kind: &str, lines: &[Line]) -> Option<Vec<Line>> {
+/// The input box's first line index and cells, one entry per line, or `None`
+/// when it is not on the screen.
+fn input_box(kind: &str, lines: &[Line]) -> Option<(usize, Vec<Line>)> {
     let last =
         |pred: &dyn Fn(usize, &Line) -> bool| lines.iter().enumerate().rev().find(|(i, l)| pred(*i, l)).map(|(i, _)| i);
     match kind {
@@ -179,10 +180,10 @@ fn input_box(kind: &str, lines: &[Line]) -> Option<Vec<Line>> {
             let end = (at + 1..lines.len()).find(|&i| is_rule(&lines[i]))?;
             let mut rows = vec![after(&lines[at], '❯')?];
             rows.extend(lines[at + 1..end].iter().cloned());
-            Some(rows)
+            Some((at, rows))
         }
-        "codex" => last(&|_, l| trimmed_starts(l, "›")).and_then(|at| after(&lines[at], '›')).map(|row| vec![row]),
-        "cursor" => last(&|_, l| trimmed_starts(l, "→")).and_then(|at| after(&lines[at], '→')).map(|row| vec![row]),
+        "codex" => last(&|_, l| trimmed_starts(l, "›")).and_then(|at| Some((at, vec![after(&lines[at], '›')?]))),
+        "cursor" => last(&|_, l| trimmed_starts(l, "→")).and_then(|at| Some((at, vec![after(&lines[at], '→')?]))),
         // `│ > ` (or `!` shell mode, `*` yolo mode) in a bordered box.
         "gemini" => {
             let at = last(&|_, l| {
@@ -203,7 +204,7 @@ fn input_box(kind: &str, lines: &[Line]) -> Option<Vec<Line>> {
                 }
                 rows.push(row);
             }
-            Some(rows)
+            Some((at, rows))
         }
         // The `┃` lines above the box's `╹▀▀▀` bottom, less the last one (the
         // mode and model line); only cells on the box's own background count,
@@ -222,13 +223,13 @@ fn input_box(kind: &str, lines: &[Line]) -> Option<Vec<Line>> {
                     row.into_iter().take_while(|c| c.bg == bg).collect()
                 })
                 .collect();
-            Some(rows)
+            Some((top, rows))
         }
         // The editor between the last two rules.
         "pi" => {
             let bottom = last(&|_, l| is_rule(l))?;
             let top = (0..bottom).rev().find(|&i| is_rule(&lines[i]))?;
-            Some(lines[top + 1..bottom].to_vec())
+            Some((top + 1, lines[top + 1..bottom].to_vec()))
         }
         _ => None,
     }
@@ -248,12 +249,53 @@ pub fn check(kind: &str, screen: &str) -> Draft {
 /// empty box), or `None` when the box is not on the screen.
 pub fn box_text(kind: &str, screen: &str) -> Option<String> {
     let lines = parse(screen);
-    let rows = input_box(kind, &lines)?;
+    let (_, rows) = input_box(kind, &lines)?;
     let typed: Vec<String> = rows.iter().map(|row| typed(row).trim().to_string()).filter(|t| !t.is_empty()).collect();
     match typed.as_slice() {
         [only] if placeholders(kind).iter().any(|p| only.starts_with(p)) => Some(String::new()),
         _ => Some(typed.join(" ")),
     }
+}
+
+/// 입력 줄의 흐린 글 표지(t-1940). 색을 뺀 글에서는 흐린 글이 친 글처럼 보인다.
+pub const DIM_MARK: &str = "[흐린 글·입력 아님]";
+
+/// 색을 뺀 화면 글 `text`에서, 입력창에 친 글 없이 흐린 글(Claude 다음 입력 예측·placeholder)만 있는 입력 줄에 `DIM_MARK`를
+/// 단다. `ansi`는 같은 화면을 같은 자리에서 읽은 색 있는 글(`ReadFormat::Ansi`, 줄 수가 같다)이다. 입력 줄 표지 글자가 있는
+/// harness(Claude `❯`·Codex `›`·Cursor `→`)만 보고, 두 글의 그 줄이 맞지 않거나 친 글이 섞였으면 그대로 돌려준다.
+pub fn mark_dim_box(kind: &str, text: &str, ansi: &str) -> String {
+    let glyph = match kind {
+        "claude" => '❯',
+        "codex" => '›',
+        "cursor" => '→',
+        _ => return text.to_string(),
+    };
+    let lines = parse(ansi);
+    let Some((at, rows)) = input_box(kind, &lines) else { return text.to_string() };
+    if rows.iter().any(|row| !typed(row).trim().is_empty()) {
+        return text.to_string();
+    }
+    // 흐린 칸과 흐린 글 위의 커서 칸(`typed`가 빈칸으로 치는 것)
+    let first = &rows[0];
+    let dim: String = first
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| c.dim || (c.reverse && first.get(i + 1).is_some_and(|next| next.dim)))
+        .map(|(_, c)| c.ch)
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if dim.is_empty() {
+        return text.to_string();
+    }
+    let mut out: Vec<String> = text.split('\n').map(str::to_string).collect();
+    let Some(row) = out.get_mut(at) else { return text.to_string() };
+    let Some(pos) = row.find(glyph) else { return text.to_string() };
+    let rest = &row[pos + glyph.len_utf8()..];
+    if rest.chars().filter(|ch| !ch.is_whitespace()).collect::<String>() != dim {
+        return text.to_string();
+    }
+    *row = format!("{}{glyph} {DIM_MARK} {}", &row[..pos], rest.trim());
+    out.join("\n")
 }
 
 /// True for the kinds whose input box this module can find.
@@ -409,6 +451,59 @@ mod tests {
         // A transcript line with `❯` that is not under a rule is not the box.
         let transcript = format!("❯ an earlier prompt\n\n{rule}\n❯ \n{rule}\n");
         assert_eq!(check("claude", &transcript), Draft::Empty);
+    }
+
+    /// Claude Code 2.1.326이 턴 끝에 그리는 다음 입력 예측(t-1940 운영 화면의 꼴: 회색 줄 사이 `❯`, NBSP, SGR 2 글). 글은 지어냈다.
+    fn claude_suggestion(box_line: &str) -> String {
+        let rule = format!("\u{1b}[38;2;136;136;136m{}\u{1b}[m", "─".repeat(60));
+        format!(
+            "\u{1b}[38;2;153;153;153m✻\u{1b}[m Baked for 1m 2s\u{1b}[m\n\u{1b}[m\n{rule}\n{box_line}\n{rule}\n  \u{1b}[38;2;153;153;153mstatus\u{1b}[m\n"
+        )
+    }
+
+    #[test]
+    fn a_predicted_next_prompt_is_an_empty_box_and_is_marked_in_plain_text() {
+        let screen = claude_suggestion("❯\u{a0}\u{1b}[2m바뀐 것을 올려\u{1b}[m");
+        assert_eq!(check("claude", &screen), Draft::Empty);
+        assert_eq!(box_text("claude", &screen).as_deref(), Some(""));
+        let text = "✻ Baked for 1m 2s\n\n────\n❯\u{a0}바뀐 것을 올려\n────\n  status\n";
+        let marked = mark_dim_box("claude", text, &screen);
+        assert_eq!(marked.lines().nth(3), Some("❯ [흐린 글·입력 아님] 바뀐 것을 올려"), "{marked}");
+        assert_eq!(marked.lines().count(), text.lines().count());
+        // 친 글은 표지가 없다
+        let typed = claude_suggestion("❯\u{a0}바뀐 것을 올려");
+        assert_eq!(check("claude", &typed), Draft::Typed);
+        assert_eq!(mark_dim_box("claude", text, &typed), text);
+        // 두 글의 그 줄이 맞지 않으면(다른 때 읽음) 고치지 않는다
+        let other = text.replace("올려", "내려");
+        assert_eq!(mark_dim_box("claude", &other, &screen), other);
+        // 빈 입력창, 입력창이 없는 화면, 모르는 harness도 그대로다
+        let empty = claude_suggestion("❯\u{a0}");
+        assert_eq!(mark_dim_box("claude", text, &empty), text);
+        assert_eq!(mark_dim_box("claude", "no box\n", "no box\n"), "no box\n");
+        assert_eq!(mark_dim_box("gemini", text, &screen), text);
+        // Codex의 흐린 placeholder도 같다
+        let codex = "\u{1b}[1m›\u{1b}[0m \u{1b}[2mAsk Codex to do anything\u{1b}[0m\n";
+        assert_eq!(
+            mark_dim_box("codex", "› Ask Codex to do anything\n", codex),
+            "› [흐린 글·입력 아님] Ask Codex to do anything\n"
+        );
+    }
+
+    /// host가 실제로 읽는 길: session host vt가 다시 그린 화면의 Text와 Ansi(빈칸이 커서 이동 `CSI C`로 나온다)
+    #[test]
+    fn the_mark_lines_up_with_the_session_hosts_text_and_ansi() {
+        let raw = claude_suggestion("❯\u{a0}\u{1b}[2m바뀐 것을 main에 올려\u{1b}[m");
+        let mut vt = aaa_vt::Vt::new(12, 70);
+        vt.feed(raw.replace('\n', "\r\n").as_bytes());
+        let text = vt.read(aaa_proto::ReadSource::Visible, None, aaa_proto::ReadFormat::Text).text;
+        let ansi = vt.read(aaa_proto::ReadSource::Visible, None, aaa_proto::ReadFormat::Ansi).text;
+        assert_eq!(check("claude", &ansi), Draft::Empty, "{ansi:?}");
+        let marked = mark_dim_box("claude", &text, &ansi);
+        assert!(marked.contains("❯ [흐린 글·입력 아님] 바뀐 것을 main에 올려"), "{marked}");
+        let recent = vt.read(aaa_proto::ReadSource::Recent, None, aaa_proto::ReadFormat::Text).text;
+        let recent_ansi = vt.read(aaa_proto::ReadSource::Recent, None, aaa_proto::ReadFormat::Ansi).text;
+        assert!(mark_dim_box("claude", &recent, &recent_ansi).contains(DIM_MARK));
     }
 
     #[test]
