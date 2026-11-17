@@ -228,7 +228,7 @@ mod tests {
         // 문서에 적힌 터무니없이 큰 번호는 받지 않는다(그 뒤 새 번호가 막히지 않게)
         let huge =
             db.design_ids_sync("demo", "lib", &[doc("docs/z.md", Some(40)), doc("docs/h.md", Some(i64::MAX))]).unwrap();
-        assert_eq!(huge[1].marked, false);
+        assert!(!huge[1].marked);
         assert!(huge[1].number < 100, "{huge:?}");
         db.project_forget("demo").unwrap();
         assert!(
