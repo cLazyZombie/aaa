@@ -419,16 +419,20 @@ pub async fn mark_ids(
             let listed = entries(
                 &git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?,
             )?;
-            let mut marked = Vec::new();
+            // 검사와 새 글을 먼저 모두 만든 뒤 쓴다: 검사 실패로 반쯤 쓴 worktree를 남기지 않는다
+            let mut writes: Vec<(String, std::path::PathBuf, String)> = Vec::new();
             for (path, id) in &picks {
-                // 이 branch에 없는 문서(그 사이 지웠다)는 건너뛴다
                 // vendor 폴더(남의 원문)는 host가 고르지 않지만 agent도 고치지 않는다
                 if aaa_proto::design_id_unmarked_path(path) {
                     continue;
                 }
+                // 이 branch에 없는 문서(그 사이 지웠다·옮겼다)는 건너뛴다: 답의 수가 줄어 host가 알린다
                 let Some(e) = listed.iter().find(|e| e.path == *path) else { continue };
                 if !e.regular() {
                     bail!("일반 파일이 아니다: {path}");
+                }
+                if !Path::new(path).extension().is_some_and(|x| x.eq_ignore_ascii_case("md")) {
+                    continue;
                 }
                 plain_parents(&cwd, path)?;
                 let target = cwd.join(path);
@@ -438,6 +442,10 @@ pub async fn mark_ids(
                 if out == text || out.len() as u64 > DESIGN_MAX_TEXT {
                     continue;
                 }
+                writes.push((path.clone(), target, out));
+            }
+            let mut marked = Vec::new();
+            for (path, target, out) in writes {
                 marked.push(path.clone());
                 if let Err(e) = std::fs::write(&target, out) {
                     restore(&cwd, &marked).await;
@@ -758,6 +766,32 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::BadRequest, "{e}");
+        // 뒤 문서가 일반 파일이 아니면 앞 문서도 쓰지 않는다(반쯤 쓴 worktree를 남기지 않는다, symlink는 Unix에서)
+        #[cfg(unix)]
+        {
+            std::fs::write(cwd.join("docs/new.md"), "# 새 문서\n").unwrap();
+            std::os::unix::fs::symlink("overview.md", cwd.join("docs/link.md")).unwrap();
+            sh(cwd, &["add", "docs/new.md", "docs/link.md"]).await;
+            sh(cwd, &["commit", "-q", "-m", "더함"]).await;
+            let e = mark_ids(
+                &cfg,
+                ("demo", repo, "docs", "aaa-ids"),
+                &[mark("docs/new.md", "k-5"), mark("docs/link.md", "k-6")],
+                "기획: x",
+            )
+            .await
+            .unwrap_err();
+            assert!(e.message.contains("일반 파일이 아니다"), "{e}");
+            assert_eq!(std::fs::read_to_string(cwd.join("docs/new.md")).unwrap(), "# 새 문서\n");
+            assert_eq!(out(cwd, &["status", "--porcelain"], b"").await, "", "남은 변경 없음");
+        }
+        // 그림은 고르지 않는다
+        let Ok(AgentResponse::DesignIdsMarked { commit: None, .. }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &[mark("docs/game-loop/media/a.png", "k-7")], "기획: x")
+                .await
+        else {
+            panic!("그림은 건너뛴다")
+        };
     }
 
     #[tokio::test]

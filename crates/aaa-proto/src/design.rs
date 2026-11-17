@@ -56,7 +56,7 @@ pub struct DesignChange {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DesignEvent {
-    /// `open`·`save`·`push`·`edit`·`apply`
+    /// `open`·`save`·`push`·`edit`·`apply`, 반영 예약 `apply_wait`·`apply_cancel`·`apply_fail`(FRONT_API 1.180)
     pub kind: String,
     /// 한 줄(「문서 2 고침 · 1 새로」 같은 꼴은 웹이 짓는다: 여기는 경로·판 같은 자료)
     pub text: String,
@@ -105,6 +105,10 @@ pub struct DesignBranchView {
     pub changed: Vec<DesignChange>,
     /// main보다 앞선 commit 수
     pub ahead: u32,
+    /// `changed`·`ahead`를 agent가 그 branch에서 읽어 실었다(FRONT_API 1.179, t-1950). 거짓이면 둘 다 기록만이라 0이 「main과 같음」이
+    /// 아니다(머신 끊김·시한·옛 host)
+    #[serde(default)]
+    pub read: bool,
     /// 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
     pub thread: Option<String>,
     /// thread에 아직 보내지 못한 말 수
@@ -120,10 +124,24 @@ pub struct DesignBranchView {
     pub profile: Option<String>,
     /// 「main에 반영」을 맡은 thread
     pub apply: Option<String>,
+    /// 자리(프로젝트 실행 한도)를 기다리는 「main에 반영」 예약(FRONT_API 1.180, t-1955). 자리가 나면 host가 반영 thread를 띄운다
+    pub apply_wait: Option<DesignApplyWait>,
     /// 대화에 끼우는 host 사건(오래된 차례)
     pub events: Vec<DesignEvent>,
     /// 사람이 고쳤고 아직 대화 thread에 알리지 않은 문서(다음 말 앞에 붙는다)
     pub edited: Vec<String>,
+}
+
+/// 「main에 반영」 예약(FRONT_API 1.180): 반영 요청이 프로젝트 실행 한도에 걸려 자리를 기다린다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignApplyWait {
+    /// 요청한 이(반영 thread를 띄울 때도 이 이름으로 띄운다)
+    pub by: String,
+    #[ts(type = "number")]
+    pub requested_ms: u64,
+    /// 지금 기다리는 까닭(자리·올리기·머신 연결)
+    pub reason: String,
 }
 
 /// 기획 폴더 안 Markdown 문서 한 개
@@ -142,13 +160,18 @@ pub struct DesignDocEntry {
     pub open: u32,
     /// 할 일로 넘긴 계획 블록의 d-ID(`> [!계획] d-NNNN`, 나온 차례)
     pub tasks: Vec<String>,
-    /// 기획서 ID(`k-NNNN`, FRONT_API 1.178, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
+    /// 기획서 ID(`k-NNNN`, FRONT_API 1.180, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
     /// 문서도 번호가 있다). 옛 agent가 읽은 트리면 없다
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub id: Option<String>,
     /// `id`가 문서 안 표지에 적혀 있다. 거짓이면 host 원장의 번호이고 다음 저장이나 「한 번에 달기」가 적는다
     pub id_marked: bool,
+    /// 문서 안 표지의 번호(agent가 읽은 그대로). `id`와 다르면 복사·다른 저장소의 표지라 원장이 다른 번호를 줬다: 표지는 고쳐 쓰지
+    /// 않으므로 한 번에 달기도 건너뛴다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub id_file: Option<String>,
 }
 
 /// agent가 읽은 기획 폴더(한 commit 기준)
@@ -174,7 +197,7 @@ pub struct DesignTree {
     pub ahead: u32,
     /// 문서마다 표지 수를 셌다(FRONT_API 1.174). 거짓이면 수를 모른다: 옛 agent, 기획 branch 트리, 세다 실패·시한
     pub marks: bool,
-    /// 문서마다 ID 표지를 읽었다(FRONT_API 1.178, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
+    /// 문서마다 ID 표지를 읽었다(FRONT_API 1.180, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
     pub ids: bool,
 }
 
@@ -231,13 +254,13 @@ pub struct DesignDoc {
     pub branch: Option<String>,
     #[ts(type = "number")]
     pub committed_ms: u64,
-    /// 기획서 ID(FRONT_API 1.178): 문서 안 표지, 없으면 host 원장의 번호
+    /// 기획서 ID(FRONT_API 1.180): 문서 안 표지, 없으면 host 원장의 번호
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub id: Option<String>,
 }
 
-/// 지금 기획 트리(main 판)에 있는 문서의 ID 하나(FRONT_API 1.178, `design_ids`의 답). 웹은 이 목록에 있는 `k-NNNN`만 링크한다
+/// 지금 기획 트리(main 판)에 있는 문서의 ID 하나(FRONT_API 1.180, `design_ids`의 답). 웹은 이 목록에 있는 `k-NNNN`만 링크한다
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DesignIdView {
@@ -519,6 +542,11 @@ pub fn design_put_id(text: &str, id: &str) -> String {
     if design_text_id(text).is_some() {
         return text.to_string();
     }
+    // 맨 앞 BOM은 맨 앞에 남긴다(제목 줄 판정과 넣는 자리는 BOM 뒤 글로)
+    if let Some(rest) = text.strip_prefix('\u{feff}') {
+        let out = format!("\u{feff}{}", design_put_id(rest, id));
+        return if design_text_id(&out).as_deref() == Some(id) { out } else { text.to_string() };
+    }
     let cr = if text.contains("\r\n") { "\r" } else { "" };
     let marker = format!("<!-- aaa-id: {id} -->");
     let lines: Vec<&str> = text.split('\n').collect();
@@ -566,8 +594,10 @@ pub fn design_put_id(text: &str, id: &str) -> String {
     let joined = if at == lines.len() { joined.trim_end_matches(['\r', '\n']).to_string() + cr + "\n" } else { joined };
     if design_text_id(&joined).as_deref() == Some(id) {
         joined
+    } else if start > 0 {
+        // YAML 머리가 앞 8KiB를 넘는다: 머리 앞에 넣으면 머리가 깨진다. 넣지 않는다(번호는 원장의 경로 번호로 남는다)
+        text.to_string()
     } else {
-        // 앞자리에 둘 수 없으면(긴 YAML 머리 등) 맨 앞
         format!("{marker}{cr}\n{cr}\n{text}")
     }
 }
@@ -763,6 +793,13 @@ mod tests {
             "```\n# 예시\n```\n# 진짜\n<!-- aaa-id: k-0012 -->\n",
             "울타리 안 제목은 건너뛴다"
         );
+        assert_eq!(
+            design_put_id("\u{feff}# 루프\n", id),
+            "\u{feff}# 루프\n<!-- aaa-id: k-0012 -->\n",
+            "BOM은 맨 앞에 둔다"
+        );
+        let yaml = format!("---\nx: {}\n---\n# 루프\n", "a".repeat(DESIGN_ID_BYTES));
+        assert_eq!(design_put_id(&yaml, id), yaml, "앞 8KiB를 넘는 YAML 머리는 깨지 않게 그대로");
         let has = "# 루프\n<!-- aaa-id: k-0003 -->\n";
         assert_eq!(design_put_id(has, id), has, "있는 표지(번호가 달라도)는 그대로");
         // 제목이 앞 8KiB 밖이면 맨 앞에 넣어 트리가 읽게 한다

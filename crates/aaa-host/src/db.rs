@@ -428,7 +428,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS automation_ids(project TEXT NOT NULL, name TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,name), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS idea_ids(project TEXT NOT NULL, idea_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,idea_id), UNIQUE(project,number));
-             CREATE TABLE IF NOT EXISTS design_ids(number INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', present INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS design_ids(number INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', present INTEGER NOT NULL DEFAULT 0, marked INTEGER NOT NULL DEFAULT 0);
              CREATE INDEX IF NOT EXISTS design_ids_path ON design_ids(project,repo,path);
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);

@@ -416,7 +416,8 @@ async fn list(
         .map(|(e, (title, id))| {
             let Marks { plans, open, tasks } = marks.remove(&e.path).unwrap_or_default();
             let id_marked = id.is_some();
-            DesignDocEntry { path: e.path, title, bytes: e.size, plans, open, tasks, id, id_marked }
+            let id_file = id.clone();
+            DesignDocEntry { path: e.path, title, bytes: e.size, plans, open, tasks, id, id_marked, id_file }
         })
         .collect();
     Ok(DesignTree {

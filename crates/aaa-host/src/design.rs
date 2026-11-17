@@ -134,6 +134,9 @@ impl Host {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }
             R::DesignApply { project, repo, branch } => self.design_apply(role, actor, &project, &repo, &branch).await,
+            R::DesignApplyCancel { project, repo, branch } => {
+                self.design_apply_cancel(role, actor, &project, &repo, &branch).await
+            }
             R::DesignHandoff { project, repo, branch, path, blob, blocks, title, profile, memo, reserve } => {
                 let pick = crate::design_handoff::Handoff {
                     repo,
@@ -221,6 +224,12 @@ impl Host {
         view
     }
 
+    /// 마지막으로 읽은 그 저장소 트리에서 그 문서의 ID
+    fn design_tree_id(&self, project: &str, repo: &str, path: &str) -> Option<String> {
+        let trees = self.design_trees.lock().unwrap();
+        trees.get(&format!("{project}/{repo}"))?.docs.iter().find(|d| d.path == path)?.id.clone()
+    }
+
     /// 마지막으로 읽은 그 저장소 트리의 commit(문서·그림을 같은 판으로 읽는다)
     fn design_commit(&self, project: &str, repo: &str) -> Option<String> {
         self.design_trees.lock().unwrap().get(&format!("{project}/{repo}")).map(|t: &DesignTree| t.commit.clone())
@@ -258,7 +267,9 @@ impl Host {
         };
         let title = aaa_proto::design_title(&text);
         // 문서 안 표지, 없으면 원장의 그 경로 번호(main 판만: 기획 branch의 새 문서는 저장할 때 번호를 받는다)
-        let id = aaa_proto::design_text_id(&text).or_else(|| {
+        // main 판은 트리와 같은 ID(원장으로 맞춘 번호: 복사본의 표지는 원본 번호라 그대로 쓰지 않는다)
+        let tree_id = branch.is_none().then(|| self.design_tree_id(project, &target.name, &path)).flatten();
+        let id = tree_id.or_else(|| aaa_proto::design_text_id(&text)).or_else(|| {
             (branch.is_none())
                 .then(|| self.db.design_id_of_path(project, &target.name, &path).ok().flatten())
                 .flatten()

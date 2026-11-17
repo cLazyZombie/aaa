@@ -191,6 +191,10 @@ export default async function () {
     await domIs(page, "옮긴 문서", () => location.hash === `#design=${encodeURIComponent("app/docs/camp/board.md")}`);
     await page.getByTestId("design-body").getByText("의뢰는 셋 중에서 고른다.").waitFor();
     await domIs(page, "옮긴 그림", () => { const i = document.querySelector("[data-testid=design-body] img"); return !!i && i.complete && i.naturalWidth > 0; });
+    // 그 대화의 commit이 모두 main에 있다: 「main에 반영」 단추 대신 「main에 들어감」(t-1950)
+    await page.getByTestId("design-chat-branch").filter({ hasText: campSlug }).waitFor();
+    await page.getByTestId("design-merged").waitFor();
+    assert.equal(await page.getByTestId("design-apply").count(), 0);
   });
 
   await step("main에 들어간 뒤 곧 버려도(origin을 아직 받지 않았어도) 「옮김」으로 남고, 같은 이름으로 다시 만든 대화는 앞 옮기기를 잇지 않는다", async () => {

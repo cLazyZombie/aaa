@@ -2203,6 +2203,7 @@ impl Host {
             | FrontRequest::DesignSay { .. }
             | FrontRequest::DesignDiscard { .. }
             | FrontRequest::DesignApply { .. }
+            | FrontRequest::DesignApplyCancel { .. }
             | FrontRequest::DesignHandoff { .. }
             | FrontRequest::DesignIds { .. }
             | FrontRequest::DesignMarkIds { .. }) => Box::pin(self.call_design(role, actor, req)).await,

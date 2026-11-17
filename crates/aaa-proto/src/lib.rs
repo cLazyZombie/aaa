@@ -172,6 +172,7 @@ pub fn typescript_bindings() -> String {
         TaskThread::decl(&cfg),
         DesignChange::decl(&cfg),
         DesignEvent::decl(&cfg),
+        DesignApplyWait::decl(&cfg),
         DesignBranchState::decl(&cfg),
         DesignBranchView::decl(&cfg),
         DesignHandoffView::decl(&cfg),

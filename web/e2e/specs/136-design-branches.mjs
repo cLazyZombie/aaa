@@ -1,6 +1,7 @@
 // 기획 2-3(t-1894, 확정 시안 library/mock2): 실제 host·agent·git origin으로 기획 branch 웹 화면을 본다.
 // 트리 branch 표시(저장소 수·문서 칩·branch에서 새로 만든 문서) → branch 판 보기(판 고르기·main과 다른 덩어리·다른 branch 알림)
-// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(반영 thread) → 버리기
+// → 고치기와 그림 붙이기(그 branch에 commit, 그림은 그 판 주소) → 대화 고르기·새 대화 → main에 반영(실행 한도면 예약·취소·자리 나면
+// host가 시작, t-1955) → 버리기
 // → 블록 표지(3-1, 확정 시안 library/mock4: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수와 「할 것」·대화로 정하기)
 // → 구현 맡기기(3-2, 확정 시안 library/mock5: 고른 블록 → 할 일 하나·표지 commit·바로 올림·예약한 구현 thread는 그 기획 branch에서)
 // → 넘긴 블록 고침 알림·main 문서에서 바로 맡기기(3-3, 확정 시안 library/mock6) → 휴대폰 칸.
@@ -8,7 +9,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until, shot, finishFixtureFollowups } from "../lib/harness.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -198,7 +199,11 @@ export default async function () {
     assert.match(await page.getByTestId("design-mark").first().textContent(), /새 대화 · design\/boss · main [0-9a-f]{7} 에서/);
   });
 
-  await step("main에 반영: 고친 파일·줄 수를 보이고 그 branch에서 갈라진 thread를 띄운다", async () => {
+  await step("main에 반영: 실행 한도에 걸리면 예약하고, 자리가 나면 host가 그 branch에서 갈라진 thread를 띄운다", async () => {
+    // 자리 하나를 다른 thread가 쥔다(기획 대화 thread는 한도에 세지 않는다)
+    fs.writeFileSync(`${root}/busy.md`, "자리\n");
+    const busy = aaa("thread", "start", "demo", "--title", "자리", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/busy.md`);
+    aaa("project", "set", "demo", "max_parallel_threads", "1");
     await page.getByTestId("design-pick").click();
     await page.getByTestId("design-pick-row").filter({ hasText: "중간 상점" }).click();
     await page.getByTestId("design-apply").click();
@@ -206,15 +211,113 @@ export default async function () {
     await dialog.waitFor();
     assert.match(await dialog.getByTestId("design-files").textContent(), /loop\/README\.md\+\d+−\d+/);
     await page.getByTestId("design-apply-submit").click();
-    await domIs(page, "반영 요청 끝", () => !!document.querySelector("[data-testid=design-applying]") || !!document.querySelector("[data-testid=design-apply-dialog] .confirm-error"));
+    await domIs(page, "반영 요청 끝", () => !!document.querySelector("[data-testid=design-apply-reserved]") || !!document.querySelector("[data-testid=design-apply-dialog] .confirm-error"));
     const problem = (await dialog.locator(".confirm-error").count()) ? await dialog.locator(".confirm-error").textContent() : null;
-    assert.equal(problem, null, "반영 요청이 거부되지 않는다");
+    assert.equal(problem, null, "한도에서 거절하지 않는다");
+    assert.match(await dialog.getByTestId("design-apply-reserved").textContent(), /예약됨 · 자리 나면 시작프로젝트 실행 한도 1/);
+    assert.equal(await dialog.getByTestId("design-apply-submit").count(), 0, "예약한 뒤에는 다시 요청하지 않는다");
+    await shot(page, "design-apply-reserved");
+    let shop = branches().find((b) => b.slug === "shop");
+    assert.equal(shop.apply, null);
+    assert.equal(shop.pushed, shop.head, "올리기는 먼저 한다");
+    // 창의 예약 취소: 창이 닫히고 머리는 다시 「main에 반영」
+    await dialog.getByTestId("design-apply-cancel").click();
+    await dialog.waitFor({ state: "detached" });
+    await page.getByTestId("design-apply").waitFor();
+    assert.equal(branches().find((b) => b.slug === "shop").apply_wait, null);
+    // 다시 예약하고 닫으면 머리에 「예약됨」이 남고, 누르면 같은 창이 예약을 보인다
+    await page.getByTestId("design-apply").click();
+    await page.getByTestId("design-apply-submit").click();
+    await dialog.getByTestId("design-apply-reserved").waitFor();
+    await dialog.getByRole("button", { name: "닫기" }).click();
+    await dialog.waitFor({ state: "detached" });
+    const chip = page.getByTestId("design-apply-wait");
+    assert.equal((await chip.textContent()).trim(), "예약됨 · 자리 나면 시작");
+    await shot(page, "design-apply-wait-chip");
+    await chip.click();
+    await dialog.getByTestId("design-apply-reserved").waitFor();
+    await dialog.getByRole("button", { name: "닫기" }).click();
+    // 휴대폰 대화 칸 머리에서도 칩이 넘치지 않는다
+    const { page: phone } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    try {
+      await phone.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
+      await phone.goto(`${new URL(phone.url()).origin}/#design=${encodeURIComponent("app/docs/loop/README.md")}`);
+      await phone.getByTestId("design-page-chat").click();
+      await phone.getByTestId("design-apply-wait").waitFor();
+      const fit = await phone.evaluate(() => {
+        const head = document.querySelector(".design-chat-head");
+        const chip = document.querySelector("[data-testid=design-apply-wait]").getBoundingClientRect();
+        return { over: head.scrollWidth - head.clientWidth, right: chip.right, width: window.innerWidth };
+      });
+      assert.ok(fit.over <= 0 && fit.right <= fit.width, `대화 머리가 넘친다: ${JSON.stringify(fit)}`);
+      await shot(phone, "design-apply-wait-phone");
+    } finally { await phone.context().close(); }
+    // 자리가 나면 다음 tick에 host가 띄우고, 화면은 새로 읽지 않아도 「반영 대기」로 바뀐다
+    await until("자리 thread 보고", () => aaa("thread", "show", busy.id).report_hash, 60_000);
+    finishFixtureFollowups(busy.id);
+    aaa("thread", "resolve", busy.id, "--skip-copy");
+    aaa("ticker", "tick");
     await page.getByTestId("design-applying").waitFor();
-    const shop = branches().find((b) => b.slug === "shop");
+    shop = branches().find((b) => b.slug === "shop");
     assert.ok(shop.apply, "반영 thread");
-    assert.equal(shop.pushed, shop.head, "올린 뒤 띄운다");
+    assert.equal(shop.apply_wait, null);
     const t = aaa("thread", "show", shop.apply);
     assert.equal(t.thread_kind, "worktree");
+    aaa("project", "set", "demo", "max_parallel_threads", "10");
+    // 무엇을 기다리는지 보이고 그 thread로 간다(t-1950)
+    assert.equal((await page.getByTestId("design-applying").textContent()).trim(), `반영 대기 ${shop.apply}`);
+    assert.equal(await page.getByTestId("design-applying").getAttribute("href"), `#thread=${shop.apply}`);
+  });
+
+  await step("대화 입력창 그림: 그 branch에 commit하고 보낼 말 앞에 「(그림: 경로)」, 보는 문서를 이 대화가 고치지 않았으면 알린다", async () => {
+    aaa("plan", "new", "app", "pics", "--title", "그림 대화");
+    await page.getByTestId("design-reload").first().click();
+    // 대화를 바꾸면 문서 판(shop → main)을 다시 읽는다. 그 읽기를 붙잡아 두고 바로 붙인다: 읽는 동안에도 그림이 올라가야 한다
+    // (t-1950 착지 실패: 부하에서 읽기가 늦으면 프로젝트를 몰라 입력창이 그림을 껐다)
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let holding = 0, passed = 0;
+    const hold = async (route) => {
+      if (route.request().postDataJSON()?.op !== "design_read") return route.fallback();
+      holding++;
+      await held;
+      await route.fallback();
+      passed++;
+    };
+    await page.route("**/api/v1/call", hold);
+    await page.getByTestId("design-pick").click();
+    await page.getByTestId("design-pick-row").filter({ hasText: "그림 대화" }).click();
+    await page.getByTestId("design-chat-branch").filter({ hasText: "pics" }).waitFor();
+    const chat = page.getByTestId("design-chat");
+    await until("판 다시 읽기를 붙잡음", () => holding > 0, 10_000);
+    await chat.locator("input[type=file]").setInputFiles({ name: "시안.png", mimeType: "image/png", buffer: png(120, 80, [200, 90, 60]) });
+    await domIs(page, "초안의 그림 경로", () => /@docs\/loop\/[0-9a-f]{16}\.png /.test(document.querySelector("[data-testid=design-chat] textarea").value));
+    assert.ok(holding > 0 && await page.getByTestId("design-body").count() === 0, "문서를 다시 읽는 중에 올렸다");
+    release();
+    await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
+    await page.unroute("**/api/v1/call", hold);
+    // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
+    await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
+    const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
+    const pics = branches().find((b) => b.slug === "pics");
+    assert.ok(pics.changed.some((c) => c.path === pic && c.status === "A"), "보는 문서 폴더에 commit한다");
+    assert.deepEqual(pics.edited, [], "말 앞 「(그림: …)」이 알리므로 「사람이 고친 문서」에 넣지 않는다");
+    // 대화 thread는 기획 worktree에서 그 파일을 읽는다(brief)
+    const wt = git(`${root}/app`, "worktree", "list", "--porcelain").split("\n\n").find((b) => b.includes("branch refs/heads/design/pics"))?.match(/^worktree (.+)$/m)?.[1];
+    assert.ok(wt && fs.existsSync(`${wt}/${pic}`), `기획 worktree에 그림 파일: ${wt}`);
+    assert.equal(await page.getByTestId("design-viewing").count(), 1, "그림만 붙였을 뿐 이 대화가 그 문서를 고치지 않았다");
+    await chat.locator("textarea").press("End");
+    await chat.locator("textarea").pressSequentially("이 그림으로 시안");
+    await chat.locator("textarea").press("Enter");
+    const thread = await until("그림 대화 thread", () => branches().find((b) => b.slug === "pics").thread, 60_000);
+    const log = `${root}/fake-lines/${thread}.log`;
+    await until("대화가 받은 그림 말", () => fs.existsSync(log) && fs.readFileSync(log, "utf8").includes("이 그림으로 시안"), 60_000);
+    const lines = fs.readFileSync(log, "utf8").split("\n");
+    const at = lines.findIndex((l) => l === "이 그림으로 시안");
+    assert.deepEqual(lines.slice(at - 2, at + 1), ["(보는 문서: docs/loop/README.md)", `(그림: ${pic})`, "이 그림으로 시안"]);
+    await chat.getByText(`그림 ${pic.split("/").pop()} 붙임`).first().waitFor();
+    aaa("plan", "discard", "app", "pics");
+    await page.getByTestId("design-reload").first().click();
   });
 
   await step("버리기: 그 대화의 branch를 지우고 트리에서 사라진다", async () => {

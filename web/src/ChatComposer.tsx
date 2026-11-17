@@ -249,6 +249,8 @@ export interface ChatComposerProps {
   prepare?: (text: string) => string;
   /** 그림을 붙일 pane이 없다(아이디어 대화가 아직 뜨지 않음, t-1575): 그 까닭. 그림 단추를 끄고 붙여 넣은 그림은 올리지 않는다 */
   imagesOff?: string | null;
+  /** 그림을 pane 대신 여기로 올리고 초안에 넣을 경로를 받는다(기획 대화: 그 branch에 commit, t-1950) */
+  uploadImage?: (file: File) => Promise<string>;
 }
 
 export function ChatComposer({
@@ -278,6 +280,7 @@ export function ChatComposer({
   context = null,
   prepare,
   imagesOff = null,
+  uploadImage,
 }: ChatComposerProps) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -432,7 +435,7 @@ export function ChatComposer({
     for (const { file, attachment: a } of added) uploads.current = uploads.current.then(async () => {
       if (!mounted.current || removed.current.has(a.id)) return;
       try {
-        const path = await uploadChatImage(pane, file);
+        const path = uploadImage ? await uploadImage(file) : await uploadChatImage(pane, file);
         if (mounted.current && !removed.current.has(a.id)) setAttachments((current) => current.map((item) => item.id === a.id ? { ...item, path, state: "waiting" } : item));
       } catch (error) {
         if (!mounted.current || removed.current.has(a.id)) return;

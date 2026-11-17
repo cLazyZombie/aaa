@@ -704,7 +704,7 @@ added?: number, removed?: number, };
 
 export type DesignEvent = {
 /**
- * `open`·`save`·`push`·`edit`·`apply`
+ * `open`·`save`·`push`·`edit`·`apply`, 반영 예약 `apply_wait`·`apply_cancel`·`apply_fail`(FRONT_API 1.180)
  */
 kind: string,
 /**
@@ -715,6 +715,16 @@ text: string, commit: string | null,
  * 이 사건 전에 대화에 보낸 마지막 사람 말의 앞부분(그 말의 답 뒤에 끼운다). 없으면 대화 처음
  */
 after: string | null, at_ms: number, };
+
+export type DesignApplyWait = {
+/**
+ * 요청한 이(반영 thread를 띄울 때도 이 이름으로 띄운다)
+ */
+by: string, requested_ms: number,
+/**
+ * 지금 기다리는 까닭(자리·올리기·머신 연결)
+ */
+reason: string, };
 
 export type DesignBranchState = "open" | "rest";
 
@@ -756,6 +766,11 @@ changed: Array<DesignChange>,
  */
 ahead: number,
 /**
+ * `changed`·`ahead`를 agent가 그 branch에서 읽어 실었다(FRONT_API 1.179, t-1950). 거짓이면 둘 다 기록만이라 0이 「main과 같음」이
+ * 아니다(머신 끊김·시한·옛 host)
+ */
+read: boolean,
+/**
  * 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
  */
 thread: string | null,
@@ -783,6 +798,10 @@ profile: string | null,
  * 「main에 반영」을 맡은 thread
  */
 apply: string | null,
+/**
+ * 자리(프로젝트 실행 한도)를 기다리는 「main에 반영」 예약(FRONT_API 1.180, t-1955). 자리가 나면 host가 반영 thread를 띄운다
+ */
+apply_wait: DesignApplyWait | null,
 /**
  * 대화에 끼우는 host 사건(오래된 차례)
  */
@@ -856,14 +875,19 @@ open: number,
  */
 tasks: Array<string>,
 /**
- * 기획서 ID(`k-NNNN`, FRONT_API 1.178, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
+ * 기획서 ID(`k-NNNN`, FRONT_API 1.180, t-1957). agent는 문서 안 표지를 싣고, host는 원장으로 맞춘 번호를 싣는다(표지가 없는
  * 문서도 번호가 있다). 옛 agent가 읽은 트리면 없다
  */
 id?: string,
 /**
  * `id`가 문서 안 표지에 적혀 있다. 거짓이면 host 원장의 번호이고 다음 저장이나 「한 번에 달기」가 적는다
  */
-id_marked: boolean, };
+id_marked: boolean,
+/**
+ * 문서 안 표지의 번호(agent가 읽은 그대로). `id`와 다르면 복사·다른 저장소의 표지라 원장이 다른 번호를 줬다: 표지는 고쳐 쓰지
+ * 않으므로 한 번에 달기도 건너뛴다
+ */
+id_file?: string, };
 
 export type DesignTree = {
 /**
@@ -903,7 +927,7 @@ ahead: number,
  */
 marks: boolean,
 /**
- * 문서마다 ID 표지를 읽었다(FRONT_API 1.178, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
+ * 문서마다 ID 표지를 읽었다(FRONT_API 1.180, agent `design_ids.v1`). 거짓이면(옛 agent) host가 번호를 주지 않는다
  */
 ids: boolean, };
 
@@ -959,7 +983,7 @@ commit: string,
  */
 branch: string | null, committed_ms: number,
 /**
- * 기획서 ID(FRONT_API 1.178): 문서 안 표지, 없으면 host 원장의 번호
+ * 기획서 ID(FRONT_API 1.180): 문서 안 표지, 없으면 host 원장의 번호
  */
 id?: string, };
 
@@ -1835,7 +1859,7 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
+summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */
@@ -2078,7 +2102,11 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number, commit: string | null, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
+/**
+ * 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
+ */
+skipped: number, commit: string | null, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

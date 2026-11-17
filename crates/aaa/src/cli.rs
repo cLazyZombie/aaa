@@ -739,8 +739,15 @@ enum PlanCmd {
     },
     /// 기획 branch를 버린다: 대화 thread를 끝내고 worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
     Discard { repo: String, slug: String },
-    /// main에 반영: 기획 branch를 올리고 그 branch에서 갈라진 thread가 main을 합치고 검사를 지나 착지 창을 받는다
-    Apply { repo: String, slug: String },
+    /// main에 반영: 기획 branch를 올리고 그 branch에서 갈라진 thread가 main을 합치고 검사를 지나 착지 창을 받는다.
+    /// 프로젝트 실행 한도에 걸리면 예약하고 자리가 나면 host가 띄운다
+    Apply {
+        repo: String,
+        slug: String,
+        /// 자리를 기다리는 반영 예약을 거둔다
+        #[arg(long)]
+        cancel: bool,
+    },
     /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 기획 branch `design/aaa-ids` 한 commit으로 넣는다.
     /// main에는 `aaa plan apply <저장소> aaa-ids`(또는 웹 「main에 반영」)로 들어간다
     Ids { repo: String },
@@ -2374,7 +2381,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 PlanCmd::New { repo, slug, title, profile } => {
                     front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title, profile })
                 }
-                PlanCmd::Apply { repo, slug } => front(json, FrontRequest::DesignApply { project, repo, branch: slug }),
+                PlanCmd::Apply { repo, slug, cancel: false } => {
+                    front(json, FrontRequest::DesignApply { project, repo, branch: slug })
+                }
+                PlanCmd::Apply { repo, slug, cancel: true } => {
+                    front(json, FrontRequest::DesignApplyCancel { project, repo, branch: slug })
+                }
                 PlanCmd::Save { repo, path, branch, base, new, file, summary } => {
                     if base.is_none() && !new {
                         anyhow::bail!("--base <blob>(고칠 문서의 판) 또는 --new(새 문서)를 준다");
@@ -5407,6 +5419,11 @@ fn print_design_branch(s: &mut String, b: &aaa_proto::DesignBranchView) {
         let error = b.chat_error.as_deref().map(|e| format!(" · 띄우지 못함: {e}")).unwrap_or_default();
         let _ = writeln!(s, "    {thread}{pending}{error}");
     }
+    if let Some(w) = &b.apply_wait {
+        let _ = writeln!(s, "    main에 반영 예약됨 · 자리 나면 시작 · {}", w.reason);
+    } else if let Some(t) = &b.apply {
+        let _ = writeln!(s, "    main에 반영 {t}");
+    }
     for c in &b.changed {
         let _ = writeln!(s, "    {} {}", c.status, c.path);
     }
@@ -6361,14 +6378,22 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{}\t{}\t{}\t{}", i.id, i.repo, i.path, i.title);
             }
         }
-        FrontResponse::DesignIdsMarked { branch, marked, commit } => match commit {
-            Some(c) => {
-                let _ = writeln!(s, "표지 {marked}개 · design/{branch} · commit {c}");
+        FrontResponse::DesignIdsMarked { branch, marked, skipped, commit } => {
+            match commit {
+                Some(c) => {
+                    let _ = writeln!(s, "표지 {marked}개 · design/{branch} · commit {c}");
+                }
+                None => {
+                    let _ = writeln!(s, "새로 단 표지 없음");
+                }
             }
-            None => {
-                let _ = writeln!(s, "표지를 달 문서가 없다");
+            if *skipped > 0 {
+                let _ = writeln!(
+                    s,
+                    "{skipped}개는 design/{branch}에 이미 있거나 그 branch에 없다(옛 branch면 버리고 다시 단다)"
+                );
             }
-        },
+        }
         FrontResponse::DesignSaved { path, commit, blob } => {
             let _ = writeln!(s, "{path} · commit {commit} · blob {blob}");
         }

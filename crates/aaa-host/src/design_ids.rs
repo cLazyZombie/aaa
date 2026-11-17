@@ -27,7 +27,11 @@ impl Host {
         let markers: Vec<Option<i64>> = tree
             .docs
             .iter()
-            .map(|d| d.id.as_deref().and_then(|id| aaa_proto::short_id_number(id, aaa_proto::DESIGN_ID_PREFIX)))
+            .map(|d| {
+                // 문서 안 표지(옛 판 agent는 `id`에만 실었다)
+                let file = d.id_file.as_deref().or(d.id.as_deref());
+                file.and_then(|id| aaa_proto::short_id_number(id, aaa_proto::DESIGN_ID_PREFIX))
+            })
             .collect();
         let docs: Vec<DesignIdDoc> = tree
             .docs
@@ -37,9 +41,10 @@ impl Host {
             .collect();
         match self.db.design_ids_sync(project, repo, &docs) {
             Ok(ids) => {
-                for (d, id) in tree.docs.iter_mut().zip(ids) {
+                for ((d, id), marker) in tree.docs.iter_mut().zip(ids).zip(&markers) {
                     d.id = Some(design_id_text(id.number));
                     d.id_marked = id.marked;
+                    d.id_file = marker.map(design_id_text);
                 }
             }
             Err(e) => {
@@ -54,20 +59,40 @@ impl Host {
         }
     }
 
-    /// 저장할 글에 표지가 없으면 그 경로의 원장 번호로 넣는다(Markdown 문서만, 상한을 넘으면 그대로)
-    pub(crate) fn design_text_with_id(&self, project: &str, repo: &str, path: &str, text: String) -> String {
+    /// 저장할 글에 표지가 없으면 넣는다(Markdown 문서만, `vendor/` 아래·상한을 넘으면 그대로). 번호는 그 branch의 옛 글에 있던
+    /// 표지(표지 줄을 지우고 저장했다), 없으면 그 경로의 아직 표지로 적히지 않은 원장 번호, 없으면 새 번호다
+    pub(crate) async fn design_text_with_id(
+        &self,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        path: &str,
+        existing: bool,
+        text: String,
+    ) -> String {
         let markdown = std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
         if !markdown || aaa_proto::design_id_unmarked_path(path) || aaa_proto::design_text_id(&text).is_some() {
             return text;
         }
-        let number = match self.db.design_id_for_path(project, repo, path) {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(project, repo, path, error = %format!("{e:#}"), "기획서 ID 번호를 내지 못해 표지 없이 저장한다");
-                return text;
+        let before = if existing {
+            match self.design_read(project, repo, path, Some(slug)).await {
+                Ok(FrontResponse::DesignDoc { doc }) => aaa_proto::design_text_id(&doc.text),
+                _ => None,
             }
+        } else {
+            None
         };
-        let out = aaa_proto::design_put_id(&text, &design_id_text(number));
+        let id = match before {
+            Some(id) => id,
+            None => match self.db.design_id_for_path(project, repo, path) {
+                Ok(n) => design_id_text(n),
+                Err(e) => {
+                    tracing::warn!(project, repo, path, error = %format!("{e:#}"), "기획서 ID 번호를 내지 못해 표지 없이 저장한다");
+                    return text;
+                }
+            },
+        };
+        let out = aaa_proto::design_put_id(&text, &id);
         if out.len() as u64 > DESIGN_MAX_TEXT { text } else { out }
     }
 
@@ -102,14 +127,15 @@ impl Host {
             (_, Some(e)) => return Err(err(ErrorCode::Unavailable, format!("기획 트리를 새로 읽지 못했다: {e}"))),
             _ => return Err(err(ErrorCode::Unavailable, "기획 트리의 ID를 읽지 못했다")),
         };
+        // 표지가 없는 문서만(복사·다른 저장소 표지는 고쳐 쓰지 않으므로 고르지 않는다)
         let ids: Vec<DesignIdMark> = tree
             .docs
             .iter()
-            .filter(|d| !d.id_marked && !aaa_proto::design_id_unmarked_path(&d.path))
+            .filter(|d| d.id_file.is_none() && !aaa_proto::design_id_unmarked_path(&d.path))
             .filter_map(|d| d.id.clone().map(|id| DesignIdMark { path: d.path.clone(), id }))
             .collect();
         if ids.is_empty() {
-            return Ok(FrontResponse::DesignIdsMarked { branch: IDS_SLUG.into(), marked: 0, commit: None });
+            return Ok(FrontResponse::DesignIdsMarked { branch: IDS_SLUG.into(), marked: 0, skipped: 0, commit: None });
         }
         Box::pin(self.design_branch_open_with(
             role,
@@ -129,6 +155,16 @@ impl Host {
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{IDS_SLUG}")))?;
         if rec.state == DesignBranchState::Rest {
             return Err(err(ErrorCode::Conflict, format!("쉬는 기획 branch다: design/{IDS_SLUG}(다시 연 뒤 단다)")));
+        }
+        // 반영 중·반영 예약된 branch에 더 쓰지 않는다(main에 들어간 뒤 다시 단다)
+        if let Some(id) = self.design_applying(project, &rec) {
+            return Err(err(
+                ErrorCode::Conflict,
+                format!("design/{IDS_SLUG}를 main에 반영 중이다: {id}(들어간 뒤 다시 단다)"),
+            ));
+        }
+        if rec.apply_wait.is_some() {
+            return Err(err(ErrorCode::Conflict, format!("design/{IDS_SLUG}의 반영을 예약했다(들어간 뒤 다시 단다)")));
         }
         let conn = self.design_write_conn(&mid)?;
         let count = ids.len();
@@ -169,6 +205,8 @@ impl Host {
             "design_mark_ids",
             &format!("{project} {}/{IDS_SLUG} {} {}", target.name, marked.len(), commit.as_deref().unwrap_or("-")),
         );
-        Ok(FrontResponse::DesignIdsMarked { branch: IDS_SLUG.into(), marked: marked.len() as u32, commit })
+        // 고른 문서 중 이 branch에 없거나(그 사이 main에서 옮김·더함, 옛 branch) 이미 단 문서
+        let skipped = (count - marked.len()) as u32;
+        Ok(FrontResponse::DesignIdsMarked { branch: IDS_SLUG.into(), marked: marked.len() as u32, skipped, commit })
     }
 }

@@ -19,6 +19,10 @@ pub(crate) struct DesignIdOf {
     pub marked: bool,
 }
 
+/// 원장에 없는 표지 번호를 받는 상한: 지금까지 낸 가장 큰 번호 + 이만큼. 문서에 적힌 큰 번호 하나(`k-9223372036854775807`)가
+/// `AUTOINCREMENT`를 끝까지 밀어 그 뒤 새 번호를 모두 막지 않게 한다. 넘는 표지는 표지가 없는 것처럼 다룬다
+const FOREIGN_SLACK: i64 = 100_000;
+
 pub(crate) fn design_id_text(number: i64) -> String {
     format!("{}-{number:04}", aaa_proto::DESIGN_ID_PREFIX)
 }
@@ -36,7 +40,8 @@ impl Db {
         let tx = c.transaction()?;
         let mut out: Vec<Option<DesignIdOf>> = vec![None; docs.len()];
         let mut taken: HashSet<i64> = HashSet::new();
-        let mut owned: Vec<(i64, usize)> = Vec::new();
+        // (번호, 문서 차례, 문서에 그 표지가 있나)
+        let mut owned: Vec<(i64, usize, bool)> = Vec::new();
         let mut numbers: Vec<i64> = docs.iter().filter_map(|d| d.marker).collect();
         numbers.sort_unstable();
         numbers.dedup();
@@ -47,7 +52,13 @@ impl Db {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })
                 .optional()?;
+            let top: i64 = tx.query_row(
+                "SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='design_ids'),0), COALESCE((SELECT MAX(number) FROM design_ids),0))",
+                [],
+                |r| r.get(0),
+            )?;
             let owner = match &row {
+                None if n > top.saturating_add(FOREIGN_SLACK) => None,
                 None => {
                     tx.execute(
                         "INSERT INTO design_ids(number,project,repo,path) VALUES(?1,?2,?3,?4)",
@@ -70,7 +81,7 @@ impl Db {
             if let Some(i) = owner {
                 out[i] = Some(DesignIdOf { number: n, marked: true });
                 taken.insert(n);
-                owned.push((n, i));
+                owned.push((n, i, true));
             }
         }
         for i in 0..docs.len() {
@@ -92,27 +103,29 @@ impl Db {
                 }
             };
             taken.insert(n);
-            owned.push((n, i));
+            owned.push((n, i, false));
             out[i] = Some(DesignIdOf { number: n, marked: false });
         }
         tx.execute("UPDATE design_ids SET present=0 WHERE project=?1 AND repo=?2", params![project, repo])?;
-        for (n, i) in owned {
+        for (n, i, marked) in owned {
             tx.execute(
-                "UPDATE design_ids SET path=?2, title=?3, present=1 WHERE number=?1",
-                params![n, docs[i].path, docs[i].title],
+                "UPDATE design_ids SET path=?2, title=?3, present=1, marked=?4 WHERE number=?1",
+                params![n, docs[i].path, docs[i].title, marked],
             )?;
         }
         tx.commit()?;
         Ok(out.into_iter().map(|o| o.expect("모든 문서에 번호를 줬다")).collect())
     }
 
-    /// 표지가 없는 문서를 저장할 때 적을 번호: 그 경로의 원장 번호 중 가장 큰 것, 없으면 새 번호(기획 branch의 새 문서)
+    /// 표지가 없는 문서를 저장할 때 적을 번호: 그 경로의 아직 표지로 적히지 않은 원장 번호 중 가장 큰 것, 없으면 새 번호.
+    /// main에서 표지로 적힌 번호는 다시 쓰지 않는다: 기획 branch에서 그 문서를 옮긴 뒤 같은 경로에 만든 새 문서가 옮긴 문서의 ID를
+    /// 가져가지 않게 한다(표지를 지운 문서는 호출자가 그 branch의 옛 글에서 번호를 되찾는다)
     pub(crate) fn design_id_for_path(&self, project: &str, repo: &str, path: &str) -> Result<i64> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         let have: Option<i64> = tx
             .query_row(
-                "SELECT MAX(number) FROM design_ids WHERE project=?1 AND repo=?2 AND path=?3",
+                "SELECT MAX(number) FROM design_ids WHERE project=?1 AND repo=?2 AND path=?3 AND marked=0",
                 params![project, repo, path],
                 |r| r.get(0),
             )
@@ -207,11 +220,21 @@ mod tests {
         let clash =
             db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(40)), doc("docs/x/a.md", Some(1))]).unwrap();
         assert_eq!(clash[0], DesignIdOf { number: 2, marked: false });
-        // 저장할 때: 경로 번호, 없으면 새 번호. 지운 프로젝트의 번호도 다시 쓰지 않는다
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/x/a.md").unwrap(), 1);
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/new.md").unwrap(), 42);
+        // 저장할 때: 아직 표지로 적히지 않은 경로 번호(b.md의 2), main에서 표지로 적힌 번호(x/a.md의 1)는 다시 쓰지 않고 새 번호
+        assert_eq!(db.design_id_for_path("demo", "app", "docs/b.md").unwrap(), 2);
+        assert_eq!(db.design_id_for_path("demo", "app", "docs/x/a.md").unwrap(), 42);
+        assert_eq!(db.design_id_for_path("demo", "app", "docs/new.md").unwrap(), 43);
+        assert_eq!(db.design_id_for_path("demo", "app", "docs/new.md").unwrap(), 43, "같은 경로는 같은 번호");
+        // 문서에 적힌 터무니없이 큰 번호는 받지 않는다(그 뒤 새 번호가 막히지 않게)
+        let huge =
+            db.design_ids_sync("demo", "lib", &[doc("docs/z.md", Some(40)), doc("docs/h.md", Some(i64::MAX))]).unwrap();
+        assert_eq!(huge[1].marked, false);
+        assert!(huge[1].number < 100, "{huge:?}");
         db.project_forget("demo").unwrap();
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/a.md").unwrap(), 43);
+        assert!(
+            db.design_id_for_path("demo", "app", "docs/a.md").unwrap() > 43,
+            "지운 프로젝트의 번호도 다시 쓰지 않는다"
+        );
         drop(db);
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -103,6 +103,7 @@ export default async function () {
     assert.equal(doc.doc.id, "k-0008");
     const again = aaa("plan", "ids", "app");
     assert.equal(again.commit, null, "main에 아직 없으니 고를 문서는 있지만 branch에는 이미 있다");
+    assert.equal(again.skipped, 2, JSON.stringify(again));
     assert.equal(git(clone, "rev-list", "--count", "main..design/aaa-ids"), "1");
   });
 }

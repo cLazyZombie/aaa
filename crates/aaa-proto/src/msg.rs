@@ -3159,7 +3159,8 @@ pub enum FrontRequest {
         branch: String,
     },
     /// 「main에 반영」(FRONT_API 1.173, 조작): 기획 branch를 올린 뒤 `origin/design/<주제>`에서 갈라진 worktree thread가 main을
-    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다
+    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다. 프로젝트 실행 한도에 걸리면 거절하지 않고 예약한다
+    /// (FRONT_API 1.178, `DesignBranchView.apply_wait`): 자리가 나면 host가 띄운다
     DesignApply {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3167,14 +3168,22 @@ pub enum FrontRequest {
         repo: String,
         branch: String,
     },
-    /// 기획서 ID 목록(FRONT_API 1.178, 보기 권한, t-1957): 지금 main 기획 트리에 있는 문서의 `k-NNNN`. host 원장에서 읽는다(agent를
+    /// 「main에 반영」 예약 취소(FRONT_API 1.178, 조작, t-1955): 한도에 걸려 자리를 기다리는 반영 요청을 거둔다. 답은 `design_branch`
+    DesignApplyCancel {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        branch: String,
+    },
+    /// 기획서 ID 목록(FRONT_API 1.180, 보기 권한, t-1957): 지금 main 기획 트리에 있는 문서의 `k-NNNN`. host 원장에서 읽는다(agent를
     /// 거치지 않는다)
     DesignIds {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
-    /// 기획서 ID 한 번에 달기(FRONT_API 1.178, 조작·사람만, t-1957): main 기획 트리에서 표지가 없는 문서마다 원장 번호의 표지를
+    /// 기획서 ID 한 번에 달기(FRONT_API 1.180, 조작·사람만, t-1957): main 기획 트리에서 표지가 없는 문서마다 원장 번호의 표지를
     /// 기획 branch `design/aaa-ids`에 한 commit으로 넣는다. main에는 그 branch의 「main에 반영」(착지 창)으로 들어간다
     DesignMarkIds {
         #[serde(default)]
@@ -4099,6 +4108,7 @@ impl FrontRequest {
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
+            | FrontRequest::DesignApplyCancel { project, .. }
             | FrontRequest::DesignHandoff { project, .. }
             | FrontRequest::DesignIds { project }
             | FrontRequest::DesignMarkIds { project, .. }
@@ -4501,14 +4511,16 @@ pub enum FrontResponse {
         commit: String,
         blob: String,
     },
-    /// `design_ids`의 답(FRONT_API 1.178)
+    /// `design_ids`의 답(FRONT_API 1.180)
     DesignIds {
         ids: Vec<crate::DesignIdView>,
     },
-    /// `design_mark_ids`의 답(FRONT_API 1.178): 표지를 넣은 기획 branch(`aaa-ids`), 넣은 문서 수, commit(넣은 것이 없으면 없음)
+    /// `design_mark_ids`의 답(FRONT_API 1.180): 표지를 넣은 기획 branch(`aaa-ids`), 넣은 문서 수, commit(넣은 것이 없으면 없음)
     DesignIdsMarked {
         branch: String,
         marked: u32,
+        /// 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
+        skipped: u32,
         commit: Option<String>,
     },
     /// `design_handoff`의 답(FRONT_API 1.175)

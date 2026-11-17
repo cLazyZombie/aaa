@@ -321,9 +321,12 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.176: main 문서에서 바로 맡기기(`design_handoff`의 빈 branch), DesignRepoView.handoffs(t-1894 3-3).
 // 1.177: 옛 아이디어 「기획으로 옮기기」(`idea_move`, IdeaSummary.moved), 아이디어 쓰기 요청(만들기·저장·말·깨우기·넘기기·첨부·모델·복사)은
 //        host가 「기획으로 옮겼다」로 거절한다(t-1894 4단계).
-// 1.178: 기획서 ID(t-1957): `design_ids`(지금 트리의 k-NNNN 목록)·`design_mark_ids`(한 번에 달기), DesignDocEntry.id·id_marked,
-//        DesignTree.ids, DesignDoc.id. 옛 host에는 새 요청을 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 178 };
+// 1.178: 「main에 반영」이 실행 한도에 걸리면 예약한다(DesignBranchView.apply_wait, 예약 취소 `design_apply_cancel`, t-1955).
+//        옛 host에는 취소를 보내지 않는다(예약은 새 host만 싣는다).
+// 1.179: DesignBranchView.read(agent가 읽은 차이를 실었나: 「main에 들어감」 판정, t-1950).
+// 1.180: 기획서 ID(t-1957): `design_ids`(지금 트리의 k-NNNN 목록)·`design_mark_ids`(한 번에 달기), DesignDocEntry.id·id_marked·
+//        id_file, DesignTree.ids, DesignDoc.id. 옛 host의 `design_ids` 거절은 웹이 무시한다(링크 없이).
+pub const FRONT_API: Version = Version { major: 1, minor: 180 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
