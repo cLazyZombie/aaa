@@ -1515,6 +1515,7 @@ async fn spread_starts_one_thread_per_design_repo_and_waits_per_repo() {
     let Action::Start(start) = &plain.action else { panic!() };
     let plain_scope = serde_json::to_string(&l.h.automation_start_scope("demo", &plain, start).unwrap()).unwrap();
     assert!(!plain_scope.contains("spread"), "{plain_scope}");
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
     let scope = l.h.automation_start_scope_text("demo", &r).unwrap().unwrap();
     assert!(scope.contains("저장소 app마다") && scope.contains("저장소 game마다") && !scope.contains("lib"), "{scope}");
     approve(&l, &r);
