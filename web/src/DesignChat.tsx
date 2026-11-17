@@ -2,10 +2,10 @@
 // 기록 사이에 host 사건(새 대화·저장·올림·사람 고침·반영)을 끼운다. 말은 host가 thread 준비 뒤 보낸다(`design_say`).
 import { Check, ChevronDown, Clock, Ellipsis, FileText, GitBranch, GitMerge, Hammer, MessageSquare, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, call } from "./api";
+import { ApiError, call, uploadDesignChatImage } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { ChatPanel } from "./Chat";
-import { designMarks, restDays, slugSuggest, splitContext, SLUG } from "./designModel";
+import { chatImageDir, designMarks, mergedToMain, restDays, slugSuggest, splitContext, takeImages, SLUG } from "./designModel";
 import type { ChatMessage, DesignBranchView, DesignRepoView, FrontRequest, FrontResponse, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
 import { ideaModelChoices } from "./ideasModel";
 import { ProviderError } from "./ProviderError";
@@ -15,14 +15,17 @@ const MARK_ICON: Record<string, typeof GitBranch> = { open: GitBranch, save: Fil
 
 /** 대화 고르기 줄의 상태 */
 function branchState(b: DesignBranchView, threads: readonly ThreadView[], now: number): string {
+  if (mergedToMain(b)) return "main에 들어감";
   const apply = b.apply ? threads.find((t) => t.id === b.apply) : undefined;
-  if (apply && apply.status !== "resolved" && apply.status !== "failed") return "반영 대기";
+  if (apply && apply.status !== "resolved" && apply.status !== "failed") return `반영 대기 ${apply.id}`;
   if (b.apply_wait) return "반영 예약";
   if (b.state === "rest") return `쉼 ${restDays(b, now)}일`;
   return "지금";
 }
 
-export function DesignChat({ repo, branch, threads, panes, canControl, viewing, picked, onUnpick, active, now, onPick, onNew, onChanged, onError, onOpenLink }: {
+export function DesignChat({ project, repo, branch, threads, panes, canControl, viewing, picked, onUnpick, active, now, onPick, onNew, onChanged, onError, onOpenLink }: {
+  /** 그림을 올릴 프로젝트(읽은 문서의 프로젝트, 없으면 대화 thread의 프로젝트) */
+  project: string | null;
   repo: DesignRepoView;
   /** 고른 대화(기획 branch). 없으면 대화가 없다 */
   branch: DesignBranchView | null;
@@ -58,7 +61,8 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
   const [sent, setSent] = useState(0);
   const status = pane ? paneAgentStatus(pane) : undefined;
   const apply = branch?.apply ? threads.find((t) => t.id === branch.apply) : undefined;
-  const applying = !!apply && apply.status !== "resolved" && apply.status !== "failed";
+  const merged = !!branch && mergedToMain(branch);
+  const applying = !merged && !!apply && apply.status !== "resolved" && apply.status !== "failed";
   const waiting = branch?.apply_wait ?? null;
   // 예약한 반영은 host가 자리 나면 띄운다: 새 thread가 보이면(또는 30초마다) 트리를 다시 읽어 예약 표시를 바꾼다
   useEffect(() => { if (waiting) onChanged(); }, [threads.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -67,6 +71,10 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
     const id = window.setInterval(onChanged, 30_000);
     return () => window.clearInterval(id);
   }, [!!waiting, onChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 보는 문서를 이 대화가 고친 적이 없다(다른 대화·main의 문서): 머리의 반영 표지가 이 문서 일이 아님을 보인다
+  const foreign = !!branch && !!viewing && !branch.changed.some((c) => c.path === viewing)
+    && !branch.events.some((e) => (e.kind === "save" || e.kind === "create" || e.kind === "edit") && e.text === viewing);
+  const uploadTo = project ?? thread?.project ?? null;
   const marks = useMemo(() => branch ? designMarks(branch.events, branch.slug).map((m) => {
     const Icon = MARK_ICON[m.kind] ?? FileText;
     return { key: m.key, after: m.after, node: <span className={`design-mark-chip is-${m.kind}`} data-testid="design-mark"><Icon aria-hidden="true" />{m.text}</span> };
@@ -104,11 +112,13 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
           )}
         </div>
         <span className="spacer" />
-        {branch && branch.state === "open" && (applying
-          ? <span className="design-applying" data-testid="design-applying" title={apply?.id}>반영 대기</span>
-          : waiting
-            ? <button type="button" className="design-applying is-wait" data-testid="design-apply-wait" title={waiting.reason} onClick={() => setDialog("apply")}><Clock className="i" aria-hidden="true" />예약됨 · 자리 나면 시작</button>
-          : canControl && <button type="button" className="btn primary design-apply" data-testid="design-apply" onClick={() => setDialog("apply")}><GitMerge className="i" aria-hidden="true" />main에 반영</button>)}
+        {branch && branch.state === "open" && (merged
+          ? <span className="design-merged" data-testid="design-merged"><Check className="i" aria-hidden="true" />main에 들어감</span>
+          : applying && apply
+            ? <a className="design-applying" data-testid="design-applying" href={`#thread=${encodeURIComponent(apply.id)}`}>반영 대기 <code>{apply.id}</code></a>
+            : waiting
+              ? <button type="button" className="design-applying is-wait" data-testid="design-apply-wait" title={waiting.reason} onClick={() => setDialog("apply")}><Clock className="i" aria-hidden="true" />예약됨 · 자리 나면 시작</button>
+              : canControl && <button type="button" className="btn primary design-apply" data-testid="design-apply" onClick={() => setDialog("apply")}><GitMerge className="i" aria-hidden="true" />main에 반영</button>)}
         {branch && (
           <div className="design-more">
             <button type="button" className="btn icon" aria-label="대화 메뉴" aria-expanded={more} data-testid="design-chat-more" onClick={() => setMore((v) => !v)}><Ellipsis className="i" aria-hidden="true" /></button>
@@ -167,7 +177,7 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
       </div>
       {branch && branch.state === "open" && (viewing || branch.edited.length > 0 || picked) && (
         <div className="design-context" data-testid="design-context">
-          {viewing && <span className="design-context-chip"><FileText aria-hidden="true" />보는 문서 <code>{viewing.split("/").slice(1).join("/") || viewing}</code></span>}
+          {viewing && <span className={`design-context-chip${foreign ? " is-foreign" : ""}`} data-testid="design-viewing"><FileText aria-hidden="true" />보는 문서 <code>{viewing.split("/").slice(1).join("/") || viewing}</code>{foreign && <span className="design-context-note">이 대화가 고치지 않음</span>}</span>}
           {branch.edited.length > 0 && <span className="design-context-chip"><Pencil aria-hidden="true" />사람이 고침 <code>{branch.edited.map((p) => p.slice(p.lastIndexOf("/") + 1)).join(", ")}</code></span>}
           {picked && (
             <span className="design-context-chip is-picked" data-testid="design-picked">고른 블록 <code>{picked.section} · {picked.title}</code>
@@ -178,18 +188,27 @@ export function DesignChat({ repo, branch, threads, panes, canControl, viewing, 
       )}
       {branch && branch.state === "open" && canControl && (
         <ChatComposer key={owner} active={active} owner={owner} pane={pane?.id ?? ""} touch={false}
-          imagesOff="기획 대화에는 그림을 붙이지 않는다"
+          imagesOff={uploadTo ? null : "문서를 연 뒤 그림을 붙인다"}
+          // 영상은 「고치기 → 그림」으로 붙인다: 대화 말의 「(그림: …)」은 그림만이다
+          uploadImage={uploadTo ? (file) => /^image\/(png|jpeg|gif|webp)$/.test(file.type)
+            ? uploadDesignChatImage(uploadTo, repo.repo, branch.slug, chatImageDir(repo.folder ?? "", viewing), file)
+            : Promise.reject(new Error("대화에는 그림(PNG·JPEG·GIF·WebP)만 붙인다")) : undefined}
           agentLabel={harness === "codex" ? "Codex" : "Claude"} harness={harness}
           pending={pending} setPending={setPending}
           connected working={status === "working"} compacting={pane?.agent?.compacting ?? false} asking={status === "blocked"}
           context={pane?.agent?.context ?? null} messages={messages}
           // 사람이 고친 문서 알림도 여기서 붙인다: host가 따로 붙이면 보낸 말 확인(대기 말 지우기)이 글과 맞지 않는다
-          prepare={(text) => [
-            branch.edited.length > 0 ? `(문서 고침: ${branch.edited.join(", ")})` : null,
-            viewing ? `(보는 문서: ${viewing})` : null,
-            picked ? `(고른 블록: ${picked.section} · ${picked.title})` : null,
-            text,
-          ].filter((x): x is string => x !== null).join("\n")}
+          // 입력창이 올린 그림(그 branch에 commit한 저장소 경로)은 초안의 `@경로`를 떼어 「(그림: …)」으로 붙인다
+          prepare={(text) => {
+            const images = takeImages(text);
+            return [
+              branch.edited.length > 0 ? `(문서 고침: ${branch.edited.join(", ")})` : null,
+              viewing ? `(보는 문서: ${viewing})` : null,
+              picked ? `(고른 블록: ${picked.section} · ${picked.title})` : null,
+              ...images.paths.map((p) => `(그림: ${p})`),
+              images.text,
+            ].filter((x): x is string => x !== null).join("\n");
+          }}
           onSend={(text) => call({ op: "design_say", repo: repo.repo, branch: branch.slug, text }).then(() => {
             onError(null);
             onUnpick?.();

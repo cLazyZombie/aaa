@@ -264,6 +264,60 @@ export default async function () {
     const t = aaa("thread", "show", shop.apply);
     assert.equal(t.thread_kind, "worktree");
     aaa("project", "set", "demo", "max_parallel_threads", "10");
+    // 무엇을 기다리는지 보이고 그 thread로 간다(t-1950)
+    assert.equal((await page.getByTestId("design-applying").textContent()).trim(), `반영 대기 ${shop.apply}`);
+    assert.equal(await page.getByTestId("design-applying").getAttribute("href"), `#thread=${shop.apply}`);
+  });
+
+  await step("대화 입력창 그림: 그 branch에 commit하고 보낼 말 앞에 「(그림: 경로)」, 보는 문서를 이 대화가 고치지 않았으면 알린다", async () => {
+    aaa("plan", "new", "app", "pics", "--title", "그림 대화");
+    await page.getByTestId("design-reload").first().click();
+    // 대화를 바꾸면 문서 판(shop → main)을 다시 읽는다. 그 읽기를 붙잡아 두고 바로 붙인다: 읽는 동안에도 그림이 올라가야 한다
+    // (t-1950 착지 실패: 부하에서 읽기가 늦으면 프로젝트를 몰라 입력창이 그림을 껐다)
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let holding = 0, passed = 0;
+    const hold = async (route) => {
+      if (route.request().postDataJSON()?.op !== "design_read") return route.fallback();
+      holding++;
+      await held;
+      await route.fallback();
+      passed++;
+    };
+    await page.route("**/api/v1/call", hold);
+    await page.getByTestId("design-pick").click();
+    await page.getByTestId("design-pick-row").filter({ hasText: "그림 대화" }).click();
+    await page.getByTestId("design-chat-branch").filter({ hasText: "pics" }).waitFor();
+    const chat = page.getByTestId("design-chat");
+    await until("판 다시 읽기를 붙잡음", () => holding > 0, 10_000);
+    await chat.locator("input[type=file]").setInputFiles({ name: "시안.png", mimeType: "image/png", buffer: png(120, 80, [200, 90, 60]) });
+    await domIs(page, "초안의 그림 경로", () => /@docs\/loop\/[0-9a-f]{16}\.png /.test(document.querySelector("[data-testid=design-chat] textarea").value));
+    assert.ok(holding > 0 && await page.getByTestId("design-body").count() === 0, "문서를 다시 읽는 중에 올렸다");
+    release();
+    await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
+    await page.unroute("**/api/v1/call", hold);
+    // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
+    await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
+    const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
+    const pics = branches().find((b) => b.slug === "pics");
+    assert.ok(pics.changed.some((c) => c.path === pic && c.status === "A"), "보는 문서 폴더에 commit한다");
+    assert.deepEqual(pics.edited, [], "말 앞 「(그림: …)」이 알리므로 「사람이 고친 문서」에 넣지 않는다");
+    // 대화 thread는 기획 worktree에서 그 파일을 읽는다(brief)
+    const wt = git(`${root}/app`, "worktree", "list", "--porcelain").split("\n\n").find((b) => b.includes("branch refs/heads/design/pics"))?.match(/^worktree (.+)$/m)?.[1];
+    assert.ok(wt && fs.existsSync(`${wt}/${pic}`), `기획 worktree에 그림 파일: ${wt}`);
+    assert.equal(await page.getByTestId("design-viewing").count(), 1, "그림만 붙였을 뿐 이 대화가 그 문서를 고치지 않았다");
+    await chat.locator("textarea").press("End");
+    await chat.locator("textarea").pressSequentially("이 그림으로 시안");
+    await chat.locator("textarea").press("Enter");
+    const thread = await until("그림 대화 thread", () => branches().find((b) => b.slug === "pics").thread, 60_000);
+    const log = `${root}/fake-lines/${thread}.log`;
+    await until("대화가 받은 그림 말", () => fs.existsSync(log) && fs.readFileSync(log, "utf8").includes("이 그림으로 시안"), 60_000);
+    const lines = fs.readFileSync(log, "utf8").split("\n");
+    const at = lines.findIndex((l) => l === "이 그림으로 시안");
+    assert.deepEqual(lines.slice(at - 2, at + 1), ["(보는 문서: docs/loop/README.md)", `(그림: ${pic})`, "이 그림으로 시안"]);
+    await chat.getByText(`그림 ${pic.split("/").pop()} 붙임`).first().waitFor();
+    aaa("plan", "discard", "app", "pics");
+    await page.getByTestId("design-reload").first().click();
   });
 
   await step("버리기: 그 대화의 branch를 지우고 트리에서 사라진다", async () => {

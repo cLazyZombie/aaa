@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
-import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
+import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, chatImageDir, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, mergedToMain, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, SLUG, slugSuggest, splitContext, splitTarget, takeImages, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -103,6 +103,31 @@ describe("기획 branch 화면", () => {
     assert.match(waits[0].text, /^main에 반영 예약 · 자리 나면 시작 · \d{2}:\d{2}$/);
     assert.match(waits[1].text, /^반영 예약 취소 · \d{2}:\d{2}$/);
     assert.equal(waits[2].text, "예약한 반영을 시작하지 못함 · 이미 반영 중이다: t-0009");
+    // 그림·영상 붙임(고치기의 「그림」·대화 입력창, t-1950)은 고침이 아니라 붙임이다
+    const pics = designMarks([ev("edit", "docs/design/89ea9511ae150ab2.png", "x", "a60733efff"), ev("edit", "docs/a/clip.MP4", "x", "b1")], "s");
+    assert.deepEqual(pics.map((m) => m.text), ["그림 89ea9511ae150ab2.png 붙임 · a60733e", "그림 clip.MP4 붙임 · b1"]);
+  });
+  it("대화 입력창 그림(t-1950): 초안의 @경로를 떼어 「(그림: …)」 줄로, 폴더는 보는 문서 폴더(기획 폴더 밖이면 기획 폴더)", () => {
+    assert.deepEqual(takeImages("@docs/design/a1.png @docs/design/b2.webp 이 그림으로 넣어 줘"), { paths: ["docs/design/a1.png", "docs/design/b2.webp"], text: "이 그림으로 넣어 줘" });
+    assert.deepEqual(takeImages("그림 없음 가@나.png"), { paths: [], text: "그림 없음 가@나.png" }, "낱말 가운데 @는 그림이 아니다");
+    assert.deepEqual(takeImages("a  b\n    code"), { paths: [], text: "a  b\n    code" }, "그림이 없으면 빈칸·들여쓰기를 건드리지 않는다");
+    assert.deepEqual(takeImages("@docs/a.png 표\n| x  |  y |\n    들여 쓴 줄"), { paths: ["docs/a.png"], text: "표\n| x  |  y |\n    들여 쓴 줄" }, "멘션만 뗀다");
+    assert.equal(chatImageDir("docs/design", "docs/design/loop/game-loop.md"), "docs/design/loop");
+    assert.equal(chatImageDir("docs/design", "docs/design/game-loop.md"), "docs/design");
+    assert.equal(chatImageDir("docs/design", "docs/attack-two.md"), "docs/design", "기획 폴더 밖 문서(폴더 재편 전 branch)");
+    assert.equal(chatImageDir("docs/design", "docs/designer/x.md"), "docs/design", "이름만 앞이 같은 폴더");
+    assert.equal(chatImageDir("docs/design", null), "docs/design");
+    const chips = splitContext("(보는 문서: docs/design/game-loop.md)\n(그림: docs/design/a1.png)\n넣어 줘").chips;
+    assert.deepEqual(chips[1], { label: "그림", value: "a1.png", path: true });
+  });
+  it("main에 들어감(t-1950): 제 commit이 있었고 main보다 앞선 것이 없는 열린 대화", () => {
+    const b = { state: "open", ahead: 0, head: "e188", base: "10aa", read: true };
+    assert.equal(mergedToMain(b), true);
+    assert.equal(mergedToMain({ ...b, ahead: 6 }), false);
+    assert.equal(mergedToMain({ ...b, head: "10aa" }), false, "갓 연 대화(끝이 갈라진 자리)");
+    assert.equal(mergedToMain({ ...b, state: "rest" }), false);
+    assert.equal(mergedToMain({ ...b, base: null }), false, "옛 host는 갈라진 판이 없다");
+    assert.equal(mergedToMain({ ...b, read: false }), false, "agent가 그 branch를 읽지 못한 0(머신 끊김·시한)은 들어간 것이 아니다");
   });
   it("그림 주소: branch 판이면 slug를 싣는다", () => {
     assert.equal(designFileUrl("p", "r", "docs/x y.png", "abc", "boss-dex"), "/api/v1/projects/p/design/r/docs/x%20y.png?c=abc&b=boss-dex");

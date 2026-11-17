@@ -29,6 +29,7 @@ import { delivered, type PendingSend } from "./ChatComposer";
 import { receiptSeen } from "./inputReceipt";
 import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
+import { markPlaces as placeMarks } from "./chatMarks";
 import { ChatRow } from "./ChatRow";
 import { usePageVisible } from "./pageVisible";
 import { mergeChatPage } from "./chatPages";
@@ -495,7 +496,7 @@ export function ChatPanel({
   onQuoteReturn?: (ref: QuoteRef) => void;
   /**
    * 대화 사이에 끼우는 host 사건 줄(기획 대화, t-1894). `after`는 그 사건 전에 보낸 마지막 사람 말의 앞부분이고, 그 말의 답 뒤
-   * (다음 사람 말 앞)에 놓는다. 없으면 맨 앞, 찾지 못하면 맨 끝
+   * (다음 사람 말 앞)에 놓는다. 없으면 맨 앞, 찾지 못하면 바로 앞 사건 자리(보내는 중인 말이면 맨 끝)
    */
   marks?: readonly { key: string; after: string | null; node: ReactNode }[];
   /** 사람 말 앞의 맥락 줄을 떼어 말풍선 위 칩으로 그린다(기획 대화, t-1894). 없으면 글 그대로 */
@@ -719,20 +720,13 @@ export function ChatPanel({
   const markPlaces = useMemo(() => {
     const at = new Map<number, ReactNode[]>();
     if (!marks || marks.length === 0) return at;
-    const msgs = chat?.messages ?? [];
-    const norm = (t: string) => t.replace(/\s+/g, " ").trim();
-    const users = msgs.flatMap((m, i) => (m.role === "user" ? [i] : []));
-    for (const mk of marks) {
-      let place = -1;
-      if (mk.after !== null) {
-        const want = norm(mk.after);
-        const hit = [...users].reverse().find((i) => norm(unwrapPasted(msgs[i]!.text)).startsWith(want));
-        place = hit ?? Number.POSITIVE_INFINITY;
-      }
+    const places = placeMarks(marks, chat?.messages ?? [], pendingSends);
+    marks.forEach((mk, n) => {
+      const place = places[n]!;
       at.set(place, [...(at.get(place) ?? []), <div key={mk.key} className="chat-mark-row">{mk.node}</div>]);
-    }
+    });
     return at;
-  }, [marks, chat?.messages]);
+  }, [marks, chat?.messages, pendingSends]);
   // 사람 말 순번마다 바로 앞 사람 말(그 앞 말의 사건 줄을 이 말 앞에 놓는다)
   const prevUser = useMemo(() => {
     const prev = new Map<number, number>();

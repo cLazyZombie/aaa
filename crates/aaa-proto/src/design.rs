@@ -105,6 +105,10 @@ pub struct DesignBranchView {
     pub changed: Vec<DesignChange>,
     /// main보다 앞선 commit 수
     pub ahead: u32,
+    /// `changed`·`ahead`를 agent가 그 branch에서 읽어 실었다(FRONT_API 1.179, t-1950). 거짓이면 둘 다 기록만이라 0이 「main과 같음」이
+    /// 아니다(머신 끊김·시한·옛 host)
+    #[serde(default)]
+    pub read: bool,
     /// 기획 대화 thread(FRONT_API 1.172, 아직 말하지 않았으면 없음)
     pub thread: Option<String>,
     /// thread에 아직 보내지 못한 말 수

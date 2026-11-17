@@ -5129,6 +5129,7 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [기획 1단계: 저장소 기획 폴더 읽기(t-1894)](testing-design-docs-t-1894.md): git 객체 읽기·고정 commit·origin 실패·링크 거부와 실제 origin E2E 135.
 - [기획 「main에 반영」 예약(t-1955)](testing-design-apply-wait-t-1955.md): 실행 한도면 예약·취소·재시작·자리 나면 시작, 웹 E2E 136.
 - [끝나는 문서의 터미널 압축 Worker(t-1894)](testing-page-leave-terminal-t-1894.md): WebKit 떠난 뒤 blob Worker 페이지 오류의 원인·RED/GREEN.
+- [기획 대화 그림 붙이기·반영 표지(t-1950)](testing-design-chat-t-1950.md): 입력창 그림 commit·main에 들어감·반영 대기 thread·사건 자리.
 
 E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리는 [t-1919 기록](testing-account-image-jobs-t1919.md)을 따른다.
 - [coordinator의 기획 대화 열기·말하기(t-1928)](testing-coordinator-plan-chat-t-1928.md): coordinator pane의 `plan new`·`plan say` 허용과 쓰기 거부, 실제 coordinator pane E2E.
