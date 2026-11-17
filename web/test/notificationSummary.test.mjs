@@ -18,7 +18,7 @@ test("앱 안 알림은 종류·대상·내용을 구별하고 공개 URL이 내
   const question = dropletContent({ ...base, kind: "blocked", topic: "asks", label: "질문", summary: original });
   assert.equal(question.summary, "어느 아이콘을 쓸까요?");
   assert.ok(question.full.includes(original), "줄인 질문의 원문은 툴팁에 남는다");
-  assert.equal(dropletContent({ ...base, target: "idea=n-0001" }).topic, "ideas");
+  assert.equal(dropletContent({ ...base, target: "idea=n-0001" }).topic, "work", "지운 아이디어 주소는 따로 가르지 않는다");
   assert.equal(dropletContent({ ...base, target: "task=d-0001" }).topic, "tasks");
   assert.equal(dropletContent(base).label, "작업 완료");
   assert.equal(dropletContent({ ...base, kind: "reset" }).label, "한도 풀림");
@@ -35,7 +35,7 @@ test("알림 목록은 원문 속 단어 대신 구조화된 종류·사건으�
     ["thread-state", "blocked on a prompt", "asks", "입력 필요"],
     ["thread-state", "resolved", "work", "작업 종료"],
     ["task-followup", "task needs check", "tasks", "할 일 확인"],
-    ["idea", "updated", "ideas", "updated"],
+    ["idea", "updated", "work", "updated"],
     ["routine", "ran", "automations", "ran"],
     ["outage", "down", "machines", "연결 끊김"],
     ["system", "unknown event", "workspace", "unknown event"],

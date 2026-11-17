@@ -194,7 +194,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: crate::db_backup::Command,
     },
-    /// 아이디어·첨부의 암호화 백업·새 폴더 복원(host 머신에서 실행).
+    /// 첨부(uploads)의 암호화 백업·새 폴더 복원(host 머신에서 실행).
     FileBackup {
         #[command(subcommand)]
         cmd: crate::file_backup::Command,
@@ -387,11 +387,6 @@ enum Cmd {
     Task {
         #[command(subcommand)]
         cmd: TaskCmd,
-    },
-    /// 옛 아이디어 노트(n-NNNN, 읽기 전용): 목록·보기. 아이디어는 저장소 기획 문서(`aaa plan`)로 옮겼다
-    Idea {
-        #[command(subcommand)]
-        cmd: IdeaCmd,
     },
     /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다).
     /// 고칠 때는 기획 branch `design/<주제>`를 열고 그 branch에 저장한다(main에는 착지 창을 거친다)
@@ -683,6 +678,8 @@ enum InboxCmd {
 enum PlanCmd {
     /// 저장소마다 기획 폴더와 문서(경로·제목)
     List,
+    /// 지운 옛 아이디어의 n-ID가 가리키는 기획 문서(줄마다 n-ID와 `<저장소>/<경로>`, 프로젝트 `idea-links.toml`)
+    Links,
     /// 문서 글. 첫 줄에 저장소·경로·ID·commit·blob(저장의 기준 판), 빈 줄 뒤에 글이다. `aaa plan show k-0012`처럼 기획서 ID로도 연다
     Show {
         /// 저장소 이름(경로 끝 폴더 이름), 또는 기획서 ID(`k-NNNN`)
@@ -751,51 +748,6 @@ enum PlanCmd {
     /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 기획 branch `design/aaa-ids` 한 commit으로 넣는다.
     /// main에는 `aaa plan apply <저장소> aaa-ids`(또는 웹 「main에 반영」)로 들어간다
     Ids { repo: String },
-}
-
-#[derive(Subcommand)]
-enum IdeaCmd {
-    /// 아이디어 목록(다듬는 중 먼저)
-    List,
-    /// 노트 글. 첫 줄에 ID·판·상태·제목, 빈 줄 뒤에 노트다
-    Show {
-        /// `n-0001`
-        idea: String,
-        /// 옛 판(생략하면 지금 판)
-        #[arg(long)]
-        rev: Option<u32>,
-    },
-    /// 거둔 쓰기 명령(t-1894 4단계): 옛 판 이름은 남겨 까닭을 알린다
-    #[command(hide = true)]
-    New {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
-    #[command(hide = true)]
-    Save {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
-    #[command(hide = true)]
-    Say {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
-    #[command(hide = true)]
-    Copy {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
-    #[command(hide = true)]
-    Model {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
-    #[command(hide = true)]
-    Attach {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -2365,11 +2317,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
-        Cmd::Idea { cmd } => idea_cli(json, cmd),
         Cmd::Plan { cmd } => {
             let project = project_or_here(None)?;
             match cmd {
                 PlanCmd::List => front(json, FrontRequest::DesignTree { project, repo: None, cached: false }),
+                PlanCmd::Links => front(json, FrontRequest::IdeaLinks { project }),
                 PlanCmd::Show { repo, path: Some(path), branch } => {
                     front(json, FrontRequest::DesignRead { project, repo, path, branch })
                 }
@@ -4250,25 +4202,6 @@ fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
-}
-
-/// `aaa idea …`: 옛 아이디어 읽기. 쓰기 명령은 거뒀다(t-1894 4단계, q-3982)
-fn idea_cli(json: bool, cmd: IdeaCmd) -> Result<ExitCode> {
-    match cmd {
-        IdeaCmd::List => front(json, FrontRequest::IdeaList { project: project_or_here(None)? }),
-        IdeaCmd::Show { idea, rev } => {
-            front(json, FrontRequest::IdeaRead { project: project_or_here(None)?, idea, rev })
-        }
-        IdeaCmd::New { .. }
-        | IdeaCmd::Save { .. }
-        | IdeaCmd::Say { .. }
-        | IdeaCmd::Copy { .. }
-        | IdeaCmd::Model { .. }
-        | IdeaCmd::Attach { .. } => anyhow::bail!(
-            "옛 아이디어는 읽기 전용이다(아이디어는 저장소 기획 문서로 옮겼다). 기획은 `aaa plan`(`aaa plan say <저장소> <주제> …`)과 \
-             웹 「기획」에서 다듬고, 옛 아이디어는 웹 「기획으로 옮기기」로 넘긴다. 읽기는 `aaa idea list`·`aaa idea show`"
-        ),
-    }
 }
 
 /// host가 아는 프로젝트(이름, 보관 여부). 프로젝트 인자를 생략한 명령이 한 번 묻는다(plan §8.285)
@@ -6375,6 +6308,14 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("저장소 없음\n");
             }
         }
+        FrontResponse::IdeaLinks { links } => {
+            for (id, doc) in links {
+                let _ = writeln!(s, "{id}\t{doc}");
+            }
+            if links.is_empty() {
+                s.push_str("링크 없음\n");
+            }
+        }
         FrontResponse::DesignBranch { branch } => print_design_branch(&mut s, branch),
         FrontResponse::DesignIds { ids } => {
             for i in ids {
@@ -6421,54 +6362,6 @@ fn render_front(r: &FrontResponse) -> String {
             if !doc.text.ends_with('\n') {
                 s.push('\n');
             }
-        }
-        FrontResponse::Ideas { ideas } => {
-            for i in ideas {
-                let _ = writeln!(
-                    s,
-                    "{}\t{}\t판 {}\t{}{}{}{}",
-                    i.short_id,
-                    i.status.as_str(),
-                    i.rev,
-                    i.title,
-                    if i.tasks.is_empty() { String::new() } else { format!("\t→ {}", i.tasks.join(", ")) },
-                    i.thread.as_deref().map(|t| format!("\t{t}")).unwrap_or_default(),
-                    i.profile.as_deref().map(|p| format!("\t모델 {p}")).unwrap_or_default()
-                );
-            }
-            if ideas.is_empty() {
-                s.push_str("아이디어 없음\n");
-            }
-        }
-        FrontResponse::Idea { note } => {
-            let i = &note.idea;
-            let old = if note.rev == i.rev { String::new() } else { format!("(지금 판 {})", i.rev) };
-            // 첫 줄 하나에 머리를 모은다: thread는 첫 줄의 판을 읽고 셋째 줄부터를 노트로 쓴다
-            let edited = note.edited.as_deref().map(|e| format!(" · 사람이 고침: {e}")).unwrap_or_default();
-            let merging = note.merging.map(|m| format!(" · 판 {m} 기준 사람 고침을 합치는 중")).unwrap_or_default();
-            let model = i.profile.as_deref().map(|p| format!("모델 {p} · ")).unwrap_or_default();
-            let _ = writeln!(
-                s,
-                "{} · 판 {}{old} · {} · {model}{}{edited}{merging}",
-                i.short_id,
-                note.rev,
-                i.status.as_str(),
-                i.title
-            );
-            let _ = write!(s, "\n{}", note.text);
-            if !note.text.ends_with('\n') {
-                s.push('\n');
-            }
-        }
-        FrontResponse::IdeaConflict(c) => {
-            let _ = writeln!(s, "겹침: 판 {} 기준, 지금 판 {}", c.base_rev, c.current.rev);
-        }
-        FrontResponse::IdeaAttached { names, note } => {
-            // 한 줄에 이름 하나(노트에 `![설명](<이름>)`로 적는다), 끝에 지금 판
-            for n in names {
-                let _ = writeln!(s, "{n}");
-            }
-            let _ = writeln!(s, "{} · 판 {}", note.idea.short_id, note.rev);
         }
         FrontResponse::AccountImageJobs { jobs } => {
             for job in jobs {

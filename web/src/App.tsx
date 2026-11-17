@@ -13,14 +13,10 @@ import type {
   QuestionMenu,
   QuestionView,
   ThreadView,
-  IdeaMoved,
-  IdeaSummary,
 } from "./gen/proto";
 import { WorkspaceList, WorkspaceView } from "./WorkspaceView";
 import { useWorkspaceData, workspaceRoute } from "./workspaceData";
 import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
-import { IdeaMoveDialog } from "./IdeaMove";
-import { movedTarget } from "./ideasModel";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { RecordSearch } from "./RecordSearch";
@@ -76,10 +72,8 @@ import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs, type ChipAsk } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
-import { DesignPanel, useDesign, useDesignIds } from "./DesignPanel";
+import { DesignPanel, useDesign, useDesignIds, useIdeaLinks } from "./DesignPanel";
 import { DesignView } from "./DesignView";
-import { IdeaView } from "./IdeaView";
-import { useIdeas } from "./IdeasPanel";
 import { useAutomations } from "./automationData";
 import { openAsks, answerIndex, questionIds, doneOf, questionKey, questionRefLook } from "./asksModel";
 import { isSheetRewind } from "./herdr/sheetHistory.ts";
@@ -643,14 +637,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
-    if (n.kind === "idea_updated" && n.idea) {
-      raiseAlert({ kind: "done", target: `idea=${encodeURIComponent(n.idea)}`, late: justWoke(),
-        topic: "ideas", label: "아이디어 갱신", subject: n.idea,
-        showing: now.current.sel === `idea:${n.idea}`, title: n.title, machine: null, agent: null,
-        notice: { title: `${n.idea} · ${n.title}`, body: "아이디어 노트 갱신", tag: `aaa-idea-${n.project}-${n.idea}` },
-      });
-      return;
-    }
     if (n.kind === "host_issue" || n.kind === "host_recovered") {
       showDroplet({ target: "threads", topic: "workspace", label: n.kind === "host_recovered" ? "host 정상" : "host 확인", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
       return;
@@ -1039,12 +1025,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const toggleTasks = () => goSel(tasksShown && !settingsOpen ? beforeTasks.current : tasksShown ? sel : "tasks:");
   // 자동화 설정 화면(t-0628): 사이드바 「자동화」 카드가 목록이고 본문은 고른 규칙 하나다. 「답할 것」처럼 앞 화면을 기억하고 한 번 연 뒤
   // 숨긴 채 그려 둔다(쓰던 편집 초안이 그대로)
-  // 아이디어 화면(t-1260): 사이드바 「아이디어」 목록이 고르고 본문은 노트·대화다. 한 번 연 뒤에는 숨긴 채 그려 둔다(쓰던 노트 편집이 그대로)
-  const ideaShown = sel?.startsWith("idea:") === true;
-  const [ideaAt, setIdeaAt] = useState<string | null>(ideaShown ? sel!.slice("idea:".length) : null);
+  // 옛 아이디어 주소(`#idea=n-NNNN`, 알림·글 링크): 아이디어는 지웠다(t-1959). n-ID 링크 표가 오면 옮긴 기획 문서로, 표에 없으면
+  // 처음 화면으로 바꾼다
+  const ideaRoute = sel?.startsWith("idea:") === true;
+  const ideaLinks = useIdeaLinks(up);
   useEffect(() => {
-    if (ideaShown) setIdeaAt(sel!.slice("idea:".length));
-  }, [ideaShown, sel]);
+    if (!ideaRoute || ideaLinks === null) return;
+    const doc = ideaLinks.get(sel!.slice("idea:".length));
+    const next = doc ? `design:${doc}` : null;
+    goHash(hashOf(next), true);
+    setSel(next);
+  }, [ideaRoute, sel, ideaLinks]); // eslint-disable-line react-hooks/exhaustive-deps
   // 기획 화면(t-1894): 사이드바 「기획」 트리가 고르고 본문은 문서 하나다(`design:<저장소>/<경로>`). 한 번 연 뒤에는 숨긴 채 그려 둔다
   const designShown = sel?.startsWith("design:") === true;
   const [designAt, setDesignAt] = useState<string | null>(designShown ? sel!.slice("design:".length) : null);
@@ -1328,17 +1319,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}${t.group === "parked" ? ":parked" : ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
-  // 아이디어·기획 대화 thread는 작업 목록·배지에 보이지 않는다(아이디어·기획 화면의 대화다, t-1255 결정 20·t-1894). 그 pane도 목록에서 뺀다
+  // 기획 대화 thread는 작업 목록·배지에 보이지 않는다(기획 화면의 대화다, t-1894). 그 pane도 목록에서 뺀다
   const shownThreads = allThreads.filter((t) => inSidebar(t) && !chatOnly(t));
-  // 질문 카드는 아이디어 thread의 것도 「답할 것」에 보인다(최후의 수단, 결정 2)
+  // 질문 카드는 기획 대화 thread의 것도 「답할 것」에 보인다(최후의 수단)
   const askThreads = allThreads.filter(inSidebar);
-  const ideaPanes = new Set(allThreads.flatMap((t) => (chatOnly(t) && t.pane ? [t.pane] : [])));
-  const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
-  const ideas = useIdeas(up);
-  // 옛 아이디어 「기획으로 옮기기」 창(4단계)
-  const [moveIdea, setMoveIdea] = useState<IdeaSummary | null>(null);
-  // 옛 아이디어 화면도 기획 트리를 쓴다(옮기기 창의 저장소·대화, 옮긴 곳 열기)
-  const design = useDesign(up, panel === "design" || designShown || ideaShown);
+  const chatPanes = new Set(allThreads.flatMap((t) => (chatOnly(t) && t.pane ? [t.pane] : [])));
+  const sidebarPanes = chatPanes.size === 0 ? panes : panes.filter((p) => !chatPanes.has(p.id));
+  const design = useDesign(up, panel === "design" || designShown);
   const designIds = useDesignIds(up, design.repos);
   // 기획서 ID 주소(`#design=k-0012`)는 ID 목록을 받으면 `<저장소>/<경로>`로 바꾼다(t-1957)
   useEffect(() => {
@@ -1346,12 +1333,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const d = designIds.get(sel.slice("design:".length));
     if (d) setSel(`design:${d.repo}/${d.path}`);
   }, [sel, designIds]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 기획 화면에서 고를 대화(옮기는 아이디어의 「기획 대화 보기」·옮긴 뒤): 바뀔 때 한 번 고른다
-  const [designChat, setDesignChat] = useState<{ repo: string; slug: string; n: number } | null>(null);
-  const openMoved = (m: IdeaMoved) => {
-    if (!m.done) setDesignChat({ repo: m.repo, slug: m.branch, n: Date.now() });
-    goSel(`design:${movedTarget(m, design.repos ?? [])}`);
-  };
   // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
@@ -1402,10 +1383,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (asksShown && panelRef.current !== "asks") setPanel("asks");
   }, [asksShown]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    // 옛 아이디어는 기획 트리 아래에 있다(4단계): 아이디어를 열면 기획 패널을 보인다
-    if (ideaShown && panelRef.current !== "design") setPanel("design");
-  }, [ideaShown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (designShown && panelRef.current !== "design") setPanel("design");
   }, [designShown]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1465,14 +1442,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const knownIds = useMemo(() => new Set([
     ...uniqueAppTargets(allThreads, t => t.project, t => t.id).keys(),
     ...automationIds.keys(),
-    ...(ideas.list ?? []).map((i) => i.short_id),
+    ...(ideaLinks?.keys() ?? []),
     ...designIds.keys(),
     ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
     ...[...reportNames.keys()].filter(id => /^r-/.test(id)),
     ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
     ...asksIndex.flatMap((r) => [r.question_id, ...questionIds(r)]),
-  ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list, designIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideaLinks, designIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
     ...askThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
@@ -1503,7 +1480,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       return;
     }
     if (ref.kind === "automation") return goSel(`automation:${ref.target}`);
-    if (ref.kind === "idea") return goSel(`idea:${ref.target}`);
+    if (ref.kind === "idea") {
+      const doc = ideaLinks?.get(ref.target);
+      if (doc) goSel(`design:${doc}`);
+      return;
+    }
     if (ref.kind === "design") {
       const d = designIds.get(ref.target);
       return goSel(`design:${d ? `${d.repo}/${d.path}` : ref.target}`);
@@ -1718,9 +1699,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
-          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }}
-            ideas={ideas.list ?? []} ideaSelected={ideaShown ? ideaAt : null} canControl={canControl}
-            onOpenIdea={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} onMoveIdea={setMoveIdea} />}
+          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
             <AsksPanel
@@ -1772,7 +1751,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown, ideaShown, designShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown, ideaRoute, designShown]}>
         {machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} page machine={selectedMachine} onClose={closeMachineInfo} />}
         {searchOpened && <RecordSearch shown={searchShown}/>}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
@@ -1850,31 +1829,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         )}
         {designAt !== null && (
-          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl} chatAsk={designChat}
-            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)}
-              ideas={ideas.list ?? []} ideaSelected={null} canControl={canControl} onOpenIdea={(id) => goSel(`idea:${id}`)} onMoveIdea={setMoveIdea} />}
+          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
+            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
             onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
-        )}
-        {moveIdea && <IdeaMoveDialog idea={moveIdea} repos={design.repos} onClose={() => setMoveIdea(null)}
-          onDone={(note) => { setMoveIdea(null); design.reload(); if (note.idea.moved) openMoved(note.idea.moved); }} />}
-        {ideaAt !== null && (
-          <IdeaView
-            onMove={setMoveIdea}
-            onOpenDesign={openMoved}
-            shown={ideaShown}
-            target={ideaAt}
-            ideas={ideas.list ?? []}
-            threads={allThreads}
-            panes={panes}
-            canControl={canControl}
-            onOpenLink={(href) => {
-              const m = /^#(task|idea|thread)=(.+)$/.exec(href);
-              if (!m) return false;
-              if (m[1] === "thread") openRefRef.current({ kind: "thread", target: decodeURIComponent(m[2]!) });
-              else goSel(`${m[1]}:${decodeURIComponent(m[2]!)}`);
-              return true;
-            }}
-          />
         )}
         {automationAt !== null && (
           <AutomationView
@@ -1955,7 +1912,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
           />);
         })}
-        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown || ideaShown || designShown ? null : currentThread ? (
+        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown || ideaRoute || designShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}

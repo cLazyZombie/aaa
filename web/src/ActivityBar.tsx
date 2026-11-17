@@ -13,7 +13,6 @@ import "./ActivityBar.css";
 
 // 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287).
 // 자동화·할 일은 직접 그린 아이콘(시안 4개씩 중 사용자 결정 10-22, t-0727)
-// 아이디어는 전구(시안 r-4673, t-1260)
 const PANEL_ICON = ACTIVITY_ICONS;
 const ReportsIcon = ACTIVITY_ICONS.reports;
 const TasksIcon = ACTIVITY_ICONS.tasks;
@@ -115,7 +114,6 @@ export function ActivityBar({
         </button>
       )}
       <div className="activity-group" role="tablist" aria-orientation="vertical" aria-label="사이드바 패널" ref={tabs} onKeyDown={onTabKey}>
-        {/* 아이디어는 기획 트리의 「옛 아이디어」로 옮겼다(t-1894 4단계) */}
         {PANELS.map((p) => {
           const Icon = PANEL_ICON[p];
           const selected = shown && panel === p;

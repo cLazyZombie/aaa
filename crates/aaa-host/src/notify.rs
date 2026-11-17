@@ -1,5 +1,5 @@
 //! 알림 webhook과 Web Push. host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 밖으로 보낸다.
-//! 예외: supervisor가 판정한 host 이상·회복과 자기 노트 저장 권한을 확인한 아이디어 새 판을 별도 안전 경로로 보낸다.
+//! 예외: supervisor가 판정한 host 이상·회복을 별도 안전 경로로 보낸다.
 //! thread 보고·확인창·세션·머신 사건은 앱 안 알림과 coordinator inbox에 남긴다.
 //!
 //! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다.
@@ -197,7 +197,6 @@ pub(crate) fn split_machine(batch: Batch) -> (Batch, Option<(Place, Vec<InboxIte
 /// 이름은 받침을 알 수 없다). 모르는 사건은 None(요약을 쓴다)
 fn phrase(i: &InboxItem) -> Option<&'static str> {
     Some(match (i.item_kind.as_str(), i.event.as_str()) {
-        ("idea", "updated") => "아이디어 노트 갱신",
         ("thread-state", "new report") => "보고 준비",
         ("thread-state", "blocked on a prompt") => "확인창 응답 기다림",
         ("thread-state", "thread stalled") => "작업 멈춤 확인 필요",
@@ -272,16 +271,6 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
             lines: lines(false),
             url: "/#threads".into(),
             tag: format!("aaa-host-{}", first.subject),
-        };
-    }
-    if let [item] = items
-        && item.item_kind == "idea"
-    {
-        return AlertText {
-            title: format!("{} · {}", item.subject, redact(&item.summary, 120).unwrap_or_else(|| "아이디어".into())),
-            lines: vec!["아이디어 노트가 갱신됐다".into()],
-            url: format!("/#idea={}", crate::push::url_escape(&item.subject)),
-            tag: format!("aaa-idea-{}-{}", item.project, item.subject),
         };
     }
     let question_ids = items
@@ -527,10 +516,7 @@ impl Host {
                 return items;
             }
         };
-        let open: HashSet<String> = open
-            .into_iter()
-            .chain(items.iter().filter(|i| i.item_kind == "idea" && self.idea_still_news(i)).map(|i| i.id.clone()))
-            .collect();
+        let open: HashSet<String> = open.into_iter().collect();
         let (keep, dropped) = news(items, &open, |_| false);
         if dropped > 0 {
             self.flow_project(project, "notify_skipped", None, format!("그 사이 답했거나 확인한 항목 {dropped}개"));
@@ -614,7 +600,6 @@ impl Host {
         // 기존 '쓰는 기기' 판정 그대로. 앱을 쓰면 앱 안 알림 하나만 보낸다.
         if self.viewing.lock().unwrap().user_in_use() {
             self.send_notice(aaa_proto::NoticeView {
-                idea: None,
                 kind: if event.recovered {
                     aaa_proto::NoticeKind::HostRecovered
                 } else {
@@ -681,7 +666,7 @@ impl Host {
                     }
                     let mut items = items;
                     me.library_notice_links(&mut items);
-                    let mut stored: Vec<_> = items.iter().filter(|i| i.item_kind != "idea").cloned().collect();
+                    let mut stored: Vec<_> = items.to_vec();
                     if let Err(e) = me.db.inbox_display_ids(&mut stored) {
                         tracing::error!("알림 inbox 별칭 조회 실패: {e:#}");
                         continue;

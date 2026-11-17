@@ -245,9 +245,9 @@ export interface ChatComposerProps {
   coordinator?: boolean;
   /** 그 harness 세션의 컨텍스트 사용량(plan §8.321). 없으면 게이지를 그리지 않는다(옛 host·첫 응답 전) */
   context?: ContextUsage | null;
-  /** 보낼 글을 보내기 직전에 고친다(아이디어 대화: 사람이 고친 노트 요약 머리, t-1260). 대화 끝 말풍선도 고친 글이다 */
+  /** 보낼 글을 보내기 직전에 고친다(기획 대화: 사람이 고친 문서 요약 머리). 대화 끝 말풍선도 고친 글이다 */
   prepare?: (text: string) => string;
-  /** 그림을 붙일 pane이 없다(아이디어 대화가 아직 뜨지 않음, t-1575): 그 까닭. 그림 단추를 끄고 붙여 넣은 그림은 올리지 않는다 */
+  /** 그림을 붙일 pane이 없다(기획 대화가 아직 뜨지 않음): 그 까닭. 그림 단추를 끄고 붙여 넣은 그림은 올리지 않는다 */
   imagesOff?: string | null;
   /** 그림을 pane 대신 여기로 올리고 초안에 넣을 경로를 받는다(기획 대화: 그 branch에 commit, t-1950) */
   uploadImage?: (file: File) => Promise<string>;

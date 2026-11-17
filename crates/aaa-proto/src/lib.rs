@@ -30,8 +30,6 @@ pub mod input;
 pub use deploy::*;
 pub use input::*;
 pub mod frame;
-pub mod idea;
-pub use idea::*;
 mod short_id;
 pub use short_id::{canonical_short_id, cmp_short_ids, short_id_number};
 pub mod layout;
@@ -184,16 +182,6 @@ pub fn typescript_bindings() -> String {
         DesignDoc::decl(&cfg),
         DesignIdView::decl(&cfg),
         DesignIdMark::decl(&cfg),
-        IdeaStatus::decl(&cfg),
-        IdeaAuthor::decl(&cfg),
-        IdeaSummary::decl(&cfg),
-        IdeaMoved::decl(&cfg),
-        IdeaRevView::decl(&cfg),
-        IdeaNote::decl(&cfg),
-        IdeaMediaSource::decl(&cfg),
-        IdeaMediaView::decl(&cfg),
-        IdeaTaskDraft::decl(&cfg),
-        IdeaConflict::decl(&cfg),
         TaskBoard::decl(&cfg),
         TaskSuggestion::decl(&cfg),
         TaskAnchor::decl(&cfg),

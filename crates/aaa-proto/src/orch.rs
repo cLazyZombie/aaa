@@ -665,8 +665,6 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
-    /// 아이디어 전용 thread가 노트를 저장했다.
-    IdeaUpdated,
     /// host 내부 감시의 이상·회복. 웹 앱 안 알림.
     HostIssue,
     HostRecovered,
@@ -688,8 +686,6 @@ pub enum NoticeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NoticeView {
     pub kind: NoticeKind,
-    #[serde(default)]
-    pub idea: Option<String>,
     /// 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
     pub pane: Option<String>,
     pub machine: String,
@@ -1070,11 +1066,7 @@ pub struct ThreadListQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
-    /// 아이디어 전용 thread면 그 아이디어(`n-NNNN`, FRONT_API 1.147). 작업 목록·할 일 화면에 보이지 않고 아이디어 화면이 쓴다
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub idea: Option<String>,
-    /// 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 아이디어 thread처럼 작업 목록·할 일에 보이지 않는다
+    /// 기획 대화 thread면 그 기획 branch(`<저장소>/<주제>`, FRONT_API 1.172). 작업 목록·할 일에 보이지 않는다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub design: Option<String>,

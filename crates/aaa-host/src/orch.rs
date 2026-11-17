@@ -67,10 +67,7 @@ pub(crate) struct ThreadRec {
     /// 다른 머신으로 옮기며 남긴 앞 자리(park.rs). 지우지 않았고, 그 머신으로 돌아가면 다시 쓴다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub left_places: Vec<crate::park::LeftPlace>,
-    /// 아이디어 전용 thread면 그 아이디어 ULID(ideas.rs). host 머신에만 띄우고 실행 한도에 세지 않는다(t-1255 결정 19·21)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idea: Option<String>,
-    /// 기획 대화 thread면 그 기획 branch `<저장소>/<주제>`(design_chat.rs, t-1894 2-2). 저장소 머신에 띄우고 아이디어 thread처럼
+    /// 기획 대화 thread면 그 기획 branch `<저장소>/<주제>`(design_chat.rs, t-1894 2-2). 저장소 머신에 띄우고
     /// 할 일·실행 한도·coordinator 요약·자동 끝내기에서 뺀다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design: Option<String>,
@@ -183,9 +180,9 @@ impl ThreadRec {
         matches!(self.status, ThreadStatus::Open | ThreadStatus::Starting) || self.resolve_pending.is_some()
     }
 
-    /// 대화 전용 thread(아이디어·기획 대화): 할 일·실행 한도·coordinator 요약·자동 끝내기·알림에서 빼고 쉬면 조용히 보류한다
+    /// 대화 전용 thread(기획 대화): 할 일·실행 한도·coordinator 요약·자동 끝내기·알림에서 빼고 쉬면 조용히 보류한다
     pub(crate) fn chat_only(&self) -> bool {
-        self.idea.is_some() || self.design.is_some()
+        self.design.is_some()
     }
 
     pub(crate) fn holds_worker_slot(&self) -> bool {
@@ -243,7 +240,6 @@ impl ThreadRec {
             park: None,
             brief_line: None,
             left_places: Vec::new(),
-            idea: None,
             design: None,
             automation: None,
             automation_run: None,
@@ -396,10 +392,7 @@ pub struct StartArgs {
     pub role: Role,
     /// 할 일 글이 `attachments/<이름>`으로 가리키는 task 첨부(`--from-task`만 채운다, plan §8.327)
     pub attachments: Vec<crate::task_attach::TaskFile>,
-    /// 아이디어 전용 thread(ideas.rs): 할 일을 남기지 않고 실행 한도에 세지 않는다
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) idea: Option<String>,
-    /// 기획 대화 thread(design_chat.rs, `<저장소>/<주제>`): 아이디어 thread와 같은 대우
+    /// 기획 대화 thread(design_chat.rs, `<저장소>/<주제>`): 할 일을 남기지 않고 실행 한도에 세지 않는다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) design: Option<String>,
 }
@@ -1055,14 +1048,6 @@ impl Host {
                 .as_ref()
                 .and_then(|id| self.inner.lock().unwrap().panes.get(id).and_then(|p| p.info.responsibility.clone())),
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
-            idea: r.idea.as_deref().and_then(|i| {
-                self.db
-                    .idea_short_id(&r.project, i)
-                    .inspect_err(|error| {
-                        aaa_common::diagnostic::observe(error, "아이디어 번호를 못 읽으면 표지 없이 보인다")
-                    })
-                    .ok()
-            }),
             design: r.design.clone(),
             over_limit: r.over_limit.clone(),
             park: r.park.clone().map(Box::new),
@@ -1622,14 +1607,7 @@ impl Host {
             .collect();
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
-        let guide = if r.idea.is_some() {
-            crate::brief_text::IDEA_GUIDE
-        } else if r.design.is_some() {
-            crate::brief_text::DESIGN_GUIDE
-        } else {
-            THREAD_GUIDE
-        }
-        .to_string();
+        let guide = if r.design.is_some() { crate::brief_text::DESIGN_GUIDE } else { THREAD_GUIDE }.to_string();
         let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
             title: &title,
@@ -1836,7 +1814,7 @@ impl Host {
             input.minimum = origin.usage_minimum;
         }
         // 자동화 do.start는 자체 실행 기록으로 관리한다. 사용자·coordinator 기동은 할 일을 먼저 남긴다.
-        if origin.is_none() && a.start_task.is_none() && a.idea.is_none() && a.design.is_none() {
+        if origin.is_none() && a.start_task.is_none() && a.design.is_none() {
             a.machine = Some(self.machine_name(&mid));
             a.start_task = Some(self.create_start_task(&a, actor).await?);
         }
@@ -1854,7 +1832,6 @@ impl Host {
             base: a.base.clone(),
             attachments: a.attachments.clone(),
             task_id: a.start_task.as_ref().and_then(|t| t.id.clone()),
-            idea: a.idea.clone(),
             design: a.design.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
@@ -1883,8 +1860,7 @@ impl Host {
                 &a.project,
                 pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
-                (a.over_limit.is_none() && a.idea.is_none() && a.design.is_none())
-                    .then(|| self.settings(&a.project).max_parallel_threads),
+                (a.over_limit.is_none() && a.design.is_none()).then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |tx, id| {
                     if a.machine_override.is_none() {
@@ -3454,7 +3430,6 @@ mod tests {
             park: None,
             brief_line: None,
             left_places: Vec::new(),
-            idea: None,
             design: None,
             automation: None,
             automation_run: None,

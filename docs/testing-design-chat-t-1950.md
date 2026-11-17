@@ -19,7 +19,7 @@
 | 사건 자리: 짝 말 뒤·맨 앞·못 찾으면 앞 사건 자리·보내는 중이면 끝 | `web/test/chatMarks.test.mjs` | `cd web && node --test test/chatMarks.test.mjs` |
 | 그림 경로 떼기·그림 폴더(기획 폴더 밖·이름만 같은 폴더)·그림 칩·그림 붙임 사건 문구·main에 들어감 판정 | `web/test/designModel.test.mjs` | `cd web && node --test test/designModel.test.mjs` |
 | 실제 host·agent·git: 반영 대기 thread 링크, 입력창 그림이 보는 문서 폴더에 commit·사람 고침에 없음·thread가 받은 줄 「(보는 문서)·(그림)·말」, 이 대화가 고치지 않음 | E2E `136-design-branches` | `ci-local --only web,e2e,public --spec 136` |
-| 옮긴 대화가 main에 병합된 뒤 「main에 들어감」, 단추 없음 | E2E `137-idea-move` | `ci-local --only web,e2e,public --spec 137` |
+| 대화 branch가 main에 병합된 뒤 「main에 들어감」, 단추 없음 | E2E `137-idea-links`(옛 `137-idea-move`에서 옮김, t-1959) | `ci-local --only web,e2e,public --spec 137` |
 
 - 사건 자리 시험은 옛 동작(못 찾으면 맨 끝)으로 되돌리면 셋 중 둘이 실패한다.
 - 착지 1차 전체 검증(부하 load 82)에서 E2E 136 「대화 입력창 그림」이 실패했다: 그림의 프로젝트를 지금 읽은 문서(`current`)에서만 얻어, 대화를 바꿔 판을 다시 읽는 동안 비면 입력창이 그림을 껐다(업로드 요청 없음). 프로젝트를 읽는 중에도 남는 앞 문서에서 얻게 고쳤다. 136은 대화를 바꾼 뒤 판 다시 읽기(`design_read`)를 route로 붙잡은 채 붙인다: 옛 코드는 같은 문구(「초안의 그림 경로」 20초)로 실패하고 고친 코드는 통과한다.

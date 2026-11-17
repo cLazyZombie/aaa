@@ -11,7 +11,7 @@ export type SidebarPanel = (typeof PANELS)[number];
 
 export const PANEL_LABEL: Record<SidebarPanel, string> = { workspace: "workspace", asks: "답할 것", work: "작업", machines: "머신", automations: "자동화", design: "기획" };
 
-/** 예전 패널 이름이나 숨긴 알림함으로 남긴 기억은 「작업」으로, 「아이디어」는 「기획」(옛 아이디어가 그 트리 아래에 있다, t-1894 4단계)으로 연다 */
+/** 예전 패널 이름이나 숨긴 알림함으로 남긴 기억은 「작업」으로, 지운 「아이디어」는 「기획」으로 연다 */
 const OLD_PANELS: Record<string, SidebarPanel> = { projects: "work", agents: "work", special: "work", inbox: "work", ideas: "design" };
 
 const PANEL_KEY = "aaa:sidebar-panel";

@@ -5,9 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, call, uploadDesignChatImage } from "./api";
 import { ChatComposer, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { ChatPanel } from "./Chat";
-import { chatImageDir, designMarks, mergedToMain, restDays, slugSuggest, splitContext, takeImages, SLUG } from "./designModel";
+import { chatImageDir, designMarks, mergedToMain, modelChoices, restDays, slugSuggest, splitContext, takeImages, SLUG } from "./designModel";
 import type { ChatMessage, DesignBranchView, DesignRepoView, FrontRequest, FrontResponse, OwnerChoice, PaneView, ThreadView } from "./gen/proto";
-import { ideaModelChoices } from "./ideasModel";
 import { ProviderError } from "./ProviderError";
 import { paneAgentStatus } from "./sidebarModel";
 
@@ -371,7 +370,7 @@ export function NewChatDialog({ repo, onClose, onDone }: { repo: DesignRepoView;
   useEffect(() => {
     call({ op: "assignable", check: null }).then((r) => { if (r.kind === "assignable") setOwners(r.owners); }, () => {});
   }, []);
-  const names = ideaModelChoices(owners, repo.machine, "").filter(Boolean);
+  const names = modelChoices(owners, repo.machine, "").filter(Boolean);
   const name = touched ? slug : slugSuggest(title);
   const taken = repo.branches.some((b) => b.slug === name);
   const ok = title.trim() !== "" && SLUG.test(name) && !taken;

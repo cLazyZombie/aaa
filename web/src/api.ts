@@ -54,12 +54,6 @@ export function onWorkspaceMetricsChanged(listener: () => void): () => void {
   workspaceMetricsListeners.add(listener);
   return () => workspaceMetricsListeners.delete(listener);
 }
-const ideasListeners = new Set<() => void>();
-/** 아이디어 목록·노트가 바뀌었다(웹 events `ideas`, FRONT_API 1.147) */
-export function onIdeasChanged(listener: () => void): () => void {
-  ideasListeners.add(listener);
-  return () => ideasListeners.delete(listener);
-}
 const tasksListeners = new Set<(sha256: string) => void>();
 export function onTasksChanged(listener: (sha256: string) => void): () => void {
   tasksListeners.add(listener);
@@ -506,7 +500,6 @@ export function watchEvents(
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "workspace_metrics") for (const listener of workspaceMetricsListeners) listener();
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
-      else if (ev.ev === "ideas") for (const listener of ideasListeners) listener();
       else if (ev.ev === "asks") for (const listener of asksListeners) listener();
       else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();
       else if (ev.ev === "accounts") for (const listener of accountsListeners) listener();

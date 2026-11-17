@@ -36,7 +36,6 @@ export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocL
 /** 보고 글에 다는 의견(t-1222): 의견을 단 글(칠한다)과 새 의견 */
 export interface ReportNotes {
   anchors: readonly TextAnchor[];
-  /** `range`는 고른 자리(아이디어 노트가 그 `##` 절을 찾는다) */
   onAdd: (anchor: TextAnchor, comment: string, range: Range) => boolean;
 }
 
@@ -46,9 +45,9 @@ export interface ReportNotes {
  */
 export function ReportMarkdown({ base, text, onImages, notes, image, captions = false }: {
   base: string | null; text: string; onImages: (s: LightboxState) => void; notes?: ReportNotes;
-  /** 혼자 선 그림 아래 설명 한 줄(아이디어 노트, t-1575) */
+  /** 혼자 선 그림 아래 설명 한 줄(기획 문서) */
   captions?: boolean;
-  /** 그림·영상 주소를 따로 푼다(아이디어 노트: 그 폴더의 이름만, t-1260). 없으면 보고 library 경로 */
+  /** 그림·영상 주소를 따로 푼다(기획 문서). 없으면 보고 library 경로 */
   image?: (src: string) => string | null;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -190,7 +189,6 @@ function NotedReport({ project, thread, report, base, text, onImages, sendNotes 
   useReportReveal(project, report, root, true);
   const reveal = (note: ReviewNote) => {
     const s = note.source;
-    if (s.kind === "note" || s.kind === "media") return;
     if (s.kind === "report" && s.report === report) {
       const el = root.current?.querySelector(".report-markdown");
       const range = el ? resolveAnchor(el, s.anchor) : null;

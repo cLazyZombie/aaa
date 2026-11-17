@@ -55,11 +55,6 @@ export function drawerSettles(shown: number, width: number, speed: number): bool
 /** A dialog, the palette or a sheet is up: a swipe there is theirs, not the drawer's under them. */
 export const MODAL = "[aria-modal='true'], dialog[open]";
 
-/** 쓸기를 스스로 쓰는 화면(아이디어 대화 쪽: 오른쪽 쓸기가 노트로 간다, t-1260): 그 안에서 시작한 쓸기는 drawer 것이 아니다 */
-function ownSwipe(target: EventTarget | null): boolean {
-  const node = target as { closest?: (selector: string) => unknown } | null;
-  return typeof node?.closest === "function" && node.closest("[data-drawer-swipe='off']") !== null;
-}
 
 /** Something under the finger scrolled sideways, a code block or a table: a swipe right scrolls it back. */
 export function scrolledAside(target: EventTarget | null): boolean {
@@ -99,7 +94,7 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     // it began on left the page and took its touches with it). It lets go where it was first
     const open = follow !== null ? onEnd() : isOpen();
     start = event.touches.length === 1 && touch && narrow.matches && document.querySelector(MODAL) === null && (open || !scrolledAside(event.target))
-      && !editable(event.target) && !selecting() && (open || !ownSwipe(event.target))
+      && !editable(event.target) && !selecting()
       ? { x: touch.clientX, y: touch.clientY, open, at: event.timeStamp } : null;
     claimed = false;
     done = false;

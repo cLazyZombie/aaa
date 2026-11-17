@@ -82,8 +82,6 @@ pub(crate) struct Rec {
     pub pushed_ms: u64,
     /// 「main에 반영」을 맡은 thread
     pub apply: Option<String>,
-    /// 그 반영이 갈라진 branch 끝(옛 아이디어 옮기기가 옮긴 뒤의 반영인지 가른다, t-1894 4단계)
-    pub apply_head: Option<String>,
     /// 실행 한도로 자리를 기다리는 「main에 반영」 요청(t-1955). 자리가 나면 ticker가 그때 올린 판에서 반영 thread를 띄운다
     pub apply_wait: Option<aaa_proto::DesignApplyWait>,
 }
@@ -120,7 +118,33 @@ fn repo_ok(repo: &str) -> bool {
     !repo.is_empty() && repo != "." && repo != ".." && !repo.contains(['/', '\\', '\0'])
 }
 
+/// 붙일 그림·영상의 종류를 파일 머리로 정한다(그림은 task 첨부와 같은 판정)
+fn media_ext(bytes: &[u8]) -> Option<&'static str> {
+    if let Some(ext) = crate::attach::sniff(bytes) {
+        return Some(ext);
+    }
+    if bytes.len() > 12 && &bytes[4..8] == b"ftyp" {
+        return Some("mp4");
+    }
+    if bytes.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        return Some("webm");
+    }
+    None
+}
+
 impl Host {
+    /// 기획 commit에 남길 쓴 이: thread 세션은 그 ID, coordinator pane 안 CLI는 `coordinator`, 나머지는 `사람`
+    pub(crate) fn design_actor_label(&self, actor: &str) -> String {
+        if let Some(session) = actor.strip_prefix("worker:") {
+            return self.thread_of_pane(session).map_or_else(|| "thread".into(), |r| r.id);
+        }
+        let coordinator = actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).is_some_and(|(_, s)| {
+            self.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role) == Some(aaa_proto::Role::Coordinator)
+                || self.thread_of_pane(s).is_some_and(|r| r.role == aaa_proto::Role::Coordinator)
+        });
+        if coordinator { "coordinator".into() } else { "사람".into() }
+    }
+
     fn design_branch_dir(&self, project: &str, repo: &str) -> Result<PathBuf, ErrorBody> {
         if !repo_ok(repo) {
             return Err(bad("저장소 이름이 잘못됐다"));
@@ -257,7 +281,7 @@ impl Host {
                 format!("보기 권한으로는 기획을 고칠 수 없다{}", crate::front::reader_reason(actor)),
             ));
         }
-        Ok(self.idea_actor_label(actor))
+        Ok(self.design_actor_label(actor))
     }
 
     /// 기획 대화를 여는 이·말하는 이(`aaa plan new`·`aaa plan say`): 쓰는 이(`design_writer`)와 그 프로젝트의 coordinator.
@@ -503,7 +527,7 @@ impl Host {
         self.design_attach_with(role, actor, project, repo, slug, dir, bytes, true).await
     }
 
-    /// 옛 아이디어 옮기기의 그림(t-1894 4단계): 옮기기 말이 경로를 함께 알리므로 다음 말 앞 「사람이 고친 문서」에 넣지 않는다.
+    /// 기획 대화 입력창의 그림(t-1950): 보낼 말 앞 「(그림: …)」이 경로를 알리므로 다음 말 앞 「사람이 고친 문서」에 넣지 않는다.
     /// 저장소 경로를 돌려준다
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn design_attach_quiet(
@@ -538,8 +562,7 @@ impl Host {
         if bytes.is_empty() || bytes.len() as u64 > aaa_proto::DESIGN_MAX_FILE {
             return Err(bad("파일은 1바이트부터 16MiB까지 붙인다"));
         }
-        let ext =
-            crate::ideas::media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?;
+        let ext = media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?;
         use sha2::Digest as _;
         let sha256 = hex::encode(sha2::Sha256::digest(bytes));
         let (target, mid) = self.design_target(project, repo)?;
@@ -707,7 +730,6 @@ impl Host {
         };
         let view = self.thread_start_mode(args, actor, true).await?;
         rec.apply = Some(view.id.clone());
-        rec.apply_head = rec.head.clone();
         rec.apply_wait = None;
         self.design_branch_store(project, rec)?;
         self.design_chat_event(project, &target.name, &slug, "apply", &view.id, rec.head.clone()).await;
@@ -848,22 +870,11 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         self.design_writer(role, actor, project, None)?;
         let (target, mid) = self.design_target(project, repo)?;
-        // 그 branch로 옮기는 옛 아이디어(t-1894 4단계): branch를 지우기 전에 main에 들어갔는지 보고 들어갔으면 「옮김」으로 둔다.
-        // 확인하지 못하면 버리지 않는다(들어간 것을 풀어 주지 않게). 풀어 주기는 branch를 다 지운 뒤에 한다.
-        // 옮기기(아이디어 잠금 → branch 잠금)와 반대 차례로 잡지 않게 branch 잠금 밖에서 하고, 판정은 agent 읽기·착지 확인을 품어
-        // 크므로 공용 dispatcher 스택에 얹지 않게 heap에 둔다
-        let moving = self.ideas_moving_to(project, &target.name, slug);
-        for idea in &moving {
-            Box::pin(self.idea_move_settle(project, idea, &target.name, slug, true)).await?;
-        }
         // 잠금을 끝까지 쥔다: 그 사이 말하기·저장·대화의 다시 열기는 기다렸다가 「없다」가 된다
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
         let Some(rec) = self.design_branch_load(project, &target.name, slug)? else {
             // 앞선 버리기가 branch는 지웠는데 대화 thread를 끝내지 못했으면 마저 끝낸다
-            for idea in &moving {
-                self.idea_move_release(project, idea, &target.name, slug, None);
-            }
             if self.design_chat_load(project, &target.name, slug)?.thread.is_some() {
                 self.design_chat_retire(project, &target.name, slug, actor).await?;
                 return Ok(FrontResponse::Done);
@@ -887,9 +898,6 @@ impl Host {
         };
         let path = self.design_branch_dir(project, &target.name)?.join(format!("{slug}.json"));
         std::fs::remove_file(&path).map_err(|e| internal(format!("{}: {e}", path.display())))?;
-        for idea in &moving {
-            self.idea_move_release(project, idea, &target.name, slug, Some(rec.created_ms));
-        }
         self.design_push_gen.lock().unwrap().remove(&format!("{project}/{}/{slug}", target.name));
         // 이 branch에서 맡긴 할 일은 그 판이 사라졌다: 맡김 기록을 지워 평소처럼 시작하게 한다
         self.design_handoff_forget(project, &target.name, slug, rec.created_ms);
@@ -1031,8 +1039,6 @@ impl Host {
                 }
             }
         }
-        // 옛 아이디어 옮기기: 그 branch가 main에 들어갔나(t-1894 4단계)
-        self.idea_move_pass(project).await;
     }
 
     async fn design_rest(&self, project: &str, repo: &str, slug: &str) {
@@ -1193,7 +1199,7 @@ mod tests {
     }
 
     /// 그 프로젝트 coordinator(host 머신에서 프로젝트 폴더에 도는 coordinator pane)는 기획 대화를 열고 말하기만 한다(t-1928).
-    /// 저장·버리기·반영·맡기기·옛 아이디어 옮기기는 거부하고, 프로젝트 폴더 밖 coordinator pane·끝난 coordinator pane은
+    /// 저장·버리기·반영·맡기기는 거부하고, 프로젝트 폴더 밖 coordinator pane·끝난 coordinator pane은
     /// 열기·말하기도 거부한다
     #[test]
     fn project_coordinator_opens_and_says_but_does_not_write() {
@@ -1294,15 +1300,6 @@ mod tests {
                     profile: None,
                     memo: String::new(),
                     reserve: false,
-                },
-                FrontRequest::IdeaMove {
-                    project: "demo".into(),
-                    idea: "n-0001".into(),
-                    rev: 1,
-                    repo: "repo".into(),
-                    slug: "boss-dex".into(),
-                    title: None,
-                    place: String::new(),
                 },
             ];
             for req in writes {

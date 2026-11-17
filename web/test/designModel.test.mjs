@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { addedDocs, ancestors, branchesByPath, calloutOf, idLineOf, withoutIdLines, changedBlocks, chatImageDir, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, mergedToMain, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, SLUG, slugSuggest, splitContext, splitTarget, takeImages, taskState } from "../src/designModel.ts";
+import { addedDocs, ancestors, branchesByPath, calloutOf, idLineOf, withoutIdLines, changedBlocks, chatImageDir, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, ideaLinkId, markCounts, marksOf, mdBlocks, mergedToMain, modelChoices, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, SLUG, slugSuggest, splitContext, splitTarget, takeImages, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -289,5 +289,18 @@ describe("기획 트리 저장소 필터", () => {
     assert.equal(pickRepo(names, ["game", "engine", "tool"], "puzzle"), null, "다 고르면 전체(새 저장소도 보인다)");
     assert.equal(pickRepo(names, ["game"], null), null, "「전체」");
     assert.deepEqual(pickRepo(names, ["game", "gone"], "tool"), ["game", "gone", "tool"], "잠시 빠진 저장소는 누름으로 지우지 않는다");
+  });
+});
+
+describe("대화 모델 고르기와 옛 아이디어 링크", () => {
+  it("모델은 그 머신이 맡을 수 있는 profile이고, 지금 값이 목록에 없으면 앞에 둔다", () => {
+    const owners = [{ machine: "mac-a", profiles: ["opus-high", "codex-high"] }, { machine: "mac-b", profiles: ["other"] }];
+    assert.deepEqual(modelChoices(owners, "mac-a", "opus-high"), ["opus-high", "codex-high"]);
+    assert.deepEqual(modelChoices(owners, "mac-a", "old-max"), ["old-max", "opus-high", "codex-high"]);
+    assert.deepEqual(modelChoices(owners, null, "opus-high"), ["opus-high"]);
+  });
+  it("옛 할 일 메모의 아이디어 링크(`ideas/n-0001`)만 n-ID로 읽는다(t-1959)", () => {
+    assert.equal(ideaLinkId("ideas/n-0001"), "n-0001");
+    for (const path of ["ideas/n-0001/note.md", "uploads/n-0001", "ideas/d-0001", "n-0001"]) assert.equal(ideaLinkId(path), null, path);
   });
 });

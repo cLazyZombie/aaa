@@ -8344,6 +8344,8 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 
 ### 8.543 아이디어: 노트·전용 thread·3분할 화면·할 일로 넘기기(t-1260)
 
+> t-1959(11-17)에 옛 아이디어를 모두 지웠다: 이 절은 기록이다. 남은 것은 n-ID → 기획 문서 링크 표(`idea-links.toml`)뿐이다.
+
 - **목적.** 사용자 10-28: 「aaa에 할일 처럼 아이디어 라는게 있고, 여기서는 계속 이야기하면서 결정과 수정을 반복해서 아이디어 노트를 개량하고, 최종 개량한걸 할일에 집어 넣는 flow」. 기획은 t-1255 보고 r-4673(결정 28개, 시안)이고 사용자 「할일을 하나로 만들어」로 일곱 부분을 한 할 일에서 했다.
 - **저장·ID.** host `ideas/<ULID>/`(note.md·idea.json·revs/·그림·merge/), 짧은 ID `n-NNNN`은 `idea_ids` 원장(프로젝트 내보내기·이름 바꾸기 표에 든다). 판을 주고 저장하며 겹치면 thread는 두 판을 받고 사람 글은 `merge/`에 둔 채 thread가 합친다. 사람이 고친 판은 host가 절마다 더하고 뺀 줄을 세어 다음 말 앞 「(노트 고침: …)」으로 알린다.
 - **전용 thread.** `ThreadRec.idea`가 표지다. host 머신 작업 폴더 thread, 할 일을 만들지 않고 실행 한도(`holds_worker_slot`)·할 일 화면·coordinator context·웹 작업 목록에서 뺀다. brief는 `IDEA_GUIDE`(보고·착지 대신 노트 저장). 쉼이 `[projects] idea_rest_secs` 넘으면 ticker가 알림함 항목 없이 보류하고(park.rs), 화면 열기(`idea_wake`)·말(`idea_say`)이 같은 대화로 잇는다. 잇지 못하면 새 thread가 노트를 읽는다. 말은 brief를 받은 뒤 보내도록 메타 `pending`에 두고 배경 일이 보낸다. thread 세션 CLI(보기 권한)는 자기 아이디어 노트만 `idea_save`한다.
@@ -8351,7 +8353,7 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **넘기기.** 초안 여럿을 `TaskOp::Add`로 더하고 메모 첫 줄이 `[아이디어 n-NNNN](ideas/n-NNNN)`이다. thread 시작 때 그 링크가 노트와 그림을 `attachments/`로 넘긴다(task_attach, agent 첨부 이름에 mp4·webm). 넘긴 아이디어는 완료로 잠기고 「복사해서 새 아이디어」로 다시 다듬는다.
 - **「나중」 없애기.** 사용자 「나중 파일은 쓰지 않아. 없애.」: 할 일 「나중」 탭, `task_notes` 설정·CLI·설정 화면, TaskBoard.notes_files를 뺐다.
 - **참고.** 구성만 참고했다: ChatGPT Canvas·Open Canvas(MIT, 문서와 대화 나란히), GitHub Discussions·Jira Product Discovery(아이디어 → 할 일 여럿, 양쪽 링크), spec-kit `/clarify`(MIT, 정리본 모양), Hypothesis(BSD-2)·W3C Web Annotation(고른 글 자리). 코드·의존성은 가져오지 않았다.
-- **계약.** FRONT_API 1.147(Idea* 요청·응답, 웹 events `ideas`, ThreadView.idea). AGENT_LINK 1.11 유지(agent 첨부 이름 확장은 같은 판 안). 사용법은 [사용법 「아이디어」](usage.md#아이디어).
+- **계약.** FRONT_API 1.147(Idea* 요청·응답, 웹 events `ideas`, ThreadView.idea). AGENT_LINK 1.11 유지(agent 첨부 이름 확장은 같은 판 안). 사용법은 [사용법 「옛 아이디어 링크」](usage.md#옛-아이디어-링크).
 - **착지 통합.** 기준 origin/main `2b75d22b`의 마지막 §8.542·FRONT_API 1.146(t-1267 LibraryRead·LibraryChunk)·AGENT_LINK 1.11·웹 E2E121(navigation-shortcuts)을 확인했다. 후보의 §8.538을 §8.543으로, FRONT_API 1.146을 1.147로, E2E121을 E2E122로 옮기고 main의 절·판·E2E를 보존한다.
 
 
