@@ -1,4 +1,7 @@
 /* 기획(t-1894, 확정 시안 library/mock): 사이드바 트리(저장소 → 폴더 → 문서)와 문서 보기(읽기 전용) */
+/* 사이드바 칸(Sidebar.tsx .design-sidebar)은 다른 패널(.asks-sidebar 등)처럼 남은 높이를 받아야 안의 트리(.design-panel)가 굴러간다.
+   이 규칙이 없으면 칸이 글 높이만큼 자라 .list의 overflow에 잘린다(t-1934, E2E 135 「긴 기획 트리」) */
+.design-sidebar { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
 .design-panel { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; padding: 0 var(--side-gutter) var(--space-2); overflow-y: auto; overscroll-behavior: contain; }
 .design-panel > * { flex-shrink: 0; }
 .sidebar-shell button.sidebar-row-action.design-reload { display: flex; align-items: center; justify-content: flex-start; width: 100%; padding: 0; border-radius: var(--radius-md); color: var(--text-dim); font-size: var(--fs-sm); }
@@ -51,7 +54,9 @@
 .design-columns > .design-view { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; padding-left: 0; padding-right: 0; }
 .design-columns > [hidden] { display: none !important; }
 .design-chat-pane { flex: 0 0 min(460px, 44%); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
-.design-tree-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--space-2) 0; }
+/* 휴대폰 「트리」 칸: 굴리는 것은 안의 트리(.design-panel) 하나다. 칸도 굴러가면 휠·손가락이 굴릴 것 없는 안쪽 칸(overscroll contain)에
+   막혀 칸이 움직이지 않았다(t-1934) */
+.design-tree-pane { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; padding: var(--space-2) 0; }
 .design-title { gap: var(--space-2); overflow: hidden; }
 
 .design-branch-chip { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid color-mix(in srgb, var(--accent-strong) 55%, transparent); background: var(--accent-bg); color: var(--accent-strong); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; }
