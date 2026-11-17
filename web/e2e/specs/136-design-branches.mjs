@@ -223,14 +223,32 @@ export default async function () {
   await step("대화 입력창 그림: 그 branch에 commit하고 보낼 말 앞에 「(그림: 경로)」, 보는 문서를 이 대화가 고치지 않았으면 알린다", async () => {
     aaa("plan", "new", "app", "pics", "--title", "그림 대화");
     await page.getByTestId("design-reload").first().click();
+    // 대화를 바꾸면 문서 판(shop → main)을 다시 읽는다. 그 읽기를 붙잡아 두고 바로 붙인다: 읽는 동안에도 그림이 올라가야 한다
+    // (t-1950 착지 실패: 부하에서 읽기가 늦으면 프로젝트를 몰라 입력창이 그림을 껐다)
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let holding = 0, passed = 0;
+    const hold = async (route) => {
+      if (route.request().postDataJSON()?.op !== "design_read") return route.fallback();
+      holding++;
+      await held;
+      await route.fallback();
+      passed++;
+    };
+    await page.route("**/api/v1/call", hold);
     await page.getByTestId("design-pick").click();
     await page.getByTestId("design-pick-row").filter({ hasText: "그림 대화" }).click();
     await page.getByTestId("design-chat-branch").filter({ hasText: "pics" }).waitFor();
-    // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
-    await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
     const chat = page.getByTestId("design-chat");
+    await until("판 다시 읽기를 붙잡음", () => holding > 0, 10_000);
     await chat.locator("input[type=file]").setInputFiles({ name: "시안.png", mimeType: "image/png", buffer: png(120, 80, [200, 90, 60]) });
     await domIs(page, "초안의 그림 경로", () => /@docs\/loop\/[0-9a-f]{16}\.png /.test(document.querySelector("[data-testid=design-chat] textarea").value));
+    assert.ok(holding > 0 && await page.getByTestId("design-body").count() === 0, "문서를 다시 읽는 중에 올렸다");
+    release();
+    await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
+    await page.unroute("**/api/v1/call", hold);
+    // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
+    await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
     const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
     const pics = branches().find((b) => b.slug === "pics");
     assert.ok(pics.changed.some((c) => c.path === pic && c.status === "A"), "보는 문서 폴더에 commit한다");

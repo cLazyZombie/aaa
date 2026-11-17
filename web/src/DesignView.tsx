@@ -537,7 +537,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
         {repo && repo.folder && (
           <section className="design-chat-pane" aria-label="기획 대화" hidden={!show("chat")} data-testid="design-chat-pane">
             {chatError && <div className="banner err" role="alert">{chatError}</div>}
-            <DesignChat project={current?.project ?? null} repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
+            {/* 프로젝트는 판을 다시 읽는 동안에도 남는 앞 문서에서 얻는다: 대화를 바꾸면 판이 바뀌어 `current`가 잠시 빈다(t-1950 착지 실패) */}
+            <DesignChat project={doc?.doc.project ?? null} repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
               picked={picked} onUnpick={() => setPicked(null)}
               active={shown && show("chat")} now={now} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
           </section>
