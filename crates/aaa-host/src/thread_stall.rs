@@ -275,7 +275,9 @@ impl Host {
                         result_kind(&a.harness, &lines)
                     };
                     action = watch.observe(&r, a, kind, now, self.started_ms, limit);
-                    let tail: Vec<_> = lines.iter().rev().filter(|l| !l.trim().is_empty()).take(6).collect();
+                    // 알림 글은 색이 없다: 입력창의 흐린 글(다음 입력 예측)에 표지를 달아 남은 입력으로 읽히지 않게 한다(t-1940)
+                    let marked = crate::prompt_box::mark_dim_box(&a.harness, &text, &ansi);
+                    let tail: Vec<_> = marked.lines().rev().filter(|l| !l.trim().is_empty()).take(6).collect();
                     let tail = tail.into_iter().rev().map(|l| l.trim()).collect::<Vec<_>>().join(" | ");
                     // inbox에도 기존 인증 가리기를 적용한다. 원문을 지시로 보내지 않는다.
                     let tail: String = aaa_common::redact::text(&tail).chars().take(600).collect();

@@ -228,6 +228,16 @@ impl Host {
         Some(ReadView { pane: id.to_string(), source, format, text: r.text, truncated: r.truncated })
     }
 
+    /// 화면 사본의 글(Text)에 입력창 흐린 글 표지를 단 것(`prompt_box::mark_dim_box`). 글과 색을 한 잠금에서 읽어 같은 화면이다.
+    fn read_view_marked(&self, id: &str, source: ReadSource, lines: Option<u32>, kind: &str) -> Option<ReadView> {
+        let mut i = self.inner.lock().unwrap();
+        let m = i.panes.get_mut(id)?.mirror.as_mut()?;
+        let r = m.vt.read(source, lines, ReadFormat::Text);
+        let ansi = m.vt.read(source, lines, ReadFormat::Ansi).text;
+        let text = crate::prompt_box::mark_dim_box(kind, &r.text, &ansi);
+        Some(ReadView { pane: id.to_string(), source, format: ReadFormat::Text, text, truncated: r.truncated })
+    }
+
     /// `pane read`: 사본이 아직 없으면(붙자마자) 그 머신 agent가 보이는 화면을 준다
     pub(crate) async fn pane_read_text(
         self: &Arc<Self>,
@@ -293,17 +303,23 @@ impl Host {
     }
 
     /// `thread read`: thread pane이 지금 보이는 것(herdr-projects threads.rs `read`). `lines`면 기록 끝 N줄이다.
+    /// 색을 뺀 글이라 입력창의 흐린 글(Claude 다음 입력 예측)은 표지를 단다(t-1940): 남은 글로 읽고 Enter를 누르지 않게.
     pub(crate) async fn thread_read(
         self: &Arc<Self>,
         project: &str,
         id: &str,
         lines: Option<u32>,
     ) -> Result<FrontResponse, ErrorBody> {
-        let (_, pid, _) = self.thread_pane(project, id)?;
+        let (rec, pid, _) = self.thread_pane(project, id)?;
         let agent = self.pane_agent(&pid).map(|a| a.activity);
         let source = if lines.is_some() { ReadSource::Recent } else { ReadSource::Visible };
-        let FrontResponse::Read(view) = self.pane_read_text(&pid, source, lines, ReadFormat::Text).await? else {
-            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
+        let kind = rec.launch.map(|l| l.harness).unwrap_or_default();
+        let view = match self.read_view_marked(&pid, source, lines, &kind) {
+            Some(view) => view,
+            None => match self.pane_read_text(&pid, source, lines, ReadFormat::Text).await? {
+                FrontResponse::Read(view) => view,
+                _ => return Err(err(ErrorCode::Internal, "예상하지 못한 응답")),
+            },
         };
         Ok(FrontResponse::ThreadPane(ThreadPaneView {
             project: project.to_string(),
