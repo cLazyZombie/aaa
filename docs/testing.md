@@ -5135,3 +5135,5 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [coordinator의 기획 대화 열기·말하기(t-1928)](testing-coordinator-plan-chat-t-1928.md): coordinator pane의 `plan new`·`plan say` 허용과 쓰기 거부, 실제 coordinator pane E2E.
 - [자동화 저장소 펼치기(t-1960)](testing-automation-spread-t-1960.md): `repos = "design"`의 저장소별 입력·상한·기다림·승인과 시험 위치.
 - [기획서 ID(t-1957)](testing-design-ids-t-1957.md): 표지 읽기·넣기와 덩어리 경계, 원장 맞추기, agent 한 번에 달기, 저장의 표지, 실제 origin E2E 139.
+
+- CI 웹 조작 준비·질문 guard 수리(t-1967): [실패 원문·회귀·검증 범위](testing-ci-interaction-readiness-t1967.md).

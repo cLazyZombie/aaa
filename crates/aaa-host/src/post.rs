@@ -1674,7 +1674,6 @@ mod tests {
 
     #[tokio::test]
     async fn question_guard_warns_once_for_both_coordinators_without_changing_turn_or_pushing() {
-        let began = std::time::Instant::now();
         let (h, _lab) = coordinator_host();
         let mut other = h.inner.lock().unwrap().panes["coord"].info.clone();
         other.id = "coord-other".into();
@@ -1711,12 +1710,16 @@ mod tests {
         }
         assert_eq!(h.pane_agent("coord"), before, "완료 감지는 화면 상태·seen을 바꾸지 않는다");
         assert!(queue.try_recv().is_err(), "카드 누락 경고는 사용자 외부 푸시가 아니다");
-        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        // 완료 처리는 on_harness가 반환하기 전에 DB에 반영되어야 한다.
+        // Host·파일·SQLite 준비까지 포함한 wall clock은 이 계약의 시계가 아니다.
+        let checked: (u64, String) =
+            serde_json::from_str(&h.db.meta("question-guard:demo:coord").unwrap().unwrap()).unwrap();
+        assert_eq!(checked.0, now + 2);
     }
 
     #[tokio::test]
     async fn question_guard_matches_the_turn_and_checks_existing_card_links() {
-        let began = std::time::Instant::now();
+        use futures_util::FutureExt;
         let (h, _lab) = coordinator_host();
         let now = util::now_ms();
         let mut card = input(991);
@@ -1751,7 +1754,10 @@ mod tests {
         );
         assert_eq!(count(), 2, "기존 링크 뒤 별개 질문은 경고한다");
         h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
-        h.reply_by_id("demo", &qid, Some("A"), None, "device:test").await.unwrap();
+        h.reply_by_id("demo", &qid, Some("A"), None, "device:test")
+            .now_or_never()
+            .expect("로컬 카드 답 처리는 timer나 다음 task를 기다리지 않는다")
+            .unwrap();
         h.on_harness("m", completed_reply("claude", later, end + 4, &format!("{qid}에서 선택해 주세요.")));
         assert_eq!(count(), 2, "이미 답한 카드 재안내는 새 카드 누락이 아니다");
         h.on_harness(
@@ -1759,7 +1765,9 @@ mod tests {
             completed_reply("claude", later, end + 5, &format!("{qid}에서 답해 주세요.\n\n추가로 배포할까요?")),
         );
         assert_eq!(count(), 3, "답한 카드도 별개의 새 승인 요청을 가리지 않는다");
-        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        let checked: (u64, String) =
+            serde_json::from_str(&h.db.meta("question-guard:demo:coord").unwrap().unwrap()).unwrap();
+        assert_eq!(checked.0, end + 5, "마지막 완료도 호출이 돌아오기 전에 검사했다");
     }
 
     /// 관측 오탐과 이전 턴 카드의 답변 방법 안내를 실제 완료 사건·DB로 확인한다.

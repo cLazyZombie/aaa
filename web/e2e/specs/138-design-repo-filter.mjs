@@ -3,7 +3,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import { aaa, root, step, browser, pairPage, inList, drawerSettled, shot, hashIs } from "../lib/harness.mjs";
+import { aaa, root, step, browser, pairPage, inList, drawerSettled, shot, hashIs, domIs } from "../lib/harness.mjs";
+import { waitForSheetExit } from "../lib/sheet-closed.mjs";
+
+export const labEnv = { AAA_E2E_FAILURE_DIAGNOSTICS: "1" };
 
 const git = (cwd, ...args) =>
   execFileSync("git", ["-c", "user.name=demo", "-c", "user.email=demo@example.com", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
@@ -46,6 +49,7 @@ async function closeMenu(p) {
   else await p.keyboard.press("Escape");
   await p.locator(".row-menu").waitFor({ state: "detached" });
   await p.locator(".modal-scrim").waitFor({ state: "detached" });
+  await p.evaluate(waitForSheetExit);
 }
 
 export default async function () {
@@ -73,7 +77,26 @@ export default async function () {
         for (const n of ["game", "puzzle"]) await item(p, n).click();
         await p.locator('[data-testid="design-repo"][data-repo="engine"]').waitFor({ state: "detached" });
         await shot(p, `design-filter-${width}-menu`);
-        await closeMenu(p);
+        if (width < 700) {
+          // 실제 sheet를 닫되 native 복귀만 보류한다. DOM 제거만 본 구판은
+          // 여기서 먼저 반환하여 reload를 복귀와 겹쳐 시작했다.
+          await p.evaluate(() => {
+            const back = history.back.bind(history);
+            window.__sheetExit = { pending: false };
+            history.back = () => { window.__sheetExit.pending = true; };
+            window.__releaseSheetExit = () => { history.back = back; back(); };
+          });
+          let exited = false;
+          const closing = closeMenu(p).then(() => { exited = true; });
+          closing.catch(() => {});
+          try {
+            await domIs(p, "메뉴 DOM 제거 뒤 native 복귀 보류", () =>
+              window.__sheetExit.pending && !document.querySelector(".row-sheet"));
+            assert.equal(await p.evaluate(() => !!history.state?.["aaa:sheet"]), true);
+            assert.equal(exited, false, "기록 복귀 전에는 메뉴 닫힘이 완료되지 않는다");
+          } finally { await p.evaluate(() => window.__releaseSheetExit()); }
+          await closing;
+        } else await closeMenu(p);
         await drawerSettled(p);
         // sheet 닫기(기록 한 칸 뒤로)가 그 밑 drawer까지 닫지 않는다
         if (width < 700) assert.equal(await p.locator("#workspace-drawer.is-open").count(), 1, "drawer가 열려 있다");

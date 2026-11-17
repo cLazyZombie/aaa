@@ -2,13 +2,15 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 02-terminal(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import path from "node:path";
+import { modalKeyboardReady } from "../lib/interaction-ready.mjs";
+import ciReadiness from "../ci-readiness.browser.mjs";
 import {
   repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, paneHash, base, step, browser, openSettings, sentFrames, sentCount, inList, domIs,
 } from "../lib/harness.mjs";
 
 // 한글을 입력받는 실제 셸의 문자 로케일을 고정한다. SSH의 C 로케일을 물려받으면
 // Bash/Readline이 UTF-8 바이트를 meta 키로 해석한다. 이 spec의 자식 프로세스에만 적용한다.
-export const labEnv = { LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8" };
+export const labEnv = { LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8", AAA_E2E_FAILURE_DIAGNOSTICS: "1" };
 
 export default async function ({ ctl, page }) {
   await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
@@ -529,10 +531,14 @@ process.stdin.resume();`;
     await dialog.waitFor();
     // 기억한 agent는 이 머신 profile 목록이 온 뒤에 선다(없는 profile이면 셸로)
     await until("마지막에 고른 agent(fake)를 기억", async () => (await dialog.getByRole("combobox").innerText()).trim() === "fake");
+    // 보이는 DOM과 initialFocus의 rAF는 별개다. 초점이 아직 xterm이면 Esc가
+    // 셸로 전달되어 document의 dialog 닫기 처리기까지 오지 않는다.
+    await modalKeyboardReady(page);
     await page.keyboard.press("Escape");
     await dialog.waitFor({ state: "detached" });
     aaa("pane", "kill", agent.id);
     aaa("pane", "kill", shell.id);
     await inList(page, "pane-t1");
   });
+  await ciReadiness();
 }
