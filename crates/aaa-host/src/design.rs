@@ -429,7 +429,7 @@ pub(crate) fn mime(path: &str) -> &'static str {
 /// 프로젝트 폴더의 n-ID 링크 표 파일 이름
 pub(crate) const IDEA_LINKS: &str = "idea-links.toml";
 
-/// `"n-0010" = "pt/docs/design/game-loop.md"` 줄들. 키는 정규 n-ID, 값은 `<저장소>/<Markdown 경로>`(`..`·절대 경로 없음)만 받는다
+/// `"n-0010" = "app/docs/loop.md"` 줄들. 키는 정규 n-ID, 값은 `<저장소>/<Markdown 경로>`(`..`·절대 경로 없음)만 받는다
 pub(crate) fn parse_idea_links(text: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
     let table: std::collections::BTreeMap<String, String> = toml::from_str(text).map_err(|e| e.to_string())?;
     let mut out = std::collections::BTreeMap::new();
@@ -457,17 +457,17 @@ mod tests {
     #[test]
     fn idea_links_accept_only_ids_and_repo_docs() {
         let ok =
-            parse_idea_links("\"n-0010\" = \"pt/docs/design/game-loop.md\"\n\"n-0004\" = \"engine/doc/design/a.md\"\n")
+            parse_idea_links("\"n-0010\" = \"app/docs/loop.md\"\n\"n-0004\" = \"engine/doc/design/a.md\"\n")
                 .unwrap();
-        assert_eq!(ok.get("n-0010").map(String::as_str), Some("pt/docs/design/game-loop.md"));
+        assert_eq!(ok.get("n-0010").map(String::as_str), Some("app/docs/loop.md"));
         assert_eq!(ok.len(), 2);
         for bad in [
-            "\"n-10\" = \"pt/a.md\"",
-            "\"d-0010\" = \"pt/a.md\"",
-            "\"n-0010\" = \"pt/../a.md\"",
+            "\"n-10\" = \"app/a.md\"",
+            "\"d-0010\" = \"app/a.md\"",
+            "\"n-0010\" = \"app/../a.md\"",
             "\"n-0010\" = \"/abs/a.md\"",
             "\"n-0010\" = \"a.md\"",
-            "\"n-0010\" = \"pt/a.png\"",
+            "\"n-0010\" = \"app/a.png\"",
             "\"n-0010\" = 3",
         ] {
             assert!(parse_idea_links(bad).is_err(), "{bad}");
