@@ -1,8 +1,11 @@
 // 필요: 사용 중 이름 저장 성공·기존/새 thread 이름 분리와 화면 밖으로 숨었던 저장 오류를 실제 host로 지킨다.
 import assert from "node:assert/strict";
+import { initialPaneReady } from "../lib/interaction-ready.mjs";
 import fs from "node:fs";
 import { token } from "../../../scripts/fixture-secret.mjs";
-import { root, aaa, until, step, browser, webkit, pairPage, openSettings, domIs, waitOutput, shot } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, webkit, pairPage, openSettings, domIs, waitOutput, shot, inTime } from "../lib/harness.mjs";
+
+export const labEnv = { AAA_E2E_FAILURE_DIAGNOSTICS: "1" };
 
 const config = `${root}/c/host.toml`;
 fs.writeFileSync(config, fs.readFileSync(config, "utf8")
@@ -28,8 +31,11 @@ async function check(engine, width) {
   register(before);
   aaa("account", "default", "claude", before);
   const existing = await startThread(before);
-  const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { serviceWorkers: "block" });
+  const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
+    serviceWorkers: "block", hash: `#pane=${encodeURIComponent(existing.pane)}`,
+  });
   try {
+    await initialPaneReady(page, existing.pane);
     const settings = await openSettings(page, "계정");
     // 목록 뒤에 오는 사용량 응답은 앞 행마다 두 줄을 더한다. native press 중 행이
     // 움직이면 WebKit의 release가 버튼 밖에 떨어지므로 초기 응답의 DOM 반영을 먼저 본다.
@@ -107,8 +113,9 @@ async function check(engine, width) {
   } catch (error) {
     const diagnostics = `${root}/diagnostics`;
     fs.mkdirSync(diagnostics, { recursive: true });
-    await page.screenshot({ path: `${diagnostics}/rename-${suffix}.png`, animations: "disabled" });
-    const position = await page.evaluate(() => {
+    await page.screenshot({ path: `${diagnostics}/rename-${suffix}.png`, animations: "disabled", timeout: 5000 })
+      .catch(diagnosticError => console.log(`이름 변경 화면 저장 실패: ${diagnosticError}`));
+    const position = await inTime(page.evaluate(() => {
       const form = document.querySelector('[data-testid="account-rename"]');
       const rect = el => {
         if (!el) return null;
@@ -118,8 +125,8 @@ async function check(engine, width) {
       };
       return { input: rect(form?.querySelector("input")), alert: rect(form?.querySelector('[role="alert"]')),
         button: rect(form?.querySelector('button[type="submit"]')), height: innerHeight };
-    });
-    throw new Error(`${error.message}; 이름 변경 위치: ${JSON.stringify(position)}`);
+    }), 5000, "이름 변경 실패 위치 진단").catch(diagnosticError => ({ error: String(diagnosticError) }));
+    throw new Error(`${error.message}; 이름 변경 위치: ${JSON.stringify(position)}`, { cause: error });
   } finally { await page.context().close(); }
 }
 

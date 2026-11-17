@@ -16,6 +16,7 @@ import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.
 import { launchChromium } from "./chromium-launch.mjs";
 import { cleanupScope } from "./cleanup-scope.mjs";
 import { phase, measured, withCasePhases } from "./phases.mjs";
+import { failureDiagnostics, writeFailure } from "./failure-diagnostics.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -49,6 +50,8 @@ const env = {
 // 운영 pane에서 시험을 실행해도 실험실 CLI가 그 세션·hook 신원을 물려받지 않는다(Rust Lab과 같다).
 for (const key of ["AAA_SESSION_ID", "AAA_PROJECT", "AAA_THREAD", "AAA_HOOK_SOCK", "AAA_HOOK_TOKEN"]) delete env[key];
 const procs = new Map();
+const failureObservers = new Set();
+let diagnosticPage = 0;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // t-0578 동시 검증(load 28.96)의 후보 점검 결과 대기만 30초→60초로 둔다(docs/testing.md).
@@ -555,6 +558,9 @@ async function pairPageBody(browser, code, viewport, { userAgent, platform, colo
     ...(deviceScaleFactor ? { deviceScaleFactor } : {}),
     ...(serviceWorkers ? { serviceWorkers } : {}),
   });
+  const diagnostics = env.AAA_E2E_FAILURE_DIAGNOSTICS === "1"
+    ? await failureDiagnostics(ctx, path.join(root, "diagnostics"), `${browser.browserType().name()}-${++diagnosticPage}`) : null;
+  if (diagnostics) failureObservers.add(diagnostics);
   if (setup) await setup(ctx);
   if (platform) await ctx.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
   if (init) await ctx.addInitScript(init);
@@ -654,6 +660,7 @@ async function pairPageBody(browser, code, viewport, { userAgent, platform, colo
   if (wsRoute) await ctx.routeWebSocket(...wsRoute);
   if (route) await ctx.route(...route);
   const page = await ctx.newPage();
+  diagnostics?.watch(page);
   openPages.add(page);
   page.on("close", () => openPages.delete(page));
   // AAA_E2E_THROTTLE=N: Chromium 화면을 N배 느리게(CI 러너처럼 느린 곳에서만 난 경합을 로컬에서 재현할 때). 기본은 끔
@@ -781,6 +788,10 @@ async function stepBody(name, fn, diagnose) {
     steps.push(`ok   ${name} (${Date.now() - t0}ms)`);
   } catch (e) {
     phase("observe", "failure-diagnostics");
+    const directory = path.join(root, "diagnostics");
+    try { writeFailure(directory, `failure-${steps.length}`, new Error(name, { cause: e })); }
+    catch (error) { console.log(`최초 실패 원문 저장 오류: ${error}`); }
+    for (const observer of failureObservers) await observer.finish();
     // viewport를 움직이는 기존 termDiag보다 먼저 실패 지점의 산출물을 저장한다.
     try { await diagnose?.(e); }
     catch (error) { console.log(`실패 진단 저장 오류: ${error}`); }
@@ -1216,6 +1227,9 @@ async function runSpec(spec, labEnv = {}) {
         if (ctl.errors.length) throw new Error(`페이지 오류: ${ctl.errors.join("; ")}`);
       } catch (e) {
         failed = true;
+        try { writeFailure(path.join(root, "diagnostics"), "run-failure", e); }
+        catch (error) { console.log(`실험실 실패 원문 저장 오류: ${error}`); }
+        for (const observer of failureObservers) await observer.finish();
         if (!steps.some((s) => s.startsWith("FAIL"))) steps.push(`FAIL ${e.message}`);
       }
     });
@@ -1245,6 +1259,7 @@ async function runSpec(spec, labEnv = {}) {
 }
 
 export {
+  failureObservers, diagnosticPage,
   LOAD_TIMEOUT_MS,
   inList,
   showPanel,
