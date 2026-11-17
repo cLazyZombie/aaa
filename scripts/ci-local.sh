@@ -141,6 +141,7 @@ step_test() {
   python3 scripts/check_fixture_secrets.py || return $?
   if [ "$OS" = windows ]; then
     pwsh -NoProfile -File scripts/test-windows-sshd-command.ps1 || return $?
+    pwsh -NoProfile -File scripts/test-windows-sshd-profile.ps1 || return $?
     cargo test --profile verify --workspace --locked --no-fail-fast; return $?
   fi
   local python_pid python_code=0 rust_code=0

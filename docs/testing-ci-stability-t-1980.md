@@ -52,7 +52,7 @@ GitHub 러너의 개선율을 대신하지 않는다. 최초 실패율과 재확
 | 웹 러너 자원 중복 | 성공 실행 `44072898718`도 3 CPU·worker 2에서 load 15.35→15.58. 45 spec·56 작업에 568초 | 세 독립 macOS 러너로 spec을 나눠 러너마다 worker 1. load가 반드시 낮아진다고 단정하지 않고 변경 후 기록과 비교 |
 | Rust 중첩 병렬도 | Unix owner 실행기는 CPU 슬롯만큼 binary를 실행하지만 workflow가 binary마다 8 thread를 지정 | Unix libtest 1, Windows 2. CI test 단계의 자식 Tokio runtime도 2 thread. Cargo 컴파일 병렬도는 유지 |
 | 조작 준비·기록 복귀 경합 | 02·133·134의 요소 기다림과 138 reload 실패 | t-1967의 사건 대기·sheet 기록 복귀 수리를 유지. 재시도로 이 수리를 대체하지 않음 |
-| route 수명 경합 | 136 `Route is already handled!` | t-1978 선행 수리 필요. route 구간은 그대로 두고 아래 칩 비교 구간만 따로 수리 |
+| route 수명 경합 | 136 `Route is already handled!` | 착지 main의 수리 뒤에도 처음·재확인 모두 실패. HTTP route를 제거하고 실제 읽기 응답의 전달만 사건으로 보류 |
 | 같은 상태의 시점 차이 | 로컬 전수 136에서 블록 칩은 작업 중, 뒤에 읽은 글 속 칩은 검수 대기. 두 상태 모두 허용된 전이 | 한 번의 page.evaluate로 두 칩을 읽고 같은 순간의 일치를 엄격히 단언. 기다림·허용 값·시한은 유지 |
 | 실제 경과 단언 | Windows 질문 guard 5초 단언 실패 | t-1967에서 전달 완료 단언으로 이미 수리됨. 추가 완화 없음 |
 | Windows 설치 PTY 정체 | 3개 실행에서 60초. Enter 관측 후 `ReadConsoleW`가 끝나지 않는 경우와 입력 전 자식 종료 대기를 구분 | 병렬도와 runtime 수만 줄임. 시한 확대·Rust 재시도·ignore 없음. 근본 원인은 아직 미확정이므로 Windows 반복 실행으로 재관찰 |
@@ -86,8 +86,8 @@ CI worker 1에서는 spec 전체와 그 준비를 새 실험실에서 실행한�
 재확인 성공이어도 지우지 않는다. `run-timings.jsonl`에 shard 선택·시도 번호·시작/끝·부하를,
 `run-summary.json`에 최초/재확인 종료 코드·최종 결과를 기록한다. artifact 이름에는 shard를
 포함하여 세 업로드가 충돌하지 않는다. `workflow_dispatch`를 추가해 승인된 branch에서
-전체 ci를 반복 실행할 수 있게 했다. 새 workflow가 main에 등록되기 전에는 승인된
-`hp/**` branch의 최초 push와 run rerun으로 같은 후보를 반복 확인한다.
+전체 ci를 반복 실행할 수 있게 했다. main에 파일이 이미 등록된 workflow라 branch 판의
+workflow_dispatch도 실제 동작함을 확인했다. 최초 push 뒤 같은 SHA를 두 번 명시적으로 dispatch한다.
 
 `ci-local.sh`는 CI 환경 없이 분할·재확인 설정을 받으면 실패한다. `verify.py landing`은
 CI 환경에서도 `AAA_E2E_ONLY`·`AAA_E2E_SHARD`·0이 아닌 `AAA_E2E_RETRIES`를 거부한다.
@@ -132,10 +132,8 @@ spec 분배·재확인 기록을 더했다. 시험 삭제·기기 조합 축소�
 최초 전수의 실패를 삭제하거나 재확인 성공으로 바꾸지 않았다. 마지막 136 수리만 별도 확인한
 결과이므로 최초 전수 실행을 단일 최종 SHA의 gate 통과로 기록하지 않는다.
 
-원문·화면은 작업 전용 target 아래에 보존한다. GitHub CI 반복 실행과 Windows의 변경 후
-결과는 아직 없다. t-1978은 조사 종료 시 main에 없으며, 먼저 반영한 뒤 같은 후보 SHA의
-전체 GitHub CI를 세 번 실행해 최초 실패 수·재확인 회복 수·Windows 설치 PTY·전체 시간을 비교한다.
-진단 branch push는 착지 창 승인 뒤 수행한다.
+원문·화면은 작업 전용 target 아래에 보존한다. 위 표는 GitHub push 전의 개발 확인이다.
+이후 q-4171 1A로 진단 push·CI 3회를 승인받았으며, 착지 main 포함과 반복 CI의 결과는 아래에 기록한다.
 
 착지 창의 최종 통합 SHA에서 전체 ci-local과 양 OS strict cross를 수행하는 절차는 유지한다.
 이 개발 단계의 부분 검사를 최종 착지 gate 통과로 기록하지 않는다.
@@ -212,3 +210,41 @@ Cargo 캐시에 runner.arch를 넣어 두 아키텍처의 산출물이 같은 �
 [GitHub의 공식 러너 표](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)는
 macos-15-intel을 Intel 4 CPU·14 GB RAM, macos-15를 arm64 3 CPU·7 GB RAM으로 명시한다.
 Intel에서도 같은 전체 CI 후보의 실제 결과를 확인하며 대기 실패가 없어졌다고 미리 단정하지 않는다.
+
+
+## E2E 136의 HTTP route 의존 제거
+
+착지 main을 포함한 후보는 처음과 허용된 재확인 모두 `route.continue`에서 실패했다.
+추적만 추가한 GitHub arm64 독립 진단 8회와 로컬 Node 24·26 각각 5회는 성공했으므로
+자연 실패의 정확한 내부 사건 순서는 아직 입증하지 못했다.
+
+화면에서 필요한 계약은 읽기 중 그림 붙이기·통계 미도착 시 버리기 거부·초기 branch 선택이다.
+이를 위해 HTTP interceptor를 쓰지 않고, 실제 fetch를 원래 인자로 한 번 실행한 뒤
+실제 응답의 화면 전달만 exposeBinding 사건으로 보류한다. 원본 응답의 본문·상태·헤더를 그대로 반환한다.
+배경 갱신은 응답 도착 때가 아니라 요청 시작 때의 실제 pointerdown 표지로 가려 교착을 막는다.
+136의 두 페이지에서 route 등록·해제·continue를 모두 제거했다. 제품·시한·화면 단언은 바꾸지 않는다.
+
+실제 loopback HTTP·Chromium·WebKit으로 인증 cookie·추가 헤더·본문·201 상태·응답 헤더가 유지되고,
+서버가 처리한 응답만 화면에 보류되며, 다른 API는 바로 끝나고 요청이 중복되지 않음을 확인했다.
+요청 시작 뒤 pointer 표지가 바뀌어도 배경 요청은 막지 않는 순서도 사건으로 고정했다.
+이 변경의 실제 host·agent E2E 136 전체는 Node 24에서 새 실험실 3/3 통과했다(재확인 0).
+
+이 방식은 기존 E2E의 panel-scroll-capabilities와 composer-attachments에서 실제 응답 전달을
+보류하는 구조를 따른다. 별도 라이브러리나 mock 응답을 추가하지 않았다.
+
+
+## Windows 반복 진단의 디스크 정리
+
+준비 원인 진단 후보의 실제 SYSTEM SSH·SCM owner는 새 계정 6회 성공했다.
+일곱 번째는 서비스 검증 전에 `work_space_insufficient`로 실패했다(20GB 필요, 19.79GB 남음).
+이 실패는 원래 `service_ready_unverified`와 다르며 별도 보존한다. 후자는 아직 재현하지 못했다.
+스크립트는 사용자·서비스를 지웠지만 성공한 사용자 프로필의 설치 사본을 남겼다.
+
+성공한 owner 뒤에만, 이번 New-LocalUser가 반환한 SID·일회 계정 이름·프로필 경로 끝 이름을 대조하고
+Special=false·Loaded=false인 정확한 프로필 하나를 CIM으로 제거한다. 실패한 실험실은 남긴다.
+다른 계정·다른 SID·다른 경로·특수·사용 중 프로필은 지우지 않는 비특권 검사를 추가했다.
+암호 지우기는 정리 오류가 있어도 finally에서 수행한다. 기본 20GB 조건이나 설치 단언은 바꾸지 않는다.
+
+[Win32_UserProfile의 SID·Loaded·Special](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/userprofileprov/win32-userprofile)과
+[Remove-CimInstance의 정확한 객체 삭제](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/remove-ciminstance)를 기준으로 했다.
+이 코드는 일회성 Windows GitHub VM의 소유한 시험 계정만 다룬다.

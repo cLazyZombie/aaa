@@ -4,6 +4,7 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:OS -ne 'Windows_NT') { throw '일회성 Windows CI 전용이다' }
 . (Join-Path $PSScriptRoot 'windows-sshd-test-command.ps1')
+. (Join-Path $PSScriptRoot 'windows-sshd-test-profile.ps1')
 # 사용자·서비스·보호 입력을 만들기 전에 이번 build의 실행 파일과 cargo를 확인한다.
 $test = New-WindowsSshTestProcess (Join-Path $PSScriptRoot '..')
 $binaryHash = (Get-FileHash -LiteralPath $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_BINARY'] -Algorithm SHA256).Hash
@@ -21,6 +22,7 @@ $password = 'Aa1!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToStrin
 $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
 $createdUser = $false
 $createdService = $false
+$testPassed = $false
 function Write-LabDiagnostic([string]$Message) {
     # 진단에도 보호 입력을 그대로 내보내지 않는다. 환경·키·설정 본문은 수집하지 않는다.
     [Console]::Out.WriteLine($Message.Replace($password, '<redacted>'))
@@ -72,7 +74,7 @@ function Show-SshdStartupFailure([DateTime]$Since) {
     }
 }
 try {
-    [void](New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires)
+    $createdAccount = New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires
     $createdUser = $true
     $admins = Get-LocalGroup -SID 'S-1-5-32-544'
     Add-LocalGroupMember -Group $admins -Member $user
@@ -150,15 +152,24 @@ Host ci
     [Console]::Error.Write($stderr)
     Write-Host ('M4 stage=test profile=verify binary=target/e2e/aaa.exe exit=' + $test.ExitCode)
     if ($test.ExitCode -ne 0) { throw ('M4 SYSTEM sshd·SCM owner 실패: profile=verify binary=target/e2e/aaa.exe exit=' + $test.ExitCode) }
+    $testPassed = $true
 } finally {
-    # 이 시험 전에는 없었고 일회 계정 소유인 서비스만 정리한다.
-    $agent = Get-CimInstance Win32_Service -Filter "Name='aaa-agent'" -ErrorAction SilentlyContinue
-    if ($agent -and $agent.StartName.EndsWith('\' + $user, [StringComparison]::OrdinalIgnoreCase)) {
-        Stop-Service -Name 'aaa-agent' -ErrorAction SilentlyContinue
-        & sc.exe delete aaa-agent | Out-Null
+    try {
+        # 이 시험 전에는 없었고 일회 계정 소유인 서비스만 정리한다.
+        $agent = Get-CimInstance Win32_Service -Filter "Name='aaa-agent'" -ErrorAction SilentlyContinue
+        if ($agent -and $agent.StartName.EndsWith('\' + $user, [StringComparison]::OrdinalIgnoreCase)) {
+            Stop-Service -Name 'aaa-agent' -ErrorAction SilentlyContinue
+            & sc.exe delete aaa-agent | Out-Null
+        }
+        if ($createdService) { Stop-Service -Name $service -ErrorAction SilentlyContinue; & sc.exe delete $service | Out-Null }
+        if ($createdUser) {
+            try {
+                # 실패 증거는 남긴다. 성공한 프로필을 두면 독립 반복이 기본 20GB 여유 검사에서 멈춘다.
+                if ($testPassed) { Remove-WindowsSshTestProfile $createdAccount }
+            } finally { Remove-LocalUser -Name $user }
+        }
+    } finally {
+        $password = $null
+        $secure.Dispose()
     }
-    if ($createdService) { Stop-Service -Name $service -ErrorAction SilentlyContinue; & sc.exe delete $service | Out-Null }
-    if ($createdUser) { Remove-LocalUser -Name $user }
-    $password = $null
-    $secure.Dispose()
 }

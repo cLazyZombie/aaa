@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import { aaa, root, step, browser, webkit, pairPage, inList, domIs, until, shot, finishFixtureFollowups } from "../lib/harness.mjs";
+import { designReadGate } from "../lib/design-read-gate.mjs";
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -94,10 +95,10 @@ const save = (slug, path, text, base) => {
 
 export default async function () {
   let page;
-  let beforeCall = async () => {};
-  let routePhase = "등록";
-  const routeTrace = (event, detail = {}) => {
-    if (process.env.AAA_E2E_ROUTE_DIAGNOSTIC === "1") console.error(JSON.stringify({ event, phase: routePhase, ...detail }));
+  let holdRead = async () => {};
+  let readPhase = "등록";
+  const readTrace = (event, detail = {}) => {
+    if (process.env.AAA_E2E_ROUTE_DIAGNOSTIC === "1") console.error(JSON.stringify({ event, phase: readPhase, ...detail }));
   };
   const tasks = {};
   // 3-2에서 맡긴 할 일과 그 구현 thread(3-3 고침 알림이 쓴다)
@@ -139,22 +140,14 @@ export default async function () {
   }, { always: true });
 
   await step("트리 branch 표시와 branch 판 보기", async () => {
-    ({ page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, { serviceWorkers: "block" }));
-    // 단계마다 unroute → route로 교체하면, 제거할 때 서버가 자동 통과시킨 요청의
-    // 늦은 route 사건을 새 handler가 받아 다시 continue할 수 있다. 이 페이지에서 한 번만 건다.
-    await page.route("**/api/v1/call", async (route) => {
-      const op = route.request().postDataJSON()?.op;
-      routeTrace("route-start", { op });
-      try {
-        await beforeCall(route.request());
-        routeTrace("route-continue", { op });
-        await route.continue();
-        routeTrace("route-end", { op });
-      } catch (error) {
-        routeTrace("route-error", { op, error: error.message });
-        throw error;
-      }
-    });
+    ({ page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, {
+      serviceWorkers: "block",
+      setup: ctx => designReadGate(ctx, async (request, armed) => {
+        readTrace("read-response-held", { op: request.op });
+        await holdRead(request, armed);
+        readTrace("read-response-released", { op: request.op });
+      }),
+    }));
     await page.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
     await inList(page, "activity-design");
     const repoRow = page.locator('[data-testid="design-repo"][data-repo="app"]');
@@ -363,9 +356,9 @@ export default async function () {
     let release;
     const held = new Promise((r) => { release = r; });
     let holding = 0, passed = 0;
-    routePhase = "그림 읽기 보류";
-    beforeCall = async (request) => {
-      if (request.postDataJSON()?.op !== "design_read") return;
+    readPhase = "그림 읽기 보류";
+    holdRead = async (request) => {
+      if (request.op !== "design_read") return;
       holding++;
       await held;
       passed++;
@@ -380,8 +373,8 @@ export default async function () {
     assert.ok(holding > 0 && await page.getByTestId("design-body").count() === 0, "문서를 다시 읽는 중에 올렸다");
     release();
     await until("붙잡은 읽기를 놓음", () => passed === holding, 10_000);
-    beforeCall = async () => {};
-    routePhase = "그림 읽기 해제";
+    holdRead = async () => {};
+    readPhase = "그림 읽기 해제";
     // 보는 문서(loop/README.md)는 shop·floors가 고쳤고 이 대화는 고치지 않았다
     await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
     const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
@@ -424,11 +417,10 @@ export default async function () {
     await page.getByTestId("design-reload").first().evaluate((button) => {
       button.addEventListener("pointerdown", () => { button.dataset.discardReadGate = "armed"; }, { capture: true, once: true });
     });
-    routePhase = "버리기 읽기 보류";
-    beforeCall = async (request) => {
-      const req = request.postDataJSON();
-      if (req?.op === "design_tree" && req.repo === "app" && !req.cached) {
-        if (await page.getByTestId("design-reload").first().getAttribute("data-discard-read-gate") === "armed") {
+    readPhase = "버리기 읽기 보류";
+    holdRead = async (request, armed) => {
+      if (request.op === "design_tree" && request.repo === "app" && !request.cached) {
+        if (armed) {
           sawHeld();
           await gate;
         } else {
@@ -461,11 +453,8 @@ export default async function () {
       fs.writeFileSync(`${root}/discard-gate.html`, await page.content());
       throw error;
     } finally {
-      routePhase = "버리기 종료";
-      routeTrace("unroute-start");
+      readPhase = "버리기 종료";
       release();
-      await page.unrouteAll({ behavior: "wait" });
-      routeTrace("unroute-end");
       await page.context().close();
     }
   });
@@ -543,11 +532,9 @@ export default async function () {
       serviceWorkers: "block",
       hash: `#design=${encodeURIComponent("app/docs/exit.md")}`,
       init: () => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"),
-      route: ["**/api/v1/call", async (route) => {
-        const req = route.request().postDataJSON();
-        if (req?.op === "design_tree" && req.repo === "app" && !req.cached) await gate;
-        await route.continue();
-      }],
+      setup: ctx => designReadGate(ctx, async request => {
+        if (request.op === "design_tree" && request.repo === "app" && !request.cached) await gate;
+      }),
     });
     try {
       await domIs(p, "boss 통계가 도착하기 전 대화 선택", () => document.querySelector("[data-testid=design-chat-branch]")?.textContent === "boss"
@@ -610,7 +597,6 @@ export default async function () {
       Object.assign(handed, { id, thread });
     } finally {
       release();
-      await p.unrouteAll({ behavior: "wait" });
       await p.context().close();
     }
   });
