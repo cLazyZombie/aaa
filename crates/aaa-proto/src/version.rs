@@ -324,7 +324,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.178: 「main에 반영」이 실행 한도에 걸리면 예약한다(DesignBranchView.apply_wait, 예약 취소 `design_apply_cancel`, t-1955).
 //        옛 host에는 취소를 보내지 않는다(예약은 새 host만 싣는다).
 // 1.179: DesignBranchView.read(agent가 읽은 차이를 실었나: 「main에 들어감」 판정, t-1950).
-pub const FRONT_API: Version = Version { major: 1, minor: 179 };
+// 1.180: 자동화 thread 동작의 저장소 펼치기 `AutomationThread.repos = "design"`와 AutomationExecution.repo(선택, t-1960).
+//        옛 host는 모르는 칸으로 거절한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 180 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

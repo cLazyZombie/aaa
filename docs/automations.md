@@ -174,7 +174,7 @@ machine_pick = "idlest"
 wait = ["timing"]
 ```
 
-`machines`를 비우거나 생략하면 자동 머신이다: workspace 자동 배정을 허용한 머신에서 독점 예약·착지 중 머신을 빼고 열린 thread÷비중으로 고른다([머신 배정](machine-assignment.md)). 승인 범위는 「자동: <workspace>」이고 후보 집합은 사람만 바꾸는 workspace 허용이 정한다. 고정 목록도 독점 예약·착지 중 머신은 후보에서 뺀다. `repo`는 각 후보 머신에 등록한 저장소의 이름 또는 정확한 경로다. 머신마다 하나로 해석돼야 한다. 생략하면 일반 작업 폴더(Dir)를 만든다. `brief_file`·`text_file`·`text` 중 하나로 비지 않은 할 일을 준다. 파일은 프로젝트 폴더 안의 일반 파일이어야 하며 바깥 경로·symlink는 거부한다. 본문/제목의 `{machine}`·`{repo_path}`·`{date}`만 채운다. 조건 자료는 별도 인용 블록으로 붙인다.
+`machines`를 비우거나 생략하면 자동 머신이다: workspace 자동 배정을 허용한 머신에서 독점 예약·착지 중 머신을 빼고 열린 thread÷비중으로 고른다([머신 배정](machine-assignment.md)). 승인 범위는 「자동: <workspace>」이고 후보 집합은 사람만 바꾸는 workspace 허용이 정한다. 고정 목록도 독점 예약·착지 중 머신은 후보에서 뺀다. `repo`는 각 후보 머신에 등록한 저장소의 이름 또는 정확한 경로다. 머신마다 하나로 해석돼야 한다. 생략하면 일반 작업 폴더(Dir)를 만든다. `brief_file`·`text_file`·`text` 중 하나로 비지 않은 할 일을 준다. 파일은 프로젝트 폴더 안의 일반 파일이어야 하며 바깥 경로·symlink는 거부한다. 본문/제목의 `{machine}`·`{repo}`(저장소 이름)·`{repo_path}`·`{date}`만 채운다. 조건 자료는 별도 인용 블록으로 붙인다.
 
 처음과 범위를 넓힐 때만 사람이 승인한다. `aaa routine list --json`의 start_scope와 start_approval_sha256를 검토한 뒤 aaa 세션 밖 터미널에서 `aaa automation approve check <검토한-hash>`를 실행하거나 Controller 웹 「자동화 → 승인 검토」에서 확인한다. 본 뒤 범위가 바뀌었으면 거부하고 다시 검토하라고 알린다. Reader는 읽기만 한다. hash는 정규화한 조건·일정/필터·명령 조회 머신·입력 저장소·해석된 시작 머신/저장소·profile에 묶인다. 주석·순서·본문·제목·선택 예산은 포함하지 않는다. 좁힌 대상/필터와 더 긴 every 주기는 기존 승인 ceiling 안에서 적용한다. 이미 쌓인 차례와 현재 범위가 다르면 그 차례는 취소한다. 본문만 바뀌면 승인 유지·inbox changed/diff 한 번으로 알린다.
 
@@ -195,6 +195,35 @@ wait = ["timing"]
 일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/규칙별 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
 
 확인: `aaa routine runs check`의 승인/holds/연결/profile/명시 상한 대기 까닭과 thread id를 본다. 기다림 중 파일 범위를 고쳤으면 이전 차례 취소 기록을 확인한다. DB/시작 key를 지워 재실행시키지 않는다.
+
+### 저장소마다 펼치기(`repos = "design"`)
+
+같은 일을 여러 저장소에 하려면 저장소마다 파일을 나누지 않고 thread 동작 하나에 `repos = "design"`을 쓴다(t-1960). 파일·승인·카드는 하나이고, 차례 하나가 project.toml에서 `design` 폴더를 적은 저장소마다 입력 하나가 된다. 같은 이름의 저장소는 머신이 달라도 하나로 센다.
+
+```toml
+#:schema ./automation.schema.json
+schema = 2
+title = "기획서 새벽 최신화"
+
+[trigger]
+kind = "schedule"
+daily = "05:00"
+
+[action]
+kind = "thread"
+title = "{repo} 기획서 최신화"
+repos = "design"
+profiles = ["reviewer"]
+machines = ["mac-a", "mac-b"]
+brief_file = "automations/design-refresh.brief.md"
+```
+
+- 머신: `machines`가 있으면 그 목록에서 그 저장소를 등록한 머신만 후보로 삼아 `machine_pick`으로 고른다. 저장소가 없는 머신은 오류가 아니라 그 저장소의 후보가 아닐 뿐이다. 비우면 그 저장소 workspace 자동 배정을 허용한 머신에서 고른다.
+- `repo`·`reuse = "open"`(그래서 memory·close_idle)과 함께 쓰지 않는다.
+- 저장소마다 따로: 입력 id는 `<차례>#<저장소>`이고 시작 key·영수증·실행 기록(`aaa automation runs`의 저장소 칸, 웹 실행 원장)·기다림 까닭이 저장소마다 갈린다. `max_running`은 저장소마다 센다(기본 1이면 저장소마다 하나). 일정 차례 합치기도 저장소마다 한다. 한 저장소가 머신·상한·승인을 기다려도 다른 저장소는 먼저 띄운다.
+- 규칙 전체로 세는 것: `max_per_day`·`min_gap`·`batch`·사용량 문턱·`max_auto_threads`. 펼친 thread 하나가 하루 횟수 하나다.
+- 기획 저장소가 없으면 thread를 띄우지 않고 그 차례를 「기획 폴더가 있는 저장소 없음」 건너뜀으로 적는다. 「지금 실행」은 거부한다.
+- 승인: 범위에는 저장소 이름별로 (머신, 경로) 목록이 들어간다. 저장소를 더하거나 저장소가 있는 머신이 늘면 넓힘이라 규칙에 「승인 필요」가 붙고, 그 저장소 입력만 승인을 기다린다. 이미 승인한 저장소는 계속 돈다. 저장소·머신이 빠지는 것은 좁힘이라 다시 묻지 않는다. 입력에는 자기 저장소 몫의 범위만 담으므로 다른 저장소가 늘거나 빠져도 기다리던 차례를 취소하지 않는다. 「지금 실행」은 규칙 전체가 승인돼야 한다.
 
 ## 배포는 제안까지만(L5)
 

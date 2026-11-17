@@ -37,6 +37,10 @@ fn subset(new: &[String], old: &[String], all_when_empty: bool) -> bool {
 fn matches_repo(path: &str, name: &str) -> bool {
     path == name || Path::new(path).file_name().is_some_and(|s| s == name)
 }
+/// 펼친 입력의 저장소(이름)와 같은 저장소에서 도는 thread인가. 펼치지 않은 입력은 모두 같은 몫이다
+pub(crate) fn same_repo(t: &crate::orch::ThreadRec, repo: Option<&str>) -> bool {
+    repo.is_none_or(|name| t.repo.as_deref().and_then(crate::task_repo::repo_name) == Some(name))
+}
 fn sorted(items: &mut Vec<String>) {
     items.sort();
     items.dedup();
@@ -90,10 +94,46 @@ pub(crate) struct Scope {
     /// 사람이 허용한 머신이다. 고정 머신 규칙은 생략해 기존 승인 hash를 그대로 둔다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     auto: Option<String>,
+    /// 저장소 펼치기(`repos = "design"`). 펼치지 않는 규칙은 생략해 기존 승인 hash를 그대로 둔다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spread: Option<Spread>,
+}
+/// 펼친 저장소 범위. 입력 하나에는 자기 저장소 몫만 담아, 다른 저장소가 늘거나 줄어도 기다리는 차례를 취소하지 않는다
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Spread {
+    kind: aaa_proto::AutomationRepos,
+    /// `machines`를 비웠다: 후보는 기동 때 그 저장소 workspace 자동 배정을 허용한 머신으로 다시 거른다
+    auto: bool,
+    /// 저장소 이름 → 그 이름으로 등록한 (머신 id, 경로). 고정 머신이면 그 목록의 머신만 담는다
+    repos: BTreeMap<String, BTreeSet<(String, String)>>,
 }
 impl Scope {
+    /// 펼친 규칙의 저장소 이름 목록(이름순). 펼치지 않는 규칙은 None
+    pub(crate) fn spread_repos(&self) -> Option<Vec<String>> {
+        self.spread.as_ref().map(|s| s.repos.keys().cloned().collect())
+    }
+    /// 저장소 하나 몫의 범위. 그 저장소가 범위에 없으면 None
+    pub(crate) fn for_repo(&self, name: &str) -> Option<Self> {
+        let spread = self.spread.as_ref()?;
+        let one = spread.repos.get(name)?.clone();
+        Some(Self {
+            spread: Some(Spread { repos: BTreeMap::from([(name.to_string(), one)]), ..spread.clone() }),
+            ..self.clone()
+        })
+    }
     fn covers(&self, new: &Self) -> bool {
-        self.auto == new.auto
+        // 저장소 추가·머신 추가는 넓힘(재승인), 빠짐은 좁힘이다. 저장소별로 따로 본다
+        let spread = match (&self.spread, &new.spread) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                a.kind == b.kind
+                    && a.auto == b.auto
+                    && b.repos.iter().all(|(name, set)| a.repos.get(name).is_some_and(|old| set.is_subset(old)))
+            }
+            _ => false,
+        };
+        spread
+            && self.auto == new.auto
             && self.command == new.command
             && self.query_machine == new.query_machine
             && covers_on(&self.on, &new.on)
@@ -127,7 +167,33 @@ pub(crate) enum Decision {
 impl Host {
     pub(crate) fn automation_start_scope(&self, p: &str, r: &Routine, a: &Start) -> Result<Scope, ErrorBody> {
         let registered = self.registered_repos(p)?;
-        let auto = if a.machines.is_empty() {
+        let spread = match a.repos {
+            None => None,
+            Some(kind) => {
+                let machines = a
+                    .machines
+                    .iter()
+                    .map(|name| self.resolve_machine(Some(name)))
+                    .collect::<Result<BTreeSet<_>, _>>()?;
+                let names: BTreeSet<String> = self
+                    .settings(p)
+                    .designs
+                    .iter()
+                    .filter_map(|d| crate::task_repo::repo_name(&d.repo.path).map(str::to_owned))
+                    .collect();
+                let mut repos: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+                for (mid, path) in &registered {
+                    let Some(name) = crate::task_repo::repo_name(path).filter(|n| names.contains(*n)) else { continue };
+                    if machines.is_empty() || machines.contains(mid) {
+                        repos.entry(name.to_string()).or_default().insert((mid.clone(), path.clone()));
+                    }
+                }
+                Some(Spread { kind, auto: a.machines.is_empty(), repos })
+            }
+        };
+        let auto = if spread.is_some() {
+            None
+        } else if a.machines.is_empty() {
             let workspace = match &a.repo {
                 None => crate::tasks::REPO_DIR.to_string(),
                 Some(name) => {
@@ -142,7 +208,7 @@ impl Host {
             None
         };
         let mut targets = BTreeMap::new();
-        for machine in &a.machines {
+        for machine in a.machines.iter().filter(|_| spread.is_none()) {
             let mid = self.resolve_machine(Some(machine))?;
             let repo = if let Some(name) = &a.repo {
                 let found: Vec<_> =
@@ -209,6 +275,7 @@ impl Host {
             targets,
             profiles: a.profiles.iter().cloned().collect(),
             auto,
+            spread,
         })
     }
     /// project.toml repos의 (머신 id, 경로)
@@ -251,6 +318,18 @@ impl Host {
             }
         };
         let mut text = format!("조건: {condition}\n시작 후보:\n");
+        if let Some(spread) = &scope.spread {
+            if spread.repos.is_empty() {
+                text.push_str("- 기획 폴더가 있는 저장소 없음\n");
+            }
+            for (name, places) in &spread.repos {
+                let machines = places.iter().map(|(mid, _)| self.machine_name(mid)).collect::<Vec<_>>().join(", ");
+                text.push_str(&format!(
+                    "- 저장소 {name}마다 thread 하나 · {}{machines}\n",
+                    if spread.auto { "자동 배정을 허용한 머신 중: " } else { "" }
+                ));
+            }
+        }
         if let Some(workspace) = &scope.auto {
             text.push_str(&format!(
                 "- 자동: {workspace} 자동 배정을 허용한 머신(독점 예약·착지 중 제외, 열린 thread÷비중)\n"
@@ -413,7 +492,18 @@ impl Host {
         if let Some(id) = self.db.meta(&start_key(p, &r.name, &event.id)).map_err(internal)? {
             return Ok(Decision::Complete(id));
         }
-        let current = self.automation_start_scope(p, r, a)?;
+        let full = self.automation_start_scope(p, r, a)?;
+        // 펼친 입력은 자기 저장소 몫만 견준다. 다른 저장소가 늘거나 빠져도 이 차례는 그대로다
+        let current = match (&event.repo, full.spread.is_some()) {
+            (Some(name), true) => match full.for_repo(name) {
+                Some(scope) => scope,
+                None => {
+                    return Ok(Decision::Skip(format!("저장소 {name}이 펼치기 범위에서 빠져 이전 차례를 취소함")));
+                }
+            },
+            (None, false) => full,
+            _ => return Ok(Decision::Skip("규칙 범위가 바뀌어 이전 차례를 취소함".into())),
+        };
         let Some(scope) = &event.start_scope else {
             return self.automation_wait(p, r, event, a, now, "입력의 승인 범위 기록 없음 · 확인 필요".into());
         };
@@ -462,8 +552,15 @@ impl Host {
             .map_err(internal)?;
         let active: Vec<_> = recs.iter().filter(|r| r.holds_slot()).collect();
         let cap = r.limits.max_running.filter(|cap| *cap > 0).unwrap_or(1);
-        if active.iter().filter(|t| t.automation.as_deref() == Some(&r.name)).count() >= cap as usize {
-            return self.automation_wait(p, r, event, a, now, format!("자동화 thread 규칙 동시 실행 상한 {cap}"));
+        // 펼친 규칙의 상한은 저장소마다 따로 센다
+        if active
+            .iter()
+            .filter(|t| t.automation.as_deref() == Some(&r.name) && same_repo(t, event.repo.as_deref()))
+            .count()
+            >= cap as usize
+        {
+            let what = event.repo.as_deref().map(|name| format!(" · 저장소 {name}")).unwrap_or_default();
+            return self.automation_wait(p, r, event, a, now, format!("자동화 thread 규칙 동시 실행 상한 {cap}{what}"));
         }
         if self.cfg.projects.max_auto_threads > 0
             && active.iter().filter(|t| t.automation.is_some()).count() >= self.cfg.projects.max_auto_threads as usize
@@ -473,7 +570,39 @@ impl Host {
         let mut candidates = Vec::new();
         let mut blocked = Vec::new();
         // 자동 머신: workspace 허용 → 독점 예약·착지 중 제외 → 열린 thread÷비중 차례. 고정 목록도 예약·착지 중 머신은 뺀다
-        let names: Vec<(String, Option<String>)> = if let Some(workspace) = &scope.auto {
+        let names: Vec<(String, Option<String>)> = if let Some(spread) = &scope.spread {
+            let Some(name) = event.repo.as_deref() else {
+                return Ok(Decision::Skip("펼친 입력에 저장소가 없어 취소함".into()));
+            };
+            let places = spread.repos.get(name).cloned().unwrap_or_default();
+            let order = if spread.auto {
+                let (order, out) = self.auto_machine_order(p, None);
+                blocked.extend(out);
+                let mut allowed = Vec::new();
+                for machine in order {
+                    if self.workspace_allowed(p, name, &machine)? {
+                        allowed.push(machine);
+                    }
+                }
+                allowed
+            } else {
+                a.machines.clone()
+            };
+            let mut names = Vec::new();
+            for machine in order {
+                let mid = self.resolve_machine(Some(&machine))?;
+                let found: Vec<_> = places.iter().filter(|(m, _)| m == &mid).collect();
+                match found.as_slice() {
+                    [] => {}
+                    [(_, path)] => names.push((machine, Some(path.clone()))),
+                    _ => blocked.push(format!("{machine} {name} 저장소를 하나로 찾지 못함")),
+                }
+            }
+            if names.is_empty() && blocked.is_empty() {
+                blocked.push(format!("{name} 저장소가 있는 후보 머신 없음"));
+            }
+            names
+        } else if let Some(workspace) = &scope.auto {
             let (order, out) = self.auto_machine_order(p, None);
             blocked.extend(out);
             let registered = self.registered_repos(p)?;
@@ -549,7 +678,7 @@ impl Host {
                 continue;
             }
             // 자동 머신은 비중 차례를 그대로 쓴다. 고정 목록은 지금처럼 Working 수·CPU·목록 순서다
-            let (working, cpu) = if scope.auto.is_some() {
+            let (working, cpu) = if scope.auto.is_some() || scope.spread.as_ref().is_some_and(|s| s.auto) {
                 (0, 0)
             } else {
                 let working = active
@@ -584,7 +713,11 @@ impl Host {
                 .collect::<Result<_, _>>()?;
             profile = week_profile(&choices, &report).unwrap_or(&profile).to_string();
         }
-        Ok(Decision::Ready(Choice { repo, machine: mid, profile, workspace: scope.auto.clone() }))
+        let workspace = match &scope.spread {
+            Some(spread) if spread.auto => event.repo.clone(),
+            _ => scope.auto.clone(),
+        };
+        Ok(Decision::Ready(Choice { repo, machine: mid, profile, workspace }))
     }
     pub(crate) async fn automation_start(
         self: &Arc<Self>,
@@ -612,8 +745,10 @@ impl Host {
         let offset = crate::routine::local_offset_secs((event.at_ms / 1000) as i64);
         let date = aaa_common::util::utc_iso(((event.at_ms as i128) + (i128::from(offset) * 1000)).max(0) as u64);
         let machine = self.machine_name(&choice.machine);
+        let repo_name = choice.repo.as_deref().and_then(crate::task_repo::repo_name).unwrap_or("");
         let fill = |text: &str| {
             text.replace("{machine}", &machine)
+                .replace("{repo}", repo_name)
                 .replace("{repo_path}", choice.repo.as_deref().unwrap_or(""))
                 .replace("{date}", &date[..10])
         };
@@ -665,6 +800,7 @@ impl Host {
                 rule: r.name.clone(),
                 max_running: r.limits.max_running,
                 max_auto_threads: self.cfg.projects.max_auto_threads,
+                repo: event.repo.clone(),
             },
         };
         let args = crate::orch::StartArgs {

@@ -389,3 +389,79 @@ for line in sys.stdin:
     probe("child");
     w.h.ok(&["thread", "resolve", "demo", &id]);
 }
+
+/// 저장소 펼치기(t-1960): 실제 host·agent·Git과 CLI로 범위 보기 → 사람 승인 → 지금 실행 → 기획 저장소마다 thread 하나 →
+/// 실행 원장의 저장소 칸. 기획 폴더가 없는 저장소는 띄우지 않는다.
+#[test]
+fn automation_spread_starts_one_thread_per_design_repo() {
+    let w = world_with("tick_secs=1\n");
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    let tool = w.lab.root.join("tool");
+    let plain = w.lab.root.join("plain");
+    for clone in [&tool, &plain] {
+        git(&w.lab.root, &["clone", "-q", path_str(&w.lab.root.join("origin.git")), path_str(clone)]);
+        git(clone, &["config", "protocol.https.allow", "never"]);
+    }
+    for repo in [&w.repo, &tool, &plain] {
+        w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labA", path_str(repo))]);
+    }
+    let file = w.projects.join("demo/project.toml");
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    for repo in [&w.repo, &tool] {
+        let entry = format!("path = {:?}\nmachine = \"labA\"\n", path_str(repo));
+        assert!(text.contains(&entry), "{text}");
+        text = text.replace(&entry, &format!("{entry}design = \"docs\"\n"));
+    }
+    std::fs::write(&file, text).unwrap();
+    let dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("check.toml"),
+        "#:schema ./automation.schema.json\nschema = 2\ntitle = \"기획서 최신화\"\n\n[trigger]\nkind = \"schedule\"\ndaily = \"05:00\"\n\n[action]\nkind = \"thread\"\ntitle = \"{repo} 기획서 최신화\"\nrepos = \"design\"\nprofiles = [\"fake\"]\nmachines = [\"labA\"]\ntext = \"noreport\"\n",
+    )
+    .unwrap();
+    let rule = wait_for("자동화 승인 범위", T, || {
+        w.h.ok(&["routine", "list", "demo"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["start_approval_sha256"].is_string())
+            .cloned()
+    });
+    let scope = rule["start_scope"].as_str().unwrap();
+    assert!(
+        scope.contains("저장소 repo마다") && scope.contains("저장소 tool마다") && !scope.contains("plain"),
+        "{scope}"
+    );
+    w.h.in_terminal(&["automation", "approve", "check", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
+    w.h.ok(&["automation", "run", "check"]);
+    let started = wait_for("저장소마다 자동화 thread 시작", T, || {
+        w.h.ticks(1);
+        let events = automatic(&w);
+        (events.len() == 2).then_some(events)
+    });
+    let mut seen: Vec<(String, String)> = started
+        .iter()
+        .map(|e| {
+            let shown =
+                w.wait_show("자동 worker brief", e["thread"].as_str().unwrap(), |v| v["brief"] == "delivered");
+            (shown["repo"].as_str().unwrap().to_string(), shown["title"].as_str().unwrap().to_string())
+        })
+        .collect();
+    seen.sort();
+    let mut want = vec![
+        (path_str(&w.repo).to_string(), "repo 기획서 최신화".to_string()),
+        (path_str(&tool).to_string(), "tool 기획서 최신화".to_string()),
+    ];
+    want.sort();
+    assert_eq!(seen, want);
+    let runs = w.h.ok(&["automation", "runs", "check"]);
+    let mut repos: Vec<_> = runs["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["state"] == "succeeded")
+        .filter_map(|r| r["repo"].as_str())
+        .collect();
+    repos.sort();
+    assert_eq!(repos, ["repo", "tool"], "{runs}");
+}

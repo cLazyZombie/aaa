@@ -739,12 +739,24 @@ impl Host {
             observe: None,
             revision: String::new(),
             original: None,
+            repo: None,
         };
+        // 펼치는 규칙은 저장소마다 입력 `<id>#<저장소>`가 된다: 대기 기록도 그 id로 남긴다
+        let spread = match &r.action {
+            super::Action::Start(a) => self.automation_start_scope(p, &r, a)?.spread_repos(),
+            _ => None,
+        };
+        if spread.as_ref().is_some_and(Vec::is_empty) {
+            return Err(bad("기획 폴더가 있는 저장소가 없어 띄울 thread가 없다"));
+        }
         let accepted = self.automation_accept(p, &r, event)?;
         if !accepted {
             return Ok((false, "이미 받은 실행이다".into()));
         }
-        self.record_routine(p, name, &id, "waiting", "지금 실행 · 차례 기다림", None);
+        let ids = spread.map_or_else(|| vec![id.clone()], |names| names.iter().map(|n| format!("{id}#{n}")).collect());
+        for id in &ids {
+            self.record_routine(p, name, id, "waiting", "지금 실행 · 차례 기다림", None);
+        }
         self.db.audit(actor, "automation_run", &format!("{p}/{name}"));
         self.flow_project(p, "automation_run", Some(r.file.clone()), name.to_string());
         self.tick_wake.notify_one();
@@ -826,6 +838,21 @@ mod tests {
         let ok = serde_json::json!({"on":{"schedule":{"every":"1m"}},"do":{"inbox":{"text":"본다"}}});
         let e = merge_form("automations/x.toml", "title = \n", ok).unwrap_err();
         assert!(e.contains("TOML에서 먼저 고친다"), "{e}");
+    }
+
+    /// 웹 폼의 「기획 폴더가 있는 저장소마다」 토글: schema 2 파일에 repos 줄만 쓰고 지운다.
+    #[test]
+    fn merge_writes_and_removes_repo_spread_in_v2_file() {
+        let text = "#:schema ./automation.schema.json\nschema = 2\ntitle = \"기획\"\n\n[trigger]\nkind = \"schedule\"\ndaily = \"05:00\"\n\n# 동작\n[action]\nkind = \"thread\"\ntitle = \"{repo} 기획\"\nprofiles = [\"reviewer\"]\nbrief_file = \"automations/x.brief.md\"\n";
+        assert_eq!(merge_form("automations/x.toml", text, form(text)).unwrap(), text);
+        let mut f = form(text);
+        f["do"]["start"]["repos"] = "design".into();
+        let on = merge_form("automations/x.toml", text, f).unwrap();
+        assert!(on.contains("repos = \"design\"\n") && on.contains("# 동작\n"), "{on}");
+        assert_eq!(on.lines().count(), text.lines().count() + 1, "{on}");
+        let mut f = form(&on);
+        f["do"]["start"].as_object_mut().unwrap().remove("repos");
+        assert_eq!(merge_form("automations/x.toml", &on, f).unwrap(), text);
     }
 
     #[test]

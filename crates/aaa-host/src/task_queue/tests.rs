@@ -1268,6 +1268,7 @@ fn automation_threads_have_atomic_separate_slots_and_restart_limits() {
         rule: "check".into(),
         max_running: None,
         max_auto_threads: 0,
+        repo: None,
     };
     let insert = |automatic: bool| {
         lab.h.db.thread_insert_admitted("demo", None, automatic.then_some(&policy), Some(1), None, |id| {

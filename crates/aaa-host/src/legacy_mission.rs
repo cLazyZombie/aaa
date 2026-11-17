@@ -217,6 +217,7 @@ impl Definition {
             close_idle: Some("30m".into()),
             title: string("title").filter(|v| !v.is_empty()).unwrap_or_else(|| name.into()),
             repo: string("repo"),
+            repos: None,
             profiles: vec![profile],
             machines: vec![machine],
             profile_pick: Default::default(),

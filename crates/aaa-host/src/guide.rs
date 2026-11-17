@@ -636,6 +636,10 @@ const AUTOMATION: &str = r#"# 자동화
 - 자동화 기억은 공통 SessionStart(compact/resume) 안내로 다시 읽는다. harness 이름을 고정하지 않는다.
   processed.txt는 입력 처리 확인이며 작업 성공 증거가 아니다. 처리 결과는 자기 입력 execution_ids에 대해
   `aaa automation input complete <실행 ID>... --outcome completed|failed|needs-decision [--report r-NNNN]`으로 남긴다.
+- 여러 저장소에 같은 일을 하려면 저장소마다 파일을 나누지 않고 thread 동작에 `repos = "design"`을 쓴다.
+  project.toml에 design 폴더가 있는 저장소마다 thread 하나를 띄우고, 머신은 그 저장소가 있는 머신 중에서 고른다.
+  `repo`·`reuse = "open"`과 함께 쓰지 않는다. 제목·본문의 `{repo}`가 저장소 이름이다. 상한·대기·실행 기록은 저장소마다 따로다.
+  기획 저장소가 늘면 그 저장소만 시작 범위 재승인을 기다린다.
 - 기존 notice를 thread 시작으로 임의 변경하지 않는다.
   멈추려면 `enabled = false`로 둔다.
 "#;

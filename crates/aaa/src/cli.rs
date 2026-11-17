@@ -6055,7 +6055,8 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::AutomationExecutions { runs, next } => {
             for run in runs {
-                let _ = writeln!(s, "{}\t{:?} · {:?} · {}", run.id, run.state, run.receipt, run.reason);
+                let repo = run.repo.as_ref().map(|r| format!(" · {r}")).unwrap_or_default();
+                let _ = writeln!(s, "{}\t{:?} · {:?}{repo} · {}", run.id, run.state, run.receipt, run.reason);
             }
             if let Some(next) = next {
                 let _ = writeln!(s, "이전 실행: --before {next}");
@@ -6064,10 +6065,11 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AutomationExecution { run } => {
             let _ = writeln!(
                 s,
-                "{}\t{:?} · {:?}\n{}\nthread: {} · 후속 결과: {}",
+                "{}\t{:?} · {:?}{}\n{}\nthread: {} · 후속 결과: {}",
                 run.id,
                 run.stage,
                 run.state,
+                run.repo.as_ref().map(|r| format!(" · 저장소 {r}")).unwrap_or_default(),
                 run.reason,
                 run.thread.as_deref().unwrap_or("미연결"),
                 run.outcome.as_deref().unwrap_or("미연결")
@@ -6085,7 +6087,8 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::RoutineRuns { runs, executions, .. } => {
             for run in executions {
-                let _ = writeln!(s, "{}\t{:?} · {:?} · {}", run.id, run.state, run.receipt, run.reason);
+                let repo = run.repo.as_ref().map(|r| format!(" · {r}")).unwrap_or_default();
+                let _ = writeln!(s, "{}\t{:?} · {:?}{repo} · {}", run.id, run.state, run.receipt, run.reason);
             }
             if !runs.is_empty() {
                 s.push_str("옛 관측 기록(작업 성공 증거 아님)\n");

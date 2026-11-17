@@ -348,6 +348,7 @@ pub fn typescript_bindings() -> String {
         AutomationNotice::decl(&cfg),
         AutomationMessage::decl(&cfg),
         AutomationThread::decl(&cfg),
+        AutomationRepos::decl(&cfg),
         AutomationReuse::decl(&cfg),
         AutomationProfilePick::decl(&cfg),
         AutomationMachinePick::decl(&cfg),

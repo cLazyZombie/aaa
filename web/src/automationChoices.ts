@@ -138,7 +138,8 @@ export function flowOf(form: Form): Flow | null {
       if (a.reports === true) what.notes.push("사건 thread 보고 붙임");
       where.rows.push({ label: "profile", chips: list(a.profiles), kind: "profile", empty: "없음" });
       where.rows.push({ label: "머신", chips: list(a.machines), kind: "machine", empty: "자동" });
-      where.rows.push({ label: "저장소", chips: str(a.repo) ? [a.repo as string] : [], kind: "repo", empty: "작업 폴더" });
+      if (a.repos === "design") where.rows.push({ label: "저장소", chips: ["기획 폴더가 있는 저장소마다"], kind: "text" });
+      else where.rows.push({ label: "저장소", chips: str(a.repo) ? [a.repo as string] : [], kind: "repo", empty: "작업 폴더" });
       break;
     case "command":
       what.title = "승인된 명령 실행";
@@ -157,7 +158,7 @@ export function flowOf(form: Form): Flow | null {
   if (typeof l.usage_week_below === "number") limits.push(`주간 ${l.usage_week_below}% 아래면 쉼`);
   if (str(l.batch)) limits.push(`입력 ${span(l.batch)} 묶음`);
   if (str(l.min_gap)) limits.push(`실행 사이 ${span(l.min_gap)}`);
-  if (ak === "start") limits.push(`동시 ${typeof l.max_running === "number" ? l.max_running : 1}`);
+  if (ak === "start") limits.push(`${a.repos === "design" ? "저장소마다 " : ""}동시 ${typeof l.max_running === "number" ? l.max_running : 1}`);
   limits.push(typeof l.max_per_day === "number" ? `하루 ${l.max_per_day}번` : "하루 상한 없음");
   if (ak === "deploy") limits.push(`새 커밋 ${typeof l.min_commits === "number" ? l.min_commits : 1}개`);
   return { when, what, where, limits };
