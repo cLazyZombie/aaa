@@ -2369,7 +2369,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Plan { cmd } => {
             let project = project_or_here(None)?;
             match cmd {
-                PlanCmd::List => front(json, FrontRequest::DesignTree { project }),
+                PlanCmd::List => front(json, FrontRequest::DesignTree { project, repo: None, cached: false }),
                 PlanCmd::Show { repo, path: Some(path), branch } => {
                     front(json, FrontRequest::DesignRead { project, repo, path, branch })
                 }

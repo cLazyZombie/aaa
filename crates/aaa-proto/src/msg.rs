@@ -3093,6 +3093,14 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
+        /// 저장소 하나만 읽는다(FRONT_API 1.182). 없으면 종전처럼 전부 읽는다
+        #[serde(default)]
+        #[ts(optional)]
+        repo: Option<String>,
+        /// agent를 기다리지 않고 설정·host가 가진 마지막 트리만 돌려준다(FRONT_API 1.182)
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        cached: bool,
     },
     /// 기획 문서 하나(FRONT_API 1.170, 보기 권한). `path`는 저장소 기준 경로이고 기획 폴더 안이어야 한다
     DesignRead {
@@ -4101,7 +4109,7 @@ impl FrontRequest {
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
-            | FrontRequest::DesignTree { project }
+            | FrontRequest::DesignTree { project, .. }
             | FrontRequest::DesignRead { project, .. }
             | FrontRequest::DesignBranchOpen { project, .. }
             | FrontRequest::DesignSave { project, .. }

@@ -152,8 +152,17 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
   const chat = repo?.branches.find((b) => b.slug === chatSlug) ?? null;
   const touching = useMemo(() => (at ? branchesByPath(repo).get(at.path) ?? [] : []), [repo, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   const [tab, setTab] = useState<string>("main");
-  // 문서나 대화가 바뀌면: 그 대화 branch가 이 문서를 고쳤으면 그 판, 아니면 main
-  useEffect(() => { setTab(chat && touching.some((b) => b.slug === chat.slug) ? chat.slug : "main"); }, [key, chat?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 문서·대화마다 자동 선택은 통계를 실제로 읽은 뒤 한 번만 한다. 빠른 목록의 빈 changed는 아직 모르는 값이다.
+  // 같은 문서의 새로 읽기가 사용자가 직접 고른 main/branch 판을 덮지 않게 완료한 선택을 기억한다.
+  const autoTarget = JSON.stringify([key, chat?.slug ?? null]);
+  const autoPicked = useRef<string | null>(null);
+  const chatTouches = !!chat && touching.some((b) => b.slug === chat.slug);
+  useEffect(() => {
+    if (autoPicked.current === autoTarget || (chat && !chat.read)) return;
+    autoPicked.current = autoTarget;
+    setTab(chatTouches && chat ? chat.slug : "main");
+  }, [autoTarget, chat?.read, chatTouches, chat?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+  const selectTab = (value: string) => { autoPicked.current = autoTarget; setTab(value); };
   const pick = useCallback((slug: string) => {
     setChatSlug(slug);
     if (repo) storeChat(repo.repo, slug);
@@ -259,7 +268,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
     setSaving(true);
     try {
       await call({ op: "design_save", repo: at.repo, branch: editing.slug, path: at.path, ...(editing.base ? { base: editing.base } : {}), text: editing.text });
-      setTab(editing.slug);
+      selectTab(editing.slug);
       pick(editing.slug);
       setEditing(null);
       onReload();
@@ -421,7 +430,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
                   const b = repo?.branches.find((x) => x.slug === t);
                   return (
                     <button key={t} type="button" role="tab" aria-selected={tab === t} className={`design-tab${tab === t ? " is-on" : ""}${b?.state === "rest" ? " is-rest" : ""}`}
-                      data-testid="design-tab" data-tab={t} onClick={() => { setTab(t); if (t !== "main") pick(t); }}>
+                      data-testid="design-tab" data-tab={t} onClick={() => { selectTab(t); if (t !== "main") pick(t); }}>
                       {t !== "main" && <GitBranch aria-hidden="true" />}{t}
                     </button>
                   );
@@ -488,7 +497,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, c
               {others.length > 0 && (
                 <div className="design-others">
                   {others.map((b) => (
-                    <button key={b.slug} type="button" className="design-other" data-testid="design-other" onClick={() => { setTab(b.slug); pick(b.slug); }}>
+                    <button key={b.slug} type="button" className="design-other" data-testid="design-other" onClick={() => { selectTab(b.slug); pick(b.slug); }}>
                       <GitBranch aria-hidden="true" /><code>{b.slug}</code>도 이 문서를 고침 · {stateOf(b)}
                     </button>
                   ))}

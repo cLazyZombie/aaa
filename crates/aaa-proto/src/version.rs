@@ -328,7 +328,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        옛 host는 모르는 칸으로 거절한다.
 // 1.181: 기획서 ID(t-1957): `design_ids`(지금 트리의 k-NNNN 목록)·`design_mark_ids`(한 번에 달기), DesignDocEntry.id·id_marked·
 //        id_file, DesignTree.ids, DesignDoc.id. 옛 host의 `design_ids` 거절은 웹이 무시한다(링크 없이).
-pub const FRONT_API: Version = Version { major: 1, minor: 181 };
+// 1.182: DesignTree.repo·cached(t-1969). 웹은 host의 목록을 먼저 그리고 저장소마다 따로 읽어 실패를 격리한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 182 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

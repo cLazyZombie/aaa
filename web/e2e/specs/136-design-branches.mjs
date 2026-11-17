@@ -134,7 +134,7 @@ export default async function () {
   }, { always: true });
 
   await step("트리 branch 표시와 branch 판 보기", async () => {
-    ({ page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }));
+    ({ page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, { serviceWorkers: "block" }));
     await page.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "shop"));
     await inList(page, "activity-design");
     const repoRow = page.locator('[data-testid="design-repo"][data-repo="app"]');
@@ -317,21 +317,52 @@ export default async function () {
     assert.deepEqual(lines.slice(at - 2, at + 1), ["(보는 문서: docs/loop/README.md)", `(그림: ${pic})`, "이 그림으로 시안"]);
     await chat.getByText(`그림 ${pic.split("/").pop()} 붙임`).first().waitFor();
     aaa("plan", "discard", "app", "pics");
+    const refreshed = page.waitForResponse((response) => {
+      const req = response.request();
+      return req.url().endsWith("/api/v1/call") && req.postDataJSON()?.op === "design_tree" && req.postDataJSON()?.repo === "app";
+    });
     await page.getByTestId("design-reload").first().click();
+    await refreshed;
+    await domIs(page, "그림 대화 제거 후 트리 읽기 완료", () => !document.querySelector("[data-testid=design-reload]")?.disabled);
   });
 
-  await step("버리기: 그 대화의 branch를 지우고 트리에서 사라진다", async () => {
-    await page.getByTestId("design-pick").click();
-    await page.getByTestId("design-pick-row").filter({ hasText: "100층까지" }).click();
-    await page.getByTestId("design-chat-more").click();
-    await page.getByTestId("design-discard-open").click();
-    const dialog = page.getByTestId("design-discard-dialog");
-    assert.match(await dialog.textContent(), /main에 없는 commit 2개/);
-    await page.getByTestId("design-discard-submit").click();
-    await dialog.waitFor({ state: "detached" });
-    assert.ok(!branches().some((b) => b.slug === "floors"));
-    await page.locator('[data-testid="design-doc"][data-path="docs/loop/floors.md"]').waitFor({ state: "detached" });
-    await page.context().close();
+  await step("버리기: 통계를 읽기 전에는 막고, 실제 commit 수를 확인해 지운다", async () => {
+    await domIs(page, "직전 트리 읽기 완료", () => !document.querySelector("[data-testid=design-reload]")?.disabled);
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const hold = async (route) => {
+      const req = route.request().postDataJSON();
+      if (req?.op === "design_tree" && req.repo === "app" && !req.cached) await gate;
+      await route.continue();
+    };
+    await page.route("**/api/v1/call", hold);
+    try {
+      const arrived = page.waitForRequest((req) => req.url().endsWith("/api/v1/call") && req.postDataJSON()?.repo === "app" && req.postDataJSON()?.op === "design_tree");
+      await page.getByTestId("design-reload").first().click();
+      await arrived;
+      await page.getByTestId("design-pick").click();
+      await page.getByTestId("design-pick-row").filter({ hasText: "100층까지" }).click();
+      await domIs(page, "아직 읽지 않은 branch 통계", () => document.querySelector("[data-testid=design-chat]")?.dataset.statistics === "pending");
+      await page.getByTestId("design-chat-more").click();
+      assert.equal(await page.getByTestId("design-discard-open").isDisabled(), true, "read=false의 0은 실제 commit 수가 아니다");
+      assert.equal(await page.getByTestId("design-discard-dialog").count(), 0);
+      release();
+      await page.getByTestId("design-discard-open").click();
+      const dialog = page.getByTestId("design-discard-dialog");
+      assert.match(await dialog.textContent(), /main에 없는 commit 2개/);
+      await page.getByTestId("design-discard-submit").click();
+      await dialog.waitFor({ state: "detached" });
+      assert.ok(!branches().some((b) => b.slug === "floors"));
+      await page.locator('[data-testid="design-doc"][data-path="docs/loop/floors.md"]').waitFor({ state: "detached" });
+    } catch (error) {
+      fs.writeFileSync(`${root}/discard-gate-failure.txt`, error.stack ?? String(error));
+      fs.writeFileSync(`${root}/discard-gate.html`, await page.content());
+      throw error;
+    } finally {
+      release();
+      await page.unrouteAll({ behavior: "wait" });
+      await page.context().close();
+    }
   });
 
   await step("블록 표지: 넘긴 할 일 칩·이상 표시·글 속 d-ID·보기 셋·트리 수·대화로 정하기", async () => {
@@ -395,11 +426,23 @@ export default async function () {
     // boss 대화 branch에서 표지 문서에 계획 하나를 더한다(넘기지 않은 계획: 캠프 지도·층 이벤트)
     const d = aaa("plan", "show", "app", "docs/exit.md", "--branch", "boss").doc;
     save("boss", "docs/exit.md", d.text.replace("## 바뀐 것", "> [!계획]\n> **층 이벤트** — 다섯 층마다 이벤트 방.\n\n## 바뀐 것"), d.blob);
-    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, {
+      serviceWorkers: "block",
+      hash: `#design=${encodeURIComponent("app/docs/exit.md")}`,
+      init: () => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"),
+      route: ["**/api/v1/call", async (route) => {
+        const req = route.request().postDataJSON();
+        if (req?.op === "design_tree" && req.repo === "app" && !req.cached) await gate;
+        await route.continue();
+      }],
+    });
     try {
-      await p.evaluate(() => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"));
-      await p.goto(`${new URL(p.url()).origin}/#design=${encodeURIComponent("app/docs/exit.md")}`);
-      // main 판에도 맡기기 단추가 있다(3-3): boss 판으로 바뀐 뒤에 센다
+      await domIs(p, "boss 통계가 도착하기 전 대화 선택", () => document.querySelector("[data-testid=design-chat-branch]")?.textContent === "boss"
+        && document.querySelector("[data-testid=design-chat]")?.dataset.statistics === "pending");
+      release();
+      // main 판에도 맡기기 단추가 있다(3-3): 통계가 도착해 boss 판으로 바뀐 뒤에 센다.
       await domIs(p, "boss 판", () => !!document.querySelector("[data-testid=design-meta]")?.textContent.includes("design/boss"));
       await p.getByTestId("design-handoff").first().waitFor();
       assert.equal(await p.getByTestId("design-handoff").count(), 3, "기획 branch 판의 넘기지 않은 계획만(캠프 지도·상점 위치·층 이벤트)");
@@ -455,6 +498,8 @@ export default async function () {
       git(tree, "merge-base", "--is-ancestor", boss.head, "HEAD");
       Object.assign(handed, { id, thread });
     } finally {
+      release();
+      await p.unrouteAll({ behavior: "wait" });
       await p.context().close();
     }
   });

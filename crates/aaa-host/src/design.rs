@@ -117,7 +117,9 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         use aaa_proto::FrontRequest as R;
         match req {
-            R::DesignTree { project } => self.design_tree(&project).await,
+            R::DesignTree { project, repo, cached } => {
+                self.design_tree_request(&project, repo.as_deref(), cached).await
+            }
             R::DesignRead { project, repo, path, branch } => {
                 self.design_read(&project, &repo, &path, branch.as_deref()).await
             }
@@ -159,6 +161,61 @@ impl Host {
         }
     }
 
+    /// 웹은 host 목록·마지막 트리를 먼저 받고, 저장소별 HTTP 요청으로 갱신한다. 한 요청의 전송 실패나 느린
+    /// agent가 다른 저장소의 응답까지 막지 않는다. CLI의 인자 없는 요청은 기존 전체 읽기를 유지한다.
+    async fn design_tree_request(
+        self: &Arc<Self>,
+        project: &str,
+        repo: Option<&str>,
+        cached: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let started = std::time::Instant::now();
+        tracing::info!(project, repo, cached, "기획 트리 요청 시작");
+        let result = async {
+            if repo.is_none() && !cached {
+                return self.design_tree(project).await;
+            }
+            let mut targets = self.design_targets(project)?;
+            if let Some(repo) = repo {
+                targets.retain(|t| t.name == repo);
+                if targets.is_empty() {
+                    return Err(err(ErrorCode::NotFound, format!("프로젝트 저장소가 아니다: {repo}")));
+                }
+            }
+            let mut repos = Vec::new();
+            for t in targets {
+                repos.push(if cached {
+                    self.design_cached_repo(project, &t)
+                } else {
+                    self.design_repo(project, t).await
+                });
+            }
+            Ok(FrontResponse::DesignTree { repos })
+        }
+        .await;
+        tracing::info!(
+            project,
+            repo,
+            cached,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            ok = result.is_ok(),
+            "기획 트리 요청 끝"
+        );
+        result
+    }
+
+    fn design_cached_repo(&self, project: &str, t: &Target) -> DesignRepoView {
+        DesignRepoView {
+            repo: t.name.clone(),
+            machine: t.machine.clone().unwrap_or_default(),
+            folder: t.folder.clone(),
+            tree: self.design_trees.lock().unwrap().get(&format!("{project}/{}", t.name)).cloned(),
+            error: None,
+            branches: self.design_branch_list(project, &t.name).iter().map(|r| self.design_view(project, r)).collect(),
+            handoffs: self.design_handoff_notes(project, &t.name),
+        }
+    }
+
     /// 프로젝트 저장소마다 기획 트리(머신마다 동시에 읽는다)
     pub(crate) async fn design_tree(self: &Arc<Self>, project: &str) -> Result<FrontResponse, ErrorBody> {
         let targets = self.design_targets(project)?;
@@ -180,15 +237,7 @@ impl Host {
     }
 
     pub(crate) async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
-        let mut view = DesignRepoView {
-            repo: t.name.clone(),
-            machine: t.machine.clone().unwrap_or_default(),
-            folder: t.folder.clone(),
-            tree: None,
-            error: None,
-            branches: Vec::new(),
-            handoffs: self.design_handoff_notes(project, &t.name),
-        };
+        let mut view = self.design_cached_repo(project, &t);
         let Some(folder) = t.folder.clone() else { return view };
         let mid = match self.resolve_machine(t.machine.as_deref()) {
             Ok(mid) => mid,
@@ -217,6 +266,7 @@ impl Host {
             Err(e) => {
                 // 마지막으로 읽은 트리를 보인다(머신이 꺼져 있어도 목록·문서 고르기는 된다)
                 view.tree = self.design_trees.lock().unwrap().get(&key).cloned();
+                tracing::warn!(project, repo = t.name, code = ?e.code, error = e.message, "기획 저장소 읽기 실패");
                 view.error = Some(e.message);
             }
         }
@@ -439,13 +489,50 @@ mod tests {
         let f = h.call_design(
             aaa_proto::DeviceRole::Local,
             "a",
-            aaa_proto::FrontRequest::DesignTree { project: "p".into() },
+            aaa_proto::FrontRequest::DesignTree { project: "p".into(), repo: None, cached: false },
         );
         let size = std::mem::size_of_val(&f);
         drop(f);
         drop(h);
         std::fs::remove_dir_all(&root).unwrap();
         assert!(size <= 8 * 1024, "기획 요청 future {size}바이트: 큰 future는 그 길 안에서 Box::pin 한다");
+    }
+
+    /// agent가 없는 저장소도 목록·마지막 트리는 즉시 돌려주며, 한 저장소 오류를 전체 오류로 올리지 않는다.
+    #[tokio::test]
+    async fn cached_list_and_single_repo_keep_failures_local() {
+        let root = std::env::temp_dir().join(format!("aaa-design-list-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Arc::new(Host::open(cfg, root.join("host")).unwrap());
+        h.project_create("demo", Default::default(), "test").unwrap();
+        std::fs::write(root.join("projects/demo/aaa.toml"),
+            "schema = 1\n[[workspaces]]\npath = \"/w/app\"\nmachine = \"mac-a\"\ndesign = \"docs\"\n\n[[workspaces]]\npath = \"/w/tool\"\n").unwrap();
+        let tree = DesignTree { commit: "old".into(), ..Default::default() };
+        h.design_trees.lock().unwrap().insert("demo/app".into(), tree.clone());
+        let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", None, true).await.unwrap() else {
+            panic!("목록")
+        };
+        assert_eq!(repos.iter().map(|r| r.repo.as_str()).collect::<Vec<_>>(), ["app", "tool"]);
+        assert_eq!(repos[0].tree.as_ref(), Some(&tree));
+        assert!(repos.iter().all(|r| r.error.is_none()));
+        let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", Some("app"), false).await.unwrap()
+        else {
+            panic!("저장소")
+        };
+        assert_eq!(repos.len(), 1);
+        assert!(repos[0].error.is_some());
+        assert_eq!(repos[0].tree.as_ref(), Some(&tree), "머신 이름을 못 풀어도 지난 트리를 보존한다");
+        let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", None, false).await.unwrap() else {
+            panic!("전체")
+        };
+        assert_eq!(repos.len(), 2);
+        assert!(repos[0].error.is_some());
+        assert!(repos[1].error.is_none());
+        assert_eq!(h.design_tree_request("demo", Some("missing"), false).await.unwrap_err().code, ErrorCode::NotFound);
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

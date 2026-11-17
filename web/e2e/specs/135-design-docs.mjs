@@ -124,6 +124,7 @@ export default async function () {
           assert.match(await tool.textContent(), /기획 폴더 없음/);
           // origin을 받지 못한 저장소 줄: 경고와 가진 판의 문서
           const lore = p.locator('[data-testid="design-repo"][data-repo="lore"]');
+          await lore.getByTestId("design-repo-error").waitFor();
           assert.match(await lore.getByTestId("design-repo-error").locator("svg").getAttribute("aria-label"), /origin을 받지 못해 가진 판/);
           assert.equal(await lore.getByTestId("design-doc").count(), 1);
           await inList(p, p.locator('[data-testid="design-dir"][data-path="docs/loop"]'));
