@@ -11,9 +11,9 @@ const items = [
   ["thread-state", "new report", "t-0001", "reports"],
   ["thread-state", "blocked on a prompt", "t-0002", "asks"],
   ["task-followup", "task needs check", "d-0001", "tasks"],
-  ["idea", "updated", "n-0001", "ideas"],
+  ["routine", "ran", "a-0001", "automations"],
 ].map(([item_kind, event, subject, topic], i) => ({ id: `fixture-${i}`, short_id: `i-000${i + 1}`, project: "demo", item_kind, event, subject,
-  summary: i === 3 ? "화면 폭 때문에 잘릴 수 있는 사십 자보다 짧은 아이디어 원문을 보존한다" : original,
+  summary: i === 3 ? "화면 폭 때문에 잘릴 수 있는 사십 자보다 짧은 자동화 원문을 보존한다" : original,
   body: i === 3 ? "" : "보존한 본문", done: false, seen: false, created_at_ms: Date.now() + i, done_at_ms: null, topic }));
 let assets;
 async function buildUI() {
@@ -23,7 +23,6 @@ async function buildUI() {
 import { createElement as h, Fragment, useEffect } from ${module("node_modules/react/index.js")};
 import { createRoot } from ${module("node_modules/react-dom/client.js")};
 import { ActivityBar } from ${module("src/ActivityBar.tsx")};
-import { ACTIVITY_ICONS } from ${module("src/activityIcons.ts")};
 import { InboxPanel } from ${module("src/InboxPanel.tsx")};
 import { Droplet } from ${module("src/herdr/Droplet.tsx")};
 import { showDroplet } from ${module("src/herdr/droplet.ts")};
@@ -35,8 +34,6 @@ function UI() {
   return h(Fragment, null,
     h(ActivityBar, { coordinator: null, panel: "asks", shown: true, onPanel() {}, badges: {}, reports: false, onReports() {}, unseenReports: 0,
       tasks: false, onTasks() {}, taskBadge: 0, up: true, reader: false, settings: null }),
-    // 옛 아이디어 알림의 기준 아이콘(활동 막대 「아이디어」는 기획에 합쳤다, t-1894 4단계)
-    h("span", { "data-testid": "activity-ideas", hidden: true }, h(ACTIVITY_ICONS.ideas, { "aria-hidden": true })),
     h("main", { style: { marginLeft: 54, padding: 12, width: "calc(100% - 54px)", height: "100vh" } }, h(InboxPanel, { canControl: false })),
     h(Droplet, { onOpen: target => { location.hash = target; } }));
 }
@@ -84,7 +81,7 @@ async function scenario(engine, width) {
     }
     const notices = [
       ["asks", "blocked", "질문", "pane=question"], ["reports", "done", "완료 보고", "thread=demo%2Ft-0001"],
-      ["work", "done", "작업 완료", "pane=finished"], ["ideas", "done", "아이디어 갱신", "idea=n-0001"],
+      ["work", "done", "작업 완료", "pane=finished"], ["automations", "done", "자동화", "automation=demo%2Fdaily"],
       ["tasks", "blocked", "할 일 확인", "tasks"],
     ];
     for (const [topic, kind, label, target] of notices) {
