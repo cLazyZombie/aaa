@@ -139,3 +139,20 @@ spec 분배·재확인 기록을 더했다. 시험 삭제·기기 조합 축소�
 
 착지 창의 최종 통합 SHA에서 전체 ci-local과 양 OS strict cross를 수행하는 절차는 유지한다.
 이 개발 단계의 부분 검사를 최종 착지 gate 통과로 기록하지 않는다.
+
+
+## 진단 후보 선행 통합과 추가 수리
+
+q-4171 1A로 진단 branch push·전체 CI 3회 실행을 승인받았다. t-1978은 E2E 53의
+brief 준비 오류로 착지 gate를 중단해 main에 없었다. main을 변경하지 않고 승인된
+수리 후보 `6a29be9f`를 이 후보의 부모로 포함했다. 소스의 route 변경과 통계 대기를
+검토했고 기존 칩 비교 수리도 유지했다. testing.md 링크 충돌은 두 문서를 모두 남겼다.
+
+E2E 53은 첫 report_hash만 확인한 뒤 답을 보냈다. `orch/report_tests.rs`는 보고 회수가
+brief 전달 확인보다 먼저 올 수 있음을 두 순서로 검사하며, `harness.rs`의 thread_message는
+brief가 delivered가 아니면 답을 거부한다. 따라서 첫 보고와 delivered를 함께 기다리도록
+E2E 53의 네 준비와 공용 question-reply 시나리오를 고쳤다. 기존 시한·답 내용·전달 단언은 유지한다.
+이것은 t-1978 착지 실패의 API 오류와 일치하는 준비 조건 수리이며 부하만 원인으로 단정하지 않는다.
+
+선행 후보 통합과 brief 준비 수리 뒤 `ci-local --only web,e2e,public --spec 53,136`을
+`aaa verify`로 실행했다. 웹 타입·번들·750개 유닛·실제 E2E 53·136·공개 검사가 모두 통과했다.
