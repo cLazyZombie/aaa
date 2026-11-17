@@ -1,3 +1,4 @@
+- t-1975: [기획 대화 목록의 바깥 누름·Esc 닫기](testing-design-chat-dismiss-t-1975.md)
 - t-1917: [보고 질문 9개 상한 안내와 진단](testing-question-limit-t-1917.md)
 - t-1916: [coordinator 정기 점검 재안내 경계](testing-idle-reminders-t1916.md): 알림 경계 문구·안내 크기 제한 확인.
 - t-1899: [계정 이름 변경 E2E의 초기 사용량 반영 경계](testing-e2e133-readiness-t1899.md): 지연 응답·native 누름 경합 재현과 DOM 준비 사건 대기.
