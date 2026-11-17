@@ -5137,3 +5137,5 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [기획서 ID(t-1957)](testing-design-ids-t-1957.md): 표지 읽기·넣기와 덩어리 경계, 원장 맞추기, agent 한 번에 달기, 저장의 표지, 실제 origin E2E 139.
 
 - CI 웹 조작 준비·질문 guard 수리(t-1967): [실패 원문·회귀·검증 범위](testing-ci-interaction-readiness-t1967.md).
+
+- [기획 트리 전송 실패 격리(t-1969)](testing-design-load-t-1969.md): 저장소별 HTTP·지난 트리·느린 응답·Chromium/WebKit 전송 끊김과 수동 복구.

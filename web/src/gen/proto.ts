@@ -1843,7 +1843,15 @@ user_request?: string, } | { "op": "task_attention_answer", project?: string, at
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string,
+task?: string, search?: TaskHistorySearch, } | { "op": "design_tree", project?: string,
+/**
+ * 저장소 하나만 읽는다(FRONT_API 1.182). 없으면 종전처럼 전부 읽는다
+ */
+repo?: string,
+/**
+ * agent를 기다리지 않고 설정·host가 가진 마지막 트리만 돌려준다(FRONT_API 1.182)
+ */
+cached?: boolean, } | { "op": "design_read", project?: string, repo: string, path: string,
 /**
  * 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
  */

@@ -446,6 +446,12 @@ mod ts_tests {
         assert_eq!(v.done, ["준비"]);
     }
 
+    #[test]
+    fn old_design_tree_request_still_reads_all_repositories() {
+        let req: super::FrontRequest = serde_json::from_str(r#"{"op":"design_tree","project":"demo"}"#).unwrap();
+        assert!(matches!(req, super::FrontRequest::DesignTree { repo: None, cached: false, .. }));
+    }
+
     /// 생성된 TS 타입이 Rust 정본과 같은지 본다. 다르면 AAA_UPDATE_TS=1로 다시 만든다.
     #[test]
     fn typescript_bindings_are_current() {

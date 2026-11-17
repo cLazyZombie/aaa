@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, GitBranch, Layers, Lightbulb, Lock, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
+import { loadDesignRepos } from "./designLoad";
 import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
 import type { DesignBranchView, DesignIdView, DesignRepoView, IdeaSummary } from "./gen/proto";
 import { ideaLegacy } from "./ideasModel";
@@ -39,10 +40,12 @@ export function useDesign(up: boolean, wanted: boolean): Design {
     if (!up || !asked) return;
     let live = true;
     setLoading(true);
-    call({ op: "design_tree" }).then(
-      (r) => { if (live && r.kind === "design_tree") { setRepos(r.repos); setError(null); } },
-      (e: unknown) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); },
-    ).finally(() => { if (live) setLoading(false); });
+    loadDesignRepos(call,
+      (repos) => { setRepos(repos); setError(null); },
+      (repo) => setRepos((repos) => repos?.map((r) => r.repo === repo.repo ? repo : r) ?? null),
+      () => live,
+    ).catch((e: unknown) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); })
+      .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [up, asked, rev]);
   return { repos, error, loading, reload, picked, setPicked };
