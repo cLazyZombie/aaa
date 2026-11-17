@@ -27,6 +27,17 @@ describe("대화·보고서의 짧은 ID", () => {
     assert.deepEqual(blocks[2].lines[0].filter(n => n.type === "link").map(n => n.href), ["https://example.ts.net/d-0002", "https://example.ts.net/"]);
   });
 });
+describe("기획서 ID(t-1957)", () => {
+  it("지금 트리에 있는 k-NNNN만 링크하고 앞 0을 정규화한다. 주소는 #design=k-NNNN", () => {
+    const known = ({ kind, target }) => kind === "design" && target === "k-0012";
+    assert.deepEqual(splitAppIds("기획 k-12와 k-0013", known), ["기획 ", { kind: "design", target: "k-0012", label: "k-12" }, "와 k-0013"]);
+    assert.deepEqual(splitAppIds("docs/k-0012.md k-0012x", known), ["docs/k-0012.md k-0012x"]);
+    assert.equal(canonicalShortId("k-7", "k"), "k-0007");
+    assert.equal(appIdHash(ref("design", "k-0012")), "#design=k-0012");
+    assert.equal(normalizeAppTarget("k-12", "k"), "k-0012");
+    assert.equal(normalizeAppTarget("app/docs/a.md", "k"), "app/docs/a.md", "경로는 그대로");
+  });
+});
 describe("할 일 주소", () => {
   it("프로젝트 없는 주소·프로젝트 있는 주소와 5자리 번호를 받는다", () => {
     assert.deepEqual(taskTarget("d-0002"), { project: null, id: "d-0002" });

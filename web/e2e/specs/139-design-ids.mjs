@@ -22,6 +22,8 @@ const DOCS = {
   "docs/README.md": "# 개요\n<!-- aaa-id: k-0007 -->\n\n작은 견본 게임. 흐름은 k-0008, 없는 문서 k-0999.\n",
   "docs/loop.md": "# 게임 루프\n> [!계획]\n> 성 안 보스를 더한다.\n\n마을에서 출발한다. 개요는 k-7.\n",
   "docs/skills.md": "# 기술 목록\n\n| 이름 | 효과 |\n| --- | --- |\n| 돌진 | 앞으로 세 칸 |\n",
+  // vendor 폴더는 번호만 받고 표지는 달지 않는다(남의 원문, q-4090 1A)
+  "docs/vendor/LICENSE.md": "# License\n\nMIT\n",
 };
 
 export default async function () {
@@ -50,9 +52,10 @@ export default async function () {
       ["docs/README.md", "k-0007", true],
       ["docs/loop.md", "k-0008", false],
       ["docs/skills.md", "k-0009", false],
+      ["docs/vendor/LICENSE.md", "k-0010", false],
     ]);
     // 다시 읽어도 같은 번호
-    assert.deepEqual(aaa("plan", "list").repos[0].tree.docs.map((d) => d.id), ["k-0007", "k-0008", "k-0009"]);
+    assert.deepEqual(aaa("plan", "list").repos[0].tree.docs.map((d) => d.id), ["k-0007", "k-0008", "k-0009", "k-0010"]);
     const shown = aaa("plan", "show", "k-8");
     assert.equal(shown.doc.path, "docs/loop.md");
     assert.equal(shown.doc.id, "k-0008", "표지 없는 문서는 원장 번호");
@@ -94,7 +97,7 @@ export default async function () {
     assert.equal(show("docs/loop.md"), "# 게임 루프\n<!-- aaa-id: k-0008 -->\n\n> [!계획]\n> 성 안 보스를 더한다.\n\n마을에서 출발한다. 개요는 k-7.");
     assert.equal(show("docs/README.md"), DOCS["docs/README.md"].trimEnd(), "있던 표지는 그대로");
     assert.equal(git(clone, "rev-list", "--count", "main..design/aaa-ids"), "1", "한 commit");
-    assert.deepEqual(git(clone, "diff", "--name-only", "main", "design/aaa-ids").split("\n"), ["docs/loop.md", "docs/skills.md"]);
+    assert.deepEqual(git(clone, "diff", "--name-only", "main", "design/aaa-ids").split("\n"), ["docs/loop.md", "docs/skills.md"], "vendor는 그대로");
     // 표지 블록 수는 그대로(표지 줄이 계획 블록을 삼키지 않는다)
     const doc = aaa("plan", "show", "app", "docs/loop.md", "--branch", "aaa-ids");
     assert.equal(doc.doc.id, "k-0008");

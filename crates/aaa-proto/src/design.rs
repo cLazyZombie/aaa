@@ -465,6 +465,11 @@ pub const DESIGN_ID_PREFIX: char = 'k';
 /// ID 표지를 찾는 문서 앞부분(바이트). agent 트리는 문서마다 이만큼만 읽으므로 전문을 읽는 쪽도 같은 범위만 본다
 pub const DESIGN_ID_BYTES: usize = 8 * 1024;
 
+/// 표지를 넣지 않는 문서인가: `vendor` 폴더 아래(남의 원문, 사용자 결정 t-1957 q-4090 1A). 번호는 받지만 글은 고치지 않는다
+pub fn design_id_unmarked_path(path: &str) -> bool {
+    path.split('/').rev().skip(1).any(|s| s == "vendor")
+}
+
 /// 줄이 ID 표지(`<!-- aaa-id: k-0012 -->`, 앞뒤 빈칸·CR 무시)면 정규형 ID. 번호가 아니면(`k-0`) 표지가 아니다
 pub fn design_id_line(line: &str) -> Option<String> {
     let inner = design_trim(line).strip_prefix("<!--")?.strip_suffix("-->")?;
@@ -640,13 +645,13 @@ mod tests {
         let raw = include_str!("../../../web/test/fixtures/design-marks.md").replace("\r\n", "\n");
         for text in [raw.clone(), raw.replace('\n', "\r\n")] {
             let before = design_marks(&text);
-            assert_eq!(before.len(), 8);
+            assert_eq!(before.len(), 9);
             assert_eq!(design_mark_text(&text, &before[0]), "> [!계획]\n> 100층까지 늘린다.", "블록 글(CR 뺌)");
             assert_eq!(before[0].end - before[0].line, 2);
             let sections: Vec<_> = before.iter().map(|m| m.section.as_str()).collect();
             assert_eq!(
                 sections,
-                ["견본", "견본", "절", "절", "절", "절", "절", "절"],
+                ["견본", "견본", "절", "절", "절", "절", "절", "절", "절"],
                 "가장 가까운 앞 제목(닫는 #은 뺀다)"
             );
             let out = design_mark_tasks(&text, &[6, 0, 0], "d-0050").unwrap();
@@ -662,7 +667,8 @@ mod tests {
                     None,
                     Some("d-0014"),
                     Some("d-0050"),
-                    Some("d-0012")
+                    Some("d-0012"),
+                    Some("d-0015")
                 ]
             );
             assert_eq!(out.lines().count(), text.lines().count(), "줄 수 그대로");
@@ -673,7 +679,7 @@ mod tests {
             assert_eq!(text.contains('\r'), out.contains('\r'), "CRLF는 그대로");
             assert!(design_mark_tasks(&text, &[3], "d-0050").unwrap_err().contains("미정"));
             assert!(design_mark_tasks(&text, &[1], "d-0050").unwrap_err().contains("이미 넘긴"));
-            assert!(design_mark_tasks(&text, &[8], "d-0050").is_err());
+            assert!(design_mark_tasks(&text, &[9], "d-0050").is_err());
             assert!(design_mark_tasks(&text, &[], "d-0050").is_err());
         }
         // 표지 뒤에 글이 붙은 줄: 번호와 글을 띄운다
@@ -694,6 +700,83 @@ mod tests {
     }
 
     use super::*;
+
+    /// 기획서 ID 표지(t-1957): 줄 꼴·울타리 밖·앞 8KiB 안 끝난 줄. 잘린 앞부분과 전문이 같은 답이다
+    #[test]
+    fn id_marker_is_read_the_same_from_head_and_whole_text() {
+        assert_eq!(design_id_line("<!-- aaa-id: k-12 -->").as_deref(), Some("k-0012"));
+        assert_eq!(design_id_line("  <!--aaa-id:k-0012-->\r").as_deref(), Some("k-0012"));
+        for bad in [
+            "<!-- aaa-id: k-0 -->",
+            "<!-- aaa-id: d-12 -->",
+            "<!-- aaa-id: k-12 x -->",
+            "`<!-- aaa-id: k-12 -->`",
+            "<!-- aaa-id: k-12 --->",
+        ] {
+            assert_eq!(design_id_line(bad), None, "{bad}");
+        }
+        assert_eq!(design_text_id("# 제목\n<!-- aaa-id: k-0005 -->\n\n본문").as_deref(), Some("k-0005"));
+        assert_eq!(design_text_id("```\n<!-- aaa-id: k-0005 -->\n```\n"), None, "울타리 안 예시는 표지가 아니다");
+        assert_eq!(
+            design_text_id("~~~\n~~~\n<!-- aaa-id: k-6 -->\n<!-- aaa-id: k-7 -->").as_deref(),
+            Some("k-0006"),
+            "첫 표지"
+        );
+        // 앞 8KiB 경계: 그 안에서 끝난 줄만. agent는 앞부분과 전체 크기를, 전문 읽기는 글 전체를 준다
+        let marker = "<!-- aaa-id: k-0009 -->";
+        for pad in
+            [DESIGN_ID_BYTES - marker.len() - 2, DESIGN_ID_BYTES - marker.len() - 1, DESIGN_ID_BYTES - marker.len()]
+        {
+            let text = format!("{}\n{marker}\n{}", "a".repeat(pad), "b".repeat(100));
+            let head = &text.as_bytes()[..DESIGN_ID_BYTES];
+            assert_eq!(design_doc_id(head, text.len() as u64), design_text_id(&text), "pad {pad}");
+        }
+        let fits = format!("{}\n{marker}\nx", "a".repeat(DESIGN_ID_BYTES - marker.len() - 3));
+        assert!(design_text_id(&fits).is_some());
+        let over = format!("{}\n{marker}\nx", "a".repeat(DESIGN_ID_BYTES));
+        assert_eq!(design_text_id(&over), None, "앞부분 밖");
+        assert!(design_id_unmarked_path("docs/vendor/marked.LICENSE.md"));
+        assert!(!design_id_unmarked_path("docs/vendor.md"));
+        assert!(!design_id_unmarked_path("docs/vendors/a.md"));
+    }
+
+    /// 표지 넣기: 첫 제목 아래, 다음 줄과 띄우고, CRLF를 따르며, 있는 표지는 고쳐 쓰지 않는다. 계획 블록 수·차례는 그대로다
+    #[test]
+    fn id_marker_goes_under_the_title_without_eating_blocks() {
+        let id = "k-0012";
+        assert_eq!(
+            design_put_id("# 루프\n> [!계획]\n> 보스\n", id),
+            "# 루프\n<!-- aaa-id: k-0012 -->\n\n> [!계획]\n> 보스\n"
+        );
+        assert_eq!(design_put_id("# 루프\n\n본문\n", id), "# 루프\n<!-- aaa-id: k-0012 -->\n\n본문\n");
+        assert_eq!(design_put_id("# 루프", id), "# 루프\n<!-- aaa-id: k-0012 -->\n");
+        assert_eq!(design_put_id("# 루프\r\n본문\r\n", id), "# 루프\r\n<!-- aaa-id: k-0012 -->\r\n\r\n본문\r\n");
+        assert_eq!(design_put_id("본문만\n", id), "<!-- aaa-id: k-0012 -->\n\n본문만\n", "제목이 없으면 맨 앞");
+        assert_eq!(design_put_id("", id), "<!-- aaa-id: k-0012 -->\n");
+        assert_eq!(
+            design_put_id("---\ntitle: x\n---\n# 루프\n", id),
+            "---\ntitle: x\n---\n# 루프\n<!-- aaa-id: k-0012 -->\n",
+            "YAML 머리 뒤 제목"
+        );
+        assert_eq!(
+            design_put_id("```\n# 예시\n```\n# 진짜\n", id),
+            "```\n# 예시\n```\n# 진짜\n<!-- aaa-id: k-0012 -->\n",
+            "울타리 안 제목은 건너뛴다"
+        );
+        let has = "# 루프\n<!-- aaa-id: k-0003 -->\n";
+        assert_eq!(design_put_id(has, id), has, "있는 표지(번호가 달라도)는 그대로");
+        // 제목이 앞 8KiB 밖이면 맨 앞에 넣어 트리가 읽게 한다
+        let late = format!("{}\n# 늦은 제목\n", "a".repeat(DESIGN_ID_BYTES));
+        assert_eq!(design_text_id(&design_put_id(&late, id)).as_deref(), Some(id));
+        let raw = include_str!("../../../web/test/fixtures/design-marks.md");
+        // 견본 끝의 표지 줄을 뺀 글: 첫 제목 아래에 넣는다
+        let body = raw.split_once('\n').unwrap().1.replace("<!-- aaa-id: k-0003 -->\n", "");
+        let body = body.as_str();
+        let out = design_put_id(body, id);
+        let heads = |t: &str| design_marks(t).iter().map(|m| design_mark_text(t, m)).collect::<Vec<_>>();
+        assert_eq!(heads(&out), heads(body), "표지 블록 글·차례 그대로");
+        assert_eq!(design_text_id(&out).as_deref(), Some(id));
+    }
 
     #[test]
     fn slugs_are_plain_branch_names() {

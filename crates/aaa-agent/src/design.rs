@@ -2,9 +2,9 @@
 //! 1분에 한 번, FETCH_HEAD를 쓰지 않는다) origin 기본 branch commit의 git 객체에서 읽는다. origin이 없는 저장소는 `HEAD`다.
 use aaa_common::child_process::TokioCommandExt as _;
 use aaa_proto::{
-    AgentResponse, B64, DESIGN_MAX_DOCS, DESIGN_MAX_FILE, DESIGN_MAX_TEXT, DesignChange, DesignDocEntry, DesignTree,
-    DESIGN_ID_BYTES, ErrorBody, ErrorCode, design_branch, design_clean_path, design_doc_id, design_inside, design_slug_ok,
-    design_title,
+    AgentResponse, B64, DESIGN_ID_BYTES, DESIGN_MAX_DOCS, DESIGN_MAX_FILE, DESIGN_MAX_TEXT, DesignChange,
+    DesignDocEntry, DesignTree, ErrorBody, ErrorCode, design_branch, design_clean_path, design_doc_id, design_inside,
+    design_slug_ok, design_title,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;

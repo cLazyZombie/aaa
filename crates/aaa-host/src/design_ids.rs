@@ -57,7 +57,7 @@ impl Host {
     /// 저장할 글에 표지가 없으면 그 경로의 원장 번호로 넣는다(Markdown 문서만, 상한을 넘으면 그대로)
     pub(crate) fn design_text_with_id(&self, project: &str, repo: &str, path: &str, text: String) -> String {
         let markdown = std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
-        if !markdown || aaa_proto::design_text_id(&text).is_some() {
+        if !markdown || aaa_proto::design_id_unmarked_path(path) || aaa_proto::design_text_id(&text).is_some() {
             return text;
         }
         let number = match self.db.design_id_for_path(project, repo, path) {
@@ -105,7 +105,7 @@ impl Host {
         let ids: Vec<DesignIdMark> = tree
             .docs
             .iter()
-            .filter(|d| !d.id_marked)
+            .filter(|d| !d.id_marked && !aaa_proto::design_id_unmarked_path(&d.path))
             .filter_map(|d| d.id.clone().map(|id| DesignIdMark { path: d.path.clone(), id }))
             .collect();
         if ids.is_empty() {

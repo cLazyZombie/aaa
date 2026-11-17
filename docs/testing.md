@@ -5131,3 +5131,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리는 [t-1919 기록](testing-account-image-jobs-t1919.md)을 따른다.
 - [coordinator의 기획 대화 열기·말하기(t-1928)](testing-coordinator-plan-chat-t-1928.md): coordinator pane의 `plan new`·`plan say` 허용과 쓰기 거부, 실제 coordinator pane E2E.
+- [기획서 ID(t-1957)](testing-design-ids-t-1957.md): 표지 읽기·넣기와 덩어리 경계, 원장 맞추기, agent 한 번에 달기, 저장의 표지, 실제 origin E2E 139.

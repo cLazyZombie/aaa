@@ -4226,11 +4226,11 @@ fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
         anyhow::bail!("문서 경로를 준다: `aaa plan show <저장소> <경로>` 또는 `aaa plan show k-NNNN`");
     };
     match front_call(FrontRequest::DesignIds { project: project.to_string() })? {
-        Ok(FrontResponse::DesignIds { ids }) => ids
-            .into_iter()
-            .find(|i| i.id == want)
-            .map(|i| (i.repo, i.path))
-            .ok_or_else(|| anyhow::anyhow!("지금 기획 트리에 없는 ID다: {want}(`aaa plan list`로 트리를 새로 읽는다)")),
+        Ok(FrontResponse::DesignIds { ids }) => {
+            ids.into_iter().find(|i| i.id == want).map(|i| (i.repo, i.path)).ok_or_else(|| {
+                anyhow::anyhow!("지금 기획 트리에 없는 ID다: {want}(`aaa plan list`로 트리를 새로 읽는다)")
+            })
+        }
         Ok(_) => anyhow::bail!("예상하지 못한 응답"),
         Err(e) => anyhow::bail!("{}", e.message),
     }

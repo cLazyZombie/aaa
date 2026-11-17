@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
-import { addedDocs, ancestors, branchesByPath, calloutOf, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
+import { addedDocs, ancestors, branchesByPath, calloutOf, idLineOf, withoutIdLines, changedBlocks, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, markCounts, marksOf, mdBlocks, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, slugSuggest, SLUG, splitContext, splitTarget, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -195,7 +195,18 @@ describe("블록 표지(3-1)", () => {
       const sections = sectionsOf(blocks, "");
       assert.deepEqual(marksOf(blocks.map((b, i) => calloutOf(b, sections[i]))), want);
     }
-    assert.deepEqual(markCounts([want]), { work: 3, plan: 2, open: 2 }, "같은 번호는 진행 하나");
+    assert.deepEqual(markCounts([want]), { work: 4, plan: 2, open: 2 }, "같은 번호는 진행 하나");
+  });
+
+  it("ID 표지 줄(t-1957)은 홀로 한 덩어리이고 그리지 않는다(Rust design_id_line과 같은 꼴)", () => {
+    assert.equal(idLineOf("<!-- aaa-id: k-12 -->"), "k-0012");
+    assert.equal(idLineOf("  <!--aaa-id:k-0012-->  "), "k-0012");
+    for (const bad of ["<!-- aaa-id: k-0 -->", "<!-- aaa-id: d-12 -->", "<!-- aaa-id: k-12 x -->", "`<!-- aaa-id: k-12 -->`", "<!-- aaa-id: k-12 --->"])
+      assert.equal(idLineOf(bad), null, bad);
+    assert.deepEqual(mdBlocks("# 루프\n<!-- aaa-id: k-0012 -->\n> [!계획]\n> 보스"), ["# 루프", "<!-- aaa-id: k-0012 -->", "> [!계획]\n> 보스"]);
+    assert.equal(withoutIdLines("# 루프\n<!-- aaa-id: k-0012 -->\n\n본문"), "# 루프\n\n본문");
+    const fenced = "```\n<!-- aaa-id: k-0012 -->\n```";
+    assert.equal(withoutIdLines(fenced), fenced, "울타리 안 예시는 그대로");
   });
 
   it("미정 뒤 번호는 할 일이 아니고, 번호는 정규형이다", () => {

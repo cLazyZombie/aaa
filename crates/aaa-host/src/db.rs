@@ -9,8 +9,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 mod account_rename;
 mod auto_merge;
 mod automation_ids;
-mod design_ids;
 pub(crate) mod automation_runs;
+mod design_ids;
 mod idea_ids;
 mod inbox_ids;
 #[cfg(test)]

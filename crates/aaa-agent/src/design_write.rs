@@ -416,11 +416,16 @@ pub async fn mark_ids(
             if !dirty.is_empty() {
                 bail!("기획 worktree에 commit하지 않은 변경이 있다: 사람이 확인한다({})", cwd.display());
             }
-            let listed =
-                entries(&git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?)?;
+            let listed = entries(
+                &git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?,
+            )?;
             let mut marked = Vec::new();
             for (path, id) in &picks {
                 // 이 branch에 없는 문서(그 사이 지웠다)는 건너뛴다
+                // vendor 폴더(남의 원문)는 host가 고르지 않지만 agent도 고치지 않는다
+                if aaa_proto::design_id_unmarked_path(path) {
+                    continue;
+                }
                 let Some(e) = listed.iter().find(|e| e.path == *path) else { continue };
                 if !e.regular() {
                     bail!("일반 파일이 아니다: {path}");
@@ -696,6 +701,65 @@ mod tests {
     }
 
     /// 기획 branch를 열어 쓰고 올리고, 쉬느라 내렸다 다시 열고, 버린다. main checkout과 main은 그대로다
+    /// 기획서 ID 한 번에 달기(t-1957): 표지 없는 문서만 한 commit, vendor·없는 문서·이미 단 문서는 건너뛰고, 다시 해도 그대로
+    #[tokio::test]
+    async fn mark_ids_adds_markers_in_one_commit() {
+        use aaa_proto::DesignIdMark;
+        let (t, clone) = lab().await;
+        let repo = clone.to_str().unwrap();
+        let cfg = cfg(t.path());
+        sh(&clone, &["config", "user.name", "t"]).await;
+        sh(&clone, &["config", "user.email", "t@example.com"]).await;
+        let Ok(AgentResponse::DesignTree(main)) = crate::design::tree(repo, "docs", None).await else {
+            panic!("트리")
+        };
+        assert!(main.ids, "트리는 ID 표지를 읽었다");
+        assert!(main.docs.iter().all(|d| d.id.is_none() && !d.id_marked));
+        let Ok(AgentResponse::DesignBranch { cwd, head, .. }) = open(&cfg, "demo", repo, "aaa-ids").await else {
+            panic!("열기")
+        };
+        let mark = |path: &str, id: &str| DesignIdMark { path: path.into(), id: id.into() };
+        let ids = [
+            mark("docs/overview.md", "k-1"),
+            mark("docs/game-loop/README.md", "k-0002"),
+            mark("docs/missing.md", "k-0003"),
+            mark("docs/vendor/LICENSE.md", "k-0004"),
+        ];
+        let Ok(AgentResponse::DesignIdsMarked { commit: Some(commit), marked }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &ids, "기획: 기획서 ID 표지 4개 (사람)").await
+        else {
+            panic!("달기")
+        };
+        assert_eq!(marked, ["docs/overview.md", "docs/game-loop/README.md"]);
+        let cwd = Path::new(&cwd);
+        assert_eq!(out(cwd, &["rev-list", "--count", &format!("{head}..{commit}")], b"").await, "1", "한 commit");
+        assert_eq!(std::fs::read_to_string(cwd.join("docs/overview.md")).unwrap(), "# 개요\n<!-- aaa-id: k-0001 -->\n");
+        assert_eq!(
+            std::fs::read_to_string(cwd.join("docs/game-loop/README.md")).unwrap(),
+            "---\nx: 1\n---\n# 게임 루프\n<!-- aaa-id: k-0002 -->\n\n![그림](media/a.png)\n",
+            "YAML 머리 뒤 제목 아래"
+        );
+        assert_eq!(out(cwd, &["status", "--porcelain"], b"").await, "", "남은 변경 없음");
+        let Ok(AgentResponse::DesignIdsMarked { commit: None, marked }) =
+            mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &ids, "기획: 다시").await
+        else {
+            panic!("다시 달기")
+        };
+        assert!(marked.is_empty(), "이미 단 문서는 그대로");
+        let Ok(AgentResponse::DesignTree(branch)) = crate::design::tree(repo, "docs", Some("aaa-ids")).await else {
+            panic!("branch 트리")
+        };
+        let got: Vec<_> = branch.docs.iter().map(|d| (d.path.as_str(), d.id.as_deref(), d.id_marked)).collect();
+        assert_eq!(
+            got,
+            [("docs/game-loop/README.md", Some("k-0002"), true), ("docs/overview.md", Some("k-0001"), true)]
+        );
+        let e = mark_ids(&cfg, ("demo", repo, "docs", "aaa-ids"), &[mark("docs/overview.md", "d-1")], "기획: x")
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadRequest, "{e}");
+    }
+
     #[tokio::test]
     async fn open_save_push_rest_and_discard() {
         let (t, clone) = lab().await;

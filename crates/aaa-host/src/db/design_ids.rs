@@ -182,14 +182,19 @@ mod tests {
         let again = db.design_ids_sync("demo", "app", &[doc("docs/a.md", None), doc("docs/b.md", None)]).unwrap();
         assert_eq!(again, got);
         // 표지를 단 뒤 a를 옮기면 번호가 따라가고, 옛 경로는 목록에서 빠진다
-        let moved = db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(2)), doc("docs/x/a.md", Some(1))]).unwrap();
+        let moved =
+            db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(2)), doc("docs/x/a.md", Some(1))]).unwrap();
         assert_eq!(moved, [DesignIdOf { number: 2, marked: true }, DesignIdOf { number: 1, marked: true }]);
-        let present: Vec<_> =
-            db.design_ids_present("demo").unwrap().into_iter().map(|v| (v.id, v.path)).collect();
+        let present: Vec<_> = db.design_ids_present("demo").unwrap().into_iter().map(|v| (v.id, v.path)).collect();
         assert_eq!(present, [("k-0001".into(), "docs/x/a.md".into()), ("k-0002".to_string(), "docs/b.md".to_string())]);
         // 복사: 같은 표지 둘이면 원장 경로 쪽이 갖고 다른 쪽은 새 번호(표지 없음)
-        let copied =
-            db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(2)), doc("docs/c.md", Some(2)), doc("docs/x/a.md", Some(1))]).unwrap();
+        let copied = db
+            .design_ids_sync(
+                "demo",
+                "app",
+                &[doc("docs/b.md", Some(2)), doc("docs/c.md", Some(2)), doc("docs/x/a.md", Some(1))],
+            )
+            .unwrap();
         assert_eq!(copied[0], DesignIdOf { number: 2, marked: true });
         assert_eq!(copied[1], DesignIdOf { number: 3, marked: false });
         // 표지가 사라져도(자동 생성 문서를 다시 만듦) 같은 경로면 같은 번호
@@ -199,7 +204,8 @@ mod tests {
         let foreign = db.design_ids_sync("demo", "lib", &[doc("docs/z.md", Some(40)), doc("docs/y.md", None)]).unwrap();
         assert_eq!(foreign, [DesignIdOf { number: 40, marked: true }, DesignIdOf { number: 41, marked: false }]);
         // 다른 저장소의 번호를 단 표지는 표지가 없는 것처럼(경로 번호)
-        let clash = db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(40)), doc("docs/x/a.md", Some(1))]).unwrap();
+        let clash =
+            db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(40)), doc("docs/x/a.md", Some(1))]).unwrap();
         assert_eq!(clash[0], DesignIdOf { number: 2, marked: false });
         // 저장할 때: 경로 번호, 없으면 새 번호. 지운 프로젝트의 번호도 다시 쓰지 않는다
         assert_eq!(db.design_id_for_path("demo", "app", "docs/x/a.md").unwrap(), 1);
