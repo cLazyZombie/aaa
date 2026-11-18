@@ -29,6 +29,9 @@ pub(crate) struct DesignFolder {
     pub media: Option<String>,
 }
 
+/// 저장소 항목의 기획 폴더와 손 그림 하위 폴더(`design`, `design_media`)
+type DesignEntry = (String, Option<String>);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectSettings {
     /// 프로젝트가 무엇을 위한 것인가(brief 머리에 들어간다)
@@ -115,7 +118,7 @@ impl ProjectSettings {
         let start_threads = s("start_threads").filter(|v| matches!(v.as_str(), "propose" | "auto"));
         let trust_screens = s("trust_screens")
             .filter(|v| matches!(v.as_str(), crate::trust_screen::USER | crate::trust_screen::COORDINATOR));
-        let entries: Vec<(Repo, Option<(String, Option<String>)>)> = t
+        let entries: Vec<(Repo, Option<DesignEntry>)> = t
             .get("workspaces")
             .or_else(|| t.get("repos"))
             .and_then(|v| v.as_array())
