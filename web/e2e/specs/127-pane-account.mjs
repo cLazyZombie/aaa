@@ -121,6 +121,37 @@ export default async function () {
     }
   });
   await step("320px 휴대폰 Chromium 머리 줄·요약 시트", async () => { await check(browser, 320); });
+  // 작업 요약 단추가 「⋯」로 들어간 좁은 머리는 그 단추의 「반영 안 된 지시 있음」 점을 「⋯」 단추가 단다(t-1987 q-4182 1B).
+  // 넓은 머리는 전처럼 요약 단추의 점이다. 지시는 brief를 받은 thread에 보낸 메시지(Follow-ups)다
+  await step("반영 안 된 지시가 있으면 좁은 머리의 「⋯」에 점", async () => {
+    fs.writeFileSync(`${root}/dot-task.md`, "점 확인\n");
+    const t = aaa("thread", "start", "demo", "--title", "점 표시", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/dot-task.md`);
+    const v = await until("brief 전달", () => { const x = aaa("thread", "show", t.id); return x.pane && x.brief === "delivered" && x; });
+    fs.writeFileSync(`${root}/dot-msg.md`, "색만 바꾼다\n");
+    aaa("thread", "message", t.id, "--text-file", `${root}/dot-msg.md`);
+    await until("반영 안 된 지시 1개", () => aaa("thread", "show", t.id).summary?.pending === 1);
+    for (const [width, tight] of [[320, true], [1280, false]]) {
+      const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width, height: 800 }, { hash: `#pane=${v.pane}` });
+      try {
+        const head = page.locator(`section.term[data-pane="${v.pane}"] > .term-head`);
+        await head.locator(".summary-btn.is-stale").waitFor({ state: "attached" });
+        const got = await head.evaluate((h) => ({
+          more: !!h.querySelector("[data-testid='more-dot'].is-notice")?.getClientRects().length,
+          summary: !!h.querySelector(".summary-btn .summary-dot")?.getClientRects().length,
+          label: h.querySelector("[data-testid='more']").getAttribute("aria-label"),
+        }));
+        assert.deepEqual(got, tight
+          ? { more: true, summary: false, label: "더 보기 · 반영 안 된 지시 있음" }
+          : { more: false, summary: true, label: "더 보기" });
+        if (tight) {
+          await head.getByTestId("more").click();
+          assert.equal(await page.getByTestId("summary-item").locator(".more-hint").textContent(), "반영 안 된 지시 있음");
+        }
+        await shot(page, `pane-head-stale-${width}`);
+        assert.deepEqual(errors, []);
+      } finally { await page.context().close(); }
+    }
+  });
   await step("휴대폰 WebKit 머리 줄·요약 시트의 계정", async () => {
     const wk = await webkit.launch();
     try { await check(wk, 390); } finally { await wk.close(); }

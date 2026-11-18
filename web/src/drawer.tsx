@@ -37,9 +37,15 @@ export const HeadContext = createContext<Head>({ more: null, note: null });
 
 /**
  * 좁은 머리 줄(t-1987)에서 머리에 둘 자리가 없는 단추를 「더 보기」 맨 위 항목으로 옮긴다. 화면(Term)이 머리 안에서 준다:
- * 메뉴는 그 머리 안에서 그려지므로 이 값을 읽는다. close는 메뉴를 닫는다
+ * 메뉴는 그 머리 안에서 그려지므로 이 값을 읽는다. items의 close는 메뉴를 닫는다
  */
-export const HeadMenuExtraContext = createContext<((close: () => void) => ReactNode) | null>(null);
+export type HeadMenuExtra = {
+  items: (close: () => void) => ReactNode;
+  /** 옮긴 단추가 달던 점(작업 요약의 「반영 안 된 지시 있음」)을 「더 보기」 단추가 대신 단다. 말은 단추 이름에 붙는다 */
+  dot?: string;
+};
+
+export const HeadMenuExtraContext = createContext<HeadMenuExtra | null>(null);
 
 /** 요소 폭이 px 이하다(ResizeObserver). 화면 폭이 아니라 머리 줄 폭으로 본다: 목록이 옆에 붙은 창도 머리 줄은 좁다 */
 export function useWidthAtMost(ref: RefObject<HTMLElement | null>, px: number, on = true): boolean {

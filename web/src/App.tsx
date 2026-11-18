@@ -1886,7 +1886,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 {threadOfPane.get(p.id) && <SummaryButton t={threadOfPane.get(p.id)!} openRequest={headAsk.summary} />}
               </>
             ) : null}
-            menu={threadOfPane.get(p.id) ? (close) => {
+            menu={threadOfPane.get(p.id) ? { dot: summaryStale(threadOfPane.get(p.id)!.summary) ? "반영 안 된 지시 있음" : undefined, items: (close) => {
               const t = threadOfPane.get(p.id)!;
               const pick = (run: () => void) => () => { close(); run(); };
               return (
@@ -1903,7 +1903,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                   <AutoMergeMenuItem t={t} role={role} onToggle={pick(() => setHeadAsk((a) => ({ ...a, merge: a.merge + 1 })))} />
                 </>
               );
-            } : undefined}
+            } } : undefined}
             dock={
               activePane === chatKey(p) && (paneQuestions.length > 0 || paneAsk) ? (
                 <div className="dock">
@@ -2136,7 +2136,7 @@ function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinat
     const t = window.setTimeout(() => setNote(null), 2000);
     return () => window.clearTimeout(t);
   }, [note]);
-  const label = alerts.offDot ? "더 보기 · 알림 꺼짐" : "더 보기";
+  const label = ["더 보기", alerts.offDot && "알림 꺼짐", extra?.dot].filter(Boolean).join(" · ");
   return (
     <span className="more" ref={box}>
       <button
@@ -2151,7 +2151,8 @@ function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinat
       >
         <Icon name="more" />
       </button>
-      {alerts.offDot && <span className="more-dot" aria-hidden="true" />}
+      {/* 점은 하나다: 옮긴 요약 단추의 점(그 단추와 같은 색)이 알림 꺼짐 점보다 먼저 */}
+      {(alerts.offDot || extra?.dot) && <span className={`more-dot${extra?.dot ? " is-notice" : ""}`} data-testid="more-dot" aria-hidden="true" />}
       {note && (
         <span className="more-note" role="status">
           {note}
@@ -2159,7 +2160,7 @@ function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinat
       )}
       {open && (
         <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
-          {extra && <>{extra(close)}<div className="more-sep" role="separator" /></>}
+          {extra && <>{extra.items(close)}<div className="more-sep" role="separator" /></>}
           {coordinator && <AutoModeMenu close={close} />}
           <button
             role="menuitem"

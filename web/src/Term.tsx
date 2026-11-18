@@ -83,7 +83,7 @@ import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown, MessageSquarePlus, Quote, RotateCcw, Search, TriangleAlert } from "lucide-react";
-import { DrawerToggle, HeadMenuExtraContext, HeadMore, HeadNote, useWidthAtMost } from "./drawer";
+import { DrawerToggle, HeadMenuExtraContext, HeadMore, HeadNote, useWidthAtMost, type HeadMenuExtra } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -173,7 +173,7 @@ export function TermView({
   account?: string;
   status?: ReactNode;
   /** 머리 줄이 좁을 때(TIGHT_HEAD) 상태 표시 대신 「더 보기」 맨 위에 둘 항목(보고·요약·자동 병합, t-1987) */
-  menu?: (close: () => void) => ReactNode;
+  menu?: HeadMenuExtra;
   /** 입력 위에 붙는 질문 카드 */
   dock?: ReactNode;
   /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
