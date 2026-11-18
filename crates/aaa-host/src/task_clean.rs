@@ -71,6 +71,10 @@ pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, report: Option<&str>, chi
     if crate::followups::pending(rec) {
         return Some(format!("{} 후속 남음: thread에서 후속 할 일 연결이나 버림·정리 완료 사유를 기록한다", rec.id));
     }
+    // CLI의 완료 체크와 ticker의 보관 사이에도 같은 완료 상태를 보여 준다.
+    if t.done && !children {
+        return None;
+    }
     let id = &rec.id;
     let c = &rec.task_clean;
     let Some(_) = c.why.as_deref() else {
@@ -379,6 +383,10 @@ impl Host {
                     t.title.clone(),
                     "후속 남음: thread에서 후속 할 일 연결이나 버림·정리 완료 사유를 기록한다".into(),
                 ));
+                continue;
+            }
+            // 이 tick의 완료 보관 순회 뒤에 완료 체크가 들어왔을 수 있다.
+            if t.done && !children {
                 continue;
             }
             match judge_thread(rec, report.as_deref(), children) {
@@ -809,6 +817,69 @@ mod attention_answer_tests {
     }
 
     const LANDED: &str = "착지: engine main abc1234 · push함\n\n```\n착지: 예제 main def5678 · push함\n```\n";
+
+    #[tokio::test]
+    async fn task_attention_clears_on_explicit_completion_before_archiving() {
+        for resolve_first in [false, true] {
+            let lab = Lab::new(Some("[결정 필요] 후속 처리\n\n## Next\n후속을 고른다\n"));
+            let h = &lab.h;
+            let dir = h.project_dir("demo").unwrap();
+            if resolve_first {
+                h.update_rec("demo", "t-0001", |r| r.task_clean.judged_ms = None).unwrap();
+                h.task_clean_pass("demo", &dir);
+                assert!(lab.task().attention.unwrap().contains("[결정 필요]"));
+            } else {
+                h.update_rec("demo", "t-0001", |r| {
+                    r.status = ThreadStatus::Open;
+                    r.task_clean = Default::default();
+                })
+                .unwrap();
+            }
+            let task = lab.task();
+            let mut events = h.task_events.subscribe();
+            let op = TaskOp::Update {
+                at: anchor(&task),
+                title: None,
+                owner: None,
+                person: false,
+                profile: None,
+                machine: None,
+                notes: None,
+                thread: None,
+                done: Some(true),
+                repo: None,
+            };
+            let FrontResponse::TaskEdited { board, conflict: None, .. } =
+                h.task_edit("demo", vec![op], None, None, "local:cli").await.unwrap()
+            else {
+                panic!("완료 체크 응답");
+            };
+            assert_eq!(events.try_recv().unwrap(), ("demo".into(), board.sha256.clone()));
+            assert!(board.tasks[0].done && board.tasks[0].attention.is_none());
+            if !resolve_first {
+                let rec = h
+                    .update_rec("demo", "t-0001", |r| {
+                        r.status = ThreadStatus::Resolved;
+                        r.task_clean.why = Some("manual".into());
+                    })
+                    .unwrap();
+                // ticker가 이 쓰기 직전에 완료 보관 순회를 마친 경우에도 확인 알림을 만들지 않는다.
+                h.task_clean_one("demo", &dir, &rec).unwrap();
+                assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().all(|i| i.event != "task needs check"));
+            }
+            assert!(lab.task().attention.is_none());
+            assert!(h.db.archive_list("demo").unwrap().is_empty());
+            let records = h.db.ask_list("demo").unwrap();
+            assert_eq!(records.len(), usize::from(resolve_first));
+            if resolve_first {
+                assert_eq!(records[0].summary, "완료 체크");
+            }
+            h.task_clean_pass("demo", &dir);
+            assert!(h.task_board("demo").unwrap().tasks.is_empty());
+            assert_eq!(h.db.archive_list("demo").unwrap()[0].reason, "완료 체크 [x]");
+        }
+    }
+
     #[tokio::test]
     async fn task_attention_answers_archive_reassign_or_unlink_and_preserve_the_evidence() {
         for action in [A::Complete, A::Reassign, A::Unlink] {

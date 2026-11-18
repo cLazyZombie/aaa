@@ -17,6 +17,42 @@ export default async function () {
   const wk = await webkit.launch({ headless: true });
   try {
     for (const [engine, name] of [[browser, "chromium"], [wk, "webkit"]]) {
+      await step(`CLI 완료 뒤 다시 본 확인 카드 ${name}`, async () => {
+        const title = `CLI 완료 ${name}`;
+        fs.appendFileSync(`${root}/projects/demo/TASKS.md`, `\n- [ ] ${title} (fake@labA) [작업 폴더]\n`);
+        const t = aaa("thread", "start", "demo", "--from-task", title, "--link-task", "--kind", "dir");
+        await until("첫 보고 수집", () => aaa("thread", "show", t.id).report_hash);
+        const report = "[결정 필요] 후속 처리\n\n## Next\n후속 처리를 고른다\n";
+        const hash = createHash("sha256").update(report).digest("hex");
+        fs.writeFileSync(`${t.work_dir}/report.md`, report);
+        await until("결정 보고 수집", () => aaa("thread", "show", t.id).report_hash === hash);
+        aaa("thread", "resolve", t.id);
+        aaa("ticker", "tick");
+        const task = aaa("task", "list").tasks.find(task => task.title === title);
+        assert(task.attention.includes("[결정 필요]"));
+        // 다른 기기의 완료 작업을 진행하되, 이 화면에만 할 일 갱신 사건이 닿지 않게 한다.
+        let missed = false;
+        const { page } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 844 }, {
+          hash: `#ask=t:${title}`,
+          wsRoute: ["**/api/v1/events", socket => {
+            const host = socket.connectToServer();
+            host.onMessage(message => {
+              if (JSON.parse(message).ev === "tasks") missed = true;
+              else socket.send(message);
+            });
+          }],
+        });
+        try {
+          const card = page.locator('[data-testid="ask-card"][data-kind="task"]');
+          await card.waitFor();
+          aaa("task", "edit", task.id, "--done");
+          await until("완료 갱신 사건을 보류했다", () => missed);
+          assert.equal(await card.count(), 1, "다시 읽기 전에는 직전 사본이 보인다");
+          await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+          await card.waitFor({ state: "detached" });
+          await page.getByTestId("ask-done-card").waitFor();
+        } finally { await page.context().close(); }
+      });
       for (const width of [1280, 390]) {
         for (const action of ["complete", "reassign", "unlink"]) {
           await step(`할 일 카드 ${action} ${name} ${width}`, async () => {

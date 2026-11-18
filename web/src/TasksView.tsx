@@ -124,10 +124,11 @@ function apiAtLeast(v: string | null | undefined, [major, minor]: readonly [numb
 
 /**
  * 할 일 board(활동 막대 배지와 할 일 화면이 함께 쓴다). host 연결이 오를 때, host `tasks` 사건(TASKS.md가 바뀜)마다, 열린 thread
- * 모음이 바뀔 때(「task 없는 열린 thread」), 화면을 열 때 다시 읽는다. 늦게 돌아온 옛 응답은 버린다. 편집 응답의 board는 `replace`로
+ * 모음이 바뀔 때(「task 없는 열린 thread」), 할 일이나 「답할 것」 화면을 열거나 그 화면으로 돌아올 때 다시 읽는다.
+ * 늦게 돌아온 옛 응답은 버린다. 편집 응답의 board는 `replace`로
  * 바로 넣는다. 그 편집의 `tasks` 사건이 시작한 읽기는 버리지 않는다(편집 둘의 응답이 거꾸로 와도 그 읽기가 최신 판으로 덮는다).
  */
-export function useTaskBoard(up: boolean, openThreads: string, visible: boolean): { board: TaskBoard | null; error: string | null; replace: (b: TaskBoard) => void } {
+export function useTaskBoard(up: boolean, openThreads: string, view: "tasks" | "asks" | null): { board: TaskBoard | null; error: string | null; replace: (b: TaskBoard) => void } {
   const [board, setBoard] = useState<TaskBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -150,11 +151,19 @@ export function useTaskBoard(up: boolean, openThreads: string, visible: boolean)
   }, []);
   useEffect(() => {
     if (up) load();
-  }, [up, openThreads, load]);
-  // 화면을 열 때마다 다시 읽는다: 첫 tick은 기억만 해 사건이 없으니, 연 뒤 만든 프로젝트·연 뒤 처음 본 파일을 놓치지 않게
+  }, [up, openThreads, view, load]);
   useEffect(() => {
-    if (up && visible) load();
-  }, [up, visible, load]);
+    if (!up || view === null) return;
+    const refresh = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [up, view, load]);
   // 같은 hash여도 다시 읽는다: 열린 thread·예약만 바뀐 사건도 TASKS.md hash는 그대로다
   useEffect(() => onTasksChanged(() => load()), [load]);
   return { board, error, replace };

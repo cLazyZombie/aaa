@@ -5151,3 +5151,4 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - t-1978: [질문 답 E2E의 brief 준비 경합](testing-question-brief-ready-t-1978.md)
 
 - [GitHub CI 반복 실패 안정화(t-1980)](testing-ci-stability-t-1980.md)
+- [완료 체크 뒤 할 일 확인 카드(t-2000)](testing-task-attention-t-2000.md)
