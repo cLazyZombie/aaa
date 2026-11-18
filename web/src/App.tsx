@@ -2110,7 +2110,7 @@ function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinat
     };
   }, [open, close]);
   const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role^=menuitem]:not(:disabled)") ?? [])];
     const at = items.indexOf(document.activeElement as HTMLElement);
     const move = (next: number) => {
       e.preventDefault();
