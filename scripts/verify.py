@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -42,34 +43,49 @@ def scope_for(paths):
     return "full"
 
 
-def commands(phase, scope, specs, packages):
+def changed_specs(paths):
+    """개발 중 고친 spec 전체를 고른다. 삭제·이동 원본이나 모르는 파일이 섞이면 전수다."""
+    names = []
+    for path in paths:
+        if not path.startswith("web/e2e/specs/"):
+            continue
+        match = re.fullmatch(r"web/e2e/specs/([0-9]{2,}-[a-z0-9-]+\.mjs)", path)
+        file = ROOT / path
+        if not match or file.is_symlink() or not file.is_file():
+            return None
+        names.append(match[1])
+    return ",".join(names) or None
+
+
+def commands(phase, scope, specs, packages, all_specs=False):
+    web = ["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]
     if phase == "landing":
-        if specs or packages:
-            raise ValueError("착지 gate에는 --spec/--package로 검사를 줄일 수 없다")
+        if specs is not None or packages or all_specs:
+            raise ValueError("착지 gate에는 개발용 --spec/--all-specs/--package를 지정할 수 없다")
         if scope == "docs":
             return [["bash", "scripts/ci-local.sh", "--only", "public"]]
         if scope == "web":
-            return [["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]]
+            return [web]
         return [["bash", "scripts/ci-local.sh"]]
+    if specs:
+        web += ["--spec", specs]
     if packages:
         if any(not p.startswith("aaa") or not all(c.isalnum() or c == "-" for c in p) for p in packages):
             raise ValueError("--package에는 aaa workspace crate 이름을 쓴다")
         selected = [arg for p in packages for arg in ("-p", p)]
-        result = [["cargo", "test", "--profile", "verify", "--locked", *selected],
+        result = [["cargo", "fmt", *selected, "--check"],
+                  ["cargo", "test", "--profile", "verify", "--locked", *selected],
                   ["cargo", "clippy", "--profile", "verify", "--locked", *selected,
                    "--all-targets", "--", "-D", "warnings"]]
-        if specs:
-            result.append(["bash", "scripts/ci-local.sh", "--only", "web,e2e,public", "--spec", specs])
+        if specs or all_specs:
+            result.append(web)
         else:
             result.append(["bash", "scripts/check-public.sh"])
         return result
-    if scope == "docs":
+    if scope == "docs" and not all_specs:
         return [["bash", "scripts/ci-local.sh", "--only", "public"]]
-    if scope == "web":
-        result = ["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]
-        if specs:
-            result += ["--spec", specs]
-        return [result]
+    if scope in ("web", "docs"):
+        return [web]
     raise ValueError("개발은 관련 owner를 --package로 지정하거나 ci-local --only로 검사한다. 전체 gate는 착지에서 실행한다")
 
 
@@ -79,7 +95,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("develop", "landing"))
     parser.add_argument("--base", required=True, help="개발/착지를 시작한 기준 commit 또는 ref")
-    parser.add_argument("--spec", help="개발 중 관련 E2E 번호, 쉼표 구분; 생략하면 웹 전체")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--spec", help="개발 중 관련 E2E 번호나 파일 이름(쉼표 구분)")
+    selection.add_argument("--all-specs", action="store_true", help="개발 중 웹 E2E 전체 실행")
     parser.add_argument("--package", action="append", default=[], help="개발 중 관련 Rust crate; 반복 가능")
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--dry-run", action="store_true")
@@ -87,7 +105,12 @@ def main():
     try:
         base, paths = changed_paths(args.base)
         scope = scope_for(paths)
-        plan = commands(args.phase, scope, args.spec, args.package)
+        specs = args.spec
+        if args.phase == "develop" and scope == "web" and not (specs or args.all_specs or args.package):
+            specs = changed_specs(paths)
+        plan = commands(args.phase, scope, specs, args.package, args.all_specs)
+        if args.all_specs and any(os.environ.get(key) for key in ("AAA_E2E_ONLY", "AAA_E2E_SHARD")):
+            raise ValueError("--all-specs는 AAA_E2E_ONLY/AAA_E2E_SHARD와 함께 쓸 수 없다")
         head = git("rev-parse", "HEAD").decode().strip()
         if args.phase == "landing" and git("status", "--porcelain"):
             raise ValueError("착지는 변경을 커밋한 뒤 최종 통합 SHA에서 실행한다")
@@ -97,6 +120,10 @@ def main():
                 if value and not (key in ("AAA_E2E_RETRIES", "AAA_CI_WINDOWS_INSTALL_RECHECK") and value == "0"):
                     raise ValueError(f"착지에서는 {key}로 E2E를 줄이거나 재확인할 수 없다")
         data = dict(phase=args.phase, scope=scope, base=base, commit=head, paths=paths, commands=plan)
+        if (args.phase == "landing" and scope == "full") or any("web,e2e,public" in command for command in plan):
+            data["e2e_selection"] = "all"
+            if specs:
+                data["e2e_selection"] = "explicit" if args.spec else "changed-specs"
         print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
         if args.dry_run:
             return 0

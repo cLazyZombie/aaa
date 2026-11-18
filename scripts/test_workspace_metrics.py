@@ -86,7 +86,8 @@ class WorkspaceMetrics(unittest.TestCase):
 
     def test_compact_counts_preserve_missing_logs_and_exclude_terminal_output(self):
         self.assertEqual(self.helper("start").returncode, 0)
-        (self.logs / "workspace-summary.tsv").write_text("v1|100|164|failed\nbuild|ok|0|1|12|unused\n")
+        (self.logs / "workspace-summary.tsv").write_text(
+            "v1|100|164|failed\ntest|FAIL|0|1|12|unused\ne2e|ok|0|1|13|unused\n")
         (self.logs / "rust").mkdir()
         (self.logs / "rust/summary.json").write_text(json.dumps(dict(jobs=[dict(log="unit.log"), dict(log="missing.log")])))
         (self.logs / "rust/unit.log").write_text("private stdout\ntest result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 2 filtered out; finished in 1s\n")
@@ -101,7 +102,7 @@ class WorkspaceMetrics(unittest.TestCase):
 
     def test_split_owner_results_are_all_archived(self):
         self.assertEqual(self.helper("start").returncode, 0)
-        (self.logs / "workspace-summary.tsv").write_text("v1|100|164|succeeded\n")
+        (self.logs / "workspace-summary.tsv").write_text("v1|100|164|succeeded\ntest|ok|0|1|12|unused\n")
         (self.logs / "rust").mkdir()
         jobs = [dict(log=f"{n}-owner.log") for n in range(350)]
         (self.logs / "rust/summary.json").write_text(json.dumps(dict(jobs=jobs)))
@@ -116,6 +117,21 @@ class WorkspaceMetrics(unittest.TestCase):
         self.assertEqual(len(list((archive / "rust").glob("*-owner.log"))), len(jobs))
         for job in jobs:
             self.assertNotIn("private", (archive / "rust" / job["log"]).read_text())
+
+    def test_skipped_steps_do_not_archive_results_from_an_earlier_run(self):
+        (self.logs / "rust").mkdir()
+        (self.logs / "rust/summary.json").write_text('{"jobs": []}')
+        (self.logs / "e2e.log").write_text("## 작업: 56개\n")
+        self.assertEqual(self.helper("start").returncode, 0)
+        (self.logs / "workspace-summary.tsv").write_text(
+            "v1|100|12|failed\nfmt|FAIL|0|1|2\ntest|건너뜀: 앞 단계 실패(build)|1|1|0\n"
+            "e2e|건너뜀: 앞 단계 실패(web·build)|1|1|0\npublic|ok|1|2|1\n")
+        result = self.helper("finish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive, = self.archives()
+        self.assertFalse((archive / "rust").exists())
+        self.assertFalse((archive / "e2e.log").exists())
+        self.assertIn("fmt|FAIL", (archive / "workspace-summary.tsv").read_text())
 
 
 if __name__ == "__main__":

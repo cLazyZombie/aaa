@@ -88,6 +88,16 @@ test("실제 spec 목록은 shard 셋에 빠짐·중복 없이 모두 남는다"
   assert.equal(new Set(shards.flat()).size, all.length);
 });
 
+test("개발 원장의 파일명은 정확히 선택하고 없는 파일도 알린다", async t => {
+  const f = fixture(t, ["12-chat", "12-chat-details", "123-drafts"]);
+  const run = await f.run(["--spec", "12-chat.mjs,123-drafts.mjs"]);
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(f.result().specs, ["12-chat", "123-drafts"]);
+  const missing = await f.run(["--spec", "12-chat.mjs,99-missing.mjs"]);
+  assert.notEqual(missing.code, 0);
+  assert.match(missing.stderr, /99-missing\.mjs/);
+});
+
 test("잘못된 재확인 설정은 실행 전에 실패한다", async t => {
   const f = fixture(t, ["01-pass"]);
   for (const args of [["--retries", "2"], ["--shard", "0/3"], ["--retries", "1", "--write-durations"]]) {

@@ -47,6 +47,7 @@
 - t-1361: [내 보고서 자동 등록 기준 검증](testing-my-reports-filter.md)
 - t-1352: [다른 pane inbox 알림과 대화 입력 지연 수리](testing-inbox-input-render.md)
 - t-1338: [사용량 조회 오류와 작업 인증 건강 분리 검증](testing-account-usage-auth-separation.md)
+- t-2007: [개발 E2E 선택·포맷 실패·Unix 빌드의 전후 시간](testing-verify-time-t-2007.md)
 - [t-1310 후속: 전체 gate 재빌드 예산과 179.7/208초 차이](testing-ci-rebuild-t-1310.md)
 - t-1314: [탭 붙여넣기 수신 확인과 기존 경고 복구](testing-chat-tab-receipts.md)
 - t-1309: [검증 중복 축소·Windows 산출물 재사용 검증](testing-verification-dedup.md)
