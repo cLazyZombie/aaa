@@ -205,6 +205,8 @@ fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
     let shown = w.wait_show("대화 thread brief", &thread, |v| v["brief"] == "delivered");
     assert_eq!(shown["design"], "game/boss-dex", "{shown}");
     assert_eq!(shown["machine"], "labB", "저장소 머신에서 돈다: {shown}");
+    let brief = std::fs::read_to_string(Path::new(shown["work_dir"].as_str().unwrap()).join("brief.md")).unwrap();
+    assert!(brief.contains("기존 그림 폴더(예: 문서 옆 `assets/`)를 `--dir`로 준다"), "{brief}");
     let pane = shown["pane"].as_str().unwrap().to_string();
     w.h.wait_output(&pane, "첫말고유 보스부터", T);
     wait_for("보낸 말 비움", T, || (branches_of(&w, "game")[0]["pending"] == 0).then_some(()));
@@ -450,8 +452,12 @@ print('design-delete', p.stdout.split()[-1])
     let apply = applied["branch"]["apply"].as_str().unwrap().to_string();
     let head = applied["branch"]["head"].as_str().unwrap().to_string();
     assert_eq!(applied["branch"]["pushed"], head.as_str(), "올린 뒤 띄운다: {applied}");
-    let shown = w.wait_show("반영 thread 준비", &apply, |v| v["cwd"].is_string() && v["status"] != "starting");
+    let shown = w.wait_show("반영 thread brief", &apply, |v| v["brief"] == "delivered");
     assert_eq!((shown["thread_kind"].as_str(), shown["machine"].as_str()), (Some("worktree"), Some("labB")), "{shown}");
+    let brief = std::fs::read_to_string(Path::new(shown["work_dir"].as_str().unwrap()).join("brief.md")).unwrap();
+    assert!(brief.contains("합치기 전에 `git diff --name-status origin/main...HEAD`"), "{brief}");
+    assert!(brief.contains("문서별 상대 링크도 고쳐"), "{brief}");
+    assert!(brief.contains("옮긴 그림의 이전 경로와 새 경로를 보고에 적는다"), "{brief}");
     let applied_cwd = PathBuf::from(shown["cwd"].as_str().unwrap());
     git(&applied_cwd, &["merge-base", "--is-ancestor", &head, "HEAD"]);
     assert!(applied_cwd.join("docs/boss.md").exists());

@@ -889,9 +889,11 @@ impl Host {
             base: Some(format!("origin/design/{slug}")),
             task: format!(
                 "기획 branch `design/{slug}`(주제 「{}」)의 기획 문서를 main에 반영한다. 이 worktree는 그 branch에서 갈라졌다.\n\n\
-                 - origin main을 받아 합친다. 겹치면 양쪽 내용을 살려 고친다.\n\
+                 - origin main을 받는다. 합치기 전에 `git diff --name-status origin/main...HEAD`에서 기획 branch가 추가·수정·이동한 그림을 찾는다.\n\
+                 - 저장소 지침과 origin/main의 관련 문서에 있는 그림 배치(예: 문서 옆 `assets/`)를 확인한다. 규칙에서 벗어난 그림은 이 반영 worktree에서 옮기고, 이름 규칙이 있으면 용도를 알 수 있는 이름으로 맞춘다. 목적지의 다른 파일을 덮어쓰지 않는다.\n\
+                 - 그림을 옮길 때는 그 그림을 가리키는 문서를 찾아 문서별 상대 링크도 고쳐 함께 commit한다. origin main을 합치고 겹치면 양쪽 내용을 살려 고친다. 합친 뒤에는 새 링크가 실제 파일을 가리키는지, 옛 경로를 가리키는 링크가 남았는지 확인한다.\n\
                  - 기획 폴더(`{folder}/`) 밖은 바꾸지 않는다. 문서 표기(`[!계획]`·`[!미정]`·「바뀐 것」·제목 아래 ID 표지 `<!-- aaa-id: k-NNNN -->`)를 지킨다.\n\
-                 - 저장소 검사를 돌려 통과시킨 뒤 `[병합 준비됨]`으로 보고하고 착지 창을 기다린다.\n",
+                 - 저장소 검사를 돌려 통과시킨 뒤 `[병합 준비됨]`으로 보고하고 착지 창을 기다린다. 옮긴 그림의 이전 경로와 새 경로를 보고에 적는다.\n",
                 rec.title
             ),
             role: aaa_proto::Role::Worker,
