@@ -318,7 +318,8 @@ export default async function () {
     await page.getByTestId("design-pick-row").filter({ hasText: "중간 상점" }).click();
     await page.getByTestId("design-history").click();
     const rows = page.getByTestId("design-history-row");
-    await domIs(page, "이력 줄", () => document.querySelectorAll("[data-testid=design-history-row]").length >= 4);
+    await domIs(page, "이력 줄", () => document.querySelectorAll("[data-testid=design-history-row]").length >= 4)
+      .catch(async (e) => { e.message += ` 화면=${JSON.stringify((await page.getByTestId("design-view").textContent()).slice(0, 600))}`; throw e; });
     const log = aaa("plan", "log", "app", "docs/loop/README.md").entries;
     assert.equal(await rows.count(), log.length, "CLI 이력과 같은 줄");
     assert.match(await rows.first().textContent(), /지금 판/);

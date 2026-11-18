@@ -3198,7 +3198,7 @@ pub enum FrontRequest {
         #[ts(optional)]
         at: Option<String>,
     },
-    /// 기획 branch 열기(FRONT_API 1.171, 조작): `design/<slug>`를 origin 기본 branch에서 만들거나 쉬던 것을 다시 연다
+    /// 기획 대화 열기(FRONT_API 1.171, 조작): 대화 기록을 만들고(있으면 그대로) 저장소 머신의 main 기획 자리를 맞춘다(t-2002, branch 없음)
     DesignBranchOpen {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3277,7 +3277,7 @@ pub enum FrontRequest {
         branch: String,
         text: String,
     },
-    /// 기획 branch 버리기(FRONT_API 1.171, 조작): worktree와 로컬 branch, host가 올린 origin branch를 지운다
+    /// 기획 대화 끝내기(FRONT_API 1.171, 조작, t-2002부터): 대화 thread를 끝내고 대화 기록을 지운다. main에 저장한 글은 그대로다
     DesignDiscard {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3285,9 +3285,8 @@ pub enum FrontRequest {
         repo: String,
         branch: String,
     },
-    /// 「main에 반영」(FRONT_API 1.173, 조작): 기획 branch를 올린 뒤 `origin/design/<주제>`에서 갈라진 worktree thread가 main을
-    /// 합치고 저장소 검사를 지나 `[병합 준비됨]`으로 착지 창을 받는다. 프로젝트 실행 한도에 걸리면 거절하지 않고 예약한다
-    /// (FRONT_API 1.178, `DesignBranchView.apply_wait`): 자리가 나면 host가 띄운다
+    /// 「main에 반영」(FRONT_API 1.173): t-2002(FRONT_API 1.186)부터 없어졌다. 기획은 저장하면 바로 main에 들어가고, host는
+    /// 이 요청을 까닭과 함께 거절한다(옛 front)
     DesignApply {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3295,7 +3294,7 @@ pub enum FrontRequest {
         repo: String,
         branch: String,
     },
-    /// 「main에 반영」 예약 취소(FRONT_API 1.178, 조작, t-1955): 한도에 걸려 자리를 기다리는 반영 요청을 거둔다. 답은 `design_branch`
+    /// 「main에 반영」 예약 취소(FRONT_API 1.178): t-2002부터 없어져 거절한다
     DesignApplyCancel {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3334,7 +3333,7 @@ pub enum FrontRequest {
         project: String,
     },
     /// 기획서 ID 한 번에 달기(FRONT_API 1.181, 조작·사람만, t-1957): main 기획 트리에서 표지가 없는 문서마다 원장 번호의 표지를
-    /// 기획 branch `design/aaa-ids`에 한 commit으로 넣는다. main에는 그 branch의 「main에 반영」(착지 창)으로 들어간다
+    /// main에 한 commit으로 넣는다(t-2002, 저장소 문서 검사를 지난다)
     DesignMarkIds {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -4130,6 +4129,8 @@ impl FrontRequest {
             | FrontRequest::DesignHandoff { project, .. }
             | FrontRequest::DesignIds { project }
             | FrontRequest::DesignMarkIds { project, .. }
+            | FrontRequest::DesignLog { project, .. }
+            | FrontRequest::DesignRevert { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
@@ -4533,11 +4534,12 @@ pub enum FrontResponse {
     DesignIds {
         ids: Vec<crate::DesignIdView>,
     },
-    /// `design_mark_ids`의 답(FRONT_API 1.181): 표지를 넣은 기획 branch(`aaa-ids`), 넣은 문서 수, commit(넣은 것이 없으면 없음)
+    /// `design_mark_ids`의 답(FRONT_API 1.181): 표지를 넣은 곳(t-2002부터 `main`, 옛 host는 기획 branch `aaa-ids`), 넣은 문서 수,
+    /// commit(넣은 것이 없으면 없음)
     DesignIdsMarked {
         branch: String,
         marked: u32,
-        /// 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
+        /// 고른 문서 중 넣지 않은 수: 그 사이 옮겼거나 지웠거나 이미 표지가 있다
         skipped: u32,
         commit: Option<String>,
     },

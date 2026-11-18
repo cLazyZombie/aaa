@@ -251,8 +251,9 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
       onReload();
       setRev((n) => n + 1);
     } catch (e) {
-      // 검사 실패·그 사이 다른 판: main은 그대로이고 쓴 글은 남는다
+      // 검사 실패·그 사이 다른 판: main은 그대로이고 쓴 글은 남는다. 트리는 다시 읽어 다른 기기가 올린 판을 안다
       setSaveError(e instanceof ApiError ? e.message : String(e));
+      onReload();
     } finally {
       setSaving(false);
     }
@@ -271,8 +272,10 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   };
   const pickVersion = (commit: string) => {
     if (!at) return;
+    // 이 문서의 가장 새 판(첫 줄)이 지금 판이다: main 끝 commit은 이 문서를 바꾸지 않은 commit일 수 있다
+    const latest = hist?.entries?.[0]?.commit;
     setHist((h) => (h ? { ...h, at: commit, old: null, error: null } : h));
-    if (current && commit === current.commit) return;
+    if (commit === latest) return;
     call({ op: "design_read", repo: at.repo, path: at.path, at: commit }).then(
       (r) => { if (r.kind === "design_doc") setHist((h) => (h && h.at === commit ? { ...h, old: r.doc } : h)); },
       (e: unknown) => setHist((h) => (h && h.at === commit ? { ...h, error: e instanceof ApiError ? e.message : String(e) } : h)),
@@ -439,7 +442,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                 <button type="button" className="btn design-edit" aria-label="그림" title="그림" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
                   <ImagePlus className="i" aria-hidden="true" /><span className="design-btn-label">그림</span>
                 </button>
-                <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel" onClick={() => setEditing(null)}>취소</button>
+                <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel"
+                  onClick={() => { setEditing(null); setSaveError(null); setRev((n) => n + 1); }}>취소</button>
                 <button type="button" className="btn primary" disabled={saving || editing.text === editing.was} data-testid="design-edit-save" onClick={() => void save()}>
                   <Check className="i" aria-hidden="true" />main에 저장
                 </button>
@@ -474,9 +478,9 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                 <p className="design-history-head">이 문서의 main 판 · 새것부터</p>
                 {hist.error && <p className="banner err" role="alert">{hist.error}</p>}
                 {!hist.entries && !hist.error && <p className="design-empty">읽는 중</p>}
-                {hist.entries?.map((e) => {
+                {hist.entries?.map((e, i) => {
                   const who = whoOf(e);
-                  const now = e.commit === current.commit;
+                  const now = i === 0;
                   return (
                     <button key={e.commit} type="button" className={`design-history-row${hist.at === e.commit ? " is-on" : ""}`} data-testid="design-history-row" data-commit={e.commit} onClick={() => pickVersion(e.commit)}>
                       <span className="design-history-who"><span className={`design-who is-${who.tone}`}>{who.label}</span>{stamp(e.committed_ms)} · <code>{e.commit.slice(0, 7)}</code></span>
@@ -486,7 +490,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                 })}
               </div>
               <div className="design-history-view">
-                {!hist.at ? <p className="design-empty">판을 고르면 지금 판과 다른 곳이 보인다</p> : hist.at === current.commit ? <p className="design-empty">지금 판이다</p> : (
+                {!hist.at ? <p className="design-empty">판을 고르면 지금 판과 다른 곳이 보인다</p> : hist.at === hist.entries?.[0]?.commit ? <p className="design-empty">지금 판이다</p> : (
                   <>
                     <div className="design-history-bar">
                       <span>{histPicked >= 0 && hist.entries ? stamp(hist.entries[histPicked]!.committed_ms) : ""} 판 <code>{hist.at.slice(0, 7)}</code></span>
