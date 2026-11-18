@@ -51,6 +51,22 @@ async fn worktrees(top: &Path) -> Result<Vec<(PathBuf, bool)>> {
     Ok(out)
 }
 
+/// 이미 있는 자리(읽기만: 기록을 고치지 않는다)
+async fn find_slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<Option<PathBuf>> {
+    let name = top.file_name().context("저장소 이름이 없다")?;
+    let have = worktrees(top).await?;
+    for root in cfg.known_roots()? {
+        let place = root.path.join(name).join(slot_name(project));
+        let Ok(want) = crate::work_root::real_location(&place) else { continue };
+        if let Some((path, _)) = have.iter().find(|(p, _)| crate::work_root::real_location(p).is_ok_and(|p| p == want))
+            && path.symlink_metadata().is_ok()
+        {
+            return Ok(Some(path.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// 이 저장소·프로젝트의 main 기획 자리. 없으면 지금 작업 root에 origin 기본 branch 끝으로 만든다
 async fn slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<PathBuf> {
     let name = top.file_name().context("저장소 이름이 없다")?;
@@ -128,7 +144,23 @@ pub async fn open(cfg: &ThreadsConfig, project: &str, repo: &str) -> Result<Agen
             let _lease = cfg.lease().context("작업 root 잠금")?;
             let top = toplevel(repo).await?;
             let lock = slot_lock(&top, project);
-            let _one = lock.lock().await;
+            // 쓰기(검사·push·다시 하기로 몇 분)가 자리를 쥐고 있으면 기다리지 않는다: 이미 있는 자리를 그대로 알리고, 맞추기는 그
+            // 쓰기가 끝난 판이다(대화를 여는 요청이 앞 저장 때문에 시한에 걸리지 않게)
+            let _one = match lock.clone().try_lock_owned() {
+                Ok(one) => one,
+                Err(_) => {
+                    if let Some(cwd) = find_slot(cfg, &top, project).await? {
+                        let (name, main) = base(&top).await?;
+                        return Ok(AgentResponse::DesignBranch {
+                            cwd: cwd.to_string_lossy().into_owned(),
+                            head: main,
+                            base: name,
+                            opened: "main".into(),
+                        });
+                    }
+                    lock.lock_owned().await
+                }
+            };
             let cwd = slot(cfg, &top, project).await?;
             if has_origin(&top).await?
                 && let Err(e) = fetch_now(&top).await
@@ -149,10 +181,15 @@ pub async fn open(cfg: &ThreadsConfig, project: &str, repo: &str) -> Result<Agen
 }
 
 /// 조각을 모으는 자리(agent 상태 폴더 안, 프로젝트·저장소·내용마다 하나). 다 받으면 `.ready`로 바꾼다
-fn stage_file(state: &Path, project: &str, repo: &str, sha256: &str, ready: bool) -> PathBuf {
+fn stage_file(state: &Path, (project, repo, upload): (&str, &str, &str), sha256: &str, ready: bool) -> PathBuf {
     use sha2::Digest as _;
-    let key = hex::encode(sha2::Sha256::digest(format!("{project}\0{repo}\0{sha256}").as_bytes()));
+    let key = hex::encode(sha2::Sha256::digest(format!("{project}\0{repo}\0{upload}\0{sha256}").as_bytes()));
     state.join("design-main-stage").join(format!("{}.{}", &key[..32], if ready { "ready" } else { "part" }))
+}
+
+/// 전송 ID: 비었거나(옛 host) 영문 대문자·숫자 1~32자
+fn upload_ok(upload: &str) -> bool {
+    upload.len() <= 32 && upload.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 fn sha256_ok(sha256: &str) -> bool {
@@ -162,16 +199,16 @@ fn sha256_ok(sha256: &str) -> bool {
 /// 그림·영상 조각 하나를 받는다. 마지막 조각이면 크기·sha256을 확인하고 쓸 수 있게 둔다
 pub fn stage(
     state: &Path,
-    (project, repo): (&str, &str),
+    (project, repo, upload): (&str, &str, &str),
     sha256: &str,
     offset: u64,
     data: &[u8],
     eof: bool,
 ) -> Result<AgentResponse, ErrorBody> {
-    let part = stage_file(state, project, repo, sha256, false);
+    let part = stage_file(state, (project, repo, upload), sha256, false);
     let result = (|| -> Result<()> {
-        if !valid_project(project) || !sha256_ok(sha256) {
-            bail!("프로젝트 이름이나 sha256 형식이 아니다");
+        if !valid_project(project) || !sha256_ok(sha256) || !upload_ok(upload) {
+            bail!("프로젝트 이름·전송 ID·sha256 형식이 아니다");
         }
         let dir = part.parent().context("조각 폴더가 없다")?;
         std::fs::create_dir_all(dir)?;
@@ -207,7 +244,7 @@ pub fn stage(
             if hex::encode(sha2::Sha256::digest(std::fs::read(&part)?)) != sha256 {
                 bail!("넘긴 파일의 sha256이 다르다");
             }
-            std::fs::rename(&part, stage_file(state, project, repo, sha256, true))?;
+            std::fs::rename(&part, stage_file(state, (project, repo, upload), sha256, true))?;
         }
         Ok(())
     })();
@@ -226,8 +263,10 @@ struct Prepared {
     base: Option<String>,
     /// None이면 지운다
     bytes: Option<Vec<u8>>,
-    /// 조각으로 넘긴 그림(이름이 내용 hash다): 같은 내용이 이미 있으면 붙인 것이다
+    /// 조각으로 넘긴 그림: 같은 내용이 이미 있으면 붙인 것이다
     staged: bool,
+    /// 이름을 준 그림: 그 이름의 다른 그림을 바꾼다
+    replace: bool,
 }
 
 /// 저장소 검사를 그 자리에서 셸 없이 돌린다. 인자의 `{base}`·`{head}`를 바꾸고, 실패하면 stderr 앞부분을 까닭으로 싣는다
@@ -409,23 +448,21 @@ pub async fn write(
                         }
                         (Some(text.as_bytes().to_vec()), false)
                     }
-                    DesignMainChange::Staged { sha256 } => {
-                        if !sha256_ok(sha256) {
-                            bail!("sha256 형식이 아니다");
+                    DesignMainChange::Staged { sha256, upload, .. } => {
+                        if !sha256_ok(sha256) || !upload_ok(upload) {
+                            bail!("전송 ID·sha256 형식이 아니다");
                         }
-                        let ready = stage_file(state, project, repo, sha256, true);
+                        // 마지막 조각에서 sha256을 확인한 파일이다(agent 상태 폴더)
+                        let ready = stage_file(state, (project, repo, upload), sha256, true);
                         let bytes = std::fs::read(&ready).context("넘긴 그림이 없다(조각을 먼저 넘긴다)")?;
-                        use sha2::Digest as _;
-                        if hex::encode(sha2::Sha256::digest(&bytes)) != *sha256 {
-                            bail!("넘긴 그림의 sha256이 다르다");
-                        }
                         staged_used.push(ready);
                         (Some(bytes), true)
                     }
                     // 기준 판이 없는 지우기는 「지금 있는 그 파일」을 지운다(그림 지우기)
                     DesignMainChange::Delete => (None, false),
                 };
-                prepared.push(Prepared { path, base: f.base.clone(), bytes, staged });
+                let replace = matches!(f.change, DesignMainChange::Staged { replace: true, .. });
+                prepared.push(Prepared { path, base: f.base.clone(), bytes, staged, replace });
             }
             let folder = folder_clean;
             let slot = Slot::take(cfg, project, repo, message).await?;
@@ -460,7 +497,9 @@ pub async fn write(
                     if deleting_any && now.is_none() {
                         return Err(Stale(format!("지울 파일이 main에 없다: {}", p.path)).into());
                     }
-                    if now != p.base && !deleting_any {
+                    // 이름을 준 그림은 그 이름의 다른 그림을 바꾼다(위에서 같은 내용이면 건너뛰었다)
+                    let replacing = p.replace && p.base.is_none() && now.is_some();
+                    if now != p.base && !deleting_any && !replacing {
                         return Err(Stale(match now {
                             Some(now) => format!("그 사이 main에 다른 판이 생겼다: {} 지금 blob {now}", p.path),
                             None => format!("기준 판이 없다: {}이(가) main에 없다", p.path),
@@ -497,7 +536,7 @@ pub async fn write(
                 }
             }
             let (commit, base, warnings) = done.ok_or_else(gave_up)?;
-            let top = toplevel(repo).await?;
+            let top = slot.top.clone();
             let mut blobs = Vec::new();
             for p in &prepared {
                 let blob = if p.bytes.is_some() {

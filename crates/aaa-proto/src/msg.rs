@@ -1240,6 +1240,9 @@ pub enum AgentRequest {
     DesignMainStage {
         project: String,
         repo: String,
+        /// 전송 ID(영문 대문자·숫자, host가 붙일 때마다 새로)
+        #[serde(default)]
+        upload: String,
         sha256: String,
         offset: u64,
         data: crate::B64,

@@ -242,15 +242,20 @@ async fn staged_images_attach_once_and_delete_warns() {
     let png = b"\x89PNG\r\n\x1a\n0000IHDR-test-image".to_vec();
     use sha2::Digest as _;
     let sha = hex::encode(sha2::Sha256::digest(&png));
+    let staged = |upload: &str, sha256: &str, replace: bool| DesignMainChange::Staged {
+        sha256: sha256.to_string(),
+        upload: upload.to_string(),
+        replace,
+    };
     let (a, b) = png.split_at(8);
-    assert!(matches!(stage(&state, ("demo", repo), &sha, 0, a, false), Ok(AgentResponse::Done)));
-    assert!(matches!(stage(&state, ("demo", repo), &sha, 8, b, true), Ok(AgentResponse::Done)));
+    assert!(matches!(stage(&state, ("demo", repo, "UP1"), &sha, 0, a, false), Ok(AgentResponse::Done)));
+    // 같은 그림을 다른 전송이 동시에 넘겨도 서로의 조각을 건드리지 않는다
+    assert!(matches!(stage(&state, ("demo", repo, "UP2"), &sha, 0, &png, true), Ok(AgentResponse::Done)));
+    assert!(matches!(stage(&state, ("demo", repo, "UP1"), &sha, 8, b, true), Ok(AgentResponse::Done)));
     let path = format!("docs/game-loop/mockups/{}.png", &sha[..16]);
-    let image =
-        DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Staged { sha256: sha.clone() } };
     let doc = blob_of(&origin, "main", "docs/game-loop/README.md").await;
     let files = [
-        image.clone(),
+        DesignMainFile { path: path.clone(), base: None, change: staged("UP1", &sha, false) },
         text("docs/game-loop/README.md", Some(&doc), &format!("# 게임 루프\n\n![시안](mockups/{}.png)\n", &sha[..16])),
     ];
     let Ok(AgentResponse::DesignMainSaved { commit, .. }) =
@@ -259,15 +264,36 @@ async fn staged_images_attach_once_and_delete_warns() {
         panic!("그림과 문서를 한 commit으로")
     };
     assert_eq!(out(&origin, &["rev-list", "--count", "main^..main"], b"").await, "1");
-    assert!(!stage_file(&state, "demo", repo, &sha, true).exists(), "올린 조각은 지운다");
+    assert!(!stage_file(&state, ("demo", repo, "UP1"), &sha, true).exists(), "올린 조각은 지운다");
+    assert!(stage_file(&state, ("demo", repo, "UP2"), &sha, true).exists(), "다른 전송의 조각은 남는다");
     // 같은 그림을 다시 붙이면 바뀐 것이 없다
-    stage(&state, ("demo", repo), &sha, 0, &png, true).unwrap();
-    let Ok(AgentResponse::DesignMainSaved { commit: again, base, .. }) =
-        write(&cfg, &state, ("demo", repo, "docs"), &[image], "기획: 다시 (사람)", &[]).await
+    let again = DesignMainFile { path: path.clone(), base: None, change: staged("UP2", &sha, false) };
+    let Ok(AgentResponse::DesignMainSaved { commit: same, base, .. }) =
+        write(&cfg, &state, ("demo", repo, "docs"), &[again], "기획: 다시 (사람)", &[]).await
     else {
         panic!("같은 그림")
     };
-    assert_eq!((again.as_str(), base.as_str()), (commit.as_str(), commit.as_str()), "새 commit 없음");
+    assert_eq!((same.as_str(), base.as_str()), (commit.as_str(), commit.as_str()), "새 commit 없음");
+    // 이름을 준 그림(--name)은 같은 이름의 다른 그림을 바꾼다
+    let other = b"\x89PNG\r\n\x1a\n0000IHDR-other-image".to_vec();
+    let other_sha = hex::encode(sha2::Sha256::digest(&other));
+    let named = "docs/game-loop/mockups/hud.png";
+    for (upload, bytes, sha_of) in [("UP4", &png, &sha), ("UP5", &other, &other_sha)] {
+        stage(&state, ("demo", repo, upload), sha_of, 0, bytes, true).unwrap();
+        let f = DesignMainFile { path: named.into(), base: None, change: staged(upload, sha_of, true) };
+        let saved = write(&cfg, &state, ("demo", repo, "docs"), &[f], "기획: 그림 hud.png 붙임 (t-0001)", &[]).await;
+        assert!(matches!(saved, Ok(AgentResponse::DesignMainSaved { .. })), "{saved:?}");
+    }
+    assert_eq!(
+        blob_of(&origin, "main", named).await,
+        out(&clone, &["hash-object", "--stdin"], &other).await,
+        "바꾼 그림"
+    );
+    // 이름이 내용 hash인 그림(이름 없음)의 다른 내용은 판 거절이다
+    stage(&state, ("demo", repo, "UP6"), &sha, 0, &png, true).unwrap();
+    let hashed = DesignMainFile { path: named.into(), base: None, change: staged("UP6", &sha, false) };
+    let e = write(&cfg, &state, ("demo", repo, "docs"), &[hashed], "기획: x (사람)", &[]).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict, "{e}");
     // 참조가 남은 그림을 지우면 경고가 온다
     let blob = blob_of(&origin, "main", &path).await;
     let gone = DesignMainFile { path: path.clone(), base: Some(blob), change: DesignMainChange::Delete };
@@ -277,19 +303,14 @@ async fn staged_images_attach_once_and_delete_warns() {
         panic!("지우기")
     };
     assert!(warnings.iter().any(|w| w.contains("README.md")), "{warnings:?}");
-    // 없는 파일 지우기·sha256이 다른 조각은 거절
-    let e = write(
-        &cfg,
-        &state,
-        ("demo", repo, "docs"),
-        &[DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Delete }],
-        "기획: x (사람)",
-        &[],
-    )
-    .await
-    .unwrap_err();
+    // 없는 파일 지우기·sha256이 다른 조각·잘못된 전송 ID는 거절
+    let none = DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Delete };
+    let e = write(&cfg, &state, ("demo", repo, "docs"), &[none], "기획: x (사람)", &[]).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict, "{e}");
-    assert!(stage(&state, ("demo", repo), &"0".repeat(64), 0, &png, true).is_err());
+    assert!(stage(&state, ("demo", repo, "UP3"), &"0".repeat(64), 0, &png, true).is_err());
+    assert!(stage(&state, ("demo", repo, "bad/id"), &sha, 0, &png, true).is_err(), "전송 ID 형식");
+    // 내용 칸이 빠진 파일은 지우기로 읽지 않는다
+    assert!(serde_json::from_str::<DesignMainFile>(r#"{"path":"docs/overview.md"}"#).is_err());
 }
 
 /// 앞선 쓰기가 commit만 하고 죽었거나 자리에 파일을 남겨도 다음 저장은 origin 끝에서 하고 그것을 올리지 않는다
@@ -388,4 +409,19 @@ async fn mark_ids_on_main_in_one_commit() {
     };
     assert!(marked.is_empty());
     assert_eq!(origin_main(&origin).await, commit, "새 commit 없음");
+}
+
+/// 쓰기가 자리를 쥐고 있어도 열기는 기다리지 않고 이미 있는 자리를 알린다(앞 저장의 검사·push 때문에 대화 열기가 시한에 걸리지 않게)
+#[tokio::test]
+async fn open_does_not_wait_behind_a_running_write() {
+    let (_t, clone, _origin, cfg) = setup().await;
+    let repo = clone.to_str().unwrap();
+    let Ok(AgentResponse::DesignBranch { cwd, .. }) = open(&cfg, "demo", repo).await else { panic!("처음 열기") };
+    let top = crate::design::toplevel(repo).await.unwrap();
+    let _writing = slot_lock(&top, "demo").lock_owned().await;
+    let again = tokio::time::timeout(std::time::Duration::from_secs(5), open(&cfg, "demo", repo))
+        .await
+        .expect("쓰기를 기다리지 않는다");
+    let Ok(AgentResponse::DesignBranch { cwd: same, opened, .. }) = again else { panic!("다시 열기") };
+    assert_eq!((same.as_str(), opened.as_str()), (cwd.as_str(), "main"));
 }

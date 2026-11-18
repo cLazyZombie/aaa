@@ -117,11 +117,11 @@ async fn own_worktree(cfg: &ThreadsConfig, top: &Path, project: &str, slug: &str
     Ok(Some((path, locked)))
 }
 
-pub(crate) async fn has_ref(top: &Path, full: &str) -> bool {
+async fn has_ref(top: &Path, full: &str) -> bool {
     git(top, &["show-ref", "--verify", "--quiet", full], 4096).await.is_ok()
 }
 
-pub(crate) async fn rev(top: &Path, full: &str) -> Result<String> {
+async fn rev(top: &Path, full: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&git(top, &["rev-parse", "--verify", "--end-of-options", full], 4096).await?)
         .trim()
         .to_string())
@@ -485,7 +485,7 @@ pub async fn mark_ids(
 }
 
 /// 바꾼 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
-pub(crate) async fn restore(cwd: &Path, paths: &[String]) {
+async fn restore(cwd: &Path, paths: &[String]) {
     let mut args: Vec<&str> = vec!["checkout", "--quiet", "HEAD", "--"];
     args.extend(paths.iter().map(String::as_str));
     aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획 파일 변경 되돌리기");

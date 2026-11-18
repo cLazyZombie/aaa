@@ -15,8 +15,9 @@ use crate::{Host, err, task_edit, tasks};
 /// 넘긴 블록 고침을 막 뜬 구현 thread가 brief를 받을 때까지 기다리는 한도
 const RELAY_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다
-const HANDOFF_PENDING_MS: u64 = 10 * 60 * 1000;
+/// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다. main 쓰기(`MAIN_WAIT` 20분)와 앞
+/// 저장의 차례보다 길게 둔다(t-2002)
+const HANDOFF_PENDING_MS: u64 = 30 * 60 * 1000;
 
 /// 웹 창에서 고른 것
 pub(crate) struct Handoff {

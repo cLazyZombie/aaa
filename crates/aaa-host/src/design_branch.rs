@@ -279,7 +279,10 @@ impl Host {
         if !slug.is_empty() && slug != NO_CHAT {
             return Some(slug.to_string());
         }
-        let session = actor.strip_prefix("worker:")?;
+        // thread pane의 CLI는 `worker:<세션>`, 역할을 알리지 않은 pane은 `local:<client>@<세션>`이다(`design_writer`와 같다)
+        let session = actor
+            .strip_prefix("worker:")
+            .or_else(|| actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).map(|(_, s)| s))?;
         let rec = self.thread_of_pane(session)?;
         rec.design.as_deref()?.strip_prefix(&format!("{repo}/")).map(str::to_string)
     }
@@ -515,11 +518,7 @@ impl Host {
                 return Err(bad(format!("기준 판은 blob SHA다: {p}")));
             }
         }
-        let lock = conv.as_deref().map(|s| self.design_branch_lock(project, &target.name, s));
-        let _one = match &lock {
-            Some(l) => Some(l.lock().await),
-            None => None,
-        };
+        // 대화 잠금은 main 쓰기(검사·push·다시 하기로 몇 분) 동안 쥐지 않는다: 쓴 뒤 사건을 남길 때만 잡는다(말하기·열기가 막히지 않게)
         let created = writes[0].1.is_none();
         let summary = summary
             .map(|s| one_line(&s, SUMMARY_MAX))
@@ -568,6 +567,8 @@ impl Host {
         commit: &str,
         event: Option<(&'static str, String)>,
     ) {
+        let lock = self.design_branch_lock(project, repo, slug);
+        let _one = lock.lock().await;
         let Ok(Some(mut rec)) = self.design_branch_load(project, repo, slug) else { return };
         let by_thread = self.design_chat_load(project, repo, slug).ok().and_then(|c| c.thread).as_deref() == Some(by);
         let kind = match (by_thread, created) {
@@ -575,9 +576,11 @@ impl Host {
             (true, false) => "save",
             (false, _) => "edit",
         };
+        let told = event.is_none();
         let (kind, text) = event.unwrap_or((kind, path.to_string()));
         self.design_chat_event(project, repo, slug, kind, &text, Some(commit.to_string())).await;
-        if !by_thread && kind == "edit" {
+        // 사람이 고친 문서·그림은 다음 말 앞에 알린다(맡기기·되돌리기·대화 입력창 그림·지우기는 사건이나 말이 알린다)
+        if !by_thread && told {
             let doc = path.to_string();
             aaa_common::diagnostic::ignored(
                 self.design_chat_edit(project, repo, slug, |c| {
@@ -671,24 +674,12 @@ impl Host {
         if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
             return Err(bad(format!("PNG·JPEG·GIF·WebP 그림만 지운다: {path}")));
         }
-        let lock = self.design_branch_lock(project, &target.name, &conv);
-        let _one = lock.lock().await;
-        if self.design_image_writer(role, actor, project, repo, slug)?.0 != by {
-            return Err(err(ErrorCode::Forbidden, "기획 대화 thread가 바뀌었다"));
-        }
         let file = path.rsplit('/').next().unwrap_or(&path).to_string();
         let files = vec![DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Delete }];
         let saved =
             self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 삭제 ({by})")).await?;
-        let event = format!("그림 {file} 삭제");
-        self.design_chat_event(project, &target.name, &conv, "remove", &event, Some(saved.commit.clone())).await;
-        if let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, &conv) {
-            rec.record_write(&saved.commit);
-            aaa_common::diagnostic::ignored(
-                self.design_branch_store(project, &rec),
-                "대화 기록의 마지막 저장만 빠진다",
-            );
-        }
+        let event = ("remove", format!("그림 {file} 삭제"));
+        self.design_saved_in_chat(project, &target.name, &conv, &by, &path, false, &saved.commit, Some(event)).await;
         self.db.audit(actor, "design_detach", &format!("{project} {} {path} {}", target.name, saved.commit));
         Ok(FrontResponse::DesignDetached { path, commit: saved.commit, warnings: saved.warnings })
     }
@@ -815,19 +806,14 @@ impl Host {
         };
         let path = crate::design::checked_path(&folder, &format!("{dir}/{file}"))?;
         let conn = self.design_main_conn(&mid)?;
-        let lock = conv.as_deref().map(|s| self.design_branch_lock(project, &target.name, s));
-        let _one = match &lock {
-            Some(l) => Some(l.lock().await),
-            None => None,
-        };
-        if thread && self.design_image_writer(role, actor, project, repo, slug)?.0 != by {
-            return Err(err(ErrorCode::Forbidden, "기획 대화 thread가 바뀌었다"));
-        }
+        // 전송마다 새 ID: 같은 그림을 동시에 붙여도 agent에서 서로의 조각을 건드리지 않는다
+        let upload = aaa_common::util::new_id();
         for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
             let offset = i * aaa_proto::ATTACH_CHUNK;
             let req = AgentRequest::DesignMainStage {
                 project: project.to_string(),
                 repo: target.path.clone(),
+                upload: upload.clone(),
                 sha256: sha256.clone(),
                 offset: offset as u64,
                 data: aaa_proto::B64(chunk.to_vec()),
@@ -835,33 +821,20 @@ impl Host {
             };
             conn.request_timeout(req, WRITE_WAIT).await?;
         }
-        let files =
-            vec![DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Staged { sha256 } }];
+        // 이름을 준 그림은 그 이름의 다른 그림을 바꾼다. 이름 없는(내용 hash) 그림은 같은 내용만 이미 붙은 것이다
+        let change = DesignMainChange::Staged { sha256, upload, replace: name.is_some() };
+        let files = vec![DesignMainFile { path: path.clone(), base: None, change }];
         let saved =
             self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 붙임 ({by})")).await?;
         let blob = saved.blob(&path);
         if let Some(conv) = conv.as_deref() {
-            let event = if thread { "create" } else { "edit" };
-            self.design_chat_event(project, &target.name, conv, event, &path, Some(saved.commit.clone())).await;
-            if matches!(source, AttachmentSource::WebEdit) {
-                let told = path.clone();
-                aaa_common::diagnostic::ignored(
-                    self.design_chat_edit(project, &target.name, conv, |c| {
-                        if !c.edited.contains(&told) {
-                            c.edited.push(told);
-                        }
-                    })
-                    .await,
-                    "다음 말 앞 알림만 빠진다",
-                );
-            }
-            if let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, conv) {
-                rec.record_write(&saved.commit);
-                aaa_common::diagnostic::ignored(
-                    self.design_branch_store(project, &rec),
-                    "대화 기록의 마지막 저장만 빠진다",
-                );
-            }
+            // 웹 「그림」은 사람이 고친 것으로(다음 말 앞에 알린다), 대화 입력창·대화 thread의 그림은 말이 알린다
+            let event = match source {
+                AttachmentSource::WebEdit => None,
+                AttachmentSource::WebChat => Some(("edit", path.clone())),
+                AttachmentSource::Thread => Some(("create", path.clone())),
+            };
+            self.design_saved_in_chat(project, &target.name, conv, &by, &path, false, &saved.commit, event).await;
         }
         self.db.audit(
             actor,
@@ -1292,6 +1265,11 @@ mod tests {
         let e = h.call(DeviceRole::Reader, "worker:01DESIGN", save("")).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
         assert_eq!(h.design_conversation("worker:01DESIGN", "repo", "").as_deref(), Some("boss-dex"));
+        assert_eq!(
+            h.design_conversation("local:me@01DESIGN", "repo", "").as_deref(),
+            Some("boss-dex"),
+            "역할을 알리지 않은 thread pane의 CLI도 자기 대화"
+        );
         assert_eq!(h.design_conversation("worker:01DESIGN", "other", ""), None, "다른 저장소는 자기 대화가 아니다");
         assert_eq!(h.design_conversation("device:01WEB", "repo", "main"), None, "웹의 「대화 없음」");
         assert_eq!(

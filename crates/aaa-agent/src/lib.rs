@@ -2209,8 +2209,8 @@ impl Agent {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 Box::pin(design_main::open(&cfg, &project, &repo)).await
             }
-            AgentRequest::DesignMainStage { project, repo, sha256, offset, data, eof } => {
-                design_main::stage(&self.state, (&project, &repo), &sha256, offset, &data.0, eof)
+            AgentRequest::DesignMainStage { project, repo, upload, sha256, offset, data, eof } => {
+                design_main::stage(&self.state, (&project, &repo, &upload), &sha256, offset, &data.0, eof)
             }
             AgentRequest::DesignMainWrite { project, repo, folder, files, message, check } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();

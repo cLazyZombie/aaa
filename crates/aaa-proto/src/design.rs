@@ -10,9 +10,9 @@ use ts_rs::TS;
 pub const DESIGN_MAX_DOCS: usize = 2000;
 /// 문서 한 개 글 상한(바이트, 넘으면 읽지 않는다). CLI front socket의 한 frame(1MiB)에 JSON 이스케이프까지 들어가게 둔다
 pub const DESIGN_MAX_TEXT: u64 = 512 * 1024;
-/// 다른 머신 대화 thread의 기획 저장 원격 전달을 기다리는 시간(초). host는 저장 전에 그 branch 올리기(검사 포함 420초)와
-/// 쓰기(120초)를 기다릴 수 있다
-pub const DESIGN_RELAY_SAVE_SECS: u64 = 600;
+/// 다른 머신 대화 thread의 기획 저장 원격 전달을 기다리는 시간(초). host는 main 쓰기(받기·검사·push를 다시 하기까지 1200초,
+/// t-2002)와 앞선 저장의 차례를 기다릴 수 있다
+pub const DESIGN_RELAY_SAVE_SECS: u64 = 1300;
 /// 그림·영상 한 개 상한(바이트). 조각마다 blob을 처음부터 풀므로 크게 두지 않는다
 pub const DESIGN_MAX_FILE: u64 = 16 * 1024 * 1024;
 /// 원격 기획 thread가 CLI 그림을 host로 중계할 수 있는 기능
@@ -28,17 +28,18 @@ pub const DESIGN_MAIN_TRIES: u32 = 3;
 /// 문서 이력 한 번에 읽는 판 수 상한
 pub const DESIGN_LOG_MAX: u32 = 100;
 
-/// main 직접 저장의 파일 하나: 경로·읽은 blob(새 파일은 없음)·바꾸는 내용
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+/// main 직접 저장의 파일 하나: 경로·읽은 blob(새 파일은 없음)·바꾸는 내용. 내용(`change`)은 꼭 있어야 한다(빠진 칸을
+/// 지우기로 읽지 않는다)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesignMainFile {
     pub path: String,
+    #[serde(default)]
     pub base: Option<String>,
     pub change: DesignMainChange,
 }
 
-/// main 직접 저장의 내용: 글, 먼저 넘긴 조각 파일(`DesignMainStage`의 sha256), 지우기
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// main 직접 저장의 내용: 글, 먼저 넘긴 조각 파일(`DesignMainStage`의 전송 ID·sha256), 지우기
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DesignMainChange {
     Text {
@@ -46,8 +47,13 @@ pub enum DesignMainChange {
     },
     Staged {
         sha256: String,
+        /// 조각을 모은 전송(같은 그림을 동시에 붙여도 서로의 조각을 건드리지 않는다)
+        #[serde(default)]
+        upload: String,
+        /// 이름을 준 그림(`--name`): 그 이름의 다른 그림이 있으면 바꾼다. 없으면 이름이 내용 hash라 같은 내용만 이미 붙은 것이다
+        #[serde(default)]
+        replace: bool,
     },
-    #[default]
     Delete,
 }
 
