@@ -1229,6 +1229,52 @@ pub enum AgentRequest {
         #[serde(default)]
         remote: Option<String>,
     },
+    /// design_main.v1(t-2002): 저장소의 「main 기획 자리」(작업 root마다 `<저장소>/<프로젝트>-design-main`, detached)를 만들거나
+    /// origin 기본 branch 끝으로 맞춘다. 기획 대화 thread가 읽는 자리다. 답은 `DesignBranch`(`opened` = `main`)다
+    DesignMainOpen {
+        project: String,
+        repo: String,
+    },
+    /// design_main.v1: 그림·영상 조각을 agent 상태 폴더에 모은다(뒤의 `DesignMainWrite`가 `Staged { sha256 }`으로 쓴다).
+    /// 마지막 조각(`eof`)에서 sha256을 확인한다. 답은 `Done`이다
+    DesignMainStage {
+        project: String,
+        repo: String,
+        sha256: String,
+        offset: u64,
+        data: crate::B64,
+        eof: bool,
+    },
+    /// design_main.v1: 기획 폴더 파일 여럿을 한 commit으로 origin 기본 branch에 올린다. 받기 → 자리를 그 끝으로 맞춤 → 파일마다
+    /// 기준 blob 비교(다르면 Stale) → commit → 검사(`check`, 인자의 `{base}`·`{head}`를 바꾼다) → force 없이 push. push가
+    /// non-fast-forward로 거절되면 새 끝에서 처음부터 다시 한다(`DESIGN_MAIN_TRIES`). 답은 `DesignMainSaved`다
+    DesignMainWrite {
+        project: String,
+        repo: String,
+        folder: String,
+        files: Vec<crate::DesignMainFile>,
+        message: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        check: Vec<String>,
+    },
+    /// design_main.v1: 기획서 ID 표지(`design_put_id`)를 문서 여럿에 넣어 한 commit으로 올린다(`DesignMainWrite`와 같은 절차).
+    /// 답은 `DesignIdsMarked`다
+    DesignMainMarkIds {
+        project: String,
+        repo: String,
+        folder: String,
+        ids: Vec<crate::DesignIdMark>,
+        message: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        check: Vec<String>,
+    },
+    /// design_main.v1: 기획 폴더 안 파일 하나의 main 이력(`--first-parent`, 새것부터 `limit`개). 답은 `DesignLog`다
+    DesignLog {
+        repo: String,
+        folder: String,
+        path: String,
+        limit: u32,
+    },
     /// work_root.manage.v1을 알린 agent만: 그 머신 작업 root 보기·점검·전환(관리 GUI W5c, `aaa work-root`와 같다)
     WorkRoot {
         action: crate::WorkRootOp,
@@ -1376,6 +1422,19 @@ pub enum AgentResponse {
     /// design_write.v1 `DesignPush`의 답: 올린 commit
     DesignPushed {
         head: String,
+    },
+    /// design_main.v1 `DesignMainWrite`의 답: 올린 commit과 그 바로 앞 main 판, 파일별 새 blob, 지운 그림의 남은 참조 경고.
+    /// 바뀐 것이 없으면(같은 그림을 다시 붙임) `commit`은 지금 main 끝이고 `base`와 같다
+    DesignMainSaved {
+        commit: String,
+        base: String,
+        blobs: Vec<crate::DesignMainBlob>,
+        #[serde(default)]
+        warnings: Vec<String>,
+    },
+    /// design_main.v1 `DesignLog`의 답
+    DesignLog {
+        entries: Vec<crate::DesignLogEntry>,
     },
     Cleanup(Cleanup),
     CleanupAbsent {

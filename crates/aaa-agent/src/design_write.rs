@@ -20,11 +20,11 @@ use crate::design::{Missing, Stale, base, entries, fetch, git, has_origin, reply
 use crate::threads::ThreadsConfig;
 
 /// worktree 만들기·commit·지우기 상한
-const GIT_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const GIT_WAIT: Duration = Duration::from_secs(60);
 /// origin 올리기·지우기 상한
-const PUSH_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const PUSH_WAIT: Duration = Duration::from_secs(60);
 /// 올리기 전 저장소 기획 검사 상한(host는 올리기 요청을 이것과 PUSH_WAIT보다 길게 기다린다)
-const CHECK_WAIT: Duration = Duration::from_secs(300);
+pub(crate) const CHECK_WAIT: Duration = Duration::from_secs(300);
 
 fn checked(project: &str, slug: &str) -> Result<String> {
     if !valid_project(project) {
@@ -43,7 +43,7 @@ fn no_hooks() -> Result<String> {
 }
 
 /// stderr까지 받아 실패 까닭을 오류에 남기는 git(worktree·commit). origin 주소가 섞일 수 있는 push에는 쓰지 않는다
-async fn git_told(dir: &Path, args: &[&str], wait: Duration) -> Result<String> {
+pub(crate) async fn git_told(dir: &Path, args: &[&str], wait: Duration) -> Result<String> {
     use aaa_common::child_process::TokioCommandExt as _;
     let hooks = format!("core.hooksPath={}", no_hooks()?);
     let out = tokio::time::timeout(
@@ -117,11 +117,11 @@ async fn own_worktree(cfg: &ThreadsConfig, top: &Path, project: &str, slug: &str
     Ok(Some((path, locked)))
 }
 
-async fn has_ref(top: &Path, full: &str) -> bool {
+pub(crate) async fn has_ref(top: &Path, full: &str) -> bool {
     git(top, &["show-ref", "--verify", "--quiet", full], 4096).await.is_ok()
 }
 
-async fn rev(top: &Path, full: &str) -> Result<String> {
+pub(crate) async fn rev(top: &Path, full: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&git(top, &["rev-parse", "--verify", "--end-of-options", full], 4096).await?)
         .trim()
         .to_string())
@@ -223,7 +223,7 @@ pub async fn open(cfg: &ThreadsConfig, project: &str, repo: &str, slug: &str) ->
 }
 
 /// worktree 안 경로의 부모 폴더가 symlink면 거부한다(worktree 밖에 쓰지 않게)
-fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
+pub(crate) fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
     let mut at = cwd.to_path_buf();
     let parts: Vec<&str> = path.split('/').collect();
     for part in &parts[..parts.len().saturating_sub(1)] {
@@ -244,7 +244,7 @@ fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
 }
 
 /// 대소문자만 다른 파일·폴더가 이미 있으면 그 이름(macOS·Windows에서는 같은 파일이다)
-fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<String> {
+pub(crate) fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<String> {
     let want: Vec<&str> = path.split('/').collect();
     for name in names {
         for (have, want) in name.split('/').zip(&want) {
@@ -260,7 +260,7 @@ fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<Str
     None
 }
 
-fn write_path(folder: &str, path: &str) -> Result<(String, String)> {
+pub(crate) fn write_path(folder: &str, path: &str) -> Result<(String, String)> {
     let (folder, path) = crate::design::inside(folder, path)?;
     if !design_write_path_ok(&path) {
         bail!(
@@ -485,7 +485,7 @@ pub async fn mark_ids(
 }
 
 /// 바꾼 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
-async fn restore(cwd: &Path, paths: &[String]) {
+pub(crate) async fn restore(cwd: &Path, paths: &[String]) {
     let mut args: Vec<&str> = vec!["checkout", "--quiet", "HEAD", "--"];
     args.extend(paths.iter().map(String::as_str));
     aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획 파일 변경 되돌리기");

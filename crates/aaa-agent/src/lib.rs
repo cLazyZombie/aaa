@@ -14,6 +14,7 @@ mod command;
 mod cwd;
 pub mod deploy;
 mod design;
+mod design_main;
 mod design_write;
 pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
@@ -2203,6 +2204,25 @@ impl Agent {
             AgentRequest::DesignClose { project, repo, slug, discard, keep_local, remote } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 design_write::close(&cfg, &project, &repo, &slug, (discard, keep_local), remote.as_deref()).await
+            }
+            AgentRequest::DesignMainOpen { project, repo } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                Box::pin(design_main::open(&cfg, &project, &repo)).await
+            }
+            AgentRequest::DesignMainStage { project, repo, sha256, offset, data, eof } => {
+                design_main::stage(&self.state, (&project, &repo), &sha256, offset, &data.0, eof)
+            }
+            AgentRequest::DesignMainWrite { project, repo, folder, files, message, check } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                Box::pin(design_main::write(&cfg, &self.state, (&project, &repo, &folder), &files, &message, &check))
+                    .await
+            }
+            AgentRequest::DesignMainMarkIds { project, repo, folder, ids, message, check } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                Box::pin(design_main::mark_ids(&cfg, (&project, &repo, &folder), &ids, &message, &check)).await
+            }
+            AgentRequest::DesignLog { repo, folder, path, limit } => {
+                Box::pin(design_main::log(&repo, &folder, &path, limit)).await
             }
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,

@@ -49,6 +49,8 @@ impl std::fmt::Display for Version {
 // 같은 1.11의 선택 기능 design.v1: 저장소 기획 폴더 읽기(DesignTree·DesignRead·DesignFile, t-1894). 알린 agent에만 보낸다.
 // 같은 1.11의 선택 기능 design_write.v1: 기획 branch worktree 열기·저장·올리기·내리기(DesignOpen·DesignSave·DesignPush·
 // DesignClose)와 읽기 요청의 `branch`(t-1894 2단계). 알린 agent에만 보낸다.
+// 같은 1.11의 선택 기능 design_main.v1: 기획 쓰기를 origin 기본 branch에 바로 commit·push(DesignMainOpen·DesignMainStage·
+// DesignMainWrite·DesignMainMarkIds)와 문서 이력(DesignLog, t-2002). 알린 agent에만 보낸다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),

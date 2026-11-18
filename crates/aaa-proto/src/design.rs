@@ -20,6 +20,67 @@ pub const DESIGN_ATTACH_RELAY_FEATURE: &str = "design_attach_relay.v1";
 /// host의 원격 CLI 중계와 저장소 agent의 그림 삭제 요청 지원
 pub const DESIGN_DETACH_FEATURE: &str = "design_detach.v1";
 
+/// main 직접 저장(t-2002): 기획 쓰기를 origin 기본 branch에 바로 commit·push하는 agent 기능(`DesignMain*`·`DesignLog`).
+/// 옛 agent는 이 요청을 모른다고 거절한다(옛 요청에 표시를 더하면 옛 agent가 조용히 기획 branch에 쓴다)
+pub const DESIGN_MAIN_FEATURE: &str = "design_main.v1";
+/// main 직접 저장에서 push가 non-fast-forward로 거절될 때 새 main 위에서 다시 하는 횟수(처음 포함)
+pub const DESIGN_MAIN_TRIES: u32 = 3;
+/// 문서 이력 한 번에 읽는 판 수 상한
+pub const DESIGN_LOG_MAX: u32 = 100;
+
+/// main 직접 저장의 파일 하나: 경로·읽은 blob(새 파일은 없음)·바꾸는 내용
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesignMainFile {
+    pub path: String,
+    pub base: Option<String>,
+    pub change: DesignMainChange,
+}
+
+/// main 직접 저장의 내용: 글, 먼저 넘긴 조각 파일(`DesignMainStage`의 sha256), 지우기
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DesignMainChange {
+    Text {
+        text: String,
+    },
+    Staged {
+        sha256: String,
+    },
+    #[default]
+    Delete,
+}
+
+/// main 직접 저장의 답에 싣는 파일별 새 blob(지운 파일은 없음)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesignMainBlob {
+    pub path: String,
+    pub blob: Option<String>,
+}
+
+/// 문서 이력 한 줄(FRONT_API, t-2002): main이 실제로 가졌던 판(`--first-parent`)만, 새것부터
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignLogEntry {
+    pub commit: String,
+    pub committed_ms: u64,
+    /// commit 첫 줄
+    pub subject: String,
+    /// 기획 저장이면 `기획: <요약> (<누가>)`의 누가(대화 thread ID·사람·coordinator), 아니면 commit 작성자
+    pub by: String,
+    /// 기획 저장이 아닌 commit(착지 병합·새벽 갱신 등)
+    pub other: bool,
+}
+
+/// 기획 저장 commit 첫 줄 `기획: <요약> (<누가>)`을 (요약, 누가)로 나눈다
+pub fn design_commit_subject(subject: &str) -> Option<(&str, &str)> {
+    let rest = subject.strip_prefix("기획: ")?;
+    let rest = rest.strip_suffix(')')?;
+    let (summary, by) = rest.rsplit_once(" (")?;
+    (!by.is_empty() && !by.contains('(')).then_some((summary, by))
+}
+
 /// 기획 branch 주제(`design/<slug>`)의 글자 수 상한
 pub const DESIGN_SLUG_MAX: usize = 48;
 
