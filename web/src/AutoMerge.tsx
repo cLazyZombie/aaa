@@ -81,8 +81,15 @@ function useAutoMergeValue(project: string, target: string, on: boolean, onError
 }
 
 /** thread 화면 맨 윗줄(t-1495 D안, t-1968부터 pane 머리줄): 넓은 화면은 글자와 스위치, 휴대폰은 아이콘 단추(켜면 청록 바탕). 실패 까닭은 머리 아래 띠(onError)에 */
-export function AutoMergeHeadSwitch({ project, target, on, compact, onError }: { project: string; target: string; on: boolean; compact: boolean; onError: (message: string | null) => void }) {
+export function AutoMergeHeadSwitch({ project, target, on, compact, onError, toggleRequest = 0 }: { project: string; target: string; on: boolean; compact: boolean; onError: (message: string | null) => void; toggleRequest?: number }) {
   const { value, busy, change } = useAutoMergeValue(project, target, on, onError);
+  // 좁은 머리 줄의 「더 보기」 항목(t-1987)이 이 스위치를 누른 것과 같다: 저장 실패 띠·되돌림을 함께 쓴다
+  const asked = useRef(toggleRequest);
+  useEffect(() => {
+    if (asked.current === toggleRequest) return;
+    asked.current = toggleRequest;
+    change(!value);
+  });
   if (compact) {
     return (
       <button
@@ -129,7 +136,7 @@ function useNarrowHead(ref: RefObject<HTMLElement | null>, on: boolean): boolean
  * 머리줄이 좁으면(700px 이하) 아이콘으로 줄이고 상태 표시는 진행률 숫자만 둔다(data-narrow, AutoMerge.css, q-4124 1A).
  * 실패 까닭은 머리 아래 오른쪽 끝에 뜨는 띠다(흐름에 넣으면 터미널 칸이 줄어 PTY 크기가 바뀐다)
  */
-export function PaneAutoMerge({ t, role }: { t: ThreadView; role: DeviceRole }) {
+export function PaneAutoMerge({ t, role, toggleRequest }: { t: ThreadView; role: DeviceRole; toggleRequest?: number }) {
   const switchable = useAutoMergeSwitchable(t, role);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement>(null);
@@ -141,7 +148,7 @@ export function PaneAutoMerge({ t, role }: { t: ThreadView; role: DeviceRole }) 
       {!switchable ? (
         narrow ? <AutoMergeMark on /> : <AutoMergeBadge on />
       ) : (
-        <AutoMergeHeadSwitch project={t.project} target={t.id} on={!!t.auto_merge} compact={narrow} onError={setError} />
+        <AutoMergeHeadSwitch project={t.project} target={t.id} on={!!t.auto_merge} compact={narrow} onError={setError} toggleRequest={toggleRequest} />
       )}
       {error && (
         <span className="banner err pane-auto-merge-error" role="alert">
@@ -152,6 +159,18 @@ export function PaneAutoMerge({ t, role }: { t: ThreadView; role: DeviceRole }) 
         </span>
       )}
     </span>
+  );
+}
+
+/** 좁은 머리 줄의 「더 보기」 항목(t-1987): 켜고 끌 수 없으면 켜졌을 때만 상태로 보인다(누를 수 없다) */
+export function AutoMergeMenuItem({ t, role, onToggle }: { t: ThreadView; role: DeviceRole; onToggle: () => void }) {
+  const switchable = useAutoMergeSwitchable(t, role);
+  if (!switchable && !t.auto_merge) return null;
+  return (
+    <button role="menuitemcheckbox" aria-checked={!!t.auto_merge} disabled={!switchable} data-testid="auto-merge-item" onClick={onToggle}>
+      <GitMerge className="i" aria-hidden="true" />
+      <span className="more-label">자동 병합</span>
+    </button>
   );
 }
 

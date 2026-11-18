@@ -13,6 +13,30 @@ fs.writeFileSync(config, fs.readFileSync(config, "utf8")
 
 let thread = null;
 
+// 머리 줄 폭 520px 이하(t-1987, Term.tsx TIGHT_HEAD)는 보고·요약·자동 병합을 「더 보기」 맨 위로 모은다. 모든 단추가 머리 안이고
+// 제목 칸이 남는다(320px 휴대폰은 전에 제목 0px·「더 보기」가 화면 밖, 목록이 붙은 창도 같았다)
+async function headFits(page, tight) {
+  const head = page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`);
+  const got = await head.evaluate((h) => {
+    const box = h.getBoundingClientRect();
+    const shown = (sel) => !!h.querySelector(sel)?.getClientRects().length;
+    return {
+      tight: h.hasAttribute("data-tight"),
+      title: Math.round(h.querySelector(".term-title").getBoundingClientRect().width),
+      over: [...h.children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > Math.min(box.right, window.innerWidth) + 0.5).map((c) => c.className),
+      buttons: [shown("[data-testid='open-report']"), shown(".summary-btn"), shown(".pane-auto-merge [role=switch]")],
+    };
+  });
+  assert.deepEqual({ tight: got.tight, over: got.over, buttons: got.buttons, titleShown: got.title >= 80 },
+    { tight, over: [], buttons: [!tight, !tight, !tight], titleShown: true }, JSON.stringify(got));
+  if (!tight) return;
+  await head.getByTestId("more").click();
+  const items = await page.locator(".more-menu").evaluate((m) => [...m.querySelectorAll("[role^=menuitem]")].slice(0, 3).map((b) => b.textContent.trim()));
+  assert.deepEqual(items, ["보고", "작업 요약", "자동 병합"]);
+  await page.keyboard.press("Escape");
+  await page.locator(".more-menu").waitFor({ state: "detached" });
+}
+
 async function check(engine, width) {
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { hash: `#pane=${thread.pane}` });
   try {
@@ -32,15 +56,17 @@ async function check(engine, width) {
     });
     if (width > 640) assert.deepEqual(fit, { whole: true, first: false, inside: true });
     else assert.deepEqual({ first: fit.first, inside: fit.inside }, { first: true, inside: true });
-    // 자동 병합 아이콘이 있는 휴대폰 머리줄(t-1968 q-4124 1A)은 상태 표시를 진행률 숫자만 두어 제목 칸을 남긴다
-    const status = await page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`).evaluate((h) => ({
-      merge: !!h.querySelector(".pane-auto-merge [role=switch]"), chip: h.querySelector(".chip.agent")?.innerText.trim(),
-      title: Math.round(h.querySelector(".term-title").getBoundingClientRect().width),
-    }));
-    assert.deepEqual({ merge: status.merge, numberOnly: status.chip === "50%", pct: status.chip?.endsWith("50%"), titleShown: status.title >= 30 },
-      { merge: true, numberOnly: width <= 700, pct: true, titleShown: true }, JSON.stringify(status));
+    // 자동 병합이 있는 좁은 머리줄(t-1968 q-4124 1A)은 상태 표시를 진행률 숫자만 두어 제목 칸을 남긴다
+    const chip = await page.locator(`section.term[data-pane="${thread.pane}"] > .term-head .chip.agent`).innerText();
+    assert.deepEqual({ numberOnly: chip.trim() === "50%", pct: chip.trim().endsWith("50%") }, { numberOnly: width <= 700, pct: true }, chip);
+    const tight = width <= 520;
+    await headFits(page, tight);
 
-    await page.locator(`section.term[data-pane="${thread.pane}"]`).getByTestId("summary-open").click();
+    // 좁은 머리는 요약을 「더 보기」 항목으로 연다
+    if (tight) {
+      await page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`).getByTestId("more").click();
+      await page.getByTestId("summary-item").click();
+    } else await page.locator(`section.term[data-pane="${thread.pane}"]`).getByTestId("summary-open").click();
     const summary = page.getByTestId("summary-account");
     await summary.waitFor();
     assert.equal(await summary.textContent(), "계정 sample-claude");
@@ -79,20 +105,52 @@ export default async function () {
     } finally { await page.context().close(); }
   });
   await step("PC Chromium 머리 줄·요약 창의 계정", async () => { await check(browser, 1280); });
-  // 목록이 옆에 붙은 중간 폭 창(t-1968): 머리줄이 451px이라 휴대폰처럼 아이콘·숫자로 줄여 제목 칸을 남기고 넘치지 않는다
-  await step("중간 폭 Chromium 머리 줄의 자동 병합", async () => {
-    const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 800 }, { hash: `#pane=${thread.pane}` });
-    try {
-      const head = page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`);
-      await head.locator(".pane-auto-merge[data-narrow] button.auto-merge-head-btn").waitFor();
-      const got = await head.evaluate((h) => ({
-        chip: h.querySelector(".chip.agent")?.innerText.trim(),
-        titleShown: h.querySelector(".term-title").getBoundingClientRect().width >= 30,
-        over: [...h.children].filter((c) => c.getClientRects().length && c.getBoundingClientRect().right > h.getBoundingClientRect().right + 0.5).map((c) => c.className),
-      }));
-      assert.deepEqual(got, { chip: "50%", titleShown: true, over: [] });
-      assert.deepEqual(errors, []);
-    } finally { await page.context().close(); }
+  // 목록이 옆에 붙은 창(t-1968·t-1987): 769px는 머리줄 400px라 전에 「더 보기」가 밖으로 나갔다. 좁은 머리는 휴대폰처럼 모으고,
+  // 그보다 넓은 머리(1000px 창, 머리 631px)는 단추를 그대로 두고 아이콘·숫자로만 줄인다
+  await step("목록이 붙은 Chromium 창의 머리 줄", async () => {
+    for (const [width, tight] of [[769, true], [1000, false]]) {
+      const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width, height: 800 }, { hash: `#pane=${thread.pane}` });
+      try {
+        const head = page.locator(`section.term[data-pane="${thread.pane}"] > .term-head`);
+        await head.locator(".pane-auto-merge[data-narrow]").waitFor({ state: "attached" });
+        assert.equal((await head.locator(".chip.agent").innerText()).trim(), "50%");
+        await headFits(page, tight);
+        await shot(page, `pane-head-chromium-${width}`);
+        assert.deepEqual(errors, []);
+      } finally { await page.context().close(); }
+    }
+  });
+  await step("320px 휴대폰 Chromium 머리 줄·요약 시트", async () => { await check(browser, 320); });
+  // 작업 요약 단추가 「⋯」로 들어간 좁은 머리는 그 단추의 「반영 안 된 지시 있음」 점을 「⋯」 단추가 단다(t-1987 q-4182 1B).
+  // 넓은 머리는 전처럼 요약 단추의 점이다. 지시는 brief를 받은 thread에 보낸 메시지(Follow-ups)다
+  await step("반영 안 된 지시가 있으면 좁은 머리의 「⋯」에 점", async () => {
+    fs.writeFileSync(`${root}/dot-task.md`, "점 확인\n");
+    const t = aaa("thread", "start", "demo", "--title", "점 표시", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/dot-task.md`);
+    const v = await until("brief 전달", () => { const x = aaa("thread", "show", t.id); return x.pane && x.brief === "delivered" && x; });
+    fs.writeFileSync(`${root}/dot-msg.md`, "색만 바꾼다\n");
+    aaa("thread", "message", t.id, "--text-file", `${root}/dot-msg.md`);
+    await until("반영 안 된 지시 1개", () => aaa("thread", "show", t.id).summary?.pending === 1);
+    for (const [width, tight] of [[320, true], [1280, false]]) {
+      const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width, height: 800 }, { hash: `#pane=${v.pane}` });
+      try {
+        const head = page.locator(`section.term[data-pane="${v.pane}"] > .term-head`);
+        await head.locator(".summary-btn.is-stale").waitFor({ state: "attached" });
+        const got = await head.evaluate((h) => ({
+          more: !!h.querySelector("[data-testid='more-dot'].is-notice")?.getClientRects().length,
+          summary: !!h.querySelector(".summary-btn .summary-dot")?.getClientRects().length,
+          label: h.querySelector("[data-testid='more']").getAttribute("aria-label"),
+        }));
+        assert.deepEqual(got, tight
+          ? { more: true, summary: false, label: "더 보기 · 반영 안 된 지시 있음" }
+          : { more: false, summary: true, label: "더 보기" });
+        if (tight) {
+          await head.getByTestId("more").click();
+          assert.equal(await page.getByTestId("summary-item").locator(".more-hint").textContent(), "반영 안 된 지시 있음");
+        }
+        await shot(page, `pane-head-stale-${width}`);
+        assert.deepEqual(errors, []);
+      } finally { await page.context().close(); }
+    }
   });
   await step("휴대폰 WebKit 머리 줄·요약 시트의 계정", async () => {
     const wk = await webkit.launch();
