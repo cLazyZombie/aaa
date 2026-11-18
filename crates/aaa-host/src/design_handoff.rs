@@ -6,9 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aaa_proto::{
-    DesignHandoffView, DesignPick, DeviceRole, ErrorBody, ErrorCode, FrontResponse, TaskOp, TaskView,
-};
+use aaa_proto::{DesignHandoffView, DesignPick, DeviceRole, ErrorBody, ErrorCode, FrontResponse, TaskOp, TaskView};
 use serde::{Deserialize, Serialize};
 
 use crate::orch::{StartArgs, bad, internal};

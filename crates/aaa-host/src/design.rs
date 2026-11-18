@@ -122,12 +122,15 @@ impl Host {
             }
             R::IdeaLinks { project } => Ok(FrontResponse::IdeaLinks { links: self.idea_links(&project)? }),
             // 옛 기획 branch 이름(`branch`)은 읽지 않는다(t-2002): 늘 main, `at`이면 그 옛 main 판
-            R::DesignRead { project, repo, path, at, .. } => self.design_read(&project, &repo, &path, at.as_deref()).await,
+            R::DesignRead { project, repo, path, at, .. } => {
+                self.design_read(&project, &repo, &path, at.as_deref()).await
+            }
             R::DesignBranchOpen { project, repo, slug, title, profile } => {
                 self.design_branch_open(role, actor, &project, &repo, &slug, title, profile).await
             }
             R::DesignSave { project, repo, branch, path, base, text, summary, extra } => {
-                Box::pin(self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary, extra)).await
+                Box::pin(self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary, extra))
+                    .await
             }
             R::DesignAttach { project, repo, branch, name, dir, upload, offset, total, data } => {
                 Box::pin(self.design_image_chunk(
@@ -352,7 +355,8 @@ impl Host {
         }
         let conn = self.design_conn(&mid)?;
         let commit = at.map(str::to_string).or_else(|| self.design_commit(project, repo));
-        let req = AgentRequest::DesignRead { repo: target.path.clone(), folder, commit, path: path.clone(), branch: None };
+        let req =
+            AgentRequest::DesignRead { repo: target.path.clone(), folder, commit, path: path.clone(), branch: None };
         let AgentResponse::DesignText { text, blob, commit, committed_ms } =
             conn.request_timeout(req, READ_WAIT).await?
         else {

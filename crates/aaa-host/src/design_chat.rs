@@ -13,9 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aaa_proto::{
-    DeviceRole, ErrorBody, ErrorCode, FrontResponse, MessageMode, Role, ThreadKind, ThreadStatus,
-};
+use aaa_proto::{DeviceRole, ErrorBody, ErrorCode, FrontResponse, MessageMode, Role, ThreadKind, ThreadStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::orch::{ResolveOpts, ResolveWhy, StartArgs, bad, internal};

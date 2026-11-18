@@ -146,9 +146,11 @@ fn media_ext(bytes: &[u8]) -> Option<&'static str> {
 /// 붙일 그림 이름(`--name`): 폴더 없는 이름, 확장자가 내용과 같다(jpg·jpeg는 같다)
 fn attach_name(name: &str, ext: &str) -> Result<String, ErrorBody> {
     let name = name.trim();
-    let given = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let given =
+        std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
     let given = if given == "jpeg" { "jpg".to_string() } else { given };
-    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') || !aaa_proto::design_write_path_ok(name) {
+    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') || !aaa_proto::design_write_path_ok(name)
+    {
         return Err(bad("그림 이름은 폴더 없는 파일 이름이다"));
     }
     if given != ext {
@@ -539,8 +541,14 @@ impl Host {
         self.db.audit(actor, "design_save", &format!("{project} {} {path} {commit}", target.name));
         if event.is_none() && commit != saved.base {
             // 넘긴 블록 고침 알림은 저장을 기다리게 하지 않는다
-            let (host, project, repo, conv, path, commit) =
-                (self.clone(), project.to_string(), target.name.clone(), conv.unwrap_or_default(), path.clone(), commit.clone());
+            let (host, project, repo, conv, path, commit) = (
+                self.clone(),
+                project.to_string(),
+                target.name.clone(),
+                conv.unwrap_or_default(),
+                path.clone(),
+                commit.clone(),
+            );
             tokio::spawn(async move { host.design_handoff_relay(&project, &repo, &conv, &path, &commit).await });
         }
         Ok(FrontResponse::DesignSaved { path, commit, blob })
@@ -670,12 +678,16 @@ impl Host {
         }
         let file = path.rsplit('/').next().unwrap_or(&path).to_string();
         let files = vec![DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Delete }];
-        let saved = self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 삭제 ({by})")).await?;
+        let saved =
+            self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 삭제 ({by})")).await?;
         let event = format!("그림 {file} 삭제");
         self.design_chat_event(project, &target.name, &conv, "remove", &event, Some(saved.commit.clone())).await;
         if let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, &conv) {
             rec.record_write(&saved.commit);
-            aaa_common::diagnostic::ignored(self.design_branch_store(project, &rec), "대화 기록의 마지막 저장만 빠진다");
+            aaa_common::diagnostic::ignored(
+                self.design_branch_store(project, &rec),
+                "대화 기록의 마지막 저장만 빠진다",
+            );
         }
         self.db.audit(actor, "design_detach", &format!("{project} {} {path} {}", target.name, saved.commit));
         Ok(FrontResponse::DesignDetached { path, commit: saved.commit, warnings: saved.warnings })
@@ -733,7 +745,8 @@ impl Host {
                     );
                 }
                 let image = pending.get_mut(&key).ok_or_else(|| bad("그림의 앞 조각이 없다"))?;
-                if image.total != total || image.dir != dir || image.name != name || image.bytes.len() as u64 != offset {
+                if image.total != total || image.dir != dir || image.name != name || image.bytes.len() as u64 != offset
+                {
                     return Err(bad("그림의 조각 순서·크기·저장 폴더·이름이 맞지 않다"));
                 }
                 image.bytes.extend_from_slice(&data);
@@ -824,7 +837,8 @@ impl Host {
         }
         let files =
             vec![DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Staged { sha256 } }];
-        let saved = self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 붙임 ({by})")).await?;
+        let saved =
+            self.design_main_write(project, &target, &mid, files, format!("기획: 그림 {file} 붙임 ({by})")).await?;
         let blob = saved.blob(&path);
         if let Some(conv) = conv.as_deref() {
             let event = if thread { "create" } else { "edit" };
@@ -843,7 +857,10 @@ impl Host {
             }
             if let Ok(Some(mut rec)) = self.design_branch_load(project, &target.name, conv) {
                 rec.record_write(&saved.commit);
-                aaa_common::diagnostic::ignored(self.design_branch_store(project, &rec), "대화 기록의 마지막 저장만 빠진다");
+                aaa_common::diagnostic::ignored(
+                    self.design_branch_store(project, &rec),
+                    "대화 기록의 마지막 저장만 빠진다",
+                );
             }
         }
         self.db.audit(
@@ -949,7 +966,10 @@ impl Host {
         self.design_chat_retire(project, &target.name, slug, actor).await.map_err(|e| {
             err(
                 e.code,
-                format!("기획 대화 기록은 지웠으나 대화 thread를 끝내지 못했다(다시 끝내면 마저 끝낸다): {}", e.message),
+                format!(
+                    "기획 대화 기록은 지웠으나 대화 thread를 끝내지 못했다(다시 끝내면 마저 끝낸다): {}",
+                    e.message
+                ),
             )
         })?;
         Ok(FrontResponse::Done)
@@ -1200,7 +1220,8 @@ mod tests {
                 assert_eq!(e.code, ErrorCode::Forbidden, "{req:?}: {e:?}");
             }
             // 「main에 반영」은 없어졌다(t-2002): 누가 불러도 까닭을 돌려준다
-            let gone = FrontRequest::DesignApply { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() };
+            let gone =
+                FrontRequest::DesignApply { project: "demo".into(), repo: "repo".into(), branch: "boss-dex".into() };
             let e = h.call(DeviceRole::Local, coordinator, gone).await.unwrap_err();
             assert_eq!(e.code, ErrorCode::BadRequest, "{e:?}");
             assert!(e.message.contains("없어졌다"), "{e:?}");

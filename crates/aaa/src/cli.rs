@@ -6464,7 +6464,13 @@ fn render_front(r: &FrontResponse) -> String {
             for e in entries {
                 let at = aaa_common::util::utc_text(e.committed_ms);
                 let who = if e.other { format!("({})", e.by) } else { e.by.clone() };
-                let _ = writeln!(s, "{}\t{}\t{who}\t{}", &e.commit[..e.commit.len().min(12)], &at[..16.min(at.len())], e.subject);
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{who}\t{}",
+                    &e.commit[..e.commit.len().min(12)],
+                    &at[..16.min(at.len())],
+                    e.subject
+                );
             }
             if entries.is_empty() {
                 s.push_str("이력 없음\n");
