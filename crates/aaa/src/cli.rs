@@ -389,7 +389,7 @@ enum Cmd {
         cmd: TaskCmd,
     },
     /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다).
-    /// 고칠 때는 기획 branch `design/<주제>`를 열고 그 branch에 저장한다(main에는 착지 창을 거친다)
+    /// 저장은 바로 origin main에 들어간다(저장소 문서 검사를 지나야 올라간다, t-2002)
     Plan {
         #[command(subcommand)]
         cmd: PlanCmd,
@@ -676,7 +676,7 @@ enum InboxCmd {
 
 #[derive(Subcommand)]
 enum PlanCmd {
-    /// 저장소마다 기획 폴더와 문서(경로·제목)
+    /// 저장소마다 기획 폴더와 문서(경로·제목)와 기획 대화
     List,
     /// 지운 옛 아이디어의 n-ID가 가리키는 기획 문서(줄마다 n-ID와 `<저장소>/<경로>`, 프로젝트 `idea-links.toml`)
     Links,
@@ -686,14 +686,23 @@ enum PlanCmd {
         repo: String,
         /// 저장소 기준 문서 경로(기획 폴더 안). 기획서 ID로 열면 주지 않는다
         path: Option<String>,
-        /// 기획 branch `design/<주제>`의 주제(없으면 main)
+        /// 옛 main 판(commit, `aaa plan log`의 첫 칸)에서 읽는다
         #[arg(long)]
+        at: Option<String>,
+        /// 옛 기획 branch 주제(t-2002부터 늘 main을 읽는다: 주면 무시하고 알린다)
+        #[arg(long, hide = true)]
         branch: Option<String>,
     },
-    /// 기획 branch `design/<주제>`를 연다: 없으면 origin 기본 branch에서 만들고, 쉬던 것은 다시 꺼낸다
+    /// 문서 이력: main이 실제로 가졌던 판을 새것부터(commit·때·누가·요약)
+    Log {
+        repo: String,
+        /// 저장소 기준 문서·그림 경로(기획 폴더 안)
+        path: String,
+    },
+    /// 기획 대화를 연다(주제): 기록을 만들고 저장소 머신의 main 기획 자리를 맞춘다. 저장은 바로 main에 들어간다
     New {
         repo: String,
-        /// 주제(영문 소문자·숫자·`-`, branch 이름이 된다)
+        /// 주제(영문 소문자·숫자·`-`)
         slug: String,
         /// 사람이 읽는 주제
         #[arg(long)]
@@ -702,15 +711,15 @@ enum PlanCmd {
         #[arg(long)]
         profile: Option<String>,
     },
-    /// 기획 branch에 문서 하나를 저장한다(그 문서만 commit, 잠시 뒤 origin에 올린다). 그 사이 다른 판이 생겼으면 쓰지 않는다
+    /// 문서를 origin main에 바로 저장한다(한 commit, 저장소 문서 검사를 지나야 올라간다). 그 사이 다른 판이 생겼으면 쓰지 않는다
     Save {
         repo: String,
         /// 저장소 기준 문서 경로(기획 폴더 안)
         path: String,
-        /// 기획 branch 주제
+        /// 사건을 남길 기획 대화 주제(대화 thread는 주지 않아도 자기 대화다)
         #[arg(long)]
-        branch: String,
-        /// 읽은 판(`aaa plan show … --branch`의 blob)
+        branch: Option<String>,
+        /// 읽은 판(`aaa plan show`의 blob)
         #[arg(long, conflicts_with = "new")]
         base: Option<String>,
         /// 새 문서
@@ -722,30 +731,39 @@ enum PlanCmd {
         /// 무엇을 바꿨나(commit 메시지)
         #[arg(long)]
         summary: Option<String>,
+        /// 같은 commit에 함께 저장할 다른 문서 `<경로>=<파일>`(서로 링크하는 문서·문서 옮기기). 기준 판은 `--also-base`
+        #[arg(long, value_name = "PATH=FILE")]
+        also: Vec<String>,
+        /// `--also` 문서의 읽은 판 `<경로>=<blob>`(없으면 새 문서)
+        #[arg(long, value_name = "PATH=BLOB")]
+        also_base: Vec<String>,
     },
-    /// 기획 대화 thread가 자기 branch에 그림을 붙이고 저장소 기준 상대 경로를 출력한다
+    /// 기획 대화 thread가 main에 그림을 붙이고 저장소 기준 경로를 출력한다
     Attach {
         repo: String,
-        /// 기획 branch 주제
+        /// 대화 주제(대화 thread는 주지 않아도 자기 대화다)
         #[arg(long)]
-        branch: String,
+        branch: Option<String>,
         /// 저장소 기준 폴더(생략하면 기획 폴더)
         #[arg(long)]
         dir: Option<String>,
+        /// 파일 이름(확장자는 내용과 같아야 한다). 생략하면 내용 hash 이름
+        #[arg(long)]
+        name: Option<String>,
         /// PNG·JPEG·GIF·WebP 파일(16MiB 이하)
         #[arg(long)]
         file: PathBuf,
     },
-    /// 기획 대화 thread가 자기 branch에서 그림 하나를 지운다
+    /// 기획 대화 thread가 main에서 그림 하나를 지운다
     Detach {
         repo: String,
-        /// 기획 branch 주제
+        /// 대화 주제(대화 thread는 주지 않아도 자기 대화다)
         #[arg(long)]
-        branch: String,
+        branch: Option<String>,
         /// 지울 그림의 저장소 기준 경로
         path: String,
     },
-    /// 기획 대화에 말한다: 그 기획 branch의 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다. 쉬던 branch는 다시 연다
+    /// 기획 대화에 말한다: 그 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다
     Say {
         repo: String,
         slug: String,
@@ -756,19 +774,17 @@ enum PlanCmd {
         #[arg(long)]
         file: Option<std::path::PathBuf>,
     },
-    /// 기획 branch를 버린다: 대화 thread를 끝내고 worktree와 branch(origin에 올린 것도)를 지운다. main에는 흔적이 없다
+    /// 기획 대화를 끝낸다: 대화 thread를 끝내고 기록을 지운다. main에 저장한 글은 그대로다(되돌리기는 문서 이력으로)
     Discard { repo: String, slug: String },
-    /// main에 반영: 기획 branch를 올리고 그 branch에서 갈라진 thread가 main을 합치고 검사를 지나 착지 창을 받는다.
-    /// 프로젝트 실행 한도에 걸리면 예약하고 자리가 나면 host가 띄운다
+    /// (없어졌다, t-2002) 기획은 저장하면 바로 main에 들어간다
+    #[command(hide = true)]
     Apply {
         repo: String,
         slug: String,
-        /// 자리를 기다리는 반영 예약을 거둔다
         #[arg(long)]
         cancel: bool,
     },
-    /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 기획 branch `design/aaa-ids` 한 commit으로 넣는다.
-    /// main에는 `aaa plan apply <저장소> aaa-ids`(또는 웹 「main에 반영」)로 들어간다
+    /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 main에 한 commit으로 넣는다(저장소 문서 검사를 지난다)
     Ids { repo: String },
 }
 
@@ -2344,13 +2360,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             match cmd {
                 PlanCmd::List => front(json, FrontRequest::DesignTree { project, repo: None, cached: false }),
                 PlanCmd::Links => front(json, FrontRequest::IdeaLinks { project }),
-                PlanCmd::Show { repo, path: Some(path), branch } => {
-                    front(json, FrontRequest::DesignRead { project, repo, path, branch })
+                PlanCmd::Show { repo, path, at, branch } => {
+                    if branch.is_some() {
+                        eprintln!("알림: 기획 branch는 없어졌다(t-2002). main을 읽는다");
+                    }
+                    let (repo, path) = match path {
+                        Some(path) => (repo, path),
+                        None => design_id_target(&project, &repo)?,
+                    };
+                    front(json, FrontRequest::DesignRead { project, repo, path, branch: None, at })
                 }
-                PlanCmd::Show { repo: id, path: None, branch } => {
-                    let (repo, path) = design_id_target(&project, &id)?;
-                    front(json, FrontRequest::DesignRead { project, repo, path, branch })
-                }
+                PlanCmd::Log { repo, path } => front(json, FrontRequest::DesignLog { project, repo, path }),
                 PlanCmd::Ids { repo } => front(json, FrontRequest::DesignMarkIds { project, repo }),
                 PlanCmd::New { repo, slug, title, profile } => {
                     front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title, profile })
@@ -2361,16 +2381,21 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 PlanCmd::Apply { repo, slug, cancel: true } => {
                     front(json, FrontRequest::DesignApplyCancel { project, repo, branch: slug })
                 }
-                PlanCmd::Save { repo, path, branch, base, new, file, summary } => {
+                PlanCmd::Save { repo, path, branch, base, new, file, summary, also, also_base } => {
                     if base.is_none() && !new {
                         anyhow::bail!("--base <blob>(고칠 문서의 판) 또는 --new(새 문서)를 준다");
                     }
                     let text =
                         std::fs::read_to_string(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
-                    front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary })
+                    let extra = plan_also(&also, &also_base)?;
+                    let branch = branch.unwrap_or_default();
+                    front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary, extra })
                 }
-                PlanCmd::Attach { repo, branch, dir, file } => plan_attach(json, project, repo, branch, dir, &file),
+                PlanCmd::Attach { repo, branch, dir, name, file } => {
+                    plan_attach(json, project, repo, branch.unwrap_or_default(), (dir, name), &file)
+                }
                 PlanCmd::Detach { repo, branch, path } => {
+                    let branch = branch.unwrap_or_default();
                     let res = front_call(FrontRequest::DesignDetach { project, repo, branch, path })?;
                     if !json && let Ok(FrontResponse::DesignDetached { warnings, .. }) = &res {
                         for warning in warnings {
@@ -4232,12 +4257,31 @@ fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
     }
 }
 
+/// `--also <경로>=<파일>`·`--also-base <경로>=<blob>`를 함께 저장할 파일로 읽는다
+fn plan_also(also: &[String], bases: &[String]) -> Result<Vec<aaa_proto::DesignSaveFile>> {
+    let mut base_of = std::collections::BTreeMap::new();
+    for b in bases {
+        let (path, blob) = b.split_once('=').context("--also-base는 <경로>=<blob>이다")?;
+        base_of.insert(path.to_string(), blob.to_string());
+    }
+    let mut out = Vec::new();
+    for a in also {
+        let (path, file) = a.split_once('=').context("--also는 <경로>=<파일>이다")?;
+        let text = std::fs::read_to_string(file).with_context(|| format!("{file}를 읽지 못했다"))?;
+        out.push(aaa_proto::DesignSaveFile { path: path.to_string(), base: base_of.remove(path), text });
+    }
+    if let Some(path) = base_of.keys().next() {
+        anyhow::bail!("--also-base의 {path}에 맞는 --also가 없다");
+    }
+    Ok(out)
+}
+
 fn plan_attach(
     json: bool,
     project: String,
     repo: String,
     branch: String,
-    dir: Option<String>,
+    (dir, name): (Option<String>, Option<String>),
     file: &std::path::Path,
 ) -> Result<ExitCode> {
     use std::io::Read as _;
@@ -4258,6 +4302,7 @@ fn plan_attach(
             project: project.clone(),
             repo: repo.clone(),
             branch: branch.clone(),
+            name: name.clone(),
             dir: dir.clone(),
             upload: upload.clone(),
             offset,
@@ -4437,11 +4482,17 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         if matches!(&req, FrontRequest::LibraryRead { .. }) && c.proto.minor < 146 {
             anyhow::bail!("library 파일 읽기는 Front API 1.146 이상 host가 필요하다");
         }
-        if matches!(&req, FrontRequest::DesignAttach { .. }) && c.proto.minor < 184 {
-            anyhow::bail!("기획 그림 첨부는 Front API 1.184 이상 host가 필요하다");
-        }
-        if matches!(&req, FrontRequest::DesignDetach { .. }) && c.proto.minor < 185 {
-            anyhow::bail!("기획 그림 삭제는 Front API 1.185 이상 host가 필요하다");
+        // 기획 main 직접 저장(t-2002): 옛 host는 같은 요청을 기획 branch에 쓴다
+        if matches!(
+            &req,
+            FrontRequest::DesignSave { .. }
+                | FrontRequest::DesignAttach { .. }
+                | FrontRequest::DesignDetach { .. }
+                | FrontRequest::DesignLog { .. }
+                | FrontRequest::DesignRevert { .. }
+        ) && c.proto.minor < 186
+        {
+            anyhow::bail!("기획 main 직접 저장·이력은 Front API 1.186 이상 host가 필요하다. host를 갱신한다");
         }
         if matches!(&req, FrontRequest::RecordSearch { .. } | FrontRequest::RecordOpen { .. }) && c.proto.minor < 140 {
             anyhow::bail!("작업 기록 검색은 host 1.140 이상이 필요하다");
@@ -5420,32 +5471,17 @@ fn status_word(s: ProjectStatus) -> &'static str {
     }
 }
 
-/// 기획 branch 한 줄과 고친 파일
+/// 기획 대화 한 줄
 fn print_design_branch(s: &mut String, b: &aaa_proto::DesignBranchView) {
     use std::fmt::Write as _;
-    let state = match b.state {
-        aaa_proto::DesignBranchState::Open => "",
-        aaa_proto::DesignBranchState::Rest => " · 쉼",
-    };
-    let pushed = match (&b.pushed, &b.push_error) {
-        (_, Some(e)) => format!(" · 올리지 못함: {e}"),
-        (Some(p), None) if b.head.as_ref() == Some(p) => " · 올림".to_string(),
-        _ => " · 올리기 전".to_string(),
-    };
-    let _ = writeln!(s, "  ⑂ design/{} 「{}」 · main보다 {} 앞{state}{pushed}", b.slug, b.title, b.ahead);
+    // 기획 대화(t-2002부터 branch가 아니다: 저장은 바로 main)
+    let last = b.head.as_deref().map(|h| format!(" · 마지막 저장 {}", &h[..h.len().min(8)])).unwrap_or_default();
+    let _ = writeln!(s, "  대화 {} 「{}」{last}", b.slug, b.title);
     if b.thread.is_some() || b.pending > 0 || b.chat_error.is_some() {
         let thread = b.thread.as_deref().map_or_else(|| "대화 thread 준비 중".to_string(), |t| format!("대화 {t}"));
         let pending = if b.pending > 0 { format!(" · 보낼 말 {}", b.pending) } else { String::new() };
         let error = b.chat_error.as_deref().map(|e| format!(" · 띄우지 못함: {e}")).unwrap_or_default();
         let _ = writeln!(s, "    {thread}{pending}{error}");
-    }
-    if let Some(w) = &b.apply_wait {
-        let _ = writeln!(s, "    main에 반영 예약됨 · 자리 나면 시작 · {}", w.reason);
-    } else if let Some(t) = &b.apply {
-        let _ = writeln!(s, "    main에 반영 {t}");
-    }
-    for c in &b.changed {
-        let _ = writeln!(s, "    {} {}", c.status, c.path);
     }
 }
 
@@ -6410,19 +6446,28 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::DesignIdsMarked { branch, marked, skipped, commit } => {
+            // t-2002부터 main(옛 host는 기획 branch 이름)
+            let on = if branch == "main" { "main".to_string() } else { format!("design/{branch}") };
             match commit {
                 Some(c) => {
-                    let _ = writeln!(s, "표지 {marked}개 · design/{branch} · commit {c}");
+                    let _ = writeln!(s, "표지 {marked}개 · {on} · commit {c}");
                 }
                 None => {
                     let _ = writeln!(s, "새로 단 표지 없음");
                 }
             }
             if *skipped > 0 {
-                let _ = writeln!(
-                    s,
-                    "{skipped}개는 design/{branch}에 이미 있거나 그 branch에 없다(옛 branch면 버리고 다시 단다)"
-                );
+                let _ = writeln!(s, "{skipped}개는 그 사이 {on}에서 옮겼거나 지웠거나 이미 표지가 있다");
+            }
+        }
+        FrontResponse::DesignLog { entries } => {
+            for e in entries {
+                let at = aaa_common::util::utc_text(e.committed_ms);
+                let who = if e.other { format!("({})", e.by) } else { e.by.clone() };
+                let _ = writeln!(s, "{}\t{}\t{who}\t{}", &e.commit[..e.commit.len().min(12)], &at[..16.min(at.len())], e.subject);
+            }
+            if entries.is_empty() {
+                s.push_str("이력 없음\n");
             }
         }
         FrontResponse::DesignSaved { path, commit, blob } => {

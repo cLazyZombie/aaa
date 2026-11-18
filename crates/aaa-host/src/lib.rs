@@ -730,10 +730,9 @@ pub struct Host {
     file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// 기획: `<프로젝트>/<저장소>`마다 마지막으로 읽은 트리(머신이 꺼졌을 때 보인다, t-1894)
     design_trees: Mutex<HashMap<String, aaa_proto::DesignTree>>,
-    /// 기획 branch 올리기 차례(`<프로젝트>/<저장소>/<slug>` → 마지막 저장 번호): 쉼 동안 새 저장이 없을 때만 올린다
-    design_push_gen: Mutex<HashMap<String, u64>>,
+    /// CLI 그림 전송 조각(프로젝트·쓰는 이·전송 ID)
     design_image_uploads: Mutex<HashMap<(String, String, String), design_branch::DesignImageUpload>>,
-    /// 도는 기획 branch ticker 일(프로젝트)
+    /// 도는 기획 ticker 일(프로젝트)
     design_passes: Mutex<std::collections::HashSet<String>>,
     /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
     design_chatting: Mutex<std::collections::HashSet<String>>,
@@ -980,7 +979,6 @@ impl Host {
             library_reaper: std::sync::OnceLock::new(),
             file_caps: Mutex::new(HashMap::new()),
             design_trees: Mutex::new(HashMap::new()),
-            design_push_gen: Mutex::new(HashMap::new()),
             design_image_uploads: Mutex::new(HashMap::new()),
             design_passes: Mutex::new(Default::default()),
             design_chatting: Mutex::new(Default::default()),
@@ -2202,6 +2200,8 @@ impl Host {
             | FrontRequest::DesignDiscard { .. }
             | FrontRequest::DesignApply { .. }
             | FrontRequest::DesignApplyCancel { .. }
+            | FrontRequest::DesignLog { .. }
+            | FrontRequest::DesignRevert { .. }
             | FrontRequest::DesignHandoff { .. }
             | FrontRequest::DesignIds { .. }
             | FrontRequest::DesignMarkIds { .. }) => Box::pin(self.call_design(role, actor, req)).await,

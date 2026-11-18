@@ -81,6 +81,17 @@ pub fn design_commit_subject(subject: &str) -> Option<(&str, &str)> {
     (!by.is_empty() && !by.contains('(')).then_some((summary, by))
 }
 
+/// 저장에 함께 넣는 다른 글 파일(FRONT_API 1.186)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignSaveFile {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub base: Option<String>,
+    pub text: String,
+}
+
 /// 기획 branch 주제(`design/<slug>`)의 글자 수 상한
 pub const DESIGN_SLUG_MAX: usize = 48;
 

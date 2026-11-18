@@ -277,18 +277,18 @@ async fn staged_images_attach_once_and_delete_warns() {
         panic!("지우기")
     };
     assert!(warnings.iter().any(|w| w.contains("README.md")), "{warnings:?}");
-    // 기준 판 없는 지우기·sha256이 다른 조각은 거절
+    // 없는 파일 지우기·sha256이 다른 조각은 거절
     let e = write(
         &cfg,
         &state,
         ("demo", repo, "docs"),
-        &[DesignMainFile { path: "docs/overview.md".into(), base: None, change: DesignMainChange::Delete }],
+        &[DesignMainFile { path: path.clone(), base: None, change: DesignMainChange::Delete }],
         "기획: x (사람)",
         &[],
     )
     .await
     .unwrap_err();
-    assert_eq!(e.code, ErrorCode::BadRequest, "{e}");
+    assert_eq!(e.code, ErrorCode::Conflict, "{e}");
     assert!(stage(&state, ("demo", repo), &"0".repeat(64), 0, &png, true).is_err());
 }
 

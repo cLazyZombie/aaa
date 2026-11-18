@@ -335,7 +335,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        (n-ID → 옮긴 기획 문서)를 더했다. 옛 host에는 보내지 않는다.
 // 1.184: 자기 기획 branch에 CLI 그림 붙이기(`design_attach`, t-1993).
 // 1.185: 자기 기획 branch에서 CLI 그림 지우기(`design_detach`, t-1995).
-pub const FRONT_API: Version = Version { major: 1, minor: 185 };
+// 1.186: 기획 main 직접 저장(t-2002): `design_save`·`design_attach`·`design_detach`가 origin main에 바로 올린다(`branch`는 사건을
+// 남길 대화, 비워도 된다). `design_save.extra`(한 commit의 여러 파일)·`design_attach.name`·`design_read.at`(옛 main 판)·`design_log`
+// (문서 이력)·`design_revert`(이 판으로 되돌리기). 「main에 반영」(`design_apply`·`design_apply_cancel`)은 없어졌다고 거절한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 186 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -422,12 +422,8 @@ pub async fn write(
                         staged_used.push(ready);
                         (Some(bytes), true)
                     }
-                    DesignMainChange::Delete => {
-                        if f.base.is_none() {
-                            bail!("지우는 파일은 기준 판이 있어야 한다: {path}");
-                        }
-                        (None, false)
-                    }
+                    // 기준 판이 없는 지우기는 「지금 있는 그 파일」을 지운다(그림 지우기)
+                    DesignMainChange::Delete => (None, false),
                 };
                 prepared.push(Prepared { path, base: f.base.clone(), bytes, staged });
             }
@@ -460,7 +456,11 @@ pub async fn write(
                             continue;
                         }
                     }
-                    if now != p.base {
+                    let deleting_any = p.bytes.is_none() && p.base.is_none();
+                    if deleting_any && now.is_none() {
+                        return Err(Stale(format!("지울 파일이 main에 없다: {}", p.path)).into());
+                    }
+                    if now != p.base && !deleting_any {
                         return Err(Stale(match now {
                             Some(now) => format!("그 사이 main에 다른 판이 생겼다: {} 지금 blob {now}", p.path),
                             None => format!("기준 판이 없다: {}이(가) main에 없다", p.path),

@@ -571,7 +571,7 @@ impl Host {
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
             self.chat_rest_pass(&p.name).await;
-            self.design_rest_spawn(&p.name);
+            self.design_pass_spawn(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, !self.coordinator_panes(dir).is_empty());
             self.automation_tick(&p.name);
@@ -582,8 +582,6 @@ impl Host {
             if let Err(e) = self.reconcile_question_requests(&p.name) {
                 tracing::warn!("닫힌 질문의 알림 정리 실패: {}", e.message);
             }
-            // 반영 예약이 할 일 예약보다 먼저 자리를 얻는다(사람이 누른 짧은 착지 일, t-1955)
-            self.design_apply_pass(&p.name).await;
             if let Err(e) = self.queue_pass(&p.name).await {
                 tracing::warn!(project=%p.name,"예약 판정 실패: {}",e.message);
             }

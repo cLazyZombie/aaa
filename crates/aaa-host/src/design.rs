@@ -121,17 +121,28 @@ impl Host {
                 self.design_tree_request(&project, repo.as_deref(), cached).await
             }
             R::IdeaLinks { project } => Ok(FrontResponse::IdeaLinks { links: self.idea_links(&project)? }),
-            R::DesignRead { project, repo, path, branch } => {
-                self.design_read(&project, &repo, &path, branch.as_deref()).await
-            }
+            // 옛 기획 branch 이름(`branch`)은 읽지 않는다(t-2002): 늘 main, `at`이면 그 옛 main 판
+            R::DesignRead { project, repo, path, at, .. } => self.design_read(&project, &repo, &path, at.as_deref()).await,
             R::DesignBranchOpen { project, repo, slug, title, profile } => {
                 self.design_branch_open(role, actor, &project, &repo, &slug, title, profile).await
             }
-            R::DesignSave { project, repo, branch, path, base, text, summary } => {
-                self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary).await
+            R::DesignSave { project, repo, branch, path, base, text, summary, extra } => {
+                Box::pin(self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary, extra)).await
             }
-            R::DesignAttach { project, repo, branch, dir, upload, offset, total, data } => {
-                self.design_image_chunk(role, actor, &project, &repo, &branch, dir, upload, offset, total, data.0).await
+            R::DesignAttach { project, repo, branch, name, dir, upload, offset, total, data } => {
+                Box::pin(self.design_image_chunk(
+                    role,
+                    actor,
+                    &project,
+                    &repo,
+                    &branch,
+                    (dir, name),
+                    upload,
+                    offset,
+                    total,
+                    data.0,
+                ))
+                .await
             }
             R::DesignDetach { project, repo, branch, path } => {
                 self.design_detach(role, actor, &project, &repo, &branch, &path).await
@@ -142,9 +153,10 @@ impl Host {
             R::DesignDiscard { project, repo, branch } => {
                 self.design_discard(role, actor, &project, &repo, &branch).await
             }
-            R::DesignApply { project, repo, branch } => self.design_apply(role, actor, &project, &repo, &branch).await,
-            R::DesignApplyCancel { project, repo, branch } => {
-                self.design_apply_cancel(role, actor, &project, &repo, &branch).await
+            R::DesignApply { .. } | R::DesignApplyCancel { .. } => self.design_apply_gone(),
+            R::DesignLog { project, repo, path } => self.design_log(&project, &repo, &path).await,
+            R::DesignRevert { project, repo, path, at, base, branch } => {
+                Box::pin(self.design_revert(role, actor, &project, &repo, &path, (&at, &base), &branch)).await
             }
             R::DesignHandoff { project, repo, branch, path, blob, blocks, title, profile, memo, reserve } => {
                 let pick = crate::design_handoff::Handoff {
@@ -308,7 +320,7 @@ impl Host {
                 view.error = Some(e.message);
             }
         }
-        view.branches = self.design_branch_views(project, &t.name, &t.path, &folder, &mid).await;
+        view.branches = self.design_branch_views(project, &t.name);
         view
     }
 
@@ -323,45 +335,34 @@ impl Host {
         self.design_trees.lock().unwrap().get(&format!("{project}/{repo}")).map(|t: &DesignTree| t.commit.clone())
     }
 
-    /// 문서 하나. `branch`(slug)면 host가 기억하는 그 기획 branch 끝에서 읽는다
+    /// 문서 하나. `at`(commit)이면 그 옛 main 판에서 읽는다(문서 이력, agent가 기본 branch의 판인지 본다). 없으면 host가 기억한
+    /// main 트리의 판
     pub(crate) async fn design_read(
         &self,
         project: &str,
         repo: &str,
         path: &str,
-        branch: Option<&str>,
+        at: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
         let path = checked_path(&folder, path)?;
-        let (conn, commit) = match branch {
-            Some(slug) => {
-                self.design_known_branch(project, &target.name, slug)?;
-                (self.design_write_conn(&mid)?, None)
-            }
-            None => (self.design_conn(&mid)?, self.design_commit(project, repo)),
-        };
-        let req = AgentRequest::DesignRead {
-            repo: target.path.clone(),
-            folder,
-            commit,
-            path: path.clone(),
-            branch: branch.map(str::to_string),
-        };
+        if at.is_some_and(|c| !aaa_common::git_watch::valid_sha(c)) {
+            return Err(err(ErrorCode::BadRequest, "판은 commit SHA다"));
+        }
+        let conn = self.design_conn(&mid)?;
+        let commit = at.map(str::to_string).or_else(|| self.design_commit(project, repo));
+        let req = AgentRequest::DesignRead { repo: target.path.clone(), folder, commit, path: path.clone(), branch: None };
         let AgentResponse::DesignText { text, blob, commit, committed_ms } =
             conn.request_timeout(req, READ_WAIT).await?
         else {
             return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
         };
         let title = aaa_proto::design_title(&text);
-        // 문서 안 표지, 없으면 원장의 그 경로 번호(main 판만: 기획 branch의 새 문서는 저장할 때 번호를 받는다)
-        // main 판은 트리와 같은 ID(원장으로 맞춘 번호: 복사본의 표지는 원본 번호라 그대로 쓰지 않는다)
-        let tree_id = branch.is_none().then(|| self.design_tree_id(project, &target.name, &path)).flatten();
+        // 지금 판은 트리와 같은 ID(원장으로 맞춘 번호: 복사본의 표지는 원본 번호라 그대로 쓰지 않는다). 옛 판은 문서 안 표지
+        let tree_id = at.is_none().then(|| self.design_tree_id(project, &target.name, &path)).flatten();
         let id = tree_id.or_else(|| aaa_proto::design_text_id(&text)).or_else(|| {
-            (branch.is_none())
-                .then(|| self.db.design_id_of_path(project, &target.name, &path).ok().flatten())
-                .flatten()
-                .map(crate::db::design_id_text)
+            self.db.design_id_of_path(project, &target.name, &path).ok().flatten().map(crate::db::design_id_text)
         });
         Ok(FrontResponse::DesignDoc {
             doc: DesignDoc {
@@ -373,17 +374,10 @@ impl Host {
                 blob,
                 commit,
                 committed_ms,
-                branch: branch.map(str::to_string),
+                branch: None,
                 id,
             },
         })
-    }
-
-    /// host가 만든(기록이 있는) 기획 branch인가
-    fn design_known_branch(&self, project: &str, repo: &str, slug: &str) -> Result<(), ErrorBody> {
-        self.design_branch_load(project, repo, slug)?
-            .map(|_| ())
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("host가 만든 기획 branch가 아니다: design/{slug}")))
     }
 
     /// 문서 안 그림·영상(웹 `GET /api/v1/projects/<p>/design/<저장소>/<경로>?c=<commit>`). 조각으로 받아 모은다. `range`는 HTTP
@@ -405,14 +399,10 @@ impl Host {
                 .design_commit(project, repo)
                 .ok_or_else(|| err(ErrorCode::NotFound, "기획 트리를 먼저 읽어야 한다"))?,
         };
-        let conn = match branch {
-            Some(slug) => {
-                self.design_known_branch(project, &target.name, slug)?;
-                self.design_write_conn(&mid)?
-            }
-            None => self.design_conn(&mid)?,
-        };
-        let file = FileAt { conn, repo: target.path, folder, commit, path, branch: branch.map(str::to_string) };
+        // 옛 기획 branch 그림 주소(`b=`)는 읽지 않는다(t-2002): agent가 그 commit이 main의 판인지 본다
+        let _ = branch;
+        let conn = self.design_conn(&mid)?;
+        let file = FileAt { conn, repo: target.path, folder, commit, path, branch: None };
         let Some(range) = range else { return Ok(DesignBytes::Whole(file.read(0, u64::MAX).await?.0)) };
         let total = file.read(0, 0).await?.1;
         Ok(match crate::files::parse_range(Some(range), total) {

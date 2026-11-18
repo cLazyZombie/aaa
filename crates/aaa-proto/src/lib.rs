@@ -183,6 +183,7 @@ pub fn typescript_bindings() -> String {
         DesignIdView::decl(&cfg),
         DesignIdMark::decl(&cfg),
         DesignLogEntry::decl(&cfg),
+        DesignSaveFile::decl(&cfg),
         TaskBoard::decl(&cfg),
         TaskSuggestion::decl(&cfg),
         TaskAnchor::decl(&cfg),

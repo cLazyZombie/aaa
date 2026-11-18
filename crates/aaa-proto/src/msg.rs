@@ -3189,10 +3189,14 @@ pub enum FrontRequest {
         project: String,
         repo: String,
         path: String,
-        /// 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
+        /// 옛 기획 branch 이름(FRONT_API 1.171). t-2002부터 읽지 않는다(늘 main)
         #[serde(default)]
         #[ts(optional)]
         branch: Option<String>,
+        /// 이 main 판(commit)에서 읽는다(FRONT_API 1.186, 문서 이력). 없으면 host가 기억한 main 트리의 판
+        #[serde(default)]
+        #[ts(optional)]
+        at: Option<String>,
     },
     /// 기획 branch 열기(FRONT_API 1.171, 조작): `design/<slug>`를 origin 기본 branch에서 만들거나 쉬던 것을 다시 연다
     DesignBranchOpen {
@@ -3210,13 +3214,16 @@ pub enum FrontRequest {
         #[ts(optional)]
         profile: Option<String>,
     },
-    /// 기획 문서 저장(FRONT_API 1.171, 조작): 기획 branch에 그 문서 하나를 commit한다. `base`는 읽은 blob(새 문서는 없음)이고
-    /// 그 사이 다른 판이 생겼으면 conflict다. origin에는 쉼 뒤 묶어서 올린다
+    /// 기획 문서 저장(FRONT_API 1.171, 조작): 문서(와 `extra` 파일)를 한 commit으로 origin main에 바로 올린다(t-2002, FRONT_API
+    /// 1.186). `base`는 읽은 blob(새 문서는 없음)이고 그 사이 다른 판이 생겼으면 conflict다. 저장소 문서 검사를 통과하지 못하면
+    /// 올리지 않고 그 까닭을 돌려준다. `branch`는 사건을 남길 기획 대화(주제, 비우면 없음: 대화 thread는 자기 대화)다
     DesignSave {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
         repo: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         branch: String,
         path: String,
         #[serde(default)]
@@ -3227,13 +3234,22 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional)]
         summary: Option<String>,
+        /// 같은 commit에 함께 저장할 다른 글 파일(FRONT_API 1.186): 서로 링크하는 문서·문서 옮기기
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<crate::DesignSaveFile>>")]
+        extra: Vec<crate::DesignSaveFile>,
     },
-    /// 기획 대화 thread가 자기 branch에 PNG·JPEG·GIF·WebP를 붙인다(FRONT_API 1.184).
+    /// 기획 대화 thread가 PNG·JPEG·GIF·WebP를 main에 붙인다(FRONT_API 1.184, t-2002부터 main).
     /// 조각마다 `ATTACH_CHUNK` 이하, 중간 응답은 `Done`, 마지막은 `DesignSaved`다.
     DesignAttach {
         project: String,
         repo: String,
+        #[serde(default)]
         branch: String,
+        /// 파일 이름(FRONT_API 1.186, 확장자는 내용과 같아야 한다). 없으면 내용 hash 이름
+        #[serde(default)]
+        #[ts(optional)]
+        name: Option<String>,
         /// 저장소 기준 폴더. 생략하면 저장소의 기획 폴더
         #[serde(default)]
         #[ts(optional)]
@@ -3243,10 +3259,11 @@ pub enum FrontRequest {
         total: u64,
         data: B64,
     },
-    /// 기획 대화 thread가 자기 branch에서 그림 하나를 지운다(FRONT_API 1.185).
+    /// 기획 대화 thread가 main에서 그림 하나를 지운다(FRONT_API 1.185, t-2002부터 main).
     DesignDetach {
         project: String,
         repo: String,
+        #[serde(default)]
         branch: String,
         path: String,
     },
@@ -3284,6 +3301,29 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
         repo: String,
+        branch: String,
+    },
+    /// 문서 이력(FRONT_API 1.186, 보기 권한, t-2002): main이 실제로 가졌던 판(`--first-parent`)을 새것부터
+    DesignLog {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        path: String,
+    },
+    /// 이 판으로 되돌리기(FRONT_API 1.186, 조작·사람만, t-2002): 문서의 옛 main 판(`at`) 글을 지금 판(`base`) 위에 새로 저장한다.
+    /// 지금 판의 넘긴 블록 표지(`[!계획] d-NNNN`)는 옛 판의 같은 블록에 옮겨 넣고, 그 블록이 옛 판에 없으면 거절한다
+    DesignRevert {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        repo: String,
+        path: String,
+        at: String,
+        base: String,
+        /// 사건을 남길 기획 대화(비우면 없음)
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         branch: String,
     },
     /// 기획서 ID 목록(FRONT_API 1.181, 보기 권한, t-1957): 지금 main 기획 트리에 있는 문서의 `k-NNNN`. host 원장에서 읽는다(agent를
@@ -4166,7 +4206,10 @@ impl FrontRequest {
     /// 기획 branch 저장과 그림 첨부·삭제(host가 그 세션 thread의 기획 branch인지 다시 본다)
     pub fn thread_relay_allowed(&self) -> bool {
         self.thread_read_allowed()
-            || matches!(self, Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignIds { .. })
+            || matches!(
+                self,
+                Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignIds { .. } | Self::DesignLog { .. }
+            )
             || self.design_relay_write()
     }
 
@@ -4245,6 +4288,7 @@ impl FrontRequest {
                 | FrontRequest::IdeaLinks { .. }
                 | FrontRequest::DesignRead { .. }
                 | FrontRequest::DesignIds { .. }
+                | FrontRequest::DesignLog { .. }
                 // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::DesignSave { .. }
                 | FrontRequest::DesignAttach { .. }
@@ -4480,6 +4524,10 @@ pub enum FrontResponse {
         path: String,
         commit: String,
         warnings: Vec<String>,
+    },
+    /// `design_log`의 답(FRONT_API 1.186)
+    DesignLog {
+        entries: Vec<crate::DesignLogEntry>,
     },
     /// `design_ids`의 답(FRONT_API 1.181)
     DesignIds {

@@ -520,7 +520,7 @@ impl Host {
         };
         let line = match rec.design.as_deref() {
             Some(branch) => format!(
-                "쉬었다가 이어 간다({id}). 기획 branch design/{}의 문서를 `aaa plan show … --branch`로 다시 읽고 사용자의 다음 말을 \
+                "쉬었다가 이어 간다({id}). 기획 대화 「{}」의 문서를 `aaa plan show`로 main에서 다시 읽고 사용자의 다음 말을 \
                  기다린다.",
                 branch.split_once('/').map_or(branch, |(_, slug)| slug)
             ),
