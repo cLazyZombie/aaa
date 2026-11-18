@@ -13,6 +13,8 @@
 ## 개발
 
 ```sh
+# 바꾼 웹 spec 자동 선택. 웹 E2E 전수를 원하면 --all-specs를 붙인다.
+nice -n 15 python3 scripts/verify.py develop --base origin/main
 # 웹 타입·번들·웹 유닛 전체 + 관련 E2E + 공개 검사
 nice -n 15 python3 scripts/verify.py develop --base origin/main --spec 23,109
 # 관련 Rust crate와 strict clippy. 필요하면 --package를 더하거나 --spec을 함께 쓴다.
@@ -24,7 +26,12 @@ nice -n 15 bash scripts/ci-local.sh --only web,e2e,public --spec 23,109
 
 `--spec`은 개발용 `--only …e2e…`에서만 받는다. 실행 binary의 별도 사본·번들 최신성 검사를 그대로 거치고,
 선택한 spec의 모든 기기 조합을 실행한다. 선택은 로그의 `e2e-selection.txt`에 남긴다. 부분 통과를 전체 통과로 쓰지 않는다.
-웹 개발에서 `--spec`을 생략하면 웹 E2E 전체다. Rust 개발은 관련 crate를 사람이 지정한다. 자동으로 임의의 owner를 추정하지 않는다.
+웹 전용 개발에서 선택을 생략하면 Git 변경 목록의 `web/e2e/specs/번호-이름.mjs`를 파일명으로 정확히 실행한다.
+바뀐 spec이 없거나 삭제·이동 원본·인식할 수 없는 spec 경로가 하나라도 있으면 전수다. 웹 타입·번들·유닛 전체와 공개 검사도 함께 실행한다.
+여러 기능을 함께 수정했다면 `--spec`으로 owner를 더 지정하거나 `--all-specs`로 전수를 선택한다.
+Rust 개발은 `--package`로 지정한 crate의 포맷을 먼저 확인한 다음 시험과 strict Clippy를 실행한다.
+웹도 확인하려면 `--spec` 또는 `--all-specs`를 함께 쓴다.
+계획·결과 원장의 `e2e_selection`은 변경 파일 자동 선택(`changed-specs`), 명시한 목록(`explicit`), 전체 목록(`all`)을 구분한다.
 
 ## 착지
 
@@ -53,7 +60,7 @@ nice -n 15 cargo xwin clippy --profile verify --workspace --all-targets --locked
 ```
 
 Git의 기준 SHA부터 현재 작업 파일까지 직접 비교한다. rename은 삭제·추가 양쪽 경로를 보며 미추적 파일도 포함한다.
-착지는 clean HEAD에서만 시작하고 실행 뒤 HEAD·작업 파일이 바뀌면 실패한다. `--spec`·`--package`·`AAA_E2E_ONLY`는 착지에서 거부한다.
+착지는 clean HEAD에서만 시작하고 실행 뒤 HEAD·작업 파일이 바뀌면 실패한다. `--spec`·`--all-specs`·`--package`·`AAA_E2E_ONLY`는 착지에서 거부한다.
 실행 계획·기준/최종 SHA·변경 파일·종료 코드·경과는 `target/verification/<단계>-<시각>/`에 보존한다.
 
 웹 전용 gate는 Rust 시험 사전 컴파일·Rust 전수·무관한 Linux/Windows cross를 반복하지 않는다. 대신 실제 내장 자산 빌드는 유지한다.
@@ -70,14 +77,19 @@ GitHub Windows는 확인된 ConPTY 정체 서명·세 설치 owner에만 최초 
 ## 전체 gate의 실행 자원
 
 2 CPU 이상에서는 읽기 전용 fmt를 web과 함께 끝내고 build를 수행한 뒤 Rust 시험과 웹 E2E를 함께 실행한다. Clippy도 명시했다면 build 뒤에 먼저 완료한다.
+기본 전체 gate에서 fmt가 실패하면 build·test·e2e를 건너뛴 사유를 원장에 기록하고 공개 검사까지 수행한 뒤 실패한다.
 Cargo 컴파일의 병렬도는 바꾸지 않는다. 실행 단계에서는 브라우저에 CPU 수의 2/5(최소 1·최대 6)를 주고 나머지를 Rust에 준다.
 10 CPU에서는 Rust 6·브라우저 4이다. 1 CPU에서는 두 단계를 직렬 실행한다. E2E 종료 뒤 Rust가 전체 CPU 예산을 돌려받는다.
+macOS에서 두 단계를 함께 돌릴 때는 실제 SSH 서버로 머신을 추가하는 host 시험 묶음과 브라우저가 같은 시각에 실행되지 않도록 한다.
+나머지 Rust 시험은 계속 병렬로 돈다. 이 실행의 로그 폴더에 둔 `.ssh-browser.lock`은 각 단계를 실행하는 부모가 쥐고, 끝나면 OS가 반환한다.
 Unix Rust의 다중 owner 묶음은 기본 libtest thread 1개, 독립 통합 owner는 한 슬롯을 쓴다.
 Windows의 기존 실행 환경과 명시한 worker/thread 값은 보존한다.
 E2E만 실행할 때는 CPU 둘마다 worker 하나·최대 6개다. `resources.tsv`와 Rust `state.json`/`events.jsonl`에 예산·반환을 기록한다.
 
 macOS 전체 실행은 이번 `cargo test --no-run`이 만든 verify CLI를 바이트 대조한 별도 사본으로 웹에도 쓴다.
-단독 build와 다른 OS는 기존 e2e CLI 빌드를 유지한다. Windows production의 별도 release·실기·같은 파일 전달 절차는 그대로다.
+단독 build는 기본적으로 e2e CLI를 만든다. GitHub Unix Rust job은 `--only build --verify-cli`로
+독립 CLI를 먼저 링크하고 workspace 시험을 사전 컴파일한다. 두 Cargo 호출의 verify profile이 같아 호환되는 의존 산출물을 재사용한다.
+브라우저 job과 Windows 설치 owner는 e2e CLI를 쓰며 Windows production은 별도 release·실기·같은 파일 전달 절차를 따른다.
 독립 통합 owner와 큰 unit 모듈은 각각 작업으로 나눠 실행하며 전체 목록과 실행 수가 다르면 실패한다. doctest도 실행한다.
 시간 원장은 긴 작업을 먼저 배치하는 데만 쓰며 선택·실패 판정·시한에는 쓰지 않는다.
 커밋 SHA와 추적한 상대 경로 목록은 최종 CLI build script가 panic hook에 주입한다. Git 메타데이터만 바뀔 때 공통 backend 캐시는 보존한다.

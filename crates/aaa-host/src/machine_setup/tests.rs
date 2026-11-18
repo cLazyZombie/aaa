@@ -1263,7 +1263,8 @@ fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_
                 .await
                 .unwrap();
             }
-            assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+            let ready = leave(&h, &job.job, MachineSetupPhase::Detecting).await;
+            assert_eq!(ready.phase, MachineSetupPhase::Ready, "{name}: {:?}", ready.error);
             let detected = as_mac(&h, &job.job);
             let settings = MachineSetupSettings {
                 name: name.into(),

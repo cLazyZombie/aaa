@@ -17,7 +17,7 @@
 # 얻을 때까지 기다린다(Unix, docs/verification.md 「같은 머신에서 겹친 검증」).
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
-#   build      verify 실행 파일·unit 사전 컴파일(Windows release cfg도 check)
+#   build      독립 CLI·unit 사전 컴파일(Unix Rust CI는 --only build --verify-cli, Windows release cfg도 check)
 #   clippy     cargo clippy --profile verify --workspace --all-targets --locked --keep-going -- -D warnings
 #   test       Python 검사와 전체 Rust 시험을 함께 실행한다. 독립 owner 분할과 doctest도 유지한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
@@ -29,7 +29,7 @@
 #   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다
 #              (없으면 origin/main. CI는 push의 before나 PR base를 준다)
 #
-# 실패한 단계는 다시 돌리지 않는다. 앞 단계(web·build)가 실패하면 그것에 기대는 단계는 「앞 단계 실패」로 건너뛴다.
+# 기본 전체 gate는 fmt 실패 뒤 build를 시작하지 않는다. web·build에 기대는 단계도 선행 실패 사유를 기록한다.
 # 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과, 실패한 단계의 로그 위치를 요약하고, 하나라도 실패하면 1로 끝난다.
 # 이 스크립트는 자식 프로세스에 신호를 보내지 않는다(각 명령이 끝나기를 기다린다. 함께 띄운 단계는 모두 끝날 때까지 wait).
 set -uo pipefail
@@ -46,6 +46,7 @@ SKIP=""
 LOGS=""
 TEE=""
 E2E_SPEC=""
+CLI_PROFILE=e2e
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
     --logs) LOGS="${2:-}"; shift 2 ;;
     --logs=*) LOGS="${1#*=}"; shift ;;
     --tee) TEE=1; shift ;;
+    --verify-cli) CLI_PROFILE=verify; shift ;;
     --spec) E2E_SPEC="${2:-}"; [ -n "$E2E_SPEC" ] || { echo '--spec 뒤에 번호가 필요하다' >&2; exit 2; }; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "모르는 인자: $1" >&2; usage >&2; exit 2 ;;
@@ -88,6 +90,10 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) OS=windows ;;
   *) OS=other ;;
 esac
+if [ "$CLI_PROFILE" = verify ] && { [ "$ONLY" != build ] || [ -n "$SKIP" ] || [ "$OS" = windows ]; }; then
+  echo '--verify-cli는 Unix의 --only build에서만 쓴다' >&2
+  exit 2
+fi
 
 # 격리한 시험 CLI·host·agent마다 머신 전체 코어 수의 runtime을 만들지 않는다.
 # Windows native owner의 기존 환경은 유지한다.
@@ -128,7 +134,7 @@ step_build() {
   # macOS 전체 실행은 integration test의 CLI를 공유한다. 단독 build와 다른 OS의
   # SSH/native owner가 요구하는 기존 e2e 산출물은 같은 명령으로 만든다.
   if [ "$OS" != macos ] || ! wanted test || ! wanted e2e; then
-    cargo build --profile e2e --locked -p aaa --bin aaa || return $?
+    cargo build --profile "$CLI_PROFILE" --locked -p aaa --bin aaa || return $?
   fi
   # integration test가 쓰는 실제 verify/aaa를 웹에도 고정 복사한다. 같은 CLI를 두 profile로 만들지 않는다.
   # cold unit codegen을 headless와 겹치지 않는다. test의 no-run은 산출물 목록만 다시 모은다.
@@ -187,7 +193,7 @@ prepare_e2e_bin() {
   cmp "$source" "$E2E_BIN" || return 1
   echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
 }
-step_e2e() {
+step_e2e() (
   local root newer built
   set --
   if [ -n "$E2E_SPEC" ]; then set -- --spec "$E2E_SPEC"; fi
@@ -206,8 +212,12 @@ step_e2e() {
     echo "Playwright 1.64.1이 필요하다: npm install -g playwright@1.64.1 && npx playwright@1.64.1 install chromium webkit"
     return 1
   fi
-  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs "$@"
-}
+  if [ -n "${AAA_CI_SSH_BROWSER_LOCK:-}" ]; then
+    exec 8<>"$AAA_CI_SSH_BROWSER_LOCK" || return 1
+    python3 scripts/ci_machine_lock.py --resource-fd 8 || return 1
+  fi
+  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs "$@" 8>&-
+)
 step_public() { bash scripts/check-public.sh ${AAA_PUBLIC_BASE:+"$AAA_PUBLIC_BASE"}; }
 
 # 이번 실행에서 그 단계가 실패했거나 앞 단계 실패로 건너뛰었다
@@ -216,7 +226,10 @@ broken() { case "$(result_of "$1")" in FAIL | 건너뜀:*) return 0 ;; esac; ret
 # 건너뛸 이유(없으면 빈 글)
 skip_reason() {
   case "$1" in
-    build) [ "$(result_of web)" = FAIL ] && echo "앞 단계 실패(web)" ;;
+    build)
+      if [ -z "$ONLY$SKIP" ] && broken fmt; then echo "앞 단계 실패(fmt)"
+      elif broken web; then echo "앞 단계 실패(web)"
+      fi ;;
     clippy|test) broken build && echo "앞 단계 실패(build)" ;;
     e2e)
       if [ "$OS" = windows ]; then echo "Unix만(웹 E2E)"
@@ -310,9 +323,13 @@ fi
 for s in build clippy; do skipped "$s" || { run_step "$s"; collect "$s"; }; done
 go=""
 for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
-unset AAA_RUST_TEST_RELEASE_FILE
+unset AAA_RUST_TEST_RELEASE_FILE AAA_CI_SSH_BROWSER_LOCK
 case " $go " in
-  *" test e2e "*) export AAA_RUST_TEST_RELEASE_FILE="$LOGS/.e2e.result" ;;
+  *" test e2e "*)
+    export AAA_RUST_TEST_RELEASE_FILE="$LOGS/.e2e.result"
+    if [ "$OS" = macos ] && [ "$CI_CPUS" -gt 1 ]; then
+      export AAA_CI_SSH_BROWSER_LOCK="$LOGS/.ssh-browser.lock"
+    fi ;;
 esac
 # 같은 로그 폴더를 다시 써도 이전 완료를 자원 반환으로 보지 않는다.
 for s in $go; do rm -f "$LOGS/.$s.result"; done

@@ -72,9 +72,12 @@ def finish(logs):
     if not before["clean"] or not after["clean"] or any(before[k] != after[k] for k in after):
         raise ValueError("실행 중 커밋·origin 변경 또는 미커밋 변경으로 출처 미확인")
     before.update(format=1, ended_at_ms=time.time_ns() // 1_000_000)
+    rows = [row.split("|", 5)[:5] for row in read(logs / "workspace-summary.tsv").splitlines()]
+    # --logs를 재사용하면 건너뛴 단계의 지난 로그가 남아 있다. 이번 실행의 결과만 보관한다.
+    ran = {row[0] for row in rows[1:] if len(row) == 5 and row[1] in ("ok", "FAIL")}
     binary = Path("target/debug/aaa")
     evidence = logs / "e2e-binary.log"
-    if (evidence.is_file() and "이번 빌드의 웹 E2E 실행 사본:" in read(evidence)
+    if ("e2e" in ran and evidence.is_file() and "이번 빌드의 웹 E2E 실행 사본:" in read(evidence)
             and binary.is_file() and binary.stat().st_mtime_ns // 1_000_000 <= before["ended_at_ms"]):
         before["artifact_bytes"] = binary.stat().st_size
     common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir"))
@@ -83,12 +86,10 @@ def finish(logs):
     # 임시 폴더는 수집 목록에서 제외하며 완성 뒤 원자적으로 공개한다.
     with tempfile.TemporaryDirectory(prefix=".writing-", dir=store) as tmp:
         out = Path(tmp)
-        rows = read(logs / "workspace-summary.tsv").splitlines()
         # 여섯째 칸의 원본 로그 절대 경로는 parser에 필요하지 않다.
-        (out / "workspace-summary.tsv").write_text("\n".join(
-            "|".join(row.split("|")[:5]) for row in rows) + "\n")
+        (out / "workspace-summary.tsv").write_text("\n".join("|".join(row) for row in rows) + "\n")
         rust = logs / "rust/summary.json"
-        if rust.is_file():
+        if "test" in ran and rust.is_file():
             try:
                 jobs = json.loads(read(rust))["jobs"]
                 if len(jobs) > MAX_RUST_JOBS:
@@ -111,7 +112,7 @@ def finish(logs):
             except (OSError, ValueError, KeyError, TypeError) as error:
                 print(f"workspace Rust 요약 미수집: {error}", file=sys.stderr)
         e2e = logs / "e2e.log"
-        if e2e.is_file():
+        if "e2e" in ran and e2e.is_file():
             try:
                 text = read(e2e)
                 # runner의 집계 행만 보존하며 터미널·오류 원문·주소는 복사하지 않는다.
