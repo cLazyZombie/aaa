@@ -1,13 +1,12 @@
-//! 구현 맡기기(t-1894 3-2, 확정 계획 §4): 기획 branch 판 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
-//! 할 일을 만들고, 고른 블록 표지에 그 d-ID를 적어 그 기획 branch에 commit해 바로 올리고, 고르면 예약한다.
-//! 그 할 일의 thread는 어느 길로 시작하든(`apply_from_task`) `origin/design/<주제>`에서 갈라진 worktree에서 일한다.
+//! 구현 맡기기(t-1894 3-2, 확정 계획 §4, t-2002 q-4224 1A): main 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
+//! 할 일을 만들고, 고른 블록 표지에 그 d-ID를 적어 main에 바로 저장하고(저장소 검사 포함), 고르면 예약한다.
+//! 그 할 일의 thread는 어느 길로 시작하든(`apply_from_task`) main에서 갈라지고 brief가 맡긴 자리를 알린다.
+//! 옛 기록(t-2002 전: 기획 branch 맡김, 표지 없이 글로 찾는 main 맡김)도 읽는다.
 //! 맡김 기록은 host 상태 폴더 `design-handoffs/<프로젝트>/<d-ID>.json`에 둔다(TASKS.md에 쓰면 예약한 블록이 바뀐다).
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aaa_proto::{
-    DesignBranchState, DesignHandoffView, DesignPick, DeviceRole, ErrorBody, ErrorCode, FrontResponse, TaskOp, TaskView,
-};
+use aaa_proto::{DesignHandoffView, DesignPick, DeviceRole, ErrorBody, ErrorCode, FrontResponse, TaskOp, TaskView};
 use serde::{Deserialize, Serialize};
 
 use crate::orch::{StartArgs, bad, internal};
@@ -16,8 +15,9 @@ use crate::{Host, err, task_edit, tasks};
 /// 넘긴 블록 고침을 막 뜬 구현 thread가 brief를 받을 때까지 기다리는 한도
 const RELAY_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
-/// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다
-const HANDOFF_PENDING_MS: u64 = 10 * 60 * 1000;
+/// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다. main 쓰기(`MAIN_WAIT` 20분)와 앞
+/// 저장의 차례보다 길게 둔다(t-2002)
+const HANDOFF_PENDING_MS: u64 = 30 * 60 * 1000;
 
 /// 웹 창에서 고른 것
 pub(crate) struct Handoff {
@@ -52,7 +52,7 @@ pub(crate) struct HandoffRec {
     pub commit: Option<String>,
     pub marked_ms: u64,
     pub pushed: bool,
-    /// main 문서에서 바로 맡겼다(t-1894 3-3): 기획 branch가 없고 표지는 구현 branch 첫 commit에 적는다
+    /// main 문서에서 맡겼다. `marked_ms`가 있으면(t-2002) 표지를 main에 적었고, 없으면(t-1894 3-3) 구현 branch 첫 commit에 적는다
     pub main: bool,
     /// 넘긴 블록의 글(main이면 맡길 때 main 판, 기획 branch면 표지를 적은 뒤). 기획 branch에서 바뀌면 그 thread에 알린다
     pub blocks: Vec<String>,
@@ -73,6 +73,18 @@ impl HandoffRec {
             self.task,
             self.task,
             capped(&blocks)
+        )
+    }
+
+    /// main에 표지를 적은 맡김(t-2002)의 brief
+    pub(crate) fn brief_marked(&self) -> String {
+        let sections =
+            if self.sections.is_empty() { String::new() } else { format!(" 「{}」", self.sections.join("」·「")) };
+        format!(
+            "## 기획에서 맡긴 일\n\n기획: `{}`{sections}({}, main 문서에 표지 `[!계획] {}`가 있다). \
+             이 branch에서 그 블록들의 표지를 풀고 본문을 실제 구현대로 고친다. 바뀐 결정과 실제 화면도 반영하고 다른 블록은 \
+             건드리지 않는다. 그 블록이 바뀌면 host가 알린다: origin main을 합쳐 반영한다.\n",
+            self.path, self.task, self.task
         )
     }
 
@@ -199,17 +211,19 @@ impl Host {
             tracing::info!(project = a.project, task = rec.task, "다른 할 일의 맡김 기록이라 쓰지 않는다");
             return Ok(());
         }
-        if rec.main {
-            // main 문서에서 맡긴 것: 기준은 그대로(origin 기본 branch), 첫 commit으로 표지를 적으라고 적는다
-            a.task = format!("{}\n\n{}", a.task.trim_end(), rec.brief_main());
-            return Ok(());
-        }
         if rec.commit.is_none() {
             // 기록 뒤 표지 commit 전: 맡기는 중이면 미루고, 오래 남았으면 끝나지 못한 맡김(host가 멈춤 등)이라 평소처럼 시작한다
             if aaa_common::util::now_ms().saturating_sub(rec.created_ms) < HANDOFF_PENDING_MS {
                 return Err(err(ErrorCode::Unavailable, "구현 맡기는 중이다: 표지를 적은 뒤 시작한다"));
             }
             tracing::info!(project = a.project, task = rec.task, "끝나지 못한 맡김 기록이라 평소처럼 시작한다");
+            return Ok(());
+        }
+        if rec.main {
+            // main 문서에서 맡긴 것: 기준은 그대로(origin 기본 branch). 표지를 main에 적었으면(t-2002) 그 자리를, 옛 기록이면 첫
+            // commit으로 표지를 적으라고 적는다
+            let brief = if rec.marked_ms > 0 { rec.brief_marked() } else { rec.brief_main() };
+            a.task = format!("{}\n\n{}", a.task.trim_end(), brief);
             return Ok(());
         }
         let branch = self
@@ -284,10 +298,11 @@ impl Host {
     /// 그 저장소에서 맡긴 블록(main 맡김은 표지가 구현 branch에, 기획 branch 맡김은 그 branch에 있어 main 판에는 아직 없다).
     /// 살아 있는 할 일(번호와 바뀌지 않는 ID가 같은 것)의 기록만, 블록 글은 d-ID를 뺀 main 판 글로
     pub(crate) fn design_handoff_notes(&self, project: &str, repo: &str) -> Vec<aaa_proto::DesignHandoffNote> {
+        // main에 표지를 적은 맡김(t-2002)은 그 표지가 칩이다: 글로 찾는 칩은 옛 기록에만 단다
         let recs: Vec<HandoffRec> = self
             .design_handoff_records(project)
             .into_iter()
-            .filter(|r| r.repo == repo && !r.blocks.is_empty())
+            .filter(|r| r.repo == repo && !r.blocks.is_empty() && !(r.main && r.marked_ms > 0))
             .collect();
         if recs.is_empty() {
             return Vec::new();
@@ -316,9 +331,9 @@ impl Host {
             .collect()
     }
 
-    /// 기획 branch 저장 뒤(사람·대화 thread): 맡긴 블록의 글이 바뀌었으면 그 할 일의 구현 thread에 바뀐 글을 보낸다(확정 계획 §4).
-    /// 할 일마다 한 번에 하나씩, 잠금 안에서 그 branch의 지금 글을 다시 읽어 견준다(저장이 겹쳐도 옛 글을 나중에 보내지 않는다).
-    /// 먼저 올리고(못 올렸으면 보내지 않는다), 대화에 「넘긴 블록 고침」 사건을 남긴다
+    /// main 저장 뒤(사람·대화 thread): 맡긴 블록의 글이 바뀌었으면 그 할 일의 구현 thread에 바뀐 글을 보낸다(확정 계획 §4).
+    /// 할 일마다 한 번에 하나씩, 잠금 안에서 main의 지금 글을 다시 읽어 견준다(저장이 겹쳐도 옛 글을 나중에 보내지 않는다).
+    /// 그 저장의 대화(`slug`, 비면 없음)에 「넘긴 블록 고침」 사건을 남긴다
     pub(crate) async fn design_handoff_relay(
         self: &Arc<Self>,
         project: &str,
@@ -330,14 +345,14 @@ impl Host {
         let tasks: Vec<String> = self
             .design_handoff_records(project)
             .into_iter()
-            .filter(|r| !r.main && r.repo == repo && r.slug == slug && r.path == path)
+            .filter(|r| r.main && r.marked_ms > 0 && r.repo == repo && r.path == path)
             .map(|r| r.task)
             .collect();
         for task in tasks {
             let lock = self.thread_op_lock(project, &format!("design-relay:{task}"));
             let _one = lock.lock().await;
             let Some(rec) = self.design_handoff_load(project, &task) else { continue };
-            let Ok(FrontResponse::DesignDoc { doc }) = self.design_read(project, repo, path, Some(slug)).await else {
+            let Ok(FrontResponse::DesignDoc { doc }) = self.design_read(project, repo, path, None).await else {
                 continue;
             };
             let now: Vec<String> = aaa_proto::design_marks(&doc.text)
@@ -347,22 +362,6 @@ impl Host {
                 .collect();
             // 표지가 모두 빠졌으면(구현됨·되돌림) 알릴 블록이 없다
             if now.is_empty() || now == rec.blocks {
-                continue;
-            }
-            // 블록 글이 없는 기록(3-2에서 맡긴 것)은 처음 본 글을 둔다: 모든 블록을 바뀐 것으로 보내지 않는다
-            if rec.blocks.is_empty() {
-                self.design_handoff_blocks(project, &task, now);
-                continue;
-            }
-            // 먼저 올린다: thread가 합칠 판, 아직 thread가 없으면 시작할 판이다(다 올린 뒤에만 갈라진다)
-            self.design_push_now(project, repo, slug).await;
-            let pushed = self
-                .design_branch_load(project, repo, slug)
-                .ok()
-                .flatten()
-                .is_some_and(|b| b.pushed.is_some() && b.pushed == b.head);
-            if !pushed {
-                tracing::info!(project, task, slug, "기획 branch를 올리지 못해 넘긴 블록 고침을 다음 저장에 다시 본다");
                 continue;
             }
             let thread = self
@@ -381,7 +380,7 @@ impl Host {
                     })
                 });
             let Some(thread) = thread else {
-                // 아직 thread가 없으면 다 올린 그 branch 끝에서 갈라지므로 바뀐 글을 그대로 받는다
+                // 아직 thread가 없으면 main에서 갈라지므로 바뀐 글을 그대로 받는다
                 self.design_handoff_blocks(project, &task, now);
                 continue;
             };
@@ -391,8 +390,7 @@ impl Host {
                 continue;
             };
             let msg = format!(
-                "기획 branch `design/{slug}`에서 맡긴 블록({task})이 바뀌었다(`{path}`, commit {}). \
-                 자기 branch에 `origin/design/{slug}`를 합쳐 반영한다.\n\n{}",
+                "main 문서에서 맡긴 블록({task})이 바뀌었다(`{path}`, commit {}). 자기 branch에 origin main을 합쳐 반영한다.\n\n{}",
                 &doc.commit[..doc.commit.len().min(7)],
                 capped(&body)
             );
@@ -402,13 +400,17 @@ impl Host {
                 None => {
                     // 보내지 못했다(보류가 풀리지 않음·시한): 기록을 두어 다음 저장에 다시 본다. 대화에 남겨 사람이 안다
                     let note = format!("{task} → {thread}(보내지 못함)");
-                    self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
+                    if !slug.is_empty() {
+                        self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
+                    }
                     continue;
                 }
             };
             // 받았는지 모르는 것도 다시 보내지 않는다(같은 말이 두 번 갈 수 있다)
             self.design_handoff_blocks(project, &task, now);
-            self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
+            if !slug.is_empty() {
+                self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
+            }
         }
     }
 
@@ -462,22 +464,38 @@ impl Host {
         }
     }
 
-    /// main 문서에서 바로 맡기기(t-1894 3-3, q-3868 5A): 기획 branch가 없다. 할 일·기록·예약만 하고, 표지는 구현 thread가
-    /// 자기 branch 첫 commit으로 적는다(brief). 맡긴 블록은 main에 표지가 생길 때까지 웹이 기록으로 칩을 단다
-    #[allow(clippy::too_many_arguments)]
-    async fn design_handoff_main(
+    /// 구현 맡기기(사람만, t-2002 q-4224 1A): main 문서를 읽어 고른 블록을 대조하고, 할 일·맡김 기록을 만든 뒤 고른 블록 표지에
+    /// d-ID를 적어 main에 저장한다(저장소 검사 포함). 저장하지 못하면 만든 할 일과 기록을 지우고 거절한다. 예약 실패는 경고다.
+    /// `h.slug`는 사건을 남길 기획 대화다(비면 없음)
+    pub(crate) async fn design_handoff(
         self: &Arc<Self>,
+        role: DeviceRole,
         actor: &str,
         project: &str,
         h: Handoff,
-        target: crate::design::Target,
-        mid: String,
-        title: String,
-        memo: Vec<String>,
     ) -> Result<FrontResponse, ErrorBody> {
-        // 같은 저장소의 main 맡김은 하나씩: 동시에 같은 블록을 두 번 맡기지 않게
+        // 사람만 맡긴다(thread·coordinator 세션은 기획에 쓰지 않는다)
+        if actor.starts_with("worker:") {
+            return Err(err(ErrorCode::Forbidden, "구현 맡기기는 사람이 한다"));
+        }
+        self.design_writer(role, actor, project, None)?;
+        let (target, mid) = self.design_target(project, &h.repo)?;
+        let title = h.title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if title.is_empty() {
+            return Err(bad("할 일 제목이 비었다"));
+        }
+        tasks::check_title(&title).map_err(|e| bad(format!("할 일 제목: {e}")))?;
+        let memo: Vec<String> = h.memo.lines().map(str::trim_end).filter(|l| !l.is_empty()).map(note_line).collect();
+        if memo.is_empty() {
+            return Err(bad("메모가 비었다(구현 thread의 할 일 글이 된다)"));
+        }
+        if h.blocks.is_empty() {
+            return Err(bad("넘길 블록을 고르지 않았다"));
+        }
+        // 같은 저장소의 맡김은 하나씩: 동시에 같은 블록을 두 번 맡기지 않게
         let lock = self.thread_op_lock(project, &format!("design-main:{}", target.name));
         let _one = lock.lock().await;
+        // 고를 때 읽은 판이고, 고른 차례의 블록 첫 줄이 같아야 한다. 넘기지 않은 계획인지도 할 일을 만들기 전에 본다
         let FrontResponse::DesignDoc { doc } = self.design_read(project, &h.repo, &h.path, None).await? else {
             return Err(internal("예상하지 못한 응답"));
         };
@@ -495,28 +513,26 @@ impl Host {
         }
         let picks: Vec<usize> = h.blocks.iter().map(|p| p.ordinal as usize).collect();
         aaa_proto::design_mark_tasks(&doc.text, &picks, "d-0000").map_err(bad)?;
+        // 옛 기록(글로 찾는 맡김)에 이미 있는 같은 블록은 다시 맡기지 않는다
         let taken = self.design_handoff_taken(project, &target.name, &doc.path);
         let mut sections: Vec<String> = Vec::new();
-        let mut blocks: Vec<String> = Vec::new();
         for &p in &picks {
             let Some(m) = marks.get(p) else { continue };
-            let block = aaa_proto::design_mark_text(&doc.text, m);
-            if let Some(task) = taken.get(&block) {
+            if let Some(task) = taken.get(&aaa_proto::design_mark_text(&doc.text, m)) {
                 return Err(err(ErrorCode::Conflict, format!("이미 맡긴 블록이다: {task}")));
             }
-            if !blocks.contains(&block) {
-                blocks.push(block);
-            }
+            // 첫 제목 앞의 블록은 문서 제목을 절로 쓴다(웹 `sectionsOf`와 같다)
             let section = if m.section.is_empty() { doc.title.clone() } else { m.section.clone() };
             if !section.is_empty() && !sections.contains(&section) {
                 sections.push(section);
             }
         }
+        // 머신은 그 문서 저장소의 머신이다(자동 배정 머신이 없어도 예약이 자리를 얻는다)
         let machine = Some(self.machine_name(&mid));
         let task =
             self.design_handoff_task(project, actor, &target.name, &title, h.profile.as_deref(), machine, memo).await?;
         let id = task.short_id.clone().ok_or_else(|| internal("새 할 일에 표시 번호가 없다"))?;
-        let rec = HandoffRec {
+        let mut rec = HandoffRec {
             task: id.clone(),
             task_id: task.id.clone().unwrap_or_default(),
             repo: target.name.clone(),
@@ -524,19 +540,57 @@ impl Host {
             sections,
             by: actor.to_string(),
             created_ms: aaa_common::util::now_ms(),
-            commit: Some(doc.commit.clone()),
             main: true,
-            blocks,
             ..Default::default()
         };
+        // 기록을 표지 저장보다 먼저 둔다: 그 사이 누가 시작해도 맡긴 자리를 안다(표지를 적기 전에는 미룬다)
+        let stored = self.design_handoff_store(project, &rec);
+        let marked = aaa_proto::design_mark_tasks(&doc.text, &picks, &id).map_err(internal)?;
+        let saved = match &stored {
+            Ok(()) => {
+                Box::pin(self.design_save_event(
+                    role,
+                    actor,
+                    project,
+                    &h.repo,
+                    &h.slug,
+                    (&doc.path, Some(h.blob.clone()), marked.clone()),
+                    Vec::new(),
+                    Some(format!("구현 맡김 {id}")),
+                    Some(("handoff", format!("{id} · 블록 {}", picks.len()))),
+                ))
+                .await
+            }
+            Err(e) => Err(e.clone()),
+        };
+        let commit = match saved {
+            Ok(FrontResponse::DesignSaved { commit, .. }) => commit,
+            other => {
+                // 표지 없는 할 일은 맡긴 것이 아니다: 지우고 거절한다(다시 맡길 수 있게)
+                let why = match other {
+                    Err(e) => e.message,
+                    Ok(_) => "예상하지 못한 응답".into(),
+                };
+                self.design_handoff_remove(project, &id);
+                let left = match self.design_handoff_task_remove(project, actor, &task).await {
+                    Ok(()) => String::new(),
+                    Err(e) => format!(" 만든 할 일 {id}도 지우지 못했다: {}", e.message),
+                };
+                return Err(err(ErrorCode::Conflict, format!("표지를 main에 적지 못해 맡기지 않았다: {why}.{left}")));
+            }
+        };
+        rec.commit = Some(commit.clone());
+        rec.marked_ms = aaa_common::util::now_ms();
+        rec.pushed = true;
+        let after = aaa_proto::design_marks(&marked);
+        rec.blocks = after
+            .iter()
+            .filter(|m| m.task.as_deref() == Some(id.as_str()))
+            .map(|m| aaa_proto::design_mark_text(&marked, m))
+            .collect();
         let mut warnings: Vec<String> = Vec::new();
         if let Err(e) = self.design_handoff_store(project, &rec) {
-            // 기록이 없으면 main 판의 칩도 brief의 표지 안내도 없다: 할 일만 남기지 않는다
-            let left = match self.design_handoff_task_remove(project, actor, &task).await {
-                Ok(()) => String::new(),
-                Err(e) => format!(" 만든 할 일 {id}도 지우지 못했다: {}", e.message),
-            };
-            return Err(err(e.code, format!("맡김 기록을 쓰지 못해 맡기지 않았다: {}.{left}", e.message)));
+            warnings.push(format!("맡김 기록을 쓰지 못했다({}): 구현 thread brief에 맡긴 자리가 빠진다", e.message));
         }
         let mut reserved = false;
         if h.reserve {
@@ -552,179 +606,7 @@ impl Host {
             &format!("{project} {} main {} {id} 블록 {} 예약 {reserved}", target.name, doc.path, picks.len()),
         );
         Ok(FrontResponse::DesignHandoff {
-            handoff: DesignHandoffView { task: id, commit: None, pushed: false, reserved, warning },
-        })
-    }
-
-    /// 구현 맡기기. 그 기획 branch를 잠근 채 읽기·고른 블록 대조·할 일·기록·표지 commit까지 한다(그 사이 대화 thread의
-    /// 저장이 끼어 다른 판·다른 블록에 적지 않게). 표지 commit에 실패하면 만든 할 일과 기록을 지우고 거절한다.
-    /// 올리기·예약 실패는 거절하지 않고 경고로 돌려준다(올리기 전에는 그 할 일을 시작하지 않는다)
-    pub(crate) async fn design_handoff(
-        self: &Arc<Self>,
-        role: DeviceRole,
-        actor: &str,
-        project: &str,
-        h: Handoff,
-    ) -> Result<FrontResponse, ErrorBody> {
-        // 사람만 맡긴다(thread·coordinator 세션은 기획 branch에 쓰지 않는다)
-        self.design_writer(role, actor, project, None)?;
-        let (target, mid) = self.design_target(project, &h.repo)?;
-        let title = h.title.split_whitespace().collect::<Vec<_>>().join(" ");
-        if title.is_empty() {
-            return Err(bad("할 일 제목이 비었다"));
-        }
-        tasks::check_title(&title).map_err(|e| bad(format!("할 일 제목: {e}")))?;
-        let memo: Vec<String> = h.memo.lines().map(str::trim_end).filter(|l| !l.is_empty()).map(note_line).collect();
-        if memo.is_empty() {
-            return Err(bad("메모가 비었다(구현 thread의 할 일 글이 된다)"));
-        }
-        if h.blocks.is_empty() {
-            return Err(bad("넘길 블록을 고르지 않았다"));
-        }
-        if h.slug.is_empty() {
-            return self.design_handoff_main(actor, project, h, target, mid, title, memo).await;
-        }
-        let lock = self.design_branch_lock(project, &target.name, &h.slug);
-        let one = lock.lock().await;
-        let branch = self
-            .design_branch_load(project, &target.name, &h.slug)?
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{}", h.slug)))?;
-        if branch.state == DesignBranchState::Rest {
-            return Err(err(ErrorCode::Conflict, format!("쉬는 기획 branch다: design/{}(다시 연 뒤 맡긴다)", h.slug)));
-        }
-        // 고를 때 읽은 판이고, 고른 차례의 블록 첫 줄이 같아야 한다. 넘기지 않은 계획인지도 할 일을 만들기 전에 본다
-        let FrontResponse::DesignDoc { doc } = self.design_read(project, &h.repo, &h.path, Some(&h.slug)).await? else {
-            return Err(internal("예상하지 못한 응답"));
-        };
-        if doc.blob != h.blob {
-            return Err(err(ErrorCode::Conflict, "그 사이 문서가 바뀌었다: 다시 읽고 고른다"));
-        }
-        let marks = aaa_proto::design_marks(&doc.text);
-        let lines: Vec<&str> = doc.text.split('\n').collect();
-        for pick in &h.blocks {
-            let head =
-                marks.get(pick.ordinal as usize).and_then(|m| lines.get(m.line)).map(|l| aaa_proto::design_trim(l));
-            if head != Some(aaa_proto::design_trim(&pick.head)) {
-                return Err(err(ErrorCode::Conflict, "고른 블록이 문서와 맞지 않는다: 다시 읽고 고른다"));
-            }
-        }
-        let picks: Vec<usize> = h.blocks.iter().map(|p| p.ordinal as usize).collect();
-        aaa_proto::design_mark_tasks(&doc.text, &picks, "d-0000").map_err(bad)?;
-        // main 문서에서(또는 다른 기획 branch에서) 이미 맡긴 같은 블록은 다시 맡기지 않는다
-        let taken = self.design_handoff_taken(project, &target.name, &doc.path);
-        for &p in &picks {
-            if let Some(task) = marks.get(p).and_then(|m| taken.get(&aaa_proto::design_mark_text(&doc.text, m))) {
-                return Err(err(ErrorCode::Conflict, format!("이미 맡긴 블록이다: {task}")));
-            }
-        }
-        let mut sections: Vec<String> = Vec::new();
-        for &p in &picks {
-            let Some(m) = marks.get(p) else { continue };
-            // 첫 제목 앞의 블록은 문서 제목을 절로 쓴다(웹 `sectionsOf`와 같다)
-            let section = if m.section.is_empty() { doc.title.clone() } else { m.section.clone() };
-            if !section.is_empty() && !sections.contains(&section) {
-                sections.push(section);
-            }
-        }
-        // 머신은 그 문서 저장소의 머신이다(기획 branch가 거기 있고, 자동 배정 머신이 없어도 예약이 자리를 얻는다)
-        let machine = Some(self.machine_name(&mid));
-        let task =
-            self.design_handoff_task(project, actor, &target.name, &title, h.profile.as_deref(), machine, memo).await?;
-        let id = task.short_id.clone().ok_or_else(|| internal("새 할 일에 표시 번호가 없다"))?;
-        let mut rec = HandoffRec {
-            task: id.clone(),
-            task_id: task.id.clone().unwrap_or_default(),
-            repo: target.name.clone(),
-            slug: h.slug.clone(),
-            branch_created_ms: branch.created_ms,
-            path: doc.path.clone(),
-            sections,
-            by: actor.to_string(),
-            created_ms: aaa_common::util::now_ms(),
-            ..Default::default()
-        };
-        // 기록을 표지 commit보다 먼저 둔다: 그 사이 누가 시작해도 기획 branch 밖에서 시작하지 않는다(올리기 전이라 미룬다)
-        let stored = self.design_handoff_store(project, &rec);
-        let marked = aaa_proto::design_mark_tasks(&doc.text, &picks, &id).map_err(internal)?;
-        let marked_text = marked.clone();
-        let saved = match &stored {
-            Ok(()) => {
-                self.design_save_event(
-                    role,
-                    actor,
-                    project,
-                    &h.repo,
-                    &h.slug,
-                    &doc.path,
-                    Some(h.blob.clone()),
-                    marked,
-                    Some(format!("구현 맡김 {id}")),
-                    Some(("handoff", format!("{id} · 블록 {}", picks.len()))),
-                    true,
-                )
-                .await
-            }
-            Err(e) => Err(e.clone()),
-        };
-        let commit = match saved {
-            Ok(FrontResponse::DesignSaved { commit, .. }) => commit,
-            other => {
-                // 표지 없는 할 일은 맡긴 것이 아니다: 지우고 거절한다(다시 맡길 수 있게)
-                let why = match other {
-                    Err(e) => e.message,
-                    Ok(_) => "예상하지 못한 응답".into(),
-                };
-                drop(one);
-                self.design_handoff_remove(project, &id);
-                let left = match self.design_handoff_task_remove(project, actor, &task).await {
-                    Ok(()) => String::new(),
-                    Err(e) => format!(" 만든 할 일 {id}도 지우지 못했다: {}", e.message),
-                };
-                return Err(err(ErrorCode::Conflict, format!("표지를 적지 못해 맡기지 않았다: {why}.{left}")));
-            }
-        };
-        rec.commit = Some(commit.clone());
-        rec.marked_ms = aaa_common::util::now_ms();
-        let after_marks = aaa_proto::design_marks(&marked_text);
-        rec.blocks = after_marks
-            .iter()
-            .filter(|m| m.task.as_deref() == Some(id.as_str()))
-            .map(|m| aaa_proto::design_mark_text(&marked_text, m))
-            .collect();
-        let mut warnings: Vec<String> = Vec::new();
-        if let Err(e) = self.design_handoff_store(project, &rec) {
-            warnings.push(format!(
-                "맡김 기록을 쓰지 못했다({}): 구현 thread는 기획 branch를 합친 뒤 일해야 한다",
-                e.message
-            ));
-        }
-        drop(one);
-        // 쉼을 기다리지 않고 바로 올린다: 구현 thread는 origin의 그 branch에서 갈라진다
-        self.design_push_now(project, &target.name, &h.slug).await;
-        let after = self.design_branch_load(project, &target.name, &h.slug).ok().flatten();
-        // 그 사이 새 저장이 있어 더 앞선 끝을 올렸어도 표지 commit은 그 안에 있다
-        let pushed = after.as_ref().is_some_and(|r| r.pushed.is_some() && r.pushed == r.head);
-        if !pushed {
-            let why = after.and_then(|r| r.push_error).unwrap_or_else(|| "그 사이 새 저장이 있었다".into());
-            warnings.push(format!("origin에 올리지 못했다({why}): 조금 뒤 다시 올리고, 올린 뒤 시작한다"));
-        }
-        let mut reserved = false;
-        if h.reserve && pushed {
-            match self.design_handoff_reserve(project, actor, &task).await {
-                Ok(()) => reserved = true,
-                Err(e) => warnings.push(format!("예약하지 못했다: {}", e.message)),
-            }
-        } else if h.reserve {
-            warnings.push("올린 뒤 할 일 화면에서 예약한다".into());
-        }
-        let warning = (!warnings.is_empty()).then(|| warnings.join(" · "));
-        self.db.audit(
-            actor,
-            "design_handoff",
-            &format!("{project} {}/{} {} {id} 블록 {} 예약 {reserved}", target.name, h.slug, doc.path, picks.len()),
-        );
-        Ok(FrontResponse::DesignHandoff {
-            handoff: DesignHandoffView { task: id, commit: Some(commit), pushed, reserved, warning },
+            handoff: DesignHandoffView { task: id, commit: Some(commit), pushed: true, reserved, warning },
         })
     }
 
@@ -1010,6 +892,8 @@ mod tests {
             main: true,
             blocks: vec![block.clone()],
             created_ms: 1,
+            // t-2002 전 main 맡김: 맡길 때의 main 판, 표지 없음
+            commit: Some("c0".into()),
             ..Default::default()
         };
         h.design_handoff_store("demo", &main).unwrap();
@@ -1035,6 +919,21 @@ mod tests {
             "{}",
             a.task
         );
+
+        // main에 표지를 적은 맡김(t-2002): 표지가 칩이라 글로 찾는 칩에 싣지 않고, brief는 표지 자리를 알린다(첫 commit 안내 없음)
+        let marked = HandoffRec { marked_ms: 2, commit: Some("c1".into()), ..main.clone() };
+        h.design_handoff_store("demo", &marked).unwrap();
+        assert!(h.design_handoff_notes("demo", "pt").is_empty());
+        let mut a = StartArgs { project: "demo".into(), task: "할 일".into(), ..Default::default() };
+        h.design_handoff_start(&mut a, Some(&id), t.id.as_deref(), Some("pt")).unwrap();
+        assert_eq!(a.base, None);
+        assert!(a.task.contains("main 문서에 표지") && !a.task.contains("첫 commit"), "{}", a.task);
+        // 표지를 적기 전(기록만)에는 시작을 미룬다
+        let pending = HandoffRec { commit: None, marked_ms: 0, created_ms: aaa_common::util::now_ms(), ..main.clone() };
+        h.design_handoff_store("demo", &pending).unwrap();
+        let mut a = StartArgs { project: "demo".into(), task: "할 일".into(), ..Default::default() };
+        let e = h.design_handoff_start(&mut a, Some(&id), t.id.as_deref(), Some("pt")).unwrap_err();
+        assert_eq!(e.code, ErrorCode::Unavailable, "{e:?}");
 
         // 기획 branch 맡김: 표지의 d-ID를 뺀 글로 싣는다(main 판과 같은 글)
         let on_branch = HandoffRec {

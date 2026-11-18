@@ -10,15 +10,94 @@ use ts_rs::TS;
 pub const DESIGN_MAX_DOCS: usize = 2000;
 /// 문서 한 개 글 상한(바이트, 넘으면 읽지 않는다). CLI front socket의 한 frame(1MiB)에 JSON 이스케이프까지 들어가게 둔다
 pub const DESIGN_MAX_TEXT: u64 = 512 * 1024;
-/// 다른 머신 대화 thread의 기획 저장 원격 전달을 기다리는 시간(초). host는 저장 전에 그 branch 올리기(검사 포함 420초)와
-/// 쓰기(120초)를 기다릴 수 있다
-pub const DESIGN_RELAY_SAVE_SECS: u64 = 600;
+/// 다른 머신 대화 thread의 기획 저장 원격 전달을 기다리는 시간(초). host는 main 쓰기(받기·검사·push를 다시 하기까지 1200초,
+/// t-2002)와 앞선 저장의 차례를 기다릴 수 있다
+pub const DESIGN_RELAY_SAVE_SECS: u64 = 1300;
 /// 그림·영상 한 개 상한(바이트). 조각마다 blob을 처음부터 풀므로 크게 두지 않는다
 pub const DESIGN_MAX_FILE: u64 = 16 * 1024 * 1024;
 /// 원격 기획 thread가 CLI 그림을 host로 중계할 수 있는 기능
 pub const DESIGN_ATTACH_RELAY_FEATURE: &str = "design_attach_relay.v1";
 /// host의 원격 CLI 중계와 저장소 agent의 그림 삭제 요청 지원
 pub const DESIGN_DETACH_FEATURE: &str = "design_detach.v1";
+
+/// main 직접 저장(t-2002): 기획 쓰기를 origin 기본 branch에 바로 commit·push하는 agent 기능(`DesignMain*`·`DesignLog`).
+/// 옛 agent는 이 요청을 모른다고 거절한다(옛 요청에 표시를 더하면 옛 agent가 조용히 기획 branch에 쓴다)
+pub const DESIGN_MAIN_FEATURE: &str = "design_main.v1";
+/// main 직접 저장에서 push가 non-fast-forward로 거절될 때 새 main 위에서 다시 하는 횟수(처음 포함)
+pub const DESIGN_MAIN_TRIES: u32 = 3;
+/// 문서 이력 한 번에 읽는 판 수 상한
+pub const DESIGN_LOG_MAX: u32 = 100;
+
+/// main 직접 저장의 파일 하나: 경로·읽은 blob(새 파일은 없음)·바꾸는 내용. 내용(`change`)은 꼭 있어야 한다(빠진 칸을
+/// 지우기로 읽지 않는다)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesignMainFile {
+    pub path: String,
+    #[serde(default)]
+    pub base: Option<String>,
+    pub change: DesignMainChange,
+}
+
+/// main 직접 저장의 내용: 글, 먼저 넘긴 조각 파일(`DesignMainStage`의 전송 ID·sha256), 지우기
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DesignMainChange {
+    Text {
+        text: String,
+    },
+    Staged {
+        sha256: String,
+        /// 조각을 모은 전송(같은 그림을 동시에 붙여도 서로의 조각을 건드리지 않는다)
+        #[serde(default)]
+        upload: String,
+        /// 이름을 준 그림(`--name`): 그 이름의 다른 그림이 있으면 바꾼다. 없으면 이름이 내용 hash라 같은 내용만 이미 붙은 것이다
+        #[serde(default)]
+        replace: bool,
+    },
+    Delete,
+}
+
+/// main 직접 저장의 답에 싣는 파일별 새 blob(지운 파일은 없음)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesignMainBlob {
+    pub path: String,
+    pub blob: Option<String>,
+}
+
+/// 문서 이력 한 줄(FRONT_API, t-2002): main이 실제로 가졌던 판(`--first-parent`)만, 새것부터
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignLogEntry {
+    pub commit: String,
+    #[ts(type = "number")]
+    pub committed_ms: u64,
+    /// commit 첫 줄
+    pub subject: String,
+    /// 기획 저장이면 `기획: <요약> (<누가>)`의 누가(대화 thread ID·사람·coordinator), 아니면 commit 작성자
+    pub by: String,
+    /// 기획 저장이 아닌 commit(착지 병합·새벽 갱신 등)
+    pub other: bool,
+}
+
+/// 기획 저장 commit 첫 줄 `기획: <요약> (<누가>)`을 (요약, 누가)로 나눈다
+pub fn design_commit_subject(subject: &str) -> Option<(&str, &str)> {
+    let rest = subject.strip_prefix("기획: ")?;
+    let rest = rest.strip_suffix(')')?;
+    let (summary, by) = rest.rsplit_once(" (")?;
+    (!by.is_empty() && !by.contains('(')).then_some((summary, by))
+}
+
+/// 저장에 함께 넣는 다른 글 파일(FRONT_API 1.186)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct DesignSaveFile {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub base: Option<String>,
+    pub text: String,
+}
 
 /// 기획 branch 주제(`design/<slug>`)의 글자 수 상한
 pub const DESIGN_SLUG_MAX: usize = 48;

@@ -204,7 +204,7 @@ pub(crate) async fn git(dir: &Path, args: &[&str], limit: usize) -> Result<Vec<u
 }
 
 /// `git` 출력과 종료 코드(0이 아니어도 실패로 보지 않는다: `git grep`의 1은 「맞는 것 없음」이다)
-async fn git_status(dir: &Path, args: &[&str], limit: usize) -> Result<(Vec<u8>, Option<i32>)> {
+pub(crate) async fn git_status(dir: &Path, args: &[&str], limit: usize) -> Result<(Vec<u8>, Option<i32>)> {
     let mut child = command(dir, args).stdin(Stdio::null()).spawn_guarded().context("git 실행 실패")?;
     let mut stdout = child.stdout.take().context("git 출력이 없다")?.take(limit as u64 + 1);
     let mut bytes = Vec::new();
@@ -260,7 +260,7 @@ pub(crate) async fn fetch(top: &Path) -> Result<()> {
     result
 }
 
-async fn fetch_now(top: &Path) -> Result<()> {
+pub(crate) async fn fetch_now(top: &Path) -> Result<()> {
     tokio::time::timeout(
         FETCH_TIMEOUT,
         git(

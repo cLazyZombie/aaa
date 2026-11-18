@@ -373,7 +373,10 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     let wait = match harness {
         // agent가 host를 기다리는 시간보다 조금 길게(`thread_read::on_thread_read`)
         "thread_read"
-            if matches!(msg.payload.get("op").and_then(Value::as_str), Some("design_save" | "design_attach")) =>
+            if matches!(
+                msg.payload.get("op").and_then(Value::as_str),
+                Some("design_save" | "design_attach" | "design_detach")
+            ) =>
         {
             aaa_proto::DESIGN_RELAY_SAVE_SECS + 10
         }

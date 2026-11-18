@@ -11,7 +11,7 @@ impl Host {
         request: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
         if !request.thread_relay_allowed() {
-            return Err(err(ErrorCode::Forbidden, "원격 전달을 허용한 명령이 아니다(읽기·자기 기획 branch 저장)"));
+            return Err(err(ErrorCode::Forbidden, "원격 전달을 허용한 명령이 아니다(읽기·자기 대화의 기획 저장)"));
         }
         {
             let i = self.inner.lock().unwrap();

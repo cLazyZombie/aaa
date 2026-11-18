@@ -49,6 +49,8 @@ impl std::fmt::Display for Version {
 // 같은 1.11의 선택 기능 design.v1: 저장소 기획 폴더 읽기(DesignTree·DesignRead·DesignFile, t-1894). 알린 agent에만 보낸다.
 // 같은 1.11의 선택 기능 design_write.v1: 기획 branch worktree 열기·저장·올리기·내리기(DesignOpen·DesignSave·DesignPush·
 // DesignClose)와 읽기 요청의 `branch`(t-1894 2단계). 알린 agent에만 보낸다.
+// 같은 1.11의 선택 기능 design_main.v1: 기획 쓰기를 origin 기본 branch에 바로 commit·push(DesignMainOpen·DesignMainStage·
+// DesignMainWrite·DesignMainMarkIds)와 문서 이력(DesignLog, t-2002). 알린 agent에만 보낸다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -333,7 +335,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        (n-ID → 옮긴 기획 문서)를 더했다. 옛 host에는 보내지 않는다.
 // 1.184: 자기 기획 branch에 CLI 그림 붙이기(`design_attach`, t-1993).
 // 1.185: 자기 기획 branch에서 CLI 그림 지우기(`design_detach`, t-1995).
-pub const FRONT_API: Version = Version { major: 1, minor: 185 };
+// 1.186: 기획 main 직접 저장(t-2002): `design_save`·`design_attach`·`design_detach`가 origin main에 바로 올린다(`branch`는 사건을
+// 남길 대화, 비워도 된다). `design_save.extra`(한 commit의 여러 파일)·`design_attach.name`·`design_read.at`(옛 main 판)·`design_log`
+// (문서 이력)·`design_revert`(이 판으로 되돌리기). 「main에 반영」(`design_apply`·`design_apply_cancel`)은 없어졌다고 거절한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 186 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

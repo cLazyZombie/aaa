@@ -999,6 +999,22 @@ path: string, title: string, };
 
 export type DesignIdMark = { path: string, id: string, };
 
+export type DesignLogEntry = { commit: string, committed_ms: number,
+/**
+ * commit 첫 줄
+ */
+subject: string,
+/**
+ * 기획 저장이면 `기획: <요약> (<누가>)`의 누가(대화 thread ID·사람·coordinator), 아니면 commit 작성자
+ */
+by: string,
+/**
+ * 기획 저장이 아닌 commit(착지 병합·새벽 갱신 등)
+ */
+other: boolean, };
+
+export type DesignSaveFile = { path: string, base?: string, text: string, };
+
 export type TaskBoard = { queue: Array<TaskReservation>, project: string,
 /**
  * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
@@ -1697,9 +1713,13 @@ repo?: string,
  */
 cached?: boolean, } | { "op": "idea_links", project?: string, } | { "op": "design_read", project?: string, repo: string, path: string,
 /**
- * 기획 branch `design/<slug>`의 slug(FRONT_API 1.171). 없으면 main
+ * 옛 기획 branch 이름(FRONT_API 1.171). t-2002부터 읽지 않는다(늘 main)
  */
-branch?: string, } | { "op": "design_branch_open", project?: string, repo: string, slug: string,
+branch?: string,
+/**
+ * 이 main 판(commit)에서 읽는다(FRONT_API 1.186, 문서 이력). 없으면 host가 기억한 main 트리의 판
+ */
+at?: string, } | { "op": "design_branch_open", project?: string, repo: string, slug: string,
 /**
  * 주제(없으면 slug). 이미 있는 branch는 바꾸지 않는다
  */
@@ -1707,15 +1727,27 @@ title?: string,
 /**
  * 대화 thread profile(FRONT_API 1.173, 없으면 프로젝트 기본·있던 고르기)
  */
-profile?: string, } | { "op": "design_save", project?: string, repo: string, branch: string, path: string, base?: string, text: string,
+profile?: string, } | { "op": "design_save", project?: string, repo: string, branch?: string, path: string, base?: string, text: string,
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_attach", project: string, repo: string, branch: string,
+summary?: string,
+/**
+ * 같은 commit에 함께 저장할 다른 글 파일(FRONT_API 1.186): 서로 링크하는 문서·문서 옮기기
+ */
+extra?: Array<DesignSaveFile>, } | { "op": "design_attach", project: string, repo: string, branch: string,
+/**
+ * 파일 이름(FRONT_API 1.186, 확장자는 내용과 같아야 한다). 없으면 내용 hash 이름
+ */
+name?: string,
 /**
  * 저장소 기준 폴더. 생략하면 저장소의 기획 폴더
  */
-dir?: string, upload: string, offset: bigint, total: bigint, data: B64, } | { "op": "design_detach", project: string, repo: string, branch: string, path: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
+dir?: string, upload: string, offset: bigint, total: bigint, data: B64, } | { "op": "design_detach", project: string, repo: string, branch: string, path: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_log", project?: string, repo: string, path: string, } | { "op": "design_revert", project?: string, repo: string, path: string, at: string, base: string,
+/**
+ * 사건을 남길 기획 대화(비우면 없음)
+ */
+branch?: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */
@@ -1934,9 +1966,9 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_detached", path: string, commit: string, warnings: Array<string>, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_detached", path: string, commit: string, warnings: Array<string>, } | { "kind": "design_log", entries: Array<DesignLogEntry>, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
 /**
- * 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
+ * 고른 문서 중 넣지 않은 수: 그 사이 옮겼거나 지웠거나 이미 표지가 있다
  */
 skipped: number, commit: string | null, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**

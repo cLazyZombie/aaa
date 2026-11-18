@@ -20,11 +20,11 @@ use crate::design::{Missing, Stale, base, entries, fetch, git, has_origin, reply
 use crate::threads::ThreadsConfig;
 
 /// worktree 만들기·commit·지우기 상한
-const GIT_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const GIT_WAIT: Duration = Duration::from_secs(60);
 /// origin 올리기·지우기 상한
-const PUSH_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const PUSH_WAIT: Duration = Duration::from_secs(60);
 /// 올리기 전 저장소 기획 검사 상한(host는 올리기 요청을 이것과 PUSH_WAIT보다 길게 기다린다)
-const CHECK_WAIT: Duration = Duration::from_secs(300);
+pub(crate) const CHECK_WAIT: Duration = Duration::from_secs(300);
 
 fn checked(project: &str, slug: &str) -> Result<String> {
     if !valid_project(project) {
@@ -43,7 +43,7 @@ fn no_hooks() -> Result<String> {
 }
 
 /// stderr까지 받아 실패 까닭을 오류에 남기는 git(worktree·commit). origin 주소가 섞일 수 있는 push에는 쓰지 않는다
-async fn git_told(dir: &Path, args: &[&str], wait: Duration) -> Result<String> {
+pub(crate) async fn git_told(dir: &Path, args: &[&str], wait: Duration) -> Result<String> {
     use aaa_common::child_process::TokioCommandExt as _;
     let hooks = format!("core.hooksPath={}", no_hooks()?);
     let out = tokio::time::timeout(
@@ -223,7 +223,7 @@ pub async fn open(cfg: &ThreadsConfig, project: &str, repo: &str, slug: &str) ->
 }
 
 /// worktree 안 경로의 부모 폴더가 symlink면 거부한다(worktree 밖에 쓰지 않게)
-fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
+pub(crate) fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
     let mut at = cwd.to_path_buf();
     let parts: Vec<&str> = path.split('/').collect();
     for part in &parts[..parts.len().saturating_sub(1)] {
@@ -244,7 +244,7 @@ fn plain_parents(cwd: &Path, path: &str) -> Result<()> {
 }
 
 /// 대소문자만 다른 파일·폴더가 이미 있으면 그 이름(macOS·Windows에서는 같은 파일이다)
-fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<String> {
+pub(crate) fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<String> {
     let want: Vec<&str> = path.split('/').collect();
     for name in names {
         for (have, want) in name.split('/').zip(&want) {
@@ -260,7 +260,7 @@ fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<Str
     None
 }
 
-fn write_path(folder: &str, path: &str) -> Result<(String, String)> {
+pub(crate) fn write_path(folder: &str, path: &str) -> Result<(String, String)> {
     let (folder, path) = crate::design::inside(folder, path)?;
     if !design_write_path_ok(&path) {
         bail!(

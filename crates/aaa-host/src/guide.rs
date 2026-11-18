@@ -677,20 +677,20 @@ thread·post의 질문은 `aaa question answer q-NNNN B --auto --reason-file <�
 /// 「아이디어」·「기획」 요청(t-1928, q-4013 2B). coordinator는 기획 대화를 열고 말하기만 한다(host `design_opener`)
 const PLAN: &str = r#"# 기획 대화로 넘기기(coordinator)
 
-사용자의 「아이디어」·「기획」 요청은 할 일·thread를 만들지 않고 저장소 기획 branch의 기획 대화로 넘긴다. 대화 thread는 host가 그 저장소 머신에 띄우고, 사용자와 이야기하며 그 branch의 기획 문서를 고친다.
+사용자의 「아이디어」·「기획」 요청은 할 일·thread를 만들지 않고 저장소의 기획 대화로 넘긴다. 대화 thread는 host가 그 저장소 머신에 띄우고, 사용자와 이야기하며 기획 문서를 고친다. 기획 저장은 바로 origin main에 들어간다(branch·「main에 반영」 없음, 저장소 문서 검사를 지나야 올라간다).
 
-1. `aaa plan list`로 저장소마다 기획 폴더와 기획 branch(`⑂ design/<주제> 「제목」`)를 본다. 기획 폴더가 없는 저장소에는 열지 못한다. 어느 저장소인지 분명하지 않으면 사용자에게 묻는다.
-2. 같은 주제의 branch가 있으면(쉼이어도) 그 주제에 말한다. 없으면 `aaa plan new <저장소> <주제> --title '<제목>'`으로 연다. 주제는 영문 소문자·숫자·`-` 1~48자(branch `design/<주제>`가 된다), 제목은 사용자 말로 짧게 쓴다.
+1. `aaa plan list`로 저장소마다 기획 폴더와 기획 대화(`대화 <주제> 「제목」`)를 본다. 기획 폴더가 없는 저장소에는 열지 못한다. 어느 저장소인지 분명하지 않으면 사용자에게 묻는다.
+2. 같은 주제의 대화가 있으면 그 주제에 말한다. 없으면 `aaa plan new <저장소> <주제> --title '<제목>'`으로 연다. 주제는 영문 소문자·숫자·`-` 1~48자, 제목은 사용자 말로 짧게 쓴다.
 3. `aaa plan say <저장소> <주제> --file <파일>`로 사용자 말을 보낸다. 줄이거나 바꾸지 않고 그대로 싣고, 사용자가 준 파일·근거 경로가 있으면 함께 적는다. 처음이면 host가 대화 thread를 띄우고 brief 뒤에 보낸다.
-4. 사용자에게 저장소와 `design/<주제>`를 알리고, 웹 「기획」에서 그 대화를 이어 갈 수 있다고 한 줄로 답한다. 채팅으로 이어지는 말도 같은 주제에 `aaa plan say`로 보낸다(`aaa thread message`를 쓰지 않는다).
+4. 사용자에게 저장소와 주제를 알리고, 웹 「기획」에서 그 대화를 이어 갈 수 있다고 한 줄로 답한다. 채팅으로 이어지는 말도 같은 주제에 `aaa plan say`로 보낸다(`aaa thread message`를 쓰지 않는다).
 
-coordinator는 열기·말하기만 한다. 사람이 직접 문서를 저장하거나 branch를 버리거나 main에 반영하거나 구현을 맡기려면 웹 「기획」을 안내한다. 기획 대화 thread는 자기 branch에 `plan save`로 문서를 저장할 수 있다.
+coordinator는 열기·말하기만 한다. 사람이 직접 문서를 저장하거나 되돌리거나 대화를 끝내거나 구현을 맡기려면 웹 「기획」을 안내한다. 기획 대화 thread는 `plan save`로 문서를 main에 저장한다.
 
-기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --branch <주제> --file <그림> --dir <저장소 기준 그림 폴더>`로 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 저장소 지침과 문서 주변의 배치를 보고 기존 그림 폴더(예: 문서 옆 `assets/`)를 고른다. 배치 규칙이 없으면 문서 폴더를 준다. 출력한 경로는 문서 폴더 기준 상대 경로로 바꾸어 링크한다.
+기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --file <그림> --dir <저장소 기준 그림 폴더> --name <이름>`으로 main에 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 저장소 지침과 문서 주변의 배치를 보고 기획 손 그림 폴더(생성 그림 폴더가 아닌 곳)와 이름 규칙을 고른다. 출력한 경로는 문서 폴더 기준 상대 경로로 바꾸어 링크한다.
 
-`aaa plan detach <저장소> --branch <주제> <저장소 기준 그림 경로>`로 자기 branch의 기획 폴더 안 그림 하나를 지운다. 옮길 때는 새 폴더에 붙이고 참조 문서를 저장한 뒤 옛 그림을 지운다. 참조가 남으면 경고가 나온다.
+`aaa plan detach <저장소> <저장소 기준 그림 경로>`로 기획 폴더 안 그림 하나를 지운다. 옮길 때는 새 자리에 붙이고 참조 문서를 저장한 뒤 옛 그림을 지운다. 참조가 남으면 경고가 나온다.
 
-옛 아이디어(`n-NNNN`)는 지웠다. 글에 나온 n-ID가 옮긴 기획 문서는 `aaa plan links`로 찾는다.
+문서 이력은 `aaa plan log <저장소> <경로>`, 옛 판은 `aaa plan show <저장소> <경로> --at <commit>`이다. 옛 아이디어(`n-NNNN`)는 지웠다. 글에 나온 n-ID가 옮긴 기획 문서는 `aaa plan links`로 찾는다.
 "#;
 
 /// thread가 웹 보고서를 만들 때(brief의 「보고」 절이 가리킨다). 자세한 예시는 aaa 저장소 docs/library.md에 있다.
@@ -760,8 +760,9 @@ mod tests {
             "`aaa plan new <저장소> <주제>",
             "`aaa plan say <저장소> <주제> --file",
             "`plan save`",
-            "`aaa plan attach <저장소> --branch <주제> --file",
-            "`aaa plan detach <저장소> --branch <주제>",
+            "`aaa plan attach <저장소> --file",
+            "`aaa plan detach <저장소> <저장소 기준 그림 경로>`",
+            "`aaa plan log <저장소> <경로>`",
             "`aaa plan links`",
         ] {
             assert!(text.contains(needle), "{needle}");

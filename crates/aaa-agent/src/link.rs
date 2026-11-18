@@ -219,6 +219,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             aaa_proto::DESIGN_DETACH_FEATURE.into(),
             // 기획서 ID(t-1957): 트리 문서마다 ID 표지를 읽고(DesignTree.ids), 표지를 한 commit으로 넣는다(DesignMarkIds)
             "design_ids.v1".into(),
+            // 기획 main 직접 저장(t-2002): 기획 쓰기를 origin 기본 branch에 바로 commit·push하고 문서 이력을 읽는다(DesignMain*·DesignLog)
+            aaa_proto::DESIGN_MAIN_FEATURE.into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

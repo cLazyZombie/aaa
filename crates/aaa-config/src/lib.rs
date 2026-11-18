@@ -415,13 +415,14 @@ pub struct ProjectsSection {
     /// 옛 이름 `idea_rest_secs`도 읽는다(t-1959).
     #[serde(alias = "idea_rest_secs")]
     pub chat_rest_secs: u64,
-    /// 기획 branch에 쓴 뒤 이만큼(초) 더 쓰지 않으면 origin에 올린다(t-1894, 묶어서 올린다). 시험에서 줄인다.
+    /// 옛 칸(t-1894 기획 branch 쉼 뒤 올리기): t-2002부터 기획 저장은 바로 main에 올라가 읽기만 하고 쓰지 않는다.
     pub design_push_secs: u64,
-    /// 기획 branch를 이만큼(초) 쓰지 않으면 「쉼」으로 두고 worktree를 돌려준다(t-1894 결정 3A, 기본 14일). 시험에서 줄인다.
+    /// 옛 칸(t-1894 기획 branch 「쉼」): t-2002부터 쉼이 없어 읽기만 하고 쓰지 않는다.
     pub design_rest_secs: u64,
-    /// 기획 branch를 origin에 올리기 전에 그 worktree에서 셸 없이 돌리는 저장소별 검사(`[projects.design_check]`의
-    /// `<저장소 이름> = ["bash", "scripts/check-public.sh"]`, t-1894). 실행 승인이라 agent가 고칠 수 있는 프로젝트 폴더가 아니라
-    /// 여기(host.toml)에 둔다. 공개 저장소는 공개 검사를 둔다.
+    /// 기획을 main에 올리기 전에 새 commit에서 셸 없이 돌리는 저장소별 문서 검사(`[projects.design_check]`의
+    /// `<저장소 이름> = ["python3", "scripts/docs_check.py", "{base}", "{head}"]`, t-1894·t-2002). 인자의 `{base}`(저장 전 main)·
+    /// `{head}`(새 commit)는 agent가 바꾼다. 실패하면 올리지 않고 stderr 앞부분을 까닭으로 보인다. 실행 승인이라 agent가 고칠 수 있는
+    /// 프로젝트 폴더가 아니라 여기(host.toml)에 둔다. 공개 저장소는 공개 검사를 둔다(main이 곧 공개).
     pub design_check: std::collections::BTreeMap<String, Vec<String>>,
 }
 

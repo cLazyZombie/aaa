@@ -1,19 +1,19 @@
-//! 기획 대화(t-1894 2-2, FRONT_API 1.172): 기획 branch마다 대화 thread 하나.
+//! 기획 대화(t-1894 2-2, FRONT_API 1.172): 기획 대화(주제)마다 대화 thread 하나. t-2002부터 대화는 branch가 아니다: 저장은 바로
+//! main에 들어가고 thread는 저장소 머신의 main 기획 자리를 읽는다.
 //!
-//! - 처음 말할 때 그 저장소 머신에 작업 폴더 thread로 띄운다(기획 worktree와 저장소 코드를 그 머신에서 읽는다). 할 일·실행
+//! - 처음 말할 때 그 저장소 머신에 작업 폴더 thread로 띄운다(main 기획 자리와 저장소 코드를 그 머신에서 읽는다). 할 일·실행
 //!   한도·coordinator 요약·자동 끝내기에서 빼고(`ThreadRec::chat_only`), 쉬면 조용히 보류한다(chat_rest.rs `chat_rest_pass`).
 //! - 보낸 말은 대화 기록(host 상태 폴더 `design-chats/<프로젝트>/<저장소>/<주제>.json`, 기획 branch 기록과 따로 잠근다)에 남기고,
 //!   thread가 brief를 받은 뒤 차례로 보낸다. host가 다시 뜨면 ticker가 남은 말을 잇는다.
-//! - thread는 자기 기획 branch에만 `aaa plan save`·`aaa plan attach`·`aaa plan detach`로 쓴다(`design_writer`). 다른 머신 세션은 agent 중계로 쓴다.
-//! - 쉬는 branch에 말하면 branch를 다시 연다. 버리면 대화 thread도 알림 없이 끝낸다(띄우는 중이었으면 뜬 뒤 끝낸다).
+//! - thread는 자기 대화로만 `aaa plan save`·`aaa plan attach`·`aaa plan detach`로 main에 쓴다(`design_writer`). 다른 머신 세션은
+//!   agent 중계로 쓴다.
+//! - 끝내면 대화 thread도 알림 없이 끝낸다(띄우는 중이었으면 뜬 뒤 끝낸다).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aaa_proto::{
-    DesignBranchState, DeviceRole, ErrorBody, ErrorCode, FrontResponse, MessageMode, Role, ThreadKind, ThreadStatus,
-};
+use aaa_proto::{DeviceRole, ErrorBody, ErrorCode, FrontResponse, MessageMode, Role, ThreadKind, ThreadStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::orch::{ResolveOpts, ResolveWhy, StartArgs, bad, internal};
@@ -97,17 +97,18 @@ fn task_text(
     again: bool,
 ) -> String {
     let start = if again {
-        "앞 대화를 이을 수 없어 새로 시작했다. 기획 branch의 문서가 지금까지의 정리본이다: 먼저 읽고 사용자의 다음 말을 기다린다."
+        "앞 대화를 이을 수 없어 새로 시작했다. main의 기획 문서가 지금까지의 정리본이다: 먼저 읽고 사용자의 다음 말을 기다린다."
     } else {
         "새 기획 대화다. 기획 폴더를 훑어 읽고 사용자의 말을 기다린다."
     };
     format!(
-        "저장소 {repo}의 기획 branch `design/{slug}`(주제 「{title}」) 기획 대화 thread다. {start}\n\n\
+        "저장소 {repo}의 기획 대화 「{title}」(주제 `{slug}`) thread다. 저장하면 바로 origin main에 들어간다. {start}\n\n\
          - 기획 폴더(저장소 기준): `{folder}/`\n\
-         - 기획 worktree(이 branch, 읽기만): {}\n\
+         - main 기획 자리(origin main, 읽기만): {}\n\
          - 저장소 checkout(코드 읽기만): {repo_path}\n\
-         - 목록 `aaa plan list`, 읽기 `aaa plan show {repo} <경로> --branch {slug}`\n\
-         - 저장 `aaa plan save {repo} <경로> --branch {slug} --base <blob> --file <파일> --summary '<바뀐 곳>'`(새 문서는 `--new`)\n",
+         - 목록 `aaa plan list`, 읽기 `aaa plan show {repo} <경로>`, 이력 `aaa plan log {repo} <경로>`\n\
+         - 저장 `aaa plan save {repo} <경로> --base <blob> --file <파일> --summary '<바뀐 곳>'`(새 문서는 `--new`, 함께 저장할 파일은 \
+         `--also <경로>=<파일>`)\n",
         cwd.unwrap_or("(아직 없다: `aaa plan show`로 읽는다)")
     )
 }
@@ -214,13 +215,13 @@ impl Host {
             return Err(err(ErrorCode::TooLarge, format!("한 번에 {MAX_SAY}바이트까지 보낸다")));
         }
         let (target, _) = self.design_target(project, repo)?;
-        // branch 잠금 안에서 남긴다: 버리기와 엇갈리면 버리기 전(버리기가 이 말도 버린다)이거나 뒤(없다)다
+        // 대화 잠금 안에서 남긴다: 끝내기와 엇갈리면 끝내기 전(끝내기가 이 말도 버린다)이거나 뒤(없다)다
         let rec = {
             let lock = self.design_branch_lock(project, &target.name, slug);
             let _one = lock.lock().await;
             let rec = self
                 .design_branch_load(project, &target.name, slug)?
-                .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
+                .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 대화가 없다: {slug}(먼저 연다)")))?;
             self.design_chat_edit(project, &target.name, slug, |c| {
                 c.pending.push(text.to_string());
                 c.error = None;
@@ -295,9 +296,19 @@ impl Host {
             let rec = self
                 .design_branch_load(project, repo, slug)?
                 .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}")))?;
-            if rec.state == DesignBranchState::Rest {
-                // 그 사이 버렸으면 되살리지 않는다
-                self.design_branch_open_with(DeviceRole::Local, actor, project, repo, slug, None, None, false).await?;
+            if start || rec.cwd.is_none() {
+                // 읽을 main 기획 자리를 origin 끝으로 맞춘다(그 사이 끝낸 대화는 되살리지 않는다)
+                Box::pin(self.design_branch_open_with(
+                    DeviceRole::Local,
+                    actor,
+                    project,
+                    repo,
+                    slug,
+                    None,
+                    None,
+                    false,
+                ))
+                .await?;
             }
             self.design_chat_ready(project, repo, slug, actor, start).await
         }
@@ -615,19 +626,22 @@ mod tests {
     }
 
     #[test]
-    fn task_text_points_at_branch_worktree_and_commands() {
-        let t = task_text("app", "boss-dex", "보스 도감", "docs", Some("/w/app/demo-design-boss-dex"), "/r/app", false);
+    fn task_text_points_at_main_slot_and_commands() {
+        let t = task_text("app", "boss-dex", "보스 도감", "docs", Some("/w/app/demo-design-main"), "/r/app", false);
         for want in [
-            "design/boss-dex",
             "「보스 도감」",
+            "`boss-dex`",
+            "바로 origin main",
             "`docs/`",
-            "/w/app/demo-design-boss-dex",
+            "/w/app/demo-design-main",
             "/r/app",
-            "aaa plan show app <경로> --branch boss-dex",
-            "--branch boss-dex --base <blob>",
+            "aaa plan show app <경로>`",
+            "aaa plan log app <경로>",
+            "aaa plan save app <경로> --base <blob>",
         ] {
             assert!(t.contains(want), "{want}: {t}");
         }
+        assert!(!t.contains("--branch") && !t.contains("design/"), "{t}");
         assert!(task_text("app", "x", "x", "docs", None, "/r", true).contains("앞 대화를 이을 수 없어"));
     }
 }
