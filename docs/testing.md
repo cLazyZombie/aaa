@@ -1,3 +1,4 @@
+- t-2011: [Codex thread 번개 표시 검증](testing-thread-speed-t-2011.md)
 - t-1995: [기획 대화 CLI 그림 삭제](testing-design-detach-t-1995.md)
 - t-1993: [기획 대화 CLI 그림 첨부](testing-design-attach-t-1993.md)
 - t-1975: [기획 대화 목록의 바깥 누름·Esc 닫기](testing-design-chat-dismiss-t-1975.md)

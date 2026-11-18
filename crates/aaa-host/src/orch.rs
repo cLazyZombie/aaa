@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentActivity, AgentRequest, AgentResponse, AgentStatus, BriefState, ErrorBody, ErrorCode, FlowEvent,
+    AgentActivity, AgentRequest, AgentResponse, AgentStatus, BriefState, CodexSpeed, ErrorBody, ErrorCode, FlowEvent,
     FrontResponse, Launch, ProjectView, Role, SpawnSpec, ThreadGroup, ThreadKind, ThreadStatus, ThreadView, next_lines,
     valid_project, valid_thread,
 };
@@ -20,6 +20,52 @@ use crate::{Host, err};
 
 #[cfg(test)]
 pub(crate) type StartAdmittedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Codex의 마지막 CLI 설정 덮어쓰기를 읽는다. `--` 뒤는 prompt 인자다.
+fn codex_launch_speed(argv: &[String]) -> Option<CodexSpeed> {
+    let mut tier = None;
+    let mut args = argv.iter().skip(1).map(String::as_str).take_while(|arg| *arg != "--");
+    while let Some(arg) = args.next() {
+        let assignment = match arg {
+            "-c" | "--config" => args.next(),
+            _ => arg.strip_prefix("--config=").or_else(|| arg.strip_prefix("-c").map(|s| s.trim_start_matches('='))),
+        };
+        if let Some((key, raw)) = assignment.and_then(|arg| arg.split_once('='))
+            && key.trim() == "service_tier"
+        {
+            // Codex는 TOML로 읽을 수 없는 계층 값을 그대로 문자열로 사용한다.
+            let raw = raw.trim();
+            let parsed = toml::from_str::<toml::Table>(&format!("service_tier = {raw}")).ok();
+            let value = parsed.as_ref().and_then(|t| t.get("service_tier")).and_then(toml::Value::as_str);
+            tier = match value.unwrap_or(raw) {
+                "ultrafast" => Some(CodexSpeed::Ultrafast),
+                "fast" | "priority" => Some(CodexSpeed::Fast),
+                "standard" | "default" | "auto" | "flex" => Some(CodexSpeed::Standard),
+                _ => None,
+            };
+        }
+    }
+    tier
+}
+
+impl crate::PaneRt {
+    pub(crate) fn thread_speed(&self) -> Option<String> {
+        if !self.info.state.is_running() || self.agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Exited) {
+            return None;
+        }
+        let speed = self.codex_speed.map(|(speed, _)| speed).or_else(|| {
+            if crate::adopt::harness_of(self.info.harness.as_deref(), &self.info.argv) == Some("codex") {
+                codex_launch_speed(&self.info.argv)
+            } else {
+                None
+            }
+        });
+        match speed {
+            Some(speed) => speed.badge().map(str::to_owned),
+            None => self.agent.as_ref()?.model_observation.as_ref()?.speed.clone(),
+        }
+    }
+}
 
 /// host가 저장하는 thread 기록(DB `threads.data` JSON). 필드를 더해도 이전 기록을 읽게 기본값을 둔다.
 fn old_launch_unknown() -> bool {
@@ -1042,11 +1088,16 @@ impl Host {
         } else {
             group
         };
+        let (responsibility, speed) = r
+            .pane
+            .as_ref()
+            .and_then(|id| {
+                self.inner.lock().unwrap().panes.get(id).map(|p| (p.info.responsibility.clone(), p.thread_speed()))
+            })
+            .unwrap_or_default();
         ThreadView {
-            responsibility: r
-                .pane
-                .as_ref()
-                .and_then(|id| self.inner.lock().unwrap().panes.get(id).and_then(|p| p.info.responsibility.clone())),
+            responsibility,
+            speed,
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             design: r.design.clone(),
             over_limit: r.over_limit.clone(),

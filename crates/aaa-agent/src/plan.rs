@@ -784,11 +784,13 @@ impl HarnessSpeed {
 
 /// Codex OSC 제목의 마지막 항목(aaa가 `fast-mode`를 끝에 둔다, `threads::ensure_codex_local`). 0.166 실측: 표준 `Standard`,
 /// `service_tier` fast·priority는 `Fast`. 제목이 그 꼴이 아니면(아직 그리기 전·옛 판) 알 수 없다: 바깥 None
-fn codex_title_speed(title: &str) -> Option<Option<String>> {
-    match title.rsplit(" | ").next()?.trim() {
-        "Standard" => Some(None),
-        "Fast" => Some(Some("fast".into())),
-        "Ultrafast" => Some(Some("ultrafast".into())),
+fn codex_title_speed(title: &str) -> Option<aaa_proto::CodexSpeed> {
+    use aaa_proto::CodexSpeed;
+    let (_, last) = title.rsplit_once(" | ")?;
+    match last.trim() {
+        "Standard" | "Flex" => Some(CodexSpeed::Standard),
+        "Fast" => Some(CodexSpeed::Fast),
+        "Ultrafast" => Some(CodexSpeed::Ultrafast),
         _ => None,
     }
 }
@@ -869,19 +871,19 @@ impl crate::Agent {
         self.harness_speed.lock().unwrap().remove(session);
     }
 
-    fn record_speed(&self, session: &str, value: Option<String>, now_ms: u64) {
+    fn record_speed(&self, session: &str, value: Option<String>, now_ms: u64) -> bool {
         let mut map = self.harness_speed.lock().unwrap();
-        let e = map.entry(session.to_string()).or_default();
-        if e.value != value {
-            *e = HarnessSpeed { value, at_ms: now_ms };
+        if map.get(session).is_some_and(|e| e.value == value) {
+            return false;
         }
+        map.insert(session.to_string(), HarnessSpeed { value, at_ms: now_ms });
+        true
     }
 
     /// Codex 감지 응답의 OSC 제목에서 처리 속도를 적는다. 제목이 말하지 않으면 앞 값을 둔다
-    pub(crate) fn observe_codex_title(&self, session: &str, title: &str, now_ms: u64) {
-        if let Some(value) = codex_title_speed(title) {
-            self.record_speed(session, value, now_ms);
-        }
+    pub(crate) fn observe_codex_title(&self, session: &str, title: &str, now_ms: u64) -> Option<aaa_proto::CodexSpeed> {
+        let speed = codex_title_speed(title)?;
+        self.record_speed(session, speed.badge().map(str::to_owned), now_ms).then_some(speed)
     }
 
     /// Claude hook·상태줄 입력의 생각 수준과 fast mode(상태줄의 `fast_mode`만, hook 입력에는 없다)를 적는다. 하위
@@ -1016,6 +1018,7 @@ impl crate::Agent {
                         background: None,
                         context: None,
                         model_observation: None,
+                        codex_speed: None,
                         turn_reply: None,
                     });
                 }
@@ -1043,6 +1046,7 @@ impl crate::Agent {
                     background: None,
                     context: None,
                     model_observation: None,
+                    codex_speed: None,
                     turn_reply: Some(reply),
                     provider_turn: None,
                 });
@@ -1065,6 +1069,7 @@ impl crate::Agent {
                 background: snap.background,
                 context: snap.context,
                 model_observation: snap.model_observation,
+                codex_speed: None,
                 turn_reply: None,
                 provider_turn: None,
             });
@@ -1297,15 +1302,18 @@ mod tests {
         assert_eq!(seen(&a, "s"), None);
 
         // Codex 0.166 제목(aaa가 fast-mode를 끝에 둔다)
-        a.observe_codex_title("c", "Working | ⠋ | shop | Fast", 100);
+        use aaa_proto::CodexSpeed;
+        assert_eq!(a.observe_codex_title("new", "Ready | shop | Standard", 90), Some(CodexSpeed::Standard));
+        assert_eq!(a.observe_codex_title("c", "Working | ⠋ | shop | Fast", 100), Some(CodexSpeed::Fast));
+        assert_eq!(a.observe_codex_title("c", "Ready | shop | Fast", 105), None);
         assert_eq!(speed(&a, "c"), (Some("fast".into()), 100));
         // 제목이 아직 없거나 속도 항목이 아니면 앞 값을 둔다
-        a.observe_codex_title("c", "", 110);
-        a.observe_codex_title("c", "Ready | shop", 110);
+        assert_eq!(a.observe_codex_title("c", "Fast", 110), None);
+        assert_eq!(a.observe_codex_title("c", "Ready | shop", 110), None);
         assert_eq!(speed(&a, "c"), (Some("fast".into()), 100));
-        a.observe_codex_title("c", "Ready | shop | Standard", 120);
+        assert_eq!(a.observe_codex_title("c", "Ready | shop | Standard", 120), Some(CodexSpeed::Standard));
         assert_eq!(speed(&a, "c"), (None, 120));
-        a.observe_codex_title("c", "Ready | shop | Ultrafast", 130);
+        assert_eq!(a.observe_codex_title("c", "Ready | shop | Ultrafast", 130), Some(CodexSpeed::Ultrafast));
         assert_eq!(speed(&a, "c"), (Some("ultrafast".into()), 130));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -820,6 +820,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                codex_speed: None,
                 provider_turn: None,
                 turn_reply: None,
             };
@@ -907,6 +908,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                codex_speed: None,
                 provider_turn: None,
                 turn_reply: None,
             };

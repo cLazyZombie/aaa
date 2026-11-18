@@ -439,12 +439,33 @@ pub struct HarnessEvent {
     /// `kind = "plan"`: 지금 프로세스의 대화 기록에서 마지막으로 확인한 모델. 없으면 아직 모른다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_observation: Option<ModelObservation>,
+    /// `codex_speed`: 대화 기록과 별개인 Codex 제목의 처리 속도 관측.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_speed: Option<CodexSpeed>,
     /// `turn_reply`: 기록에서 확인한 완료 답변. 상태·승인 여부를 바꾸지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_reply: Option<TurnReply>,
     /// `provider_turn`: 현재 실행의 native turn 관측. 화면 상태와 별개다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_turn: Option<ProviderTurn>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexSpeed {
+    Standard,
+    Fast,
+    Ultrafast,
+}
+
+impl CodexSpeed {
+    pub fn badge(self) -> Option<&'static str> {
+        match self {
+            Self::Standard => None,
+            Self::Fast => Some("fast"),
+            Self::Ultrafast => Some("ultrafast"),
+        }
+    }
 }
 
 /// native 기록의 turn 경계. 시작·성공도 보내 이전 오류를 걷고 늦은 오류를 거른다.
@@ -1089,6 +1110,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub auto_merge: bool,
+    /// 실행 중인 pane의 번개 표지(`fast`·`ultrafast`). 표준 또는 미확인일 때는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub speed: Option<String>,
     /// FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

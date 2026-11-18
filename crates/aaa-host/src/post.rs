@@ -1585,6 +1585,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: Some(aaa_proto::TurnReply { started_ms: start, finished_ms: end, text: text.into() }),
         }

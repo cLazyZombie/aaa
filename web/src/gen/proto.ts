@@ -2226,6 +2226,10 @@ park?: ThreadPark,
  */
 auto_merge?: boolean,
 /**
+ * 실행 중인 pane의 번개 표지(`fast`·`ultrafast`). 표준 또는 미확인일 때는 생략한다.
+ */
+speed?: string,
+/**
  * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
  */
 report_id?: string, project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
