@@ -5064,6 +5064,7 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - Windows 승인 PTY 스냅샷의 CI 경로 비교 수리: [t-1369 검증 기록](testing-win-console-snapshot-t1369.md).
 
 - [완료 보고의 최신 결과·참조 판 보호와 과거 판 정리(t-1392)](testing-report-retention-t-1392.md)
+- [종료한 작업의 보고 사본 자동 정리(t-2021)](testing-report-retention-t-2021.md)
 
 - 아이디어 그림·새 글 알림·분할 조절: [t-1412 검증 기록](testing-idea-updates-t-1412.md).
 - Windows 콘솔 스냅샷 실행 의존 제거·실기 대조: [t-1418 검증 기록](testing-win-console-snapshot-t1418.md).

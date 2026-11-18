@@ -7,7 +7,7 @@ mod queue;
 pub(crate) use queue::Reaper;
 use std::time::Instant;
 
-use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryRef, ThreadStatus};
+use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryRef};
 
 use crate::library::{manifest_path, safe_rel};
 use crate::{Host, err, orch::internal};
@@ -48,7 +48,7 @@ impl Host {
                                 aaa_common::diagnostic::observe(error, "thread 상태를 읽지 못해 삭제에서 보호한다")
                             })
                             .ok()?;
-                        (rec.status == ThreadStatus::Resolved).then(|| id.clone())
+                        (!rec.protects_report_copy()).then(|| id.clone())
                     })
                     .collect();
                 let sources = catalog

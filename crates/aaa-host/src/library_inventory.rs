@@ -102,14 +102,13 @@ impl Host {
                 });
                 // 일하는 수집의 임시 폴더와 출처를 알 수 없는 thread는 보호한다. 숨은 사본도 용량에서 빼지 않는다.
                 let active = source.starts_with("t-")
-                    && *active_sources.entry(source.to_string()).or_insert_with(|| {
-                        self.load(p, source).map_or(true, |r| r.status != aaa_proto::ThreadStatus::Resolved)
-                    });
+                    && *active_sources
+                        .entry(source.to_string())
+                        .or_insert_with(|| self.load(p, source).map_or(true, |r| r.protects_report_copy()));
                 let latest = target.is_none() || catalog.versions.get(source).and_then(|v| v.first()) == Some(&name);
                 let protected = protected_names.as_ref().is_none_or(|names| names.contains(&name))
                     || name.starts_with('.')
                     || catalog.rows.get(source).is_some_and(|r| r.live.is_some())
-                    || (source.starts_with("t-") && latest)
                     || active;
                 let family =
                     if target.is_some() && latest && aliases.contains(source) && !catalog.archived.contains(&name) {

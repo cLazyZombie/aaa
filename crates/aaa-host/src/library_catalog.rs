@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use aaa_proto::{ErrorBody, LibraryReport, ThreadStatus};
+use aaa_proto::{ErrorBody, LibraryReport};
 
 use crate::library::{manifest_path, safe_rel};
 use crate::{Host, orch::internal};
@@ -23,6 +23,7 @@ fn modified_ms(path: &Path) -> u64 {
         .map_or(0, |t| t.as_millis() as u64)
 }
 
+/// 완료 기록의 작업 ID와 보고 본문 경로는 이력이다. library 첨부만 사본을 보호한다.
 pub(crate) fn referenced_names(rows: &[aaa_proto::ArchivedTask]) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut body = |text: &str| {
@@ -42,10 +43,6 @@ pub(crate) fn referenced_names(rows: &[aaa_proto::ArchivedTask]) -> HashSet<Stri
                 body(text);
             }
         }
-    }
-    for row in rows {
-        names.extend(row.task.thread.iter().cloned());
-        names.extend(row.history.iter().filter_map(|h| h.thread.clone()));
     }
     names
 }
@@ -82,7 +79,7 @@ impl Host {
                             aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                         })
                         .ok()?;
-                    (aaa_proto::valid_thread(id) && rec.status == ThreadStatus::Resolved).then_some(id.as_str())
+                    (aaa_proto::valid_thread(id) && !rec.protects_report_copy()).then_some(id.as_str())
                 })
                 .collect();
             let mut links = HashMap::new();

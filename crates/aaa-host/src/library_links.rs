@@ -987,8 +987,15 @@ mod tests {
         else {
             panic!("prune 응답")
         };
-        assert_eq!(removed, vec!["demo/old".to_string(), format!("demo/{}", old.report_id.as_ref().unwrap())]);
-        assert!(dir.join("library/t-0001/index.html").is_file(), "완료 보관 참조가 없어도 최신 결과는 남긴다");
+        assert_eq!(
+            removed,
+            vec![
+                "demo/old".to_string(),
+                format!("demo/{}", old.report_id.as_ref().unwrap()),
+                "demo/t-0001".to_string()
+            ]
+        );
+        assert!(!dir.join("library/t-0001/index.html").exists());
         assert!(dir.join("library/t-0002/index.html").is_file());
         assert_eq!(std::fs::read(dir.join("threads/t-0001.md")).unwrap(), b"keep report");
         assert_eq!(lab.h.load("demo", "t-0001").unwrap().status, aaa_proto::ThreadStatus::Resolved);
@@ -999,7 +1006,7 @@ mod tests {
         );
         assert!(input.join("index.html").is_file());
         assert!(lab.h.project_dir("demo").unwrap().join("library/recent/index.html").is_file());
-        assert_eq!(lab.h.library_reports(None, true).unwrap().len(), 4);
+        assert_eq!(lab.h.library_reports(None, true).unwrap().len(), 3);
         assert!(lab.h.library_prune_at(None, 0, u64::MAX, "test").is_err());
     }
 
@@ -1016,7 +1023,7 @@ mod tests {
         let middle = retention_report(&lab, "copy-0002", 700_000, RETENTION_NOW - 1, false);
         let newest = retention_report(&lab, "copy-0003", 700_000, RETENTION_NOW, false);
         let active = retention_report(&lab, "t-0001", 4, 1, true);
-        let completed = retention_report(&lab, "t-0002", 4, 1, false);
+        let completed = retention_report(&lab, "t-0002", 4, RETENTION_NOW - 3 * day, false);
         let archived = retention_report(&lab, "copy-0004", 1_100_000, 1, false);
         lab.h.db.library_archive_set(&[("demo".into(), "copy-0004".into())], true).unwrap();
         let link = lab.issue("copy-0001");
@@ -1024,20 +1031,21 @@ mod tests {
         assert!(old.exists());
         let before = lab.h.library_retention_settings().unwrap();
         lab.h.library_retention_set(1, 1, &before.rev, "device:test").unwrap();
-        assert!(old.exists() && middle.exists(), "저장은 삭제를 실행하지 않는다");
+        assert!(old.exists() && middle.exists() && completed.exists(), "저장은 삭제를 실행하지 않는다");
         let preview = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
         assert_eq!((preview.max_days, preview.max_size), (1, 1_048_576));
         assert_eq!(
             preview.candidates.iter().map(|r| (r.name.as_str(), r.reason.as_str())).collect::<Vec<_>>(),
-            [("copy-0001", "기한"), ("copy-0002", "용량")]
+            [("t-0002", "기한"), ("copy-0001", "기한"), ("copy-0002", "용량")]
         );
         let FrontResponse::LibraryUsage { max_days, max_size, .. } = lab.h.library_usage().unwrap() else { panic!() };
         assert_eq!((max_days, max_size), (1, 1_048_576));
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000 - 1).unwrap();
-        assert!(old.exists() && middle.exists(), "기존 회차를 앞당기지 않는다");
+        assert!(old.exists() && middle.exists() && completed.exists(), "기존 회차를 앞당기지 않는다");
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
         assert!(!old.exists() && !middle.exists());
-        assert!(newest.exists() && active.exists() && completed.exists() && archived.exists());
+        assert!(!completed.exists());
+        assert!(newest.exists() && active.exists() && archived.exists());
         assert!(lab.h.db.library_link_get(&link.id).unwrap().unwrap().revoked);
         let saved = lab.h.library_retention_settings().unwrap();
         lab.h.library_retention_set(0, 0, &saved.rev, "device:test").unwrap();
@@ -1153,11 +1161,11 @@ mod tests {
     #[tokio::test]
     async fn retention_protected_overflow_only_notifies_once() {
         let lab = Lab::with_retention(1, 1);
-        let completed = retention_report(&lab, "t-0001", 1_100_000, 1, false);
+        let active = retention_report(&lab, "t-0001", 1_100_000, 1, true);
         let other = retention_report(&lab, "copy-0002", 4, 1, false);
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
-        assert!(completed.exists() && other.exists(), "보호분만으로 상한을 넘으면 삭제 없이 알린다");
+        assert!(active.exists() && other.exists(), "보호분만으로 상한을 넘으면 삭제 없이 알린다");
         let notices = lab.h.db.inbox_list(None, true).unwrap();
         assert_eq!(notices.iter().filter(|i| i.item_kind == "library-retention").count(), 1);
         // 재시작에도 같은 초과를 다시 알리지 않는다.

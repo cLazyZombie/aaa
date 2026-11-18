@@ -1,7 +1,5 @@
 //! host 사본만 정리한다. 운영 원본·실시간 등록 폴더·thread 기록은 건드리지 않는다(§8.212).
-use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, LibraryPruneEntry, LibraryPrunePlan, LibraryReport, ThreadStatus,
-};
+use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryPruneEntry, LibraryPrunePlan, LibraryReport};
 
 use crate::library::manifest_path;
 use crate::{Host, err};
@@ -37,9 +35,7 @@ impl Host {
             return self.protected_copy(&source);
         }
         // t- 보고서는 thread가 없거나 읽지 못해도 안전하게 남긴다.
-        if r.name.starts_with("t-")
-            && self.load(&r.project, &r.name).map_or(true, |t| t.status != ThreadStatus::Resolved)
-        {
+        if r.name.starts_with("t-") && self.load(&r.project, &r.name).map_or(true, |t| t.protects_report_copy()) {
             return true;
         }
         let versions = match self.db.report_ids(&r.project, &r.name) {
@@ -49,25 +45,10 @@ impl Host {
                 return true;
             }
         };
-        // 복원 뒤에도 완료 당시 결과와 메모는 보관에 남는다. 미확정 보관도 먼저 보호하며,
-        // DB를 읽지 못하면 유일한 결과 사본을 정리하지 않는다.
+        // 복원·미확정 상태에서도 완료 기록의 첨부를 보호한다.
         self.db.archive_list(&r.project).map_or(true, |rows| {
-            rows.iter().any(|a| {
-                let refers = |body: &str| {
-                    crate::task_attach::refs(body).iter().any(|path| {
-                        path.strip_prefix("library/")
-                            .and_then(|p| p.split_once('/'))
-                            .is_some_and(|(name, _)| name == r.name || versions.iter().any(|v| v.id == name))
-                    })
-                };
-                a.task.thread.as_deref() == Some(r.name.as_str())
-                    || refers(&a.body)
-                    || a.history.iter().any(|h| {
-                        h.thread.as_deref() == Some(r.name.as_str())
-                            || h.before.as_deref().is_some_and(refers)
-                            || h.after.as_deref().is_some_and(refers)
-                    })
-            })
+            let names = crate::library_catalog::referenced_names(&rows);
+            names.contains(&r.name) || versions.iter().any(|v| names.contains(&v.id))
         })
     }
 
@@ -319,9 +300,9 @@ impl Host {
         if limit > 0 && plan.protected_size > limit {
             if self.db.meta(OVERFLOW).map_err(crate::orch::internal)?.is_none() {
                 let mut projects = self
-                    .library_reports(None, false)?
+                    .library_inventory()?
                     .into_iter()
-                    .filter(|r| !r.live && !r.archived && (r.name.starts_with("t-") || self.protected_copy(r)))
+                    .filter(|r| !r.archived && r.protected && r.size > 0)
                     .map(|r| r.project)
                     .collect::<Vec<_>>();
                 projects.sort();

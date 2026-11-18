@@ -222,6 +222,10 @@ pub(crate) struct ThreadRec {
 }
 
 impl ThreadRec {
+    pub(crate) fn protects_report_copy(&self) -> bool {
+        self.status != ThreadStatus::Resolved || self.resolve_pending.is_some()
+    }
+
     pub(crate) fn holds_slot(&self) -> bool {
         matches!(self.status, ThreadStatus::Open | ThreadStatus::Starting) || self.resolve_pending.is_some()
     }
@@ -3282,6 +3286,8 @@ impl Host {
         id: &str,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
+        // 다시 열린 작업의 사본을 이전 정리 계획이 지우지 않도록 상태 전이와 정리를 직렬화한다.
+        let library_ops = self.library_ops.lock().unwrap();
         let rec = self.load(project, id)?;
         if rec.resolve_pending.is_some() {
             return Err(bad("정리 미완료다. 먼저 같은 thread resolve로 마친다"));
@@ -3309,6 +3315,7 @@ impl Host {
                 ..Default::default()
             };
         })?;
+        drop(library_ops);
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
         self.reports_bump();
         self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");

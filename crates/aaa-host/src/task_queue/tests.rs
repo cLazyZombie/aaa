@@ -317,7 +317,7 @@ fn checked_tasks_keep_the_file_on_archive_failure_and_recover_the_receipt_after_
 #[tokio::test]
 async fn archive_write_failure_preserves_active_then_restore_keeps_id_without_queue() {
     let lab = Lab::new();
-    lab.write("## Backlog\n- [ ] 일 [작업 폴더] · t-0001\n  완료 범위와 [문서](uploads/example.md) [근거](library/evidence/notes.md)\n");
+    lab.write("## Backlog\n- [ ] 일 [작업 폴더] · t-0001\n  완료 범위와 [문서](uploads/example.md) [근거](library/evidence/notes.md) [결과](library/t-0001/notes.md)\n");
     lab.h.task_identify("demo").unwrap();
     let original = lab.text();
     let t = tasks::parse(&original).remove(0);
@@ -403,7 +403,7 @@ async fn archive_recompletion_preserves_old_result_after_history_prune() {
             .unwrap()
     };
     let first = complete_thread();
-    lab.write(&format!("## Backlog\n- [ ] 일 [작업 폴더] · {first}\n  [옛 근거](library/evidence/notes.md)\n"));
+    lab.write(&format!("## Backlog\n- [ ] 일 [작업 폴더] · {first}\n  [옛 근거](library/evidence/notes.md) [옛 결과](library/{first}/notes.md)\n"));
     lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
     let old = lab.h.db.archive_list("demo").unwrap().remove(0);
     lab.h.db.task_log_prune("demo", u64::MAX / 2).unwrap();
