@@ -83,7 +83,7 @@ import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ArrowDown, MessageSquarePlus, Quote, RotateCcw, Search, TriangleAlert } from "lucide-react";
-import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
+import { DrawerToggle, HeadMenuExtraContext, HeadMore, HeadNote, useWidthAtMost } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
 const WEB_FONT = '"Meslotendard Web"';
@@ -137,6 +137,9 @@ function termColors(): { fg: string; bg: string } {
   return terminalThemeColors(termTheme());
 }
 
+/** 이 폭(px) 이하의 머리 줄은 보조 단추를 「더 보기」로 모아 제목 칸을 남긴다(t-1987: 320px 휴대폰·목록이 붙은 769px 창) */
+const TIGHT_HEAD = 520;
+
 export function TermView({
   pane,
   active = true,
@@ -147,6 +150,7 @@ export function TermView({
   crumb,
   account,
   status,
+  menu,
   dock,
   controls,
   onOpenFile,
@@ -168,6 +172,8 @@ export function TermView({
   /** 이 pane(thread)이 쓰는 계정 별칭(`thread show`의 「인증:」). 모르면 없다: 머리 줄에 보이지 않는다 */
   account?: string;
   status?: ReactNode;
+  /** 머리 줄이 좁을 때(TIGHT_HEAD) 상태 표시 대신 「더 보기」 맨 위에 둘 항목(보고·요약·자동 병합, t-1987) */
+  menu?: (close: () => void) => ReactNode;
   /** 입력 위에 붙는 질문 카드 */
   dock?: ReactNode;
   /** 단축키가 이 화면에 시키는 일(입력으로 가기·한 화면씩 굴리기·대화 전환, herdr-web-ui PaneTerminal 2675~2692줄) */
@@ -197,6 +203,8 @@ export function TermView({
   const openChatFile = useCallback((path: string) => openFileRef.current?.(path), []);
   const openChatLink = useCallback((href: string) => openLinkRef.current?.(href) ?? false, []);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLElement>(null);
+  const tight = useWidthAtMost(headRef, TIGHT_HEAD, active);
   const termRef = useRef<Terminal | null>(null);
   const finishHiddenHistoryRef = useRef(() => {});
   const fitRef = useRef<FitAddon | null>(null);
@@ -2265,7 +2273,7 @@ export function TermView({
   return (
     // 크기(cols×rows)는 화면에 쓰지 않고 시험이 읽는 속성으로만 둔다(t-1531: 그 자리에 계정)
     <section hidden={!active} inert={!active} data-pane={pane.id} data-screen-role={pane.coordinator_project ? "coordinator" : undefined} data-cols={size[0]} data-rows={size[1]} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
-      {active && <header className="term-head">
+      {active && <header className="term-head" ref={headRef} data-tight={tight && menu ? "" : undefined}>
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />
         <HeadNote />
@@ -2302,7 +2310,9 @@ export function TermView({
             <span className="head-button-label">{chatView ? "터미널" : "대화"}</span>
           </button>
         )}
-        {active && <HeadMore />}
+        <HeadMenuExtraContext.Provider value={tight && menu ? menu : null}>
+          <HeadMore />
+        </HeadMenuExtraContext.Provider>
       </header>}
       {active && <ProviderError agent={pane.agent} />}
       {flowNotices && notices}

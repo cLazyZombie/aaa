@@ -1,7 +1,7 @@
 import { AutoModeProvider, AutoModeMenu } from "./AutoMode";
 import { diagnosticReason, ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { MachineInfoPanel } from "./MachineInfoPanel";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -36,11 +36,12 @@ import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedC
 import { QuestionReload } from "./questionReload";
 import { ThreadReload, readThreadPages, readSelectedThread } from "./threadReload";
 import { SummaryButton } from "./ThreadSummary";
-import { PaneAutoMerge } from "./AutoMerge";
+import { AutoMergeMenuItem, PaneAutoMerge } from "./AutoMerge";
+import { summaryStale } from "./summaryCard";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
-import { ListChecks, Menu, Settings } from "lucide-react";
+import { ClipboardList, ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -78,7 +79,7 @@ import { useAutomations } from "./automationData";
 import { openAsks, answerIndex, questionIds, doneOf, questionKey, questionRefLook } from "./asksModel";
 import { isSheetRewind } from "./herdr/sheetHistory.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
-import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
+import { DrawerContext, DrawerToggle, HeadContext, HeadMenuExtraContext, HeadMore, HeadNote } from "./drawer";
 import { DrawerDiagnostics } from "./DrawerDiagnostics";
 import { drawerTrace } from "./herdr/drawerTrace";
 import { highMachines, HIGH_STAT } from "./machineStats";
@@ -1157,6 +1158,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 머리 알림(참고 headerNote): 8초 뒤 거둔다(참고 App.tsx 281~284줄)
   const [headNote, setHeadNote] = useState<string | null>(null);
+  // 좁은 머리 줄의 「더 보기」 항목이 머리의 숨긴 요약·자동 병합 단추에 시키는 일(t-1987). 머리는 고른 pane 하나뿐이다
+  const [headAsk, setHeadAsk] = useState({ summary: 0, merge: 0 });
   useEffect(() => {
     if (headNote === null) return;
     const timer = window.setTimeout(() => setHeadNote(null), 8000);
@@ -1870,7 +1873,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             status={activePane === chatKey(p) ? (
               <>
                 {/* 자동 병합(t-1968): thread pane 머리줄의 상태 표시 왼쪽. 보고 화면에는 두지 않는다 */}
-                {threadOfPane.get(p.id) && <PaneAutoMerge t={threadOfPane.get(p.id)!} role={role} />}
+                {threadOfPane.get(p.id) && <PaneAutoMerge t={threadOfPane.get(p.id)!} role={role} toggleRequest={headAsk.merge} />}
                 <AgentChip p={p} />
                 {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
                 {threadOfPane.get(p.id) && (
@@ -1880,9 +1883,27 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                   </button>
                 )}
                 {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}
-                {threadOfPane.get(p.id) && <SummaryButton t={threadOfPane.get(p.id)!} />}
+                {threadOfPane.get(p.id) && <SummaryButton t={threadOfPane.get(p.id)!} openRequest={headAsk.summary} />}
               </>
             ) : null}
+            menu={threadOfPane.get(p.id) ? (close) => {
+              const t = threadOfPane.get(p.id)!;
+              const pick = (run: () => void) => () => { close(); run(); };
+              return (
+                <>
+                  <button role="menuitem" data-testid="open-report-item" onClick={pick(() => chooseThread(t))}>
+                    <Icon name="file" />
+                    <span className="more-label">보고</span>
+                  </button>
+                  <button role="menuitem" data-testid="summary-item" onClick={pick(() => setHeadAsk((a) => ({ ...a, summary: a.summary + 1 })))}>
+                    <ClipboardList className="i" aria-hidden="true" />
+                    <span className="more-label">작업 요약</span>
+                    {summaryStale(t.summary) && <span className="more-hint">반영 안 된 지시 있음</span>}
+                  </button>
+                  <AutoMergeMenuItem t={t} role={role} onToggle={pick(() => setHeadAsk((a) => ({ ...a, merge: a.merge + 1 })))} />
+                </>
+              );
+            } : undefined}
             dock={
               activePane === chatKey(p) && (paneQuestions.length > 0 || paneAsk) ? (
                 <div className="dock">
@@ -2057,6 +2078,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
  */
 function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinator: boolean }) {
   const alerts = useAlerts();
+  const extra = useContext(HeadMenuExtraContext);
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
@@ -2137,6 +2159,7 @@ function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinat
       )}
       {open && (
         <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
+          {extra && <>{extra(close)}<div className="more-sep" role="separator" /></>}
           {coordinator && <AutoModeMenu close={close} />}
           <button
             role="menuitem"

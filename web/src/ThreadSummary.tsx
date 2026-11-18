@@ -334,9 +334,17 @@ function HoverCard({ anchor, t, v, instant }: { anchor: HTMLElement; t: ThreadVi
 }
 
 /** thread 화면 머리의 「요약」 단추와 그 창(데스크톱 팝오버, 휴대폰 아래 시트) */
-export function SummaryButton({ t }: { t: ThreadView }) {
+export function SummaryButton({ t, openRequest = 0 }: { t: ThreadView; openRequest?: number }) {
   const btn = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  // 좁은 머리 줄은 이 단추를 숨기고 「더 보기」 항목이 연다(t-1987): 그때 popover는 「더 보기」 단추 아래에 선다
+  const asked = useRef(openRequest);
+  useEffect(() => {
+    if (asked.current === openRequest) return;
+    asked.current = openRequest;
+    setOpen(true);
+  }, [openRequest]);
+  const anchor = () => (btn.current!.getClientRects().length ? btn.current! : btn.current!.closest(".term-head")?.querySelector<HTMLElement>("[data-testid='more']") ?? btn.current!);
   const stale = summaryStale(t.summary);
   const label = stale ? "작업 요약 · 반영 안 된 지시 있음" : "작업 요약";
   return (
@@ -356,7 +364,7 @@ export function SummaryButton({ t }: { t: ThreadView }) {
         <span className="summary-btn-label">요약</span>
         {stale && <span className="summary-dot" aria-hidden="true" />}
       </button>
-      {open && <SummaryOverlay t={t} anchor={btn.current!} onClose={() => setOpen(false)} />}
+      {open && <SummaryOverlay t={t} anchor={anchor()} onClose={() => setOpen(false)} />}
     </>
   );
 }
