@@ -3155,6 +3155,21 @@ pub enum FrontRequest {
         #[ts(optional)]
         summary: Option<String>,
     },
+    /// 기획 대화 thread가 자기 branch에 PNG·JPEG·GIF·WebP를 붙인다(FRONT_API 1.184).
+    /// 조각마다 `ATTACH_CHUNK` 이하, 중간 응답은 `Done`, 마지막은 `DesignSaved`다.
+    DesignAttach {
+        project: String,
+        repo: String,
+        branch: String,
+        /// 저장소 기준 폴더. 생략하면 저장소의 기획 폴더
+        #[serde(default)]
+        #[ts(optional)]
+        dir: Option<String>,
+        upload: String,
+        offset: u64,
+        total: u64,
+        data: B64,
+    },
     /// 기획 대화에 말하기(FRONT_API 1.172, 조작): 그 기획 branch의 대화 thread에 보낸다. thread가 없거나 끝났으면 그 저장소 머신에
     /// 새로 띄우고, 쉬느라 내린 것은 잇고, 쉬는 branch는 다시 연다. 말은 thread가 brief를 받은 뒤 차례로 간다
     DesignSay {
@@ -3986,6 +4001,7 @@ impl FrontRequest {
             | FrontRequest::DesignRead { project, .. }
             | FrontRequest::DesignBranchOpen { project, .. }
             | FrontRequest::DesignSave { project, .. }
+            | FrontRequest::DesignAttach { project, .. }
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
@@ -4066,13 +4082,22 @@ impl FrontRequest {
 
     /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
     /// host 밖 머신 thread 세션의 CLI가 agent를 거쳐 host에 보낼 수 있는 요청(`thread_read.v1`): 위 읽기와 기획 읽기, 그리고 자기
-    /// 기획 branch 저장(t-1894 2-2, host가 그 세션 thread의 기획 branch인지 다시 본다)
+    /// 기획 branch 저장과 그림 첨부(host가 그 세션 thread의 기획 branch인지 다시 본다)
     pub fn thread_relay_allowed(&self) -> bool {
         self.thread_read_allowed()
             || matches!(
                 self,
-                Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignIds { .. } | Self::DesignSave { .. }
+                Self::DesignTree { .. }
+                    | Self::DesignRead { .. }
+                    | Self::DesignIds { .. }
+                    | Self::DesignSave { .. }
+                    | Self::DesignAttach { .. }
             )
+    }
+
+    /// 원격 중계에서 Git 쓰기를 기다리는 요청
+    pub fn design_relay_write(&self) -> bool {
+        matches!(self, Self::DesignSave { .. } | Self::DesignAttach { .. })
     }
 
     pub fn thread_read_allowed(&self) -> bool {
@@ -4147,6 +4172,7 @@ impl FrontRequest {
                 | FrontRequest::DesignIds { .. }
                 // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::DesignSave { .. }
+                | FrontRequest::DesignAttach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }

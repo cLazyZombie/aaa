@@ -682,7 +682,9 @@ const PLAN: &str = r#"# 기획 대화로 넘기기(coordinator)
 3. `aaa plan say <저장소> <주제> --file <파일>`로 사용자 말을 보낸다. 줄이거나 바꾸지 않고 그대로 싣고, 사용자가 준 파일·근거 경로가 있으면 함께 적는다. 처음이면 host가 대화 thread를 띄우고 brief 뒤에 보낸다.
 4. 사용자에게 저장소와 `design/<주제>`를 알리고, 웹 「기획」에서 그 대화를 이어 갈 수 있다고 한 줄로 답한다. 채팅으로 이어지는 말도 같은 주제에 `aaa plan say`로 보낸다(`aaa thread message`를 쓰지 않는다).
 
-coordinator는 열기·말하기만 한다. 문서 저장(`plan save`)·버리기(`plan discard`)·main 반영(`plan apply`)·구현 맡기기는 사람이 웹 「기획」에서 한다(host가 coordinator 요청을 거부한다). 사용자가 그 일을 바라면 웹 「기획」을 안내한다.
+coordinator는 열기·말하기만 한다. 사람이 직접 문서를 저장하거나 branch를 버리거나 main에 반영하거나 구현을 맡기려면 웹 「기획」을 안내한다. 기획 대화 thread는 자기 branch에 `plan save`로 문서를 저장할 수 있다.
+
+기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --branch <주제> --file <그림>`으로 직접 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 기본은 기획 폴더이며 문서와 같은 폴더에 두려면 `--dir <저장소 기준 폴더>`를 준다. 출력한 저장소 기준 경로는 문서 기준 상대 경로로 바꾸어 링크한다.
 
 옛 아이디어(`n-NNNN`)는 지웠다. 글에 나온 n-ID가 옮긴 기획 문서는 `aaa plan links`로 찾는다.
 "#;
@@ -754,6 +756,7 @@ mod tests {
             "`aaa plan new <저장소> <주제>",
             "`aaa plan say <저장소> <주제> --file",
             "`plan save`",
+            "`aaa plan attach <저장소> --branch <주제> --file",
             "`aaa plan links`",
         ] {
             assert!(text.contains(needle), "{needle}");

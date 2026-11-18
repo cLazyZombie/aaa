@@ -37,8 +37,14 @@ impl Agent {
             self.host_thread_read.load(std::sync::atomic::Ordering::Relaxed) && self.host_tx().is_some(),
             "연결된 host의 thread_read.v1 지원이 필요하다"
         );
-        // 기획 저장은 host가 그 branch 올리기를 기다릴 수 있다(읽기보다 길게)
-        let wait = if matches!(request, FrontRequest::DesignSave { .. }) {
+        if matches!(request, FrontRequest::DesignAttach { .. }) {
+            ensure!(
+                self.host_design_attach.load(std::sync::atomic::Ordering::Relaxed),
+                "기획 그림 첨부는 Front API 1.184 이상 host가 필요하다"
+            );
+        }
+        // 기획 저장과 첨부는 Git 쓰기를 기다린다(읽기보다 길게)
+        let wait = if request.design_relay_write() {
             Duration::from_secs(aaa_proto::DESIGN_RELAY_SAVE_SECS)
         } else {
             Duration::from_secs(25)

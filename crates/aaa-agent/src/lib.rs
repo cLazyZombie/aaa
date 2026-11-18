@@ -230,6 +230,7 @@ pub struct Agent {
     host_post: Mutex<Option<bool>>,
     host_automation_results: Mutex<bool>,
     host_thread_read: std::sync::atomic::AtomicBool,
+    host_design_attach: std::sync::atomic::AtomicBool,
     read_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::FrontResponse>>>>,
     host_image: std::sync::atomic::AtomicBool,
     image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
@@ -299,6 +300,7 @@ impl Agent {
             host_post: Mutex::new(None),
             host_automation_results: Mutex::new(false),
             host_thread_read: std::sync::atomic::AtomicBool::new(false),
+            host_design_attach: std::sync::atomic::AtomicBool::new(false),
             read_waiters: Mutex::new(HashMap::new()),
             host_image: std::sync::atomic::AtomicBool::new(false),
             image_waiters: Mutex::new(HashMap::new()),
@@ -1089,6 +1091,12 @@ impl Agent {
                     ..
                 }
                 | LinkMsg::Event(AgentEvent::AccountRefresh(_)) => msg.clone(),
+                // 그림 조각은 Git에 저장할 원본 바이트다.
+                LinkMsg::Event(AgentEvent::ThreadRead { request, .. })
+                    if matches!(&**request, aaa_proto::FrontRequest::DesignAttach { .. }) =>
+                {
+                    msg.clone()
+                }
                 _ => match aaa_common::redact::json(msg.clone()) {
                     Ok(clean) => clean,
                     Err(_) => return, // 가림 실패는 기록한 뒤 메시지를 거부한다. 원문은 보내지 않는다.

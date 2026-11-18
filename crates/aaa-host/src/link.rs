@@ -368,6 +368,7 @@ async fn serve_connection(
             "automation_results.v1".into(),
             "imagegen.v1".into(),
             "thread_read.v1".into(),
+            aaa_proto::DESIGN_ATTACH_RELAY_FEATURE.into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
             aaa_common::response_parts::FEATURE.into(),
@@ -452,6 +453,9 @@ async fn serve_connection(
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
+                    msg @ LinkMsg::Event(AgentEvent::ThreadRead { .. })
+                        if matches!(&msg, LinkMsg::Event(AgentEvent::ThreadRead { request, .. })
+                            if matches!(&**request, aaa_proto::FrontRequest::DesignAttach { .. })) => msg,
                     // 인증 갱신 요청은 인증 전달이다. 가리면 본문 JSON이 깨져 OpenAI에 묻지도 못한다(t-1688).
                     // host는 이 값을 기록하지 않고 형식만 확인한 뒤 버린다(제공자에는 금고 값을 보낸다).
                     msg @ LinkMsg::Event(AgentEvent::AccountRefresh(_)) => msg,

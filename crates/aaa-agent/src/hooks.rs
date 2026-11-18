@@ -24,7 +24,7 @@ pub const ENV_SOCK: &str = "AAA_HOOK_SOCK";
 pub const ENV_TOKEN: &str = "AAA_HOOK_TOKEN";
 pub const ENV_SESSION: &str = "AAA_SESSION_ID";
 const MAX_MSG: usize = 256 * 1024;
-/// 원격 전달(`thread_read`)은 기획 문서 저장(글 512KiB까지)을 싣는다: host 연결 frame에 감싸 들어갈 만큼까지 받는다
+/// 원격 전달(`thread_read`)은 기획 문서와 그림 조각을 싣는다: host 연결 frame에 들어갈 만큼까지 받는다
 const MAX_RELAY_MSG: usize = aaa_proto::MAX_FRAME - 16 * 1024;
 
 fn msg_limit(harness: &str) -> usize {
@@ -372,7 +372,9 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     }
     let wait = match harness {
         // agent가 host를 기다리는 시간보다 조금 길게(`thread_read::on_thread_read`)
-        "thread_read" if msg.payload.get("op").and_then(Value::as_str) == Some("design_save") => {
+        "thread_read"
+            if matches!(msg.payload.get("op").and_then(Value::as_str), Some("design_save" | "design_attach")) =>
+        {
             aaa_proto::DESIGN_RELAY_SAVE_SECS + 10
         }
         "thread_read" => 30,

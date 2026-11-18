@@ -732,6 +732,7 @@ pub struct Host {
     design_trees: Mutex<HashMap<String, aaa_proto::DesignTree>>,
     /// 기획 branch 올리기 차례(`<프로젝트>/<저장소>/<slug>` → 마지막 저장 번호): 쉼 동안 새 저장이 없을 때만 올린다
     design_push_gen: Mutex<HashMap<String, u64>>,
+    design_image_uploads: Mutex<HashMap<(String, String, String), design_branch::DesignImageUpload>>,
     /// 도는 기획 branch ticker 일(프로젝트)
     design_passes: Mutex<std::collections::HashSet<String>>,
     /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
@@ -980,6 +981,7 @@ impl Host {
             file_caps: Mutex::new(HashMap::new()),
             design_trees: Mutex::new(HashMap::new()),
             design_push_gen: Mutex::new(HashMap::new()),
+            design_image_uploads: Mutex::new(HashMap::new()),
             design_passes: Mutex::new(Default::default()),
             design_chatting: Mutex::new(Default::default()),
             vapid,
@@ -1686,11 +1688,13 @@ impl Host {
         {
             return Err(err(ErrorCode::Forbidden, "서비스 암호는 사람이 웹 확인 창의 전용 입력칸에 직접 넣는다"));
         }
+        // Git에 쓸 그림 바이트는 웹 첨부와 같이 그대로 넘긴다.
         let req = if matches!(
             &req,
             FrontRequest::AccountImport { .. }
                 | FrontRequest::MachineSetupApply { .. }
                 | FrontRequest::AccountLoginCode { .. }
+                | FrontRequest::DesignAttach { .. }
         ) {
             req
         } else {
@@ -2192,6 +2196,7 @@ impl Host {
             | FrontRequest::DesignRead { .. }
             | FrontRequest::DesignBranchOpen { .. }
             | FrontRequest::DesignSave { .. }
+            | FrontRequest::DesignAttach { .. }
             | FrontRequest::DesignSay { .. }
             | FrontRequest::DesignDiscard { .. }
             | FrontRequest::DesignApply { .. }
