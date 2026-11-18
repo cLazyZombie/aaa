@@ -1189,6 +1189,15 @@ pub enum AgentRequest {
         sha256: String,
         message: String,
     },
+    /// design_detach.v1: 기획 branch에서 그림 하나를 지우고 참조 문서의 경고를 돌려준다
+    DesignDetach {
+        project: String,
+        repo: String,
+        folder: String,
+        slug: String,
+        path: String,
+        message: String,
+    },
     /// design_ids.v1(t-1957): 기획 branch worktree의 문서 여럿에 ID 표지(`design_put_id`)를 넣고 바뀐 파일만 한 commit으로 남긴다.
     /// 이미 표지가 있는 문서는 그대로 둔다(다시 돌려도 안전하다). 답은 `DesignIdsMarked`다
     DesignMarkIds {
@@ -1353,6 +1362,11 @@ pub enum AgentResponse {
     DesignSaved {
         commit: String,
         blob: String,
+    },
+    /// design_detach.v1 `DesignDetach`의 답: 삭제 commit과 참조 검사 경고
+    DesignDetached {
+        commit: String,
+        warnings: Vec<String>,
     },
     /// design_ids.v1 `DesignMarkIds`의 답: 표지를 넣은 문서(경로)와 그 commit(넣은 것이 없으면 없음)
     DesignIdsMarked {
@@ -3170,6 +3184,13 @@ pub enum FrontRequest {
         total: u64,
         data: B64,
     },
+    /// 기획 대화 thread가 자기 branch에서 그림 하나를 지운다(FRONT_API 1.185).
+    DesignDetach {
+        project: String,
+        repo: String,
+        branch: String,
+        path: String,
+    },
     /// 기획 대화에 말하기(FRONT_API 1.172, 조작): 그 기획 branch의 대화 thread에 보낸다. thread가 없거나 끝났으면 그 저장소 머신에
     /// 새로 띄우고, 쉬느라 내린 것은 잇고, 쉬는 branch는 다시 연다. 말은 thread가 brief를 받은 뒤 차례로 간다
     DesignSay {
@@ -4002,6 +4023,7 @@ impl FrontRequest {
             | FrontRequest::DesignBranchOpen { project, .. }
             | FrontRequest::DesignSave { project, .. }
             | FrontRequest::DesignAttach { project, .. }
+            | FrontRequest::DesignDetach { project, .. }
             | FrontRequest::DesignSay { project, .. }
             | FrontRequest::DesignDiscard { project, .. }
             | FrontRequest::DesignApply { project, .. }
@@ -4082,22 +4104,16 @@ impl FrontRequest {
 
     /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
     /// host 밖 머신 thread 세션의 CLI가 agent를 거쳐 host에 보낼 수 있는 요청(`thread_read.v1`): 위 읽기와 기획 읽기, 그리고 자기
-    /// 기획 branch 저장과 그림 첨부(host가 그 세션 thread의 기획 branch인지 다시 본다)
+    /// 기획 branch 저장과 그림 첨부·삭제(host가 그 세션 thread의 기획 branch인지 다시 본다)
     pub fn thread_relay_allowed(&self) -> bool {
         self.thread_read_allowed()
-            || matches!(
-                self,
-                Self::DesignTree { .. }
-                    | Self::DesignRead { .. }
-                    | Self::DesignIds { .. }
-                    | Self::DesignSave { .. }
-                    | Self::DesignAttach { .. }
-            )
+            || matches!(self, Self::DesignTree { .. } | Self::DesignRead { .. } | Self::DesignIds { .. })
+            || self.design_relay_write()
     }
 
     /// 원격 중계에서 Git 쓰기를 기다리는 요청
     pub fn design_relay_write(&self) -> bool {
-        matches!(self, Self::DesignSave { .. } | Self::DesignAttach { .. })
+        matches!(self, Self::DesignSave { .. } | Self::DesignAttach { .. } | Self::DesignDetach { .. })
     }
 
     pub fn thread_read_allowed(&self) -> bool {
@@ -4173,6 +4189,7 @@ impl FrontRequest {
                 // 기획 대화 thread(보기 권한)도 자기 기획 branch에 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::DesignSave { .. }
                 | FrontRequest::DesignAttach { .. }
+                | FrontRequest::DesignDetach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -4398,6 +4415,12 @@ pub enum FrontResponse {
         path: String,
         commit: String,
         blob: String,
+    },
+    /// `design_detach`의 답(FRONT_API 1.185)
+    DesignDetached {
+        path: String,
+        commit: String,
+        warnings: Vec<String>,
     },
     /// `design_ids`의 답(FRONT_API 1.181)
     DesignIds {

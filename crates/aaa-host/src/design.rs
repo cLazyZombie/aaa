@@ -133,6 +133,9 @@ impl Host {
             R::DesignAttach { project, repo, branch, dir, upload, offset, total, data } => {
                 self.design_image_chunk(role, actor, &project, &repo, &branch, dir, upload, offset, total, data.0).await
             }
+            R::DesignDetach { project, repo, branch, path } => {
+                self.design_detach(role, actor, &project, &repo, &branch, &path).await
+            }
             R::DesignSay { project, repo, branch, text } => {
                 self.design_say(role, actor, &project, &repo, &branch, &text).await
             }

@@ -333,7 +333,7 @@ pub(crate) async fn committed_ms(top: &Path, commit: &str) -> Result<u64> {
 }
 
 /// 기획 폴더 안 일반 파일의 blob과 크기(symlink·폴더·submodule은 없는 것으로 본다)
-async fn blob(top: &Path, commit: &str, folder: &str, path: &str) -> Result<(String, u64)> {
+pub(crate) async fn blob(top: &Path, commit: &str, folder: &str, path: &str) -> Result<(String, u64)> {
     debug_assert!(design_inside(folder, path));
     let out = git(top, &["ls-tree", "-z", "-l", "--full-tree", commit, "--", path], 64 * 1024).await?;
     let entry = entries(&out)?.into_iter().find(|e| e.path == path);
@@ -381,6 +381,82 @@ pub(crate) fn entries(out: &[u8]) -> Result<Vec<Entry>> {
 
 fn is_markdown(path: &str) -> bool {
     Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
+}
+
+/// 현재 branch에 commit된 Markdown의 상대 그림·파일 링크를 검사한다.
+pub(crate) async fn image_reference_warnings(top: &Path, commit: &str, image: &str) -> Result<Vec<String>> {
+    const WARNING_LIMIT: usize = 20;
+    let out = git(top, &["ls-tree", "-r", "-z", "-l", "--full-tree", commit], OUTPUT_MAX).await?;
+    let mut skipped = 0;
+    let docs: Vec<Entry> = entries(&out)?
+        .into_iter()
+        .filter(|e| {
+            e.regular()
+                && (is_markdown(&e.path)
+                    || Path::new(&e.path).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("markdown")))
+        })
+        .filter(|e| {
+            let readable = e.size <= DESIGN_MAX_TEXT;
+            skipped += usize::from(!readable);
+            readable
+        })
+        .collect();
+    let shas: Vec<&str> = docs.iter().map(|e| e.sha.as_str()).collect();
+    let mut warnings = Vec::new();
+    let mut omitted = 0;
+    each_head(top, &shas, DESIGN_MAX_TEXT as usize, |i, bytes| {
+        let path = &docs[i].path;
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            if references_image(path, text, image) {
+                if warnings.len() < WARNING_LIMIT {
+                    warnings.push(format!("{path:?} 문서가 지운 그림을 참조한다"));
+                } else {
+                    omitted += 1;
+                }
+            }
+        } else {
+            skipped += 1;
+        }
+    })
+    .await?;
+    if omitted > 0 {
+        warnings.push(format!("다른 문서 {omitted}개도 지운 그림을 참조한다"));
+    }
+    if skipped > 0 {
+        warnings.push(format!("크기·인코딩 제한으로 Markdown 문서 {skipped}개의 참조를 검사하지 못했다"));
+    }
+    Ok(warnings)
+}
+
+fn references_image(doc: &str, text: &str, image: &str) -> bool {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+
+    Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES).any(|event| match event {
+        Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) => {
+            image_link_path(doc, &dest_url).as_deref() == Some(image)
+        }
+        _ => false,
+    })
+}
+
+/// 웹 기획서의 상대 경로 해석과 같이 문서 폴더에서 시작하고 절·질의는 경로에서 뺀다.
+fn image_link_path(doc: &str, destination: &str) -> Option<String> {
+    let raw = destination.trim().split(['?', '#']).next()?;
+    if raw.is_empty() || raw.starts_with('/') || raw.split('/').next()?.contains(':') {
+        return None;
+    }
+    let decoded = crate::page::percent_decode(raw);
+    let mut parts: Vec<&str> = doc.rsplit_once('/').map_or_else(Vec::new, |(dir, _)| dir.split('/').collect());
+    for part in decoded.as_deref().unwrap_or(raw).split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    Some(parts.join("/"))
 }
 
 async fn list(
@@ -581,7 +657,7 @@ async fn each_head(top: &Path, shas: &[&str], keep: usize, mut f: impl FnMut(usi
     Ok(())
 }
 
-async fn blob_slice(top: &Path, blob: &str, offset: u64, len: usize) -> Result<Vec<u8>> {
+pub(crate) async fn blob_slice(top: &Path, blob: &str, offset: u64, len: usize) -> Result<Vec<u8>> {
     let mut child =
         command(top, &["cat-file", "blob", blob]).stdin(Stdio::null()).spawn_guarded().context("git 실행 실패")?;
     let mut out = child.stdout.take().context("git 출력이 없다")?;

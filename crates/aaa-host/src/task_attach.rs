@@ -110,7 +110,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "파일은 1바이트부터 16MiB까지 첨부한다"));
         }
         let ext = match kind {
-            None => crate::attach::sniff(bytes)
+            None => aaa_common::util::image_extension(bytes)
                 .ok_or_else(|| err(ErrorCode::BadRequest, "그림은 PNG·JPEG·GIF·WebP만 첨부한다"))?,
             Some(k) => {
                 let ext = doc_ext(k).ok_or_else(|| err(ErrorCode::BadRequest, "문서는 md·html만 첨부한다"))?;

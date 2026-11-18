@@ -26,6 +26,21 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex::encode(digest.finish()))
 }
 
+/// PNG·JPEG·GIF·WebP의 확장자를 파일 머리에서 정한다.
+pub fn image_extension(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn sha256_file_matches_vectors_chunks_and_fresh_bytes() {

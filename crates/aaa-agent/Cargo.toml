@@ -26,6 +26,7 @@ toml.workspace = true
 toml_edit.workspace = true
 # 파일 보기 HTML 페이지에 제 폴더 파일을 data: URL로 넣는다(page.rs)
 base64.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

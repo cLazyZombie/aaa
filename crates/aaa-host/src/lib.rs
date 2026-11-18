@@ -2197,6 +2197,7 @@ impl Host {
             | FrontRequest::DesignBranchOpen { .. }
             | FrontRequest::DesignSave { .. }
             | FrontRequest::DesignAttach { .. }
+            | FrontRequest::DesignDetach { .. }
             | FrontRequest::DesignSay { .. }
             | FrontRequest::DesignDiscard { .. }
             | FrontRequest::DesignApply { .. }

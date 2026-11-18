@@ -369,6 +369,7 @@ async fn serve_connection(
             "imagegen.v1".into(),
             "thread_read.v1".into(),
             aaa_proto::DESIGN_ATTACH_RELAY_FEATURE.into(),
+            aaa_proto::DESIGN_DETACH_FEATURE.into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
             aaa_common::response_parts::FEATURE.into(),
