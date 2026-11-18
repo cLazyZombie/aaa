@@ -1,12 +1,12 @@
 // 기획 트리(t-1894, 확정 계획 plan §2): 활동 막대 「기획」의 사이드바 칸. 프로젝트 저장소 → 폴더 → 문서이고 폴더가 먼저 온다.
-// 기획 폴더를 정하지 않은 저장소도 한 줄로 보인다. 1단계는 읽기 전용이다(origin 기본 branch).
-import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, GitBranch, Layers, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+// 기획 폴더를 정하지 않은 저장소도 한 줄로 보인다. 트리는 origin 기본 branch(main) 하나다(t-2002).
+import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, Layers, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { loadDesignRepos } from "./designLoad";
-import { addedDocs, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
+import { designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
 import { useDesignTreeScroll, useDesignTreeState, type DesignTreeState } from "./designTreeState";
-import type { DesignBranchView, DesignIdView, DesignRepoView } from "./gen/proto";
+import type { DesignIdView, DesignRepoView } from "./gen/proto";
 import { RowMenu } from "./RowMenu";
 import { onRowKey } from "./Sidebar";
 
@@ -175,13 +175,8 @@ function RepoRow({ repo: r, todo, onAll, collapsed, onToggle, openDirs, onToggle
   selected: string | null;
   onOpen: (target: string) => void;
 }) {
-  // branch에서 새로 만든 문서도 트리에 더한다(「+」)
-  const added = useMemo(() => addedDocs(r), [r]);
-  const marks = useMemo(() => branchesByPath(r), [r]);
-  const nodes = useMemo(() => (r.folder && r.tree
-    ? designTree(r.folder, [...r.tree.docs, ...added.map((a) => ({ path: a.path, title: "", bytes: 0, plans: 0, open: 0, tasks: [], id_marked: false }))])
-    : []), [r.folder, r.tree, added]);
-  const fresh = useMemo(() => new Set(added.map((a) => a.path)), [added]);
+  // 트리는 main 하나다(t-2002: 기획 branch 없음)
+  const nodes = useMemo(() => (r.folder && r.tree ? designTree(r.folder, r.tree.docs) : []), [r.folder, r.tree]);
   const total = useMemo(() => markCounts(nodes.flatMap(docsUnder)), [nodes]);
   const plain = useMemo(() => (r.tree?.docs ?? []).filter((d) => { const n = markCounts([d]); return n.work + n.plan + n.open === 0; }).length, [r.tree]);
   // 표지 수를 세지 못한 트리(옛 agent·세기 실패)는 「할 것」으로 거르지 않는다: 0과 모름은 다르다
@@ -203,16 +198,15 @@ function RepoRow({ repo: r, todo, onAll, collapsed, onToggle, openDirs, onToggle
         <span className="design-name"><strong>{r.repo}</strong>{r.folder && <span className="design-file">{r.folder}/</span>}</span>
         {r.folder === null && <span className="design-note">기획 폴더 없음</span>}
         <Counts n={total} />
-        {r.branches.length > 0 && <span className="design-count" title={r.branches.map((b) => `design/${b.slug}`).join(" · ")} data-testid="design-repo-branches"><GitBranch aria-hidden="true" />{r.branches.length}</span>}
         {warn && <span className="design-warn" data-testid="design-repo-error"><TriangleAlert aria-label={warn} /></span>}
       </div>
       {r.error && !r.tree && <p className="design-error" role="alert">{r.error}</p>}
       {has && !collapsed && (
         <ul role="group">
           {nodes.length === 0 && <li className="design-note design-none">문서 없음</li>}
-          {rootReadme && keep(rootReadme) && <NodeRow node={rootReadme} depth={1} repo={r.repo} todo={todoHere} marks={marks} fresh={fresh} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />}
+          {rootReadme && keep(rootReadme) && <NodeRow node={rootReadme} depth={1} repo={r.repo} todo={todoHere} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />}
           {nodes.filter((n) => n !== rootReadme && keep(n)).map((n) => (
-            <NodeRow key={n.kind === "dir" ? n.path : n.doc.path} node={n} depth={1} repo={r.repo} todo={todoHere} marks={marks} fresh={fresh} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />
+            <NodeRow key={n.kind === "dir" ? n.path : n.doc.path} node={n} depth={1} repo={r.repo} todo={todoHere} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />
           ))}
           {todo && !counted && <li className="design-note" data-testid="design-uncounted">표지 수를 세지 못해 모두 보인다</li>}
           {todoHere && plain > 0 && (
@@ -227,15 +221,11 @@ function RepoRow({ repo: r, todo, onAll, collapsed, onToggle, openDirs, onToggle
   );
 }
 
-function NodeRow({ node, depth, repo, todo, marks, fresh, openDirs, onToggleDir, selected, onOpen }: {
+function NodeRow({ node, depth, repo, todo, openDirs, onToggleDir, selected, onOpen }: {
   node: DesignNode;
   depth: number;
   repo: string;
   todo: boolean;
-  /** 문서마다 그 문서를 고친 기획 branch */
-  marks: Map<string, DesignBranchView[]>;
-  /** branch에서 새로 만든 문서 */
-  fresh: Set<string>;
   openDirs: Set<string>;
   onToggleDir: (path: string) => void;
   selected: string | null;
@@ -246,17 +236,13 @@ function NodeRow({ node, depth, repo, todo, marks, fresh, openDirs, onToggleDir,
     const target = designTarget(repo, node.doc.path);
     const go = () => onOpen(target);
     const sel = selected === node.doc.path;
-    const by = marks.get(node.doc.path) ?? [];
-    const isNew = fresh.has(node.doc.path);
     return (
       <li role="treeitem" aria-selected={sel}>
         <div className={`design-row is-doc${sel ? " is-selected" : ""}`} style={pad} role="button" tabIndex={0} aria-current={sel ? "true" : undefined}
           title={node.doc.id ? `${node.doc.id} · ${node.doc.path}` : node.doc.path} data-testid="design-doc" data-path={node.doc.path} data-id={node.doc.id} onClick={go} onKeyDown={(e) => onRowKey(e, go)}>
-          <span className={`design-mark${isNew ? " is-new" : ""}`} aria-hidden="true">{isNew ? <Plus /> : <FileText />}</span>
+          <span className="design-mark" aria-hidden="true"><FileText /></span>
           <span className="design-name">{docLabel(node.doc)}{node.doc.title && <span className="design-file">{stem(node.doc.path)}</span>}</span>
           <Counts n={markCounts([node.doc])} />
-          {by.length === 1 && <span className={`design-branch-chip${by[0]!.state === "rest" ? " is-dim" : ""}`} data-testid="design-doc-branch"><GitBranch aria-hidden="true" />{by[0]!.slug}</span>}
-          {by.length > 1 && <span className="design-count" title={by.map((b) => b.slug).join(" · ")} data-testid="design-doc-branch"><GitBranch aria-hidden="true" />{by.length}</span>}
         </div>
       </li>
     );
@@ -274,7 +260,7 @@ function NodeRow({ node, depth, repo, todo, marks, fresh, openDirs, onToggleDir,
       {open && (
         <ul role="group">
           {node.children.filter((c) => !todo || (() => { const n = sumCounts(c); return n.work + n.plan + n.open > 0; })()).map((c) => (
-            <NodeRow key={c.kind === "dir" ? c.path : c.doc.path} node={c} depth={depth + 1} repo={repo} todo={todo} marks={marks} fresh={fresh} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />
+            <NodeRow key={c.kind === "dir" ? c.path : c.doc.path} node={c} depth={depth + 1} repo={repo} todo={todo} openDirs={openDirs} onToggleDir={onToggleDir} selected={selected} onOpen={onOpen} />
           ))}
         </ul>
       )}

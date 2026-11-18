@@ -64,6 +64,7 @@ pub struct DesignMainBlob {
 #[serde(default)]
 pub struct DesignLogEntry {
     pub commit: String,
+    #[ts(type = "number")]
     pub committed_ms: u64,
     /// commit 첫 줄
     pub subject: String,

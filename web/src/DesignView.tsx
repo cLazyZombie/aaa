@@ -1,16 +1,17 @@
-// 기획 문서 보기(t-1894, 확정 시안 library/mock2): 사이드바 「기획」 트리에서 고른 문서 하나와 오른쪽 기획 대화.
-// 문서는 main이나 그 문서를 고친 기획 branch의 판으로 보고, branch 판은 main과 다른 덩어리에 표시를 단다. 「고치기」는 그 대화의
-// 기획 branch에 저장한다. 그림·영상은 같은 commit의 저장소 파일이고, 문서 안 다른 문서 링크(상대 경로 .md)는 앱 안에서 연다.
+// 기획 문서 보기(t-1894, t-2002 확정 시안 library/mock): 사이드바 「기획」 트리에서 고른 문서 하나와 오른쪽 기획 대화.
+// 문서는 늘 main 판이다. 「고치기」는 main에 바로 저장하고(저장소 문서 검사를 지나야 올라간다, 실패하면 까닭을 보이고 글은 남긴다),
+// 「이력」은 main이 가졌던 판과 지금 판의 차이를 보이고 고른 판으로 되돌린다. 그림·영상은 같은 commit의 저장소 파일이고,
+// 문서 안 다른 문서 링크(상대 경로 .md)는 앱 안에서 연다.
 import "./DesignView.css";
-import { Check, CircleDot, GitBranch, Hammer, ImagePlus, MessageSquare, Pencil, RefreshCw } from "lucide-react";
+import { Check, CircleDot, Hammer, History, ImagePlus, MessageSquare, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
 import { DesignChat, NewChatDialog } from "./DesignChat";
 import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
-import { branchesByPath, calloutOf, mergedToMain, changedBlocks, designFileUrl, designTarget, idLineOf, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, restDays, sectionsOf, splitTarget, taskState, withoutIdLines, type ArchiveLookup, type Callout } from "./designModel";
+import { blockDiff, calloutOf, designFileUrl, designTarget, idLineOf, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, sectionsOf, splitTarget, taskState, withoutIdLines, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
-import type { DesignBranchView, DesignDoc, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
+import type { DesignDoc, DesignLogEntry, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { useLightbox } from "./Lightbox";
 import { AppIdChipContext } from "./Markdown";
@@ -71,7 +72,7 @@ function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, childr
   lookup: ArchiveLookup;
   threads: ThreadView[];
   onDiscuss?: () => void;
-  /** 기획 branch 판의 넘기지 않은 계획 블록만 */
+  /** 넘기지 않은 계획 블록만 */
   onHandoff?: () => void;
   children: ReactNode;
 }) {
@@ -113,7 +114,14 @@ function storeChat(repo: string, slug: string) {
   try { localStorage.setItem(`herdr-web-ui:design-chat:${repo}`, slug); } catch { /* 이 기기만의 편의 */ }
 }
 
-const clock = (ms: number) => new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+const stamp = (ms: number) => {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+/** 문서 이력(main이 가졌던 판)과 고른 옛 판 */
+type History = { entries: DesignLogEntry[] | null; at: string | null; old: DesignDoc | null; error: string | null };
 
 export function DesignView({ shown, target, repos, threads, panes, canControl, tree, onOpen, onReload }: {
   shown: boolean;
@@ -138,97 +146,80 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const [page, setPage] = useState<Page>("doc");
   const now = useMinute();
   const lightbox = useLightbox();
-  // 고른 대화(저장소마다)와 문서 판(main 또는 branch)
+  // 고른 대화(저장소마다): 저장·그림·맡기기의 사건을 그 대화에 남긴다(없으면 남기지 않는다)
   const [chatSlug, setChatSlug] = useState<string | null>(null);
   useEffect(() => {
     if (!repo) return;
     const kept = storedChat(repo.repo);
-    const open = repo.branches.filter((b) => b.state === "open").sort((a, b) => b.updated_ms - a.updated_ms);
+    const recent = [...repo.branches].sort((a, b) => b.updated_ms - a.updated_ms);
     setChatSlug((cur) => (cur && repo.branches.some((b) => b.slug === cur) ? cur
-      : kept && repo.branches.some((b) => b.slug === kept) ? kept : open[0]?.slug ?? repo.branches[0]?.slug ?? null));
+      : kept && repo.branches.some((b) => b.slug === kept) ? kept : recent[0]?.slug ?? null));
   }, [repo]);
   const chat = repo?.branches.find((b) => b.slug === chatSlug) ?? null;
-  const touching = useMemo(() => (at ? branchesByPath(repo).get(at.path) ?? [] : []), [repo, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [tab, setTab] = useState<string>("main");
-  // 문서·대화마다 자동 선택은 통계를 실제로 읽은 뒤 한 번만 한다. 빠른 목록의 빈 changed는 아직 모르는 값이다.
-  // 같은 문서의 새로 읽기가 사용자가 직접 고른 main/branch 판을 덮지 않게 완료한 선택을 기억한다.
-  const autoTarget = JSON.stringify([key, chat?.slug ?? null]);
-  const autoPicked = useRef<string | null>(null);
-  const chatTouches = !!chat && touching.some((b) => b.slug === chat.slug);
-  useEffect(() => {
-    if (autoPicked.current === autoTarget || (chat && !chat.read)) return;
-    autoPicked.current = autoTarget;
-    setTab(chatTouches && chat ? chat.slug : "main");
-  }, [autoTarget, chat?.read, chatTouches, chat?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
-  const selectTab = (value: string) => { autoPicked.current = autoTarget; setTab(value); };
   const pick = useCallback((slug: string) => {
     setChatSlug(slug);
     if (repo) storeChat(repo.repo, slug);
   }, [repo]);
-  const branch = tab === "main" ? null : repo?.branches.find((b) => b.slug === tab) ?? null;
-  // 받은 문서(branch 판이면 main 판도 함께: 다른 덩어리 표시)
-  const [doc, setDoc] = useState<{ key: string; doc: DesignDoc; main: string | null } | null>(null);
+  // 받은 문서(늘 main 판)
+  const [doc, setDoc] = useState<{ key: string; doc: DesignDoc } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rev, setRev] = useState(0);
-  const docKey = key ? `${key}@${tab}` : null;
+  const docKey = key;
   useEffect(() => {
     if (!at || !docKey) return;
     let live = true;
     setBusy(true);
     setError(null);
-    const read = (b: string | null) => call({ op: "design_read", repo: at.repo, path: at.path, ...(b ? { branch: b } : {}) })
-      .then((r) => (r.kind === "design_doc" ? r.doc : null));
-    const wantMain = tab !== "main";
-    Promise.all([read(tab === "main" ? null : tab), wantMain ? read(null).catch(() => null) : Promise.resolve(null)]).then(
-      ([d, m]) => { if (live && d) setDoc({ key: docKey, doc: d, main: wantMain ? m?.text ?? null : null }); },
+    call({ op: "design_read", repo: at.repo, path: at.path }).then(
+      (r) => { if (live && r.kind === "design_doc") setDoc({ key: docKey, doc: r.doc }); },
       (e: unknown) => { if (live) { setDoc(null); setError(e instanceof ApiError ? e.message : String(e)); } },
     ).finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
-  }, [docKey, rev, treeCommit, branch?.head]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docKey, rev, treeCommit]); // eslint-disable-line react-hooks/exhaustive-deps
   const current = doc && doc.key === docKey ? doc.doc : null;
   const docs = repo?.tree?.docs;
-  const image = useCallback((src: string) => {
-    if (!current) return null;
-    const path = resolveDocPath(current.path, src);
-    return path && !isMarkdown(path) ? designFileUrl(current.project, current.repo, path, current.commit, current.branch) : null;
-  }, [current]);
+  const imageAt = useCallback((d: DesignDoc | null) => (src: string) => {
+    if (!d) return null;
+    const path = resolveDocPath(d.path, src);
+    return path && !isMarkdown(path) ? designFileUrl(d.project, d.repo, path, d.commit) : null;
+  }, []);
+  const image = useMemo(() => imageAt(current), [imageAt, current]);
   /** 문서 안 경로: 문서 폴더 기준, 없으면 저장소 기준으로 찾아 트리에 있는 문서면 연다 */
   const openPath = useCallback((raw: string) => {
     if (!current) return;
     const tries = [resolveDocPath(current.path, raw), resolveDocPath("x", raw)];
-    const branchDocs = new Set(touching.flatMap((b) => b.changed.map((c) => c.path)));
-    const hit = tries.find((p) => p && isMarkdown(p) && ((docs ?? []).some((d) => d.path === p) || branchDocs.has(p)));
+    const hit = tries.find((p) => p && isMarkdown(p) && (docs ?? []).some((d) => d.path === p));
     if (hit) onOpen(designTarget(current.repo, hit));
-  }, [current, docs, onOpen, touching]);
-  // 고치기: 그 판(branch)이나 고른 대화의 branch에 저장한다. 대화가 없으면 새 대화부터
-  const [editing, setEditing] = useState<{ slug: string; text: string; base: string | null; was: string } | null>(null);
+  }, [current, docs, onOpen]);
+  // 고치기: main에 바로 저장한다. 고른 대화가 있으면 그 대화에 「사람이 고침」으로 남는다
+  const [editing, setEditing] = useState<{ text: string; base: string; was: string } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [newChat, setNewChat] = useState(false);
   const [saving, setSaving] = useState(false);
   const editor = useRef<HTMLTextAreaElement | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
-  // 그림: 그 branch의 문서 폴더에 commit하고 글 커서 자리에 그림 줄을 넣는다(같은 폴더라 이름만 쓴다)
+  // 그림: main의 문서 폴더에 commit하고 글 커서 자리에 그림 줄을 넣는다(같은 폴더라 이름만 쓴다)
   const attach = async (files: FileList | null) => {
     if (!at || !editing || !current || !files?.length) return;
     // 올리는 동안 글은 읽기만 한다(그 사이 친 글을 잃지 않게). 올린 것만큼은 실패해도 줄을 넣는다
     setSaving(true);
-    const slug = editing.slug;
     const cursor = editor.current?.selectionStart ?? editing.text.length;
     const lines: string[] = [];
     try {
       const dir = at.path.slice(0, at.path.lastIndexOf("/"));
       for (const file of [...files]) {
-        const r = await uploadDesignFile(current.project, at.repo, slug, dir, file);
+        const r = await uploadDesignFile(current.project, at.repo, chat?.slug ?? "main", dir, file);
         const name = r.path.slice(r.path.lastIndexOf("/") + 1);
         lines.push(`![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${name})`);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setSaveError(e instanceof ApiError ? e.message : String(e));
     } finally {
-      // 지금 고치는 글(같은 branch일 때만)에 넣는다: 그 사이 취소했거나 다른 문서를 열었으면 넣지 않는다
+      // 지금 고치는 글에 넣는다: 그 사이 취소했거나 다른 문서를 열었으면 넣지 않는다
       if (lines.length > 0) {
         setEditing((now) => {
-          if (!now || now.slug !== slug) return now;
+          if (!now) return now;
           const at = Math.min(cursor, now.text.length);
           const block = `${at > 0 && now.text[at - 1] !== "\n" ? "\n" : ""}${lines.join("\n")}\n`;
           return { ...now, text: now.text.slice(0, at) + block + now.text.slice(at) };
@@ -240,43 +231,66 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     }
   };
   const [chatError, setChatError] = useState<string | null>(null);
-  useEffect(() => setEditing(null), [key]);
+  useEffect(() => { setEditing(null); setSaveError(null); }, [key]);
   const startEdit = async () => {
     if (!at) return;
-    const slug = branch?.slug ?? (chat?.state === "open" ? chat.slug : null);
-    if (!slug) { setNewChat(true); return; }
     try {
-      const r = await call({ op: "design_read", repo: at.repo, path: at.path, branch: slug });
-      if (r.kind === "design_doc") setEditing({ slug, text: r.doc.text, base: r.doc.blob, was: r.doc.text });
+      const r = await call({ op: "design_read", repo: at.repo, path: at.path });
+      if (r.kind === "design_doc") { setSaveError(null); setEditing({ text: r.doc.text, base: r.doc.blob, was: r.doc.text }); }
     } catch (e) {
-      // 그 branch에 없는 문서(main에만 있다)는 main 판의 글로 그 branch에 새로 만든다(기준 판 없음)
-      if (current && tab === "main") setEditing({ slug, text: current.text, base: null, was: current.text });
-      else setError(e instanceof ApiError ? e.message : String(e));
+      setError(e instanceof ApiError ? e.message : String(e));
     }
   };
   const save = async () => {
     if (!at || !editing) return;
     setSaving(true);
+    setSaveError(null);
     try {
-      await call({ op: "design_save", repo: at.repo, branch: editing.slug, path: at.path, ...(editing.base ? { base: editing.base } : {}), text: editing.text });
-      selectTab(editing.slug);
-      pick(editing.slug);
+      await call({ op: "design_save", repo: at.repo, branch: chat?.slug ?? "", path: at.path, base: editing.base, text: editing.text });
       setEditing(null);
       onReload();
       setRev((n) => n + 1);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      // 검사 실패·그 사이 다른 판: main은 그대로이고 쓴 글은 남는다
+      setSaveError(e instanceof ApiError ? e.message : String(e));
     } finally {
       setSaving(false);
     }
   };
-  // 덩어리: 표지 블록을 그리려고 늘 나눈다. branch 판이면 main과 다른 덩어리도 표시한다
+  // 이력: main이 가졌던 판을 새것부터. 판을 고르면 지금 판과 다른 덩어리를 보이고 그 판으로 되돌린다
+  const [hist, setHist] = useState<History | null>(null);
+  const [revert, setRevert] = useState(false);
+  useEffect(() => { setHist(null); setRevert(false); }, [key]);
+  const openHistory = () => {
+    if (!at) return;
+    setHist({ entries: null, at: null, old: null, error: null });
+    call({ op: "design_log", repo: at.repo, path: at.path }).then(
+      (r) => { if (r.kind === "design_log") setHist((h) => (h ? { ...h, entries: r.entries } : h)); },
+      (e: unknown) => setHist((h) => (h ? { ...h, error: e instanceof ApiError ? e.message : String(e) } : h)),
+    );
+  };
+  const pickVersion = (commit: string) => {
+    if (!at) return;
+    setHist((h) => (h ? { ...h, at: commit, old: null, error: null } : h));
+    if (current && commit === current.commit) return;
+    call({ op: "design_read", repo: at.repo, path: at.path, at: commit }).then(
+      (r) => { if (r.kind === "design_doc") setHist((h) => (h && h.at === commit ? { ...h, old: r.doc } : h)); },
+      (e: unknown) => setHist((h) => (h && h.at === commit ? { ...h, error: e instanceof ApiError ? e.message : String(e) } : h)),
+    );
+  };
+  /** 이력 줄의 누가: 기획 대화 thread는 그 대화 이름, 사람, 구현 맡기기, 기획 저장이 아닌 commit은 작성자 */
+  const whoOf = (e: DesignLogEntry): { label: string; tone: string } => {
+    if (e.other) return { label: e.by, tone: "other" };
+    if (/구현 맡김/.test(e.subject)) return { label: "구현 맡기기", tone: "host" };
+    if (e.by === "사람") return { label: "사람", tone: "man" };
+    const conv = repo?.branches.find((b) => b.thread === e.by || b.events.some((ev) => ev.commit === e.commit));
+    return { label: conv?.title ?? e.by, tone: "ai" };
+  };
+  // 덩어리: 표지 블록을 그리려고 늘 나눈다
   const blocks = useMemo(() => (current ? mdBlocks(current.text) : null), [current]);
-  const marked = useMemo(() => (blocks && tab !== "main" ? changedBlocks(doc?.main ?? null, blocks) : null), [blocks, doc?.main, tab]);
   const sections = useMemo(() => (blocks && current ? sectionsOf(blocks, current.title) : []), [blocks, current]);
-  // main 문서에서 맡긴 블록(3-3): 표지는 구현 branch에만 있어 main 글에는 없다. 맡김 기록의 블록 글로 찾아 그 할 일로 본다
-  // 맡긴 블록은 다른 판에 아직 표지가 없을 수 있다(main 맡김은 구현 branch에, 기획 branch 맡김은 그 branch에): 같은 글이면
-  // 어느 판에서든 그 할 일로 보이고 다시 맡기지 않는다. 그 판에 표지가 있는 블록은 표지대로다
+  // 옛 맡김 기록(t-2002 전: 표지가 구현 branch나 기획 branch에만 있다)은 그 블록 글로 찾아 그 할 일로 본다.
+  // t-2002부터 맡기면 표지를 main에 바로 적으므로 표지대로 보인다
   const pendingNotes = useMemo(() => {
     const out = new Map<string, { task: string; branch: string }>();
     if (!at) return out;
@@ -307,9 +321,8 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   // 대화로 정하기: 고른 블록을 대화 입력의 맥락으로 넘긴다
   const [picked, setPicked] = useState<{ path: string; section: string; title: string } | null>(null);
   useEffect(() => setPicked(null), [key]);
-  // 구현 맡기기(3-2): 기획 branch 판에서만. 「남은 것」에서 고른 블록과 창
-  // 기획 branch 판, 또는 main 판(3-3: 기획 branch 없이 맡기고 표지는 구현 branch 첫 commit에)
-  const canHand = canControl && (branch ? branch.state === "open" : tab === "main");
+  // 구현 맡기기: 고른 블록 표지에 d-ID를 적어 main에 바로 저장한다(t-2002 q-4224 1A). 「남은 것」에서 고른 블록과 창
+  const canHand = canControl;
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   // 창은 연 때의 판과 블록으로 맡긴다: 그 사이 문서가 다시 읽혀도 고른 번호가 다른 블록을 가리키지 않는다(host가 판을 다시 본다)
   const [handoff, setHandoff] = useState<{ initial: number[]; blob: string; blocks: HandoffBlock[] } | null>(null);
@@ -339,19 +352,18 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     const c = callouts[i];
     const md = <ReportMarkdown base={null} image={image} text={c ? c.body : b} onImages={lightbox.open} captions />;
     return (
-      <div key={i} className={`design-block${marked?.[i] ? " is-changed" : ""}`} data-testid={marked?.[i] ? "design-changed" : undefined}>
+      <div key={i} className="design-block">
         {c ? <DesignCallout c={c} tasks={tasks} lookup={lookup} threads={threads} onDiscuss={canControl ? () => discuss(c) : undefined}
           onHandoff={canHand && handable(c) ? () => openHandoff([i]) : undefined}>{md}</DesignCallout> : md}
       </div>
     );
   };
   // 본문: main 판은 표지 블록 사이의 보통 글을 이어 한 번에 그린다(목록 이어짐·참조식 링크·각주가 덩어리마다 끊기지 않게).
-  // 표지가 없으면 문서 전체를 그대로 그린다. branch 판은 main과 다른 덩어리를 표시하므로 덩어리마다 그린다(2-3과 같다)
+  // 표지가 없으면 문서 전체를 그대로 그린다
   const renderBody = (): ReactNode => {
     if (!blocks || !current) return null;
-    if (!marked && callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={withoutIdLines(current.text)} onImages={lightbox.open} captions />;
+    if (callouts.every((c) => !c)) return <ReportMarkdown base={null} image={image} text={withoutIdLines(current.text)} onImages={lightbox.open} captions />;
     const shown = (i: number) => !(look === "now" && (callouts[i] || onlyPlans(i)));
-    if (marked) return blocks.map((b, i) => (shown(i) ? renderBlock(b, i) : null));
     const out: ReactNode[] = [];
     let run: string[] = [];
     let start = 0;
@@ -383,14 +395,14 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     });
     return groups.filter((g) => g.items.length > 0);
   }, [blocks, sections, callouts]);
-  const others = touching.filter((b) => b.slug !== tab);
-  const stateOf = (b: DesignBranchView) => {
-    if (mergedToMain(b)) return "main에 들어감";
-    const apply = b.apply ? threads.find((t) => t.id === b.apply) : undefined;
-    if (apply && apply.status !== "resolved" && apply.status !== "failed") return "반영 대기";
-    return b.state === "rest" ? `쉼 ${restDays(b, now)}일` : "대화 중";
-  };
-  const tabs = ["main", ...touching.map((b) => b.slug), ...(chat && chat.state === "open" && !touching.some((b) => b.slug === chat.slug) && editing?.slug === chat.slug ? [chat.slug] : [])];
+  // 이력에서 고른 판과 지금 판의 차이(덩어리 단위, ID 표지 줄은 빼고)
+  const diff = useMemo(() => {
+    if (!hist?.old || !current) return null;
+    const plain = (t: string) => mdBlocks(t).filter((b) => idLineOf(b) === null);
+    return blockDiff(plain(hist.old.text), plain(current.text));
+  }, [hist?.old, current]);
+  const histPicked = hist?.entries && hist.at ? hist.entries.findIndex((e) => e.commit === hist.at) : -1;
+  const histImage = useMemo(() => imageAt(hist?.old ?? null), [imageAt, hist?.old]);
   const show = (p: Page) => !narrow || page === p;
   return (
     <div className={`design-screen${shown ? "" : " is-hidden"}`} inert={!shown} data-testid="design-view" data-shown={shown ? "true" : "false"}>
@@ -401,8 +413,6 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
               {p === "tree" ? "트리" : p === "doc" ? "문서" : "대화"}
             </button>
           ))}
-          <span className="spacer" />
-          {chat && <span className="design-branch-chip"><GitBranch aria-hidden="true" />{chat.slug}</span>}
         </nav>
       )}
       <div className="design-columns">
@@ -413,24 +423,15 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
             <HeadNote />
             <div className="term-title design-title">
               {at ? <span className="design-crumb" data-testid="design-crumb">{at.repo} / {at.path.split("/").join(" / ")}</span> : <strong>기획</strong>}
-              {editing && <span className="design-branch-chip"><GitBranch aria-hidden="true" />{editing.slug}</span>}
+              {hist && <span className="design-pill is-plan" data-testid="design-history-on">이력</span>}
             </div>
-            {at && !editing && tabs.length > 1 && (
-              <div className="design-tabs" role="tablist" aria-label="판" data-testid="design-tabs">
-                {tabs.map((t) => {
-                  const b = repo?.branches.find((x) => x.slug === t);
-                  return (
-                    <button key={t} type="button" role="tab" aria-selected={tab === t} className={`design-tab${tab === t ? " is-on" : ""}${b?.state === "rest" ? " is-rest" : ""}`}
-                      data-testid="design-tab" data-tab={t} onClick={() => { selectTab(t); if (t !== "main") pick(t); }}>
-                      {t !== "main" && <GitBranch aria-hidden="true" />}{t}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {at && !editing && canControl && current && (
+            {at && !editing && !hist && canControl && current && (
               <button type="button" className="btn design-edit" aria-label="고치기" title="고치기" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" /><span className="design-btn-label">고치기</span></button>
             )}
+            {at && !editing && !hist && current && (
+              <button type="button" className="btn design-edit" aria-label="이력" title="이력" data-testid="design-history" onClick={openHistory}><History className="i" aria-hidden="true" /><span className="design-btn-label">이력</span></button>
+            )}
+            {hist && <button type="button" className="btn" data-testid="design-history-close" onClick={() => setHist(null)}>닫기</button>}
             {editing && (
               <>
                 <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden data-testid="design-attach-input"
@@ -440,11 +441,11 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                 </button>
                 <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel" onClick={() => setEditing(null)}>취소</button>
                 <button type="button" className="btn primary" disabled={saving || editing.text === editing.was} data-testid="design-edit-save" onClick={() => void save()}>
-                  <Check className="i" aria-hidden="true" />{editing.slug}에 저장
+                  <Check className="i" aria-hidden="true" />main에 저장
                 </button>
               </>
             )}
-            {at && !editing && (
+            {at && !editing && !hist && (
               <button type="button" className="btn icon" aria-label="새로 읽기" title="새로 읽기" disabled={busy} data-testid="design-doc-reload" onClick={() => { onReload(); setRev((n) => n + 1); }}>
                 <RefreshCw className={`i${busy ? " is-spinning" : ""}`} aria-hidden="true" />
               </button>
@@ -455,24 +456,64 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           {error && <div className="banner err" role="alert">{error}</div>}
           {editing ? (
             <div className="design-body">
+              {saveError ? (
+                <div className="design-save-error" role="alert" data-testid="design-save-error">
+                  <strong><X className="i" aria-hidden="true" />저장하지 않았다</strong>
+                  <span>main은 그대로다. 고친 뒤 다시 저장한다. 쓴 글은 그대로 남아 있다.</span>
+                  <pre>{saveError}</pre>
+                </div>
+              ) : (
+                <p className="design-save-note" data-testid="design-save-note">저장하면 저장소 문서 검사를 지나 바로 main에 들어간다 · 기준 판 <code>{editing.base.slice(0, 7)}</code></p>
+              )}
               <textarea ref={editor} className="design-editor" value={editing.text} readOnly={saving} spellCheck={false} autoFocus aria-label="문서 글" data-testid="design-editor"
                 onChange={(e) => setEditing({ ...editing, text: e.target.value })} />
+            </div>
+          ) : hist && current ? (
+            <div className="design-history" data-testid="design-history-view">
+              <div className="design-history-list" data-testid="design-history-list">
+                <p className="design-history-head">이 문서의 main 판 · 새것부터</p>
+                {hist.error && <p className="banner err" role="alert">{hist.error}</p>}
+                {!hist.entries && !hist.error && <p className="design-empty">읽는 중</p>}
+                {hist.entries?.map((e) => {
+                  const who = whoOf(e);
+                  const now = e.commit === current.commit;
+                  return (
+                    <button key={e.commit} type="button" className={`design-history-row${hist.at === e.commit ? " is-on" : ""}`} data-testid="design-history-row" data-commit={e.commit} onClick={() => pickVersion(e.commit)}>
+                      <span className="design-history-who"><span className={`design-who is-${who.tone}`}>{who.label}</span>{stamp(e.committed_ms)} · <code>{e.commit.slice(0, 7)}</code></span>
+                      <span className="design-history-what">{e.subject.replace(/^기획: /, "").replace(/ \([^()]*\)$/, "")}{now && <span className="design-history-now"> · 지금 판</span>}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="design-history-view">
+                {!hist.at ? <p className="design-empty">판을 고르면 지금 판과 다른 곳이 보인다</p> : hist.at === current.commit ? <p className="design-empty">지금 판이다</p> : (
+                  <>
+                    <div className="design-history-bar">
+                      <span>{histPicked >= 0 && hist.entries ? stamp(hist.entries[histPicked]!.committed_ms) : ""} 판 <code>{hist.at.slice(0, 7)}</code></span>
+                      <span className="spacer" />
+                      {canControl && hist.old && <button type="button" className="btn small primary" data-testid="design-revert" onClick={() => setRevert(true)}><RotateCcw className="i" aria-hidden="true" />이 판으로 되돌리기</button>}
+                    </div>
+                    {hist.error && <p className="banner err" role="alert">{hist.error}</p>}
+                    {diff && (
+                      <div className="design-text design-diff">
+                        <p className="design-diff-legend"><span className="is-back">되돌리면 생김</span><span className="is-gone">되돌리면 사라짐</span></p>
+                        {diff.map((d, i) => (
+                          <div key={i} className={`design-block is-${d.kind}`} data-testid={d.kind === "same" ? undefined : `design-diff-${d.kind}`}>
+                            <ReportMarkdown base={null} image={d.kind === "gone" ? image : histImage} text={d.text} onImages={lightbox.open} captions />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           ) : current && (
             <div className="design-body" data-testid="design-body">
               <div className="design-meta" data-testid="design-meta">
                 {current.id && <span className="design-id-chip" title="기획서 ID" data-testid="design-id">{current.id}</span>}
-                {branch ? (
-                  <>
-                    <span className="design-branch-chip"><GitBranch aria-hidden="true" />design/{branch.slug}</span>
-                    <span title={current.commit}>판 <code>{current.commit.slice(0, 7)}</code> · main보다 {branch.ahead} 앞{branch.pushed && branch.pushed === branch.head && branch.pushed_ms > 0 ? ` · ${clock(branch.pushed_ms)} 올림` : branch.state === "rest" ? ` · 쉼 ${restDays(branch, now)}일` : " · 올리기 전"} · 대화 「{branch.title}」</span>
-                  </>
-                ) : (
-                  <>
-                    <span title={current.commit}>판 <code>{current.commit.slice(0, 7)}</code></span>
-                    <span>{ago(current.committed_ms, now)}</span>
-                  </>
-                )}
+                <span title={current.commit}>main <code>{current.commit.slice(0, 7)}</code></span>
+                <span>{ago(current.committed_ms, now)}</span>
               </div>
               <div className="design-looks">
                 {counts.work > 0 && <span className="design-count-chip is-work" data-testid="design-count-work">진행 {counts.work}</span>}
@@ -485,15 +526,6 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                   ))}
                 </div>
               </div>
-              {others.length > 0 && (
-                <div className="design-others">
-                  {others.map((b) => (
-                    <button key={b.slug} type="button" className="design-other" data-testid="design-other" onClick={() => { selectTab(b.slug); pick(b.slug); }}>
-                      <GitBranch aria-hidden="true" /><code>{b.slug}</code>도 이 문서를 고침 · {stateOf(b)}
-                    </button>
-                  ))}
-                </div>
-              )}
               <div className="design-text">
                 <OpenFileContext.Provider value={openPath}>
                 <AppIdChipContext.Provider value={chipOf}>
@@ -543,16 +575,81 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
             {/* 프로젝트는 판을 다시 읽는 동안에도 남는 앞 문서에서 얻는다: 대화를 바꾸면 판이 바뀌어 `current`가 잠시 빈다(t-1950 착지 실패) */}
             <DesignChat project={doc?.doc.project ?? null} repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
               picked={picked} onUnpick={() => setPicked(null)}
-              active={shown && show("chat")} now={now} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
+              active={shown && show("chat")} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
           </section>
         )}
       </div>
       {handoff && repo && at && (
-        <HandoffDialog repo={repo} branch={branch} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
+        <HandoffDialog repo={repo} chat={chat} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
           onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
+      )}
+      {revert && hist?.at && hist.old && current && at && (
+        <RevertDialog repo={at.repo} path={at.path} at={hist.at} base={current.blob} chat={chat?.slug ?? ""}
+          lost={(hist.entries ?? []).slice(0, Math.max(0, histPicked)).map((e) => ({ e, who: whoOf(e) }))}
+          onClose={() => setRevert(false)} onDone={() => { setRevert(false); setHist(null); onReload(); setRev((n) => n + 1); }} />
       )}
       {newChat && repo && <NewChatDialog repo={repo} onClose={() => setNewChat(false)} onDone={(slug) => { setNewChat(false); pick(slug); onReload(); }} />}
       {lightbox.node}
+    </div>
+  );
+}
+
+/** 이 판으로 되돌리기: 옛 판 글을 지금 main 위에 새로 저장한다. 사라지는 저장(이력에는 남는다)을 보인다 */
+function RevertDialog({ repo, path, at, base, chat, lost, onClose, onDone }: {
+  repo: string;
+  path: string;
+  at: string;
+  base: string;
+  chat: string;
+  lost: { e: DesignLogEntry; who: { label: string; tone: string } }[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const submit = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await call({ op: "design_revert", repo, path, at, base, branch: chat });
+      onDone();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div className="modal design-dialog" role="dialog" aria-modal="true" aria-label="이 판으로 되돌리기" data-testid="design-revert-dialog">
+        <header className="modal-header"><h2 className="modal-title"><RotateCcw className="i" aria-hidden="true" />이 판으로 되돌리기 <code>{path.slice(path.indexOf("/") + 1)}</code></h2></header>
+        <div className="modal-body">
+          <p>판 <code>{at.slice(0, 7)}</code>의 글을 지금 main 위에 새로 저장한다.</p>
+          {lost.length > 0 && (
+            <ul className="design-files">
+              {lost.map(({ e, who }) => (
+                <li key={e.commit} className="design-file-row">
+                  <span className={`design-who is-${who.tone}`}>{who.label}</span>
+                  <span>{stamp(e.committed_ms)} {e.subject.replace(/^기획: /, "").replace(/ \([^()]*\)$/, "")}</span>
+                  <span className="spacer" /><span className="design-minus">사라짐</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <ul className="design-checks">
+            <li className="is-ok"><Check className="i" aria-hidden="true" />사라지는 저장도 이력에 남아 다시 되돌릴 수 있다</li>
+            <li className="is-ok"><Check className="i" aria-hidden="true" />넘긴 블록 표지(<code>[!계획] d-NNNN</code>)는 그대로 둔다</li>
+            <li className="is-ok"><Check className="i" aria-hidden="true" />저장할 때 저장소 문서 검사를 한다</li>
+          </ul>
+          {problem && <p className="confirm-error" role="alert">{problem}</p>}
+        </div>
+        <footer className="modal-footer">
+          <span className="design-hand-note">main에 바로 들어간다</span>
+          <span className="spacer" />
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>취소</button>
+          <button type="button" className="btn primary" disabled={busy} data-testid="design-revert-submit" onClick={() => void submit()}><RotateCcw className="i" aria-hidden="true" />되돌리기</button>
+        </footer>
+      </div>
     </div>
   );
 }

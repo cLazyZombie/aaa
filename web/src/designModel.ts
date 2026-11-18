@@ -1,7 +1,7 @@
 // 기획 트리(t-1894): 저장소 기획 폴더의 Markdown 문서 목록을 폴더 트리로 묶고, 문서 안 상대 경로(그림·다른 문서)를 저장소 기준 경로로 푼다.
 import { canonicalShortId } from "./appIds.ts";
 import { imageMention, imagePaths } from "./herdr/composerImages.ts";
-import type { DesignBranchView, DesignDocEntry, DesignEvent, DesignRepoView, TaskView, ThreadView } from "./gen/proto";
+import type { DesignDocEntry, DesignEvent, TaskView, ThreadView } from "./gen/proto";
 
 export type DesignDir = { kind: "dir"; name: string; path: string; title: string; children: DesignNode[] };
 export type DesignFile = { kind: "doc"; name: string; doc: DesignDocEntry };
@@ -103,30 +103,7 @@ export function isMarkdown(path: string): boolean {
   return /\.md$/i.test(path);
 }
 
-/** 문서마다 그 문서를 main과 달리 고친 기획 branch(만든 차례) */
-export function branchesByPath(repo: Pick<DesignRepoView, "branches"> | undefined): Map<string, DesignBranchView[]> {
-  const out = new Map<string, DesignBranchView[]>();
-  for (const b of repo?.branches ?? []) {
-    for (const c of b.changed) {
-      const list = out.get(c.path) ?? [];
-      list.push(b);
-      out.set(c.path, list);
-    }
-  }
-  return out;
-}
 
-/** main에는 없고 branch에서 새로 만든 문서(트리에 더해 보인다). 같은 경로는 먼저 만든 branch 하나 */
-export function addedDocs(repo: Pick<DesignRepoView, "branches" | "tree"> | undefined): { path: string; branch: DesignBranchView }[] {
-  const main = new Set((repo?.tree?.docs ?? []).map((d) => d.path));
-  const out = new Map<string, DesignBranchView>();
-  for (const b of repo?.branches ?? []) {
-    for (const c of b.changed) {
-      if (c.status === "A" && isMarkdown(c.path) && !main.has(c.path) && !out.has(c.path)) out.set(c.path, b);
-    }
-  }
-  return [...out].map(([path, branch]) => ({ path, branch }));
-}
 
 /** branch 이름(주제)의 꼴(host `design_slug_ok`와 같다): 영문 소문자·숫자·`-`, 1~48자, `-`로 시작·끝나지 않고 `--`가 없다. `main`은 판 고르기와 겹쳐 쓰지 않는다 */
 export const SLUG = /^(?!main$)(?!.*--)[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -184,17 +161,7 @@ export function mdBlocks(text: string): string[] {
   return out;
 }
 
-/** branch 판의 덩어리마다 main에 같은 덩어리가 없으면 참(앞뒤 빈칸은 보지 않는다). main이 없으면(새 문서) 모두 참 */
-export function changedBlocks(main: string | null, blocks: readonly string[]): boolean[] {
-  if (main === null) return blocks.map(() => true);
-  const have = new Set(mdBlocks(main).map((b) => b.trim()));
-  return blocks.map((b) => !have.has(b.trim()));
-}
 
-/** 쉰 날 수(마지막으로 쓴 때부터) */
-export function restDays(b: Pick<DesignBranchView, "updated_ms">, now: number): number {
-  return Math.max(0, Math.floor((now - b.updated_ms) / 86_400_000));
-}
 
 const short = (commit: string | null | undefined) => (commit ?? "").slice(0, 7);
 const clock = (ms: number) => new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -203,13 +170,13 @@ const fileOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 /** 대화에 끼우는 한 줄. 같은 자리의 thread 저장은 하나로 묶는다(「문서 2 고침 · 1 새로」) */
 export type DesignMark = { key: string; after: string | null; kind: string; text: string };
 
-export function designMarks(events: readonly DesignEvent[], slug: string): DesignMark[] {
+export function designMarks(events: readonly DesignEvent[]): DesignMark[] {
   const out: DesignMark[] = [];
   let saves: { after: string | null; changed: Set<string>; created: Set<string>; commit: string; at: number } | null = null;
   const flush = () => {
     if (!saves) return;
     const parts = [saves.changed.size > 0 ? `문서 ${saves.changed.size} 고침` : null, saves.created.size > 0 ? `${saves.created.size} 새로` : null].filter(Boolean);
-    out.push({ key: `save-${saves.at}`, after: saves.after, kind: "save", text: `${parts.join(" · ")} · ${short(saves.commit)}` });
+    out.push({ key: `save-${saves.at}`, after: saves.after, kind: "save", text: `main에 올림 · ${parts.join(" · ")} · ${short(saves.commit)} · ${clock(saves.at)}` });
     saves = null;
   };
   for (const e of events) {
@@ -221,14 +188,16 @@ export function designMarks(events: readonly DesignEvent[], slug: string): Desig
       continue;
     }
     flush();
-    const text = e.kind === "open" ? `새 대화 · design/${slug} · main ${short(e.commit)} 에서`
+    // 옛 기록(t-2002 전 기획 branch)의 사건 글도 그대로 그린다
+    const text = e.kind === "open" ? `새 대화 · main ${short(e.commit)}`
       : e.kind === "push" ? `origin에 올림 · ${clock(e.at_ms)}`
-        : e.kind === "edit" ? (/\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(e.text) ? `그림 ${fileOf(e.text)} 붙임 · ${short(e.commit)}` : `사람이 ${fileOf(e.text)} 고침 · ${short(e.commit)}`)
+        : e.kind === "edit" ? (/\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(e.text) ? `그림 ${fileOf(e.text)} 붙임 · ${short(e.commit)}`
+          : / 되돌림 ← /.test(e.text) ? `${e.text} · ${short(e.commit)}` : `사람이 ${fileOf(e.text)} 고침 · main ${short(e.commit)} · ${clock(e.at_ms)}`)
           : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
           : e.kind === "apply_wait" ? `main에 반영 예약 · 자리 나면 시작 · ${clock(e.at_ms)}`
           : e.kind === "apply_cancel" ? `반영 예약 취소 · ${clock(e.at_ms)}`
           : e.kind === "apply_fail" ? `예약한 반영을 시작하지 못함 · ${e.text}`
-            : e.kind === "handoff" ? `구현 맡김 ${e.text} · ${short(e.commit)}`
+            : e.kind === "handoff" ? `구현 맡기기 ${e.text} · main에 표지 ${short(e.commit)}`
             : e.kind === "relay" ? `넘긴 블록 고침 ${e.text} · ${short(e.commit)}`
             : e.text;
     out.push({ key: `${e.kind}-${e.at_ms}`, after: e.after ?? null, kind: e.kind, text });
@@ -421,11 +390,6 @@ export function chatImageDir(folder: string, viewing: string | null): string {
   return dir === folder || dir.startsWith(`${folder}/`) ? dir : folder;
 }
 
-/** 그 대화의 commit이 모두 main에 들어갔다(t-1950): agent가 그 branch를 읽었고, 제 commit이 있었고(끝이 갈라진 자리가 아니다)
- * main보다 앞선 것이 없다. 읽지 못한 0(머신 끊김·시한)은 들어간 것이 아니다 */
-export function mergedToMain(b: Pick<DesignBranchView, "state" | "ahead" | "head" | "base" | "read">): boolean {
-  return b.state === "open" && b.read && b.ahead === 0 && !!b.head && !!b.base && b.head !== b.base;
-}
 
 /** 고를 수 있는 진행 모델: 그 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
 export function modelChoices(owners: readonly { machine: string; profiles: string[] }[], hostMachine: string | null, chosen: string): string[] {
@@ -437,4 +401,29 @@ export function modelChoices(owners: readonly { machine: string; profiles: strin
 export function ideaLinkId(path: string): string | null {
   const m = /^ideas\/(n-\d+)$/.exec(path.trim());
   return m ? m[1]! : null;
+}
+
+/** 대화의 저장 수(그 대화가 main에 올린 저장·사람 고침·맡김, t-2002) */
+export function savesOf(events: readonly DesignEvent[]): number {
+  return events.filter((e) => e.kind === "save" || e.kind === "create" || e.kind === "edit" || e.kind === "handoff" || e.kind === "remove").length;
+}
+
+/** 이력 보기(t-2002): 옛 판 덩어리와 지금 덩어리를 차례대로 맞춘다(LCS). `back`은 되돌리면 생기는 덩어리(옛 판에만),
+ *  `gone`은 되돌리면 사라지는 덩어리(지금 판에만), `same`은 둘 다에 있다 */
+export function blockDiff(old: readonly string[], now: readonly string[]): { text: string; kind: "same" | "back" | "gone" }[] {
+  const n = old.length, m = now.length;
+  // 문서 하나라 덩어리 수가 작다(수백). 넘치면 같은 줄 비교 없이 통째로 보인다
+  if (n * m > 4_000_000) return [...old.map((text) => ({ text, kind: "back" as const })), ...now.map((text) => ({ text, kind: "gone" as const }))];
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i]![j] = old[i] === now[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+  const out: { text: string; kind: "same" | "back" | "gone" }[] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (old[i] === now[j]) { out.push({ text: old[i]!, kind: "same" }); i++; j++; }
+    else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) out.push({ text: old[i++]!, kind: "back" });
+    else out.push({ text: now[j++]!, kind: "gone" });
+  }
+  while (i < n) out.push({ text: old[i++]!, kind: "back" });
+  while (j < m) out.push({ text: now[j++]!, kind: "gone" });
+  return out;
 }
