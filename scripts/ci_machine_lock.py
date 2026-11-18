@@ -29,6 +29,10 @@ def acquire(fd, logs, say=print):
 
 
 if __name__ == "__main__":
-    waited = acquire(int(sys.argv[1]), sys.argv[2])
-    if waited >= 1:
-        print(f"── 같은 머신 실행 잠금을 {waited:.0f}초 기다려 얻었다", flush=True)
+    if sys.argv[1] == "--resource-fd":
+        # 한 검증 안에서 브라우저와 SSH 실험실이 공유한다. fd를 연 부모가 자원 반환을 소유한다.
+        fcntl.flock(int(sys.argv[2]), fcntl.LOCK_EX)
+    else:
+        waited = acquire(int(sys.argv[1]), sys.argv[2])
+        if waited >= 1:
+            print(f"── 같은 머신 실행 잠금을 {waited:.0f}초 기다려 얻었다", flush=True)

@@ -80,6 +80,8 @@ GitHub Windows는 확인된 ConPTY 정체 서명·세 설치 owner에만 최초 
 기본 전체 gate에서 fmt가 실패하면 build·test·e2e를 건너뛴 사유를 원장에 기록하고 공개 검사까지 수행한 뒤 실패한다.
 Cargo 컴파일의 병렬도는 바꾸지 않는다. 실행 단계에서는 브라우저에 CPU 수의 2/5(최소 1·최대 6)를 주고 나머지를 Rust에 준다.
 10 CPU에서는 Rust 6·브라우저 4이다. 1 CPU에서는 두 단계를 직렬 실행한다. E2E 종료 뒤 Rust가 전체 CPU 예산을 돌려받는다.
+macOS에서 두 단계를 함께 돌릴 때는 실제 SSH 서버로 머신을 추가하는 host 시험 묶음과 브라우저가 같은 시각에 실행되지 않도록 한다.
+나머지 Rust 시험은 계속 병렬로 돈다. 이 실행의 로그 폴더에 둔 `.ssh-browser.lock`은 각 단계를 실행하는 부모가 쥐고, 끝나면 OS가 반환한다.
 Unix Rust의 다중 owner 묶음은 기본 libtest thread 1개, 독립 통합 owner는 한 슬롯을 쓴다.
 Windows의 기존 실행 환경과 명시한 worker/thread 값은 보존한다.
 E2E만 실행할 때는 CPU 둘마다 worker 하나·최대 6개다. `resources.tsv`와 Rust `state.json`/`events.jsonl`에 예산·반환을 기록한다.

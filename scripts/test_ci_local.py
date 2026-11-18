@@ -58,6 +58,18 @@ elif tool == "node":
         sys.exit(0)
     assert pathlib.Path(os.environ["AAA_BIN"]).read_text() == "fixture binary"
     assert args[1:] == (["--spec", os.environ["EXPECT_SPEC"]] if os.environ.get("EXPECT_SPEC") else [])
+    if "EXPECT_SSH_BROWSER_LOCK" in os.environ:
+        lock = os.environ.get("AAA_CI_SSH_BROWSER_LOCK")
+        assert bool(lock) == (os.environ["EXPECT_SSH_BROWSER_LOCK"] == "1")
+        if lock:
+            import fcntl
+            with open(lock, "rb") as guard:
+                try:
+                    fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise AssertionError("브라우저가 실행 중인데 SSH 실험실이 들어갈 수 있다")
     stage = "e2e"
 else:
     stage = "public"
@@ -365,6 +377,8 @@ class CiLocal(unittest.TestCase):
 
     def test_without_tee_keeps_logs_and_summary(self):
         self.env["EXPECT_STAGES"] = "test e2e clippy"
+        (self.root / "scripts/ci_resources.py").write_text('print("2|1|1")\n')
+        self.env["EXPECT_SSH_BROWSER_LOCK"] = "1" if sys.platform == "darwin" else "0"
         result = self.run_ci("--only", "test,e2e,clippy,public")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn("LIVE-", result.stdout)

@@ -1,6 +1,7 @@
 """Cargo가 준비한 모든 시험 binary를 격리된 묶음으로 실행한다. doctest도 별도로 유지한다."""
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 import os
@@ -91,11 +92,11 @@ class RunRecord:
     def signal(self, signum, _frame):
         self.signum = signum
 
-    def run(self, key, argv, cwd, output, env=None, stderr=subprocess.STDOUT):
+    def run(self, key, argv, cwd, output, env=None, stderr=subprocess.STDOUT, pass_fds=()):
         if self.stopping:
             raise Interrupted("자식 기동 전 중단")
         child = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                 stdout=output, stderr=stderr)
+                                 stdout=output, stderr=stderr, pass_fds=pass_fds)
         try:
             with self.lock:
                 self.state["active"][key] = dict(pid=child.pid, argv=argv, cwd=str(cwd),
@@ -279,8 +280,22 @@ def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False, re
             env["RUSTC_BOOTSTRAP"] = "1"
             argv = [*argv, "-Z", "unstable-options", "--report-time", "--format", "pretty", "--color", "never"]
         try:
-            with log.open("w") as output:
+            with log.open("w") as output, ExitStack() as held:
                 try:
+                    lock = env.get("AAA_CI_SSH_BROWSER_LOCK")
+                    if lock and job.name.startswith("aaa_host-") and any(
+                            test.startswith("machine_setup::tests::") for test in job.tests or ()):
+                        # 대기 도우미도 중단할 수 있다. 시험·sshd에는 fd를 넘기지 않는다.
+                        handle = held.enter_context(open(lock, "a+b"))
+                        fd = handle.fileno()
+                        helper = Path(__file__).with_name("ci_machine_lock.py").resolve()
+                        acquired = record.run(f"{index:02d}-{job.name}-resource",
+                                              [sys.executable, str(helper), "--resource-fd", str(fd)],
+                                              job.cwd, output, env, pass_fds=(fd,))
+                        if acquired:
+                            raise OSError(f"SSH 실험실 실행 잠금: 종료 코드 {acquired}")
+                        started = time.monotonic()
+                        load_before = load_average()
                     code = record.run(f"{index:02d}-{job.name}", argv, job.cwd, output, env)
                 except Interrupted as error:
                     output.write(f"시험 중단: {error}\n")

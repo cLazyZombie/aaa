@@ -193,7 +193,7 @@ prepare_e2e_bin() {
   cmp "$source" "$E2E_BIN" || return 1
   echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
 }
-step_e2e() {
+step_e2e() (
   local root newer built
   set --
   if [ -n "$E2E_SPEC" ]; then set -- --spec "$E2E_SPEC"; fi
@@ -212,8 +212,12 @@ step_e2e() {
     echo "Playwright 1.64.1이 필요하다: npm install -g playwright@1.64.1 && npx playwright@1.64.1 install chromium webkit"
     return 1
   fi
-  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs "$@"
-}
+  if [ -n "${AAA_CI_SSH_BROWSER_LOCK:-}" ]; then
+    exec 8<>"$AAA_CI_SSH_BROWSER_LOCK" || return 1
+    python3 scripts/ci_machine_lock.py --resource-fd 8 || return 1
+  fi
+  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs "$@" 8>&-
+)
 step_public() { bash scripts/check-public.sh ${AAA_PUBLIC_BASE:+"$AAA_PUBLIC_BASE"}; }
 
 # 이번 실행에서 그 단계가 실패했거나 앞 단계 실패로 건너뛰었다
@@ -319,9 +323,13 @@ fi
 for s in build clippy; do skipped "$s" || { run_step "$s"; collect "$s"; }; done
 go=""
 for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
-unset AAA_RUST_TEST_RELEASE_FILE
+unset AAA_RUST_TEST_RELEASE_FILE AAA_CI_SSH_BROWSER_LOCK
 case " $go " in
-  *" test e2e "*) export AAA_RUST_TEST_RELEASE_FILE="$LOGS/.e2e.result" ;;
+  *" test e2e "*)
+    export AAA_RUST_TEST_RELEASE_FILE="$LOGS/.e2e.result"
+    if [ "$OS" = macos ] && [ "$CI_CPUS" -gt 1 ]; then
+      export AAA_CI_SSH_BROWSER_LOCK="$LOGS/.ssh-browser.lock"
+    fi ;;
 esac
 # 같은 로그 폴더를 다시 써도 이전 완료를 자원 반환으로 보지 않는다.
 for s in $go; do rm -f "$LOGS/.$s.result"; done

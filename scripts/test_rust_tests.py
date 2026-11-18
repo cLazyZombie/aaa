@@ -1,4 +1,5 @@
 """분할의 완전성과 실제 자식의 병렬 실행·실패 보존을 검사한다."""
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import json
 import os
@@ -12,10 +13,57 @@ import unittest
 import subprocess
 from unittest.mock import patch
 
-from scripts.rust_tests import Job, execute, partitions, plan, process_tree
+from scripts.rust_tests import Job, RunRecord, execute, partitions, plan, process_tree
 
 
 class RustTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "Unix 전체 gate의 브라우저와 SSH 실험실 잠금을 검사한다")
+    def test_ssh_owner_waits_for_browser_while_other_jobs_run_and_keeps_its_exit(self):
+        import fcntl
+
+        waiting = threading.Event()
+        other_done = threading.Event()
+
+        class ObservedRecord(RunRecord):
+            def run(self, key, *args, **kwargs):
+                if key.endswith("-resource"):
+                    waiting.set()
+                code = super().run(key, *args, **kwargs)
+                if key.endswith("-other"):
+                    other_done.set()
+                return code
+
+        with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(max_workers=1) as pool:
+            root = Path(tmp)
+            lock = root / "ssh-browser.lock"
+            owner = """import fcntl, os
+from pathlib import Path
+assert Path("browser-done").exists()
+with open(os.environ["AAA_CI_SSH_BROWSER_LOCK"], "rb") as guard:
+    try:
+        fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    else:
+        raise AssertionError("SSH 시험이 실행 중인데 브라우저가 들어갈 수 있다")
+print("running 1 test")
+raise SystemExit(7)
+"""
+            jobs = [Job("aaa_host-2", [sys.executable, "-c", owner], root, ["machine_setup::tests::launcher"]),
+                    Job("other", [sys.executable, "-c", "print('other done')"], root)]
+            with lock.open("a+b") as browser, patch.dict(os.environ, AAA_CI_SSH_BROWSER_LOCK=str(lock)):
+                fcntl.flock(browser, fcntl.LOCK_EX)
+                result = pool.submit(execute, jobs, root, 2, 1, 2, record=ObservedRecord(root))
+                try:
+                    self.assertTrue(waiting.wait(10))
+                    self.assertTrue(other_done.wait(10))
+                    self.assertFalse(result.done())
+                    (root / "browser-done").touch()
+                finally:
+                    fcntl.flock(browser, fcntl.LOCK_UN)
+                self.assertEqual({j["name"]: j["exit"] for j in result.result(timeout=10)},
+                                 {"other": 0, "aaa_host-2": 7})
+
     @unittest.skipUnless(os.name == "posix", "실제 Unix SIGINT/TERM과 shebang runner를 검사한다")
     def interrupt_runner(self, phase, signum, ignore_term=False, snapshot_error=False):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-interrupt-") as tmp, socket.socket() as listener:
