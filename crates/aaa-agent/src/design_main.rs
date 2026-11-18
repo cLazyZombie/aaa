@@ -51,6 +51,11 @@ async fn worktrees(top: &Path) -> Result<Vec<(PathBuf, bool)>> {
     Ok(out)
 }
 
+/// 실제 위치로 찾고 Git이 등록한 경로 표기를 돌려준다.
+fn worktree_at<'a>(have: &'a [(PathBuf, bool)], location: &Path) -> Option<&'a (PathBuf, bool)> {
+    have.iter().find(|(path, _)| crate::work_root::real_location(path).is_ok_and(|real| real == location))
+}
+
 /// 이미 있는 자리(읽기만: 기록을 고치지 않는다)
 async fn find_slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<Option<PathBuf>> {
     let name = top.file_name().context("저장소 이름이 없다")?;
@@ -58,7 +63,7 @@ async fn find_slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<Opt
     for root in cfg.known_roots()? {
         let place = root.path.join(name).join(slot_name(project));
         let Ok(want) = crate::work_root::real_location(&place) else { continue };
-        if let Some((path, _)) = have.iter().find(|(p, _)| crate::work_root::real_location(p).is_ok_and(|p| p == want))
+        if let Some((path, _)) = worktree_at(&have, &want)
             && path.symlink_metadata().is_ok()
         {
             return Ok(Some(path.clone()));
@@ -74,11 +79,7 @@ async fn slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<PathBuf>
     for root in cfg.known_roots()? {
         let place = root.path.join(name).join(slot_name(project));
         let Ok(want) = crate::work_root::real_location(&place) else { continue };
-        let Some((path, locked)) =
-            have.iter().find(|(p, _)| crate::work_root::real_location(p).is_ok_and(|p| p == want))
-        else {
-            continue;
-        };
+        let Some((path, locked)) = worktree_at(&have, &want) else { continue };
         if path.symlink_metadata().is_ok() {
             return Ok(path.clone());
         }
@@ -107,16 +108,21 @@ async fn slot(cfg: &ThreadsConfig, top: &Path, project: &str) -> Result<PathBuf>
     args.extend([at.as_str(), main.as_str()]);
     if let Err(e) = git_told(top, &args, GIT_WAIT).await {
         // 방금 만들다 만 자리만 치운다(detached라 잃을 commit이 없다)
-        if worktrees(top).await.is_ok_and(|w| w.iter().any(|(p, _)| p == &cwd)) {
+        if let Ok(real) = crate::work_root::real_location(&cwd)
+            && let Ok(have) = worktrees(top).await
+            && let Some((path, _)) = worktree_at(&have, &real)
+        {
             aaa_common::diagnostic::ignored(
-                git_told(top, &["worktree", "remove", "--force", &at], GIT_WAIT).await,
+                git_told(top, &["worktree", "remove", "--force", &path.to_string_lossy()], GIT_WAIT).await,
                 "만들다 만 main 기획 자리 치우기",
             );
         }
         return Err(e.context("main 기획 자리를 만들지 못했다"));
     }
     let real = crate::work_root::real_location(&cwd)?;
-    Ok(worktrees(top).await?.into_iter().map(|(p, _)| p).find(|p| p == &real || p == &cwd).unwrap_or(real))
+    worktree_at(&worktrees(top).await?, &real)
+        .map(|(path, _)| path.clone())
+        .with_context(|| format!("방금 만든 main 기획 자리가 Git worktree 목록에 없다: {}", cwd.display()))
 }
 
 /// 자리를 그 commit으로 맞춘다: 추적 파일은 그 판대로, 추적하지 않는 파일은 지운다(ignore된 것은 둔다)

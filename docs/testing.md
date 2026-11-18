@@ -1,3 +1,4 @@
+- t-2013: [Windows 기획 main worktree 경로 검증](testing-design-main-path-t-2013.md)
 - t-2011: [Codex thread 번개 표시 검증](testing-thread-speed-t-2011.md)
 - t-1995: [기획 대화 CLI 그림 삭제](testing-design-detach-t-1995.md)
 - t-1993: [기획 대화 CLI 그림 첨부](testing-design-attach-t-1993.md)
