@@ -6,9 +6,115 @@ import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { aaa, root, step, browser, webkit, pairPage, inList, domIs, drawerSettled, shot, hashIs } from "../lib/harness.mjs";
+import { aaa, root, step, browser, webkit, pairPage, inList, inTime, domIs, drawerSettled, shot, hashIs } from "../lib/harness.mjs";
 import { reachEnd } from "../lib/panel-scroll.mjs";
 import { installPanelScrollTrace } from "../lib/panel-scroll-diagnostics.mjs";
+
+const sidebarTree = '#sidebar-column [data-testid="design-panel"]';
+const documentTree = '.design-tree-pane [data-testid="design-panel"]';
+const sidebarToggle = (page) => page.locator(".view [data-testid='drawer-toggle']:visible");
+const dir = (panel, path) => panel.locator(`[data-testid="design-dir"][data-path="${path}"]`);
+const doc = (panel, path) => panel.locator(`[data-testid="design-doc"][data-path="${path}"]`);
+const repoRow = (panel, name) => panel.locator(`[data-testid="design-repo"][data-repo="${name}"]`);
+const selectedInView = (page, panel) => domIs(page, "선택한 문서가 트리 칸 안에 보임", (selector) => {
+  const tree = document.querySelector(selector);
+  const selected = tree?.querySelector('[data-testid="design-doc"][aria-current="true"]');
+  if (!selected) return false;
+  const { top, bottom } = tree.getBoundingClientRect();
+  const row = selected.getBoundingClientRect();
+  return row.top >= top - 1 && row.bottom <= bottom + 1;
+}, panel);
+
+function scrollAt(page, selector, top) {
+  return domIs(page, `트리 위치 ${top} 유지`, ({ selector, top }) => {
+    return document.querySelector(selector)?.scrollTop === top;
+  }, { selector, top });
+}
+
+async function scrollTreeTo(tree, top, key) {
+  const at = await inTime(tree.evaluate((el, { top, key }) => {
+    return new Promise((resolve) => {
+      // React 스크롤 처리와 같은 native 사건을 기다린 뒤 저장한 값까지 읽는다.
+      const done = () => queueMicrotask(() => resolve({ actual: el.scrollTop, saved: key && localStorage.getItem(key) }));
+      if (el.scrollTop === top) return done();
+      el.addEventListener("scroll", done, { once: true });
+      el.scrollTop = top;
+    });
+  }, { top, key }), 20_000, `트리 스크롤 ${top}의 scroll 사건`);
+  assert.equal(at.actual, top);
+  if (key) assert.equal(at.saved, String(top));
+}
+
+async function rememberTree(page, phone) {
+  const sidebar = page.locator(sidebarTree);
+  const body = page.getByTestId("design-body");
+  const reopenDrawer = async () => {
+    await sidebarToggle(page).click();
+    await page.locator("#workspace-drawer.is-open").waitFor();
+    await drawerSettled(page);
+  };
+  await inList(page, "activity-design");
+  await inList(page, repoRow(sidebar, "app").locator(".design-row.is-repo"));
+  await inList(page, dir(sidebar, "docs/monsters"));
+  await inList(page, dir(sidebar, "docs/monsters/archive"));
+  await doc(sidebar, "docs/monsters/archive/README.md").waitFor();
+  await inList(page, doc(sidebar, "docs/monsters/m60.md"));
+  await body.getByRole("heading", { name: "몬스터 60", exact: true }).waitFor();
+  if (phone) await reopenDrawer();
+  await scrollTreeTo(sidebar, 700, "herdr-web-ui:design-tree-scroll:sidebar");
+
+  await inList(page, "activity-work");
+  await sidebar.waitFor({ state: "detached" });
+  await inList(page, "activity-design");
+  await scrollAt(page, sidebarTree, 700);
+  await inList(page, "activity-tasks");
+  await page.getByTestId("tasks-view").waitFor();
+  await inList(page, "activity-tasks");
+  await body.getByRole("heading", { name: "몬스터 60", exact: true }).waitFor();
+  if (phone) {
+    await reopenDrawer();
+    await scrollAt(page, sidebarTree, 700);
+    await inList(page, "activity-design");
+    await reopenDrawer();
+    await scrollAt(page, sidebarTree, 700);
+  }
+
+  await page.evaluate(() => {
+    const key = "herdr-web-ui:design-tree-expansion";
+    const value = JSON.parse(localStorage.getItem(key));
+    value.openDirs.push("big/docs/deleted");
+    value.closedRepos.push("deleted");
+    localStorage.setItem(key, JSON.stringify(value));
+  });
+  await page.reload();
+  if (phone) await reopenDrawer();
+  await scrollAt(page, sidebarTree, 700);
+  assert.equal(await repoRow(sidebar, "app").getAttribute("aria-expanded"), "false");
+  assert.equal(await doc(sidebar, "docs/monsters/archive/README.md").count(), 1, "중첩 폴더도 다시 펼친다");
+  assert.equal(await dir(sidebar, "docs/deleted").count(), 0);
+  assert.equal(await repoRow(sidebar, "deleted").count(), 0);
+  assert.equal(await doc(sidebar, "docs/monsters/m60.md").getAttribute("aria-current"), "true", "선택한 문서보다 기록 위치가 먼저다");
+
+  if (phone) {
+    await inList(page, "activity-design"); // drawer 닫기
+    await page.getByTestId("design-page-tree").click();
+    await selectedInView(page, documentTree);
+    const tree = page.locator(documentTree);
+    assert.equal(await doc(tree, "docs/monsters/archive/README.md").count(), 1, "문서 칸도 같은 폴더를 펼친다");
+    await scrollTreeTo(tree, 510, "herdr-web-ui:design-tree-scroll:document");
+    await page.getByTestId("design-page-doc").click();
+    await page.getByTestId("design-page-tree").click();
+    await scrollAt(page, documentTree, 510);
+    await page.getByTestId("design-page-doc").click();
+    await reopenDrawer();
+    await scrollAt(page, sidebarTree, 700);
+  } else {
+    await body.getByRole("button", { name: "첫 몬스터", exact: true }).click();
+    await body.getByRole("heading", { name: "몬스터 1", exact: true }).waitFor();
+    await selectedInView(page, sidebarTree);
+    assert.ok(await sidebar.evaluate((el) => el.scrollTop < 700), "새 문서를 연 뒤에는 그 줄을 보인다");
+  }
+}
 
 /** 단색 PNG(w×h) */
 function png(w, h, [r, g, b]) {
@@ -225,12 +331,13 @@ export default async function () {
   // 넓은 창은 사이드바, 휴대폰은 drawer와 문서 화면의 「트리」 칸을 실제 휠로 굴린다
   const many = 60;
   await step("긴 기획 트리 준비: 문서 60개 폴더가 있는 저장소를 더한다", async () => {
-    const docs = Object.fromEntries(Array.from({ length: many }, (_, i) => [`docs/monsters/m${String(i + 1).padStart(2, "0")}.md`, `# 몬스터 ${i + 1}\n`]));
-    const big = repo("big", { "README.md": "# big\n", "docs/README.md": "# 큰 기획\n", ...docs });
+    const docs = Object.fromEntries(Array.from({ length: many }, (_, i) => [`docs/monsters/m${String(i + 1).padStart(2, "0")}.md`,
+      `# 몬스터 ${i + 1}\n${i + 1 === many ? "\n[첫 몬스터](m01.md)\n" : ""}`]));
+    const big = repo("big", { "README.md": "# big\n", "docs/README.md": "# 큰 기획\n", "docs/monsters/archive/README.md": "# 보관\n", ...docs });
     fs.appendFileSync(`${root}/projects/demo/aaa.toml`, `\n[[workspaces]]\npath = "${big.clone}"\nmachine = "labA"\ndesign = "docs"\n`);
     const tree = aaa("plan", "list");
     assert.deepEqual(tree.repos.map((r) => r.repo).at(-1), "big");
-    assert.equal(tree.repos.at(-1).tree.docs.length, many + 1);
+    assert.equal(tree.repos.at(-1).tree.docs.length, many + 2);
   }, { always: true });
 
   for (const [name, width] of [["chromium", 1280], ["chromium", 390], ["webkit", 1280], ["webkit", 390]]) {
@@ -269,5 +376,38 @@ export default async function () {
         } finally { await p.context().close(); }
       } finally { await wk?.close(); }
     });
+    await step(`기획 트리 기억 ${name} ${width}px: 펼침과 중간 위치를 다시 열면 복원`, async () => {
+      const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
+      try {
+        const { page: p } = await pairPage(wk ?? browser, aaa("web", "pair").code, { width, height: 844 });
+        try { await rememberTree(p, width < 700); }
+        finally { await p.context().close(); }
+      } finally { await wk?.close(); }
+    });
   }
+  await step("트리 기억의 저장소 접근을 거부해도 이번 화면의 펼침과 스크롤을 유지", async () => {
+    const { page: p, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 844 }, {
+      setup: (context) => context.addInitScript(() => {
+        for (const method of ["getItem", "setItem"]) {
+          const original = Storage.prototype[method];
+          Storage.prototype[method] = function (key, ...args) {
+            if (key.startsWith("herdr-web-ui:design-tree-")) throw new DOMException("저장 거부", "SecurityError");
+            return original.call(this, key, ...args);
+          };
+        }
+      }),
+    });
+    try {
+      const sidebar = p.locator(sidebarTree);
+      await inList(p, "activity-design");
+      await inList(p, dir(sidebar, "docs/monsters"));
+      await scrollTreeTo(sidebar, 700);
+      await inList(p, "activity-work");
+      await sidebar.waitFor({ state: "detached" });
+      await inList(p, "activity-design");
+      await scrollAt(p, sidebarTree, 700);
+      assert.equal(await doc(sidebar, "docs/monsters/m60.md").count(), 1);
+      assert.deepEqual(errors, []);
+    } finally { await p.context().close(); }
+  });
 }

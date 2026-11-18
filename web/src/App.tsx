@@ -1328,7 +1328,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const askThreads = allThreads.filter(inSidebar);
   const chatPanes = new Set(allThreads.flatMap((t) => (chatOnly(t) && t.pane ? [t.pane] : [])));
   const sidebarPanes = chatPanes.size === 0 ? panes : panes.filter((p) => !chatPanes.has(p.id));
-  const design = useDesign(up, panel === "design" || designShown);
+  const design = useDesign(up, panel === "design" || designShown, designAt);
   const designIds = useDesignIds(up, design.repos);
   // 기획서 ID 주소(`#design=k-0012`)는 ID 목록을 받으면 `<저장소>/<경로>`로 바꾼다(t-1957)
   useEffect(() => {
@@ -1702,7 +1702,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
-          design={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }} />}
+          design={<DesignPanel design={design} surface="sidebar" visible={wideScreen ? sidebarShown && !settingsOpen : drawerOpen}
+            selected={designShown ? designAt : null} onOpen={(t) => { goSel(`design:${t}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
             <AsksPanel
@@ -1833,7 +1834,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         {designAt !== null && (
           <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
-            tree={<DesignPanel design={design} selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
+            tree={<DesignPanel design={design} surface="document" visible={designShown && !drawerOpen}
+              selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
             onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />
         )}
         {automationAt !== null && (

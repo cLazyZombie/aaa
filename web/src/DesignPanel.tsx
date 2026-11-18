@@ -4,7 +4,8 @@ import { ChevronDown, ChevronRight, FileText, Folder, FolderGit2, FolderOpen, Gi
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { loadDesignRepos } from "./designLoad";
-import { addedDocs, ancestors, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
+import { addedDocs, branchesByPath, designTarget, designTree, docLabel, docsUnder, markCounts, parseRepoFilter, pickRepo, REPO_FILTER_KEY, shownRepos, splitTarget, stem, type DesignNode } from "./designModel";
+import { useDesignTreeScroll, useDesignTreeState, type DesignTreeState } from "./designTreeState";
 import type { DesignBranchView, DesignIdView, DesignRepoView } from "./gen/proto";
 import { RowMenu } from "./RowMenu";
 import { onRowKey } from "./Sidebar";
@@ -13,6 +14,7 @@ export type Design = {
   repos: DesignRepoView[] | null; error: string | null; loading: boolean; reload: () => void;
   /** 트리 저장소 필터(t-1946): 고른 저장소 이름, null이면 전부. 사이드바·drawer·문서 화면 「트리」 칸이 함께 쓴다 */
   picked: string[] | null; setPicked: (v: string[] | null) => void;
+  treeState: DesignTreeState;
 };
 
 /** 고른 저장소는 이 브라우저에만 남긴다(서버에 싣지 않는다). 저장소를 못 쓰면 이번 화면에서만 */
@@ -26,7 +28,7 @@ function usePickedRepos(): [string[] | null, (v: string[] | null) => void] {
 }
 
 /** host 기획 트리. 「기획」 칸을 처음 열 때와 「새로 읽기」에서 읽는다(origin은 agent가 1분에 한 번 받는다) */
-export function useDesign(up: boolean, wanted: boolean): Design {
+export function useDesign(up: boolean, wanted: boolean, target: string | null): Design {
   const [repos, setRepos] = useState<DesignRepoView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +36,7 @@ export function useDesign(up: boolean, wanted: boolean): Design {
   const reload = useCallback(() => setRev((n) => n + 1), []);
   const [asked, setAsked] = useState(false);
   const [picked, setPicked] = usePickedRepos();
+  const treeState = useDesignTreeState(target);
   useEffect(() => { if (wanted) setAsked(true); }, [wanted]);
   useEffect(() => {
     if (!up || !asked) return;
@@ -47,7 +50,7 @@ export function useDesign(up: boolean, wanted: boolean): Design {
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [up, asked, rev]);
-  return { repos, error, loading, reload, picked, setPicked };
+  return { repos, error, loading, reload, picked, setPicked, treeState };
 }
 
 /**
@@ -83,26 +86,17 @@ export function useIdeaLinks(up: boolean): Map<string, string> | null {
   return links;
 }
 
-export function DesignPanel({ design, selected, onOpen }: {
+export function DesignPanel({ design, surface, visible, selected, onOpen }: {
   design: Design;
+  surface: "sidebar" | "document";
+  visible: boolean;
   /** 본문에 연 문서(`<저장소>/<경로>`) */
   selected: string | null;
   onOpen: (target: string) => void;
 }) {
   const at = selected ? splitTarget(selected) : null;
-  // 접은 것(저장소 이름·폴더 경로). 처음엔 저장소는 펼치고 폴더는 접는다. 연 문서의 폴더는 펼친다
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
-  const [shut, setShut] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    if (!at) return;
-    setOpen((s) => {
-      const want = ancestors(at.path).map((p) => `${at.repo}:${p}`);
-      return want.every((k) => s.has(k)) ? s : new Set([...s, ...want]);
-    });
-    setShut((s) => (s.has(at.repo) ? new Set([...s].filter((k) => k !== at.repo)) : s));
-  }, [at?.repo, at?.path]); // eslint-disable-line react-hooks/exhaustive-deps
-  const flip = (set: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) =>
-    set((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  const { expansion, toggle } = design.treeState;
+  const scroll = useDesignTreeScroll(design.treeState, surface, visible, selected, design.loading || (design.repos === null && !design.error));
   const repos = design.repos ?? [];
   const names = useMemo(() => repos.map((r) => r.repo), [repos]);
   const shown = useMemo(() => shownRepos(names, design.picked), [names, design.picked]);
@@ -112,7 +106,7 @@ export function DesignPanel({ design, selected, onOpen }: {
   const [todo, setTodoState] = useState<boolean>(() => { try { return localStorage.getItem("herdr-web-ui:design-todo") === "1"; } catch { return false; } });
   const setTodo = (v: boolean) => { setTodoState(v); try { localStorage.setItem("herdr-web-ui:design-todo", v ? "1" : "0"); } catch { /* 이 기기만의 편의 */ } };
   return (
-    <section className="design-panel" aria-label="기획 트리" data-testid="design-panel">
+    <section className="design-panel" aria-label="기획 트리" data-testid="design-panel" {...scroll}>
       <div className="design-panel-top">
         <button type="button" className="sidebar-row-action design-reload" disabled={design.loading} data-testid="design-reload" onClick={design.reload}>
           <span className="sidebar-mark" aria-hidden="true"><RefreshCw className={design.loading ? "is-spinning" : undefined} /></span>새로 읽기
@@ -128,8 +122,8 @@ export function DesignPanel({ design, selected, onOpen }: {
       {design.repos?.length === 0 && <p className="tree-state" data-testid="design-empty">저장소 없음</p>}
       <ul className="design-tree" role="tree">
         {repos.filter((r) => shown.has(r.repo)).map((r) => (
-          <RepoRow key={r.repo} repo={r} todo={todo} onAll={() => setTodo(false)} collapsed={shut.has(r.repo)} onToggle={() => flip(setShut, r.repo)}
-            openDirs={open} onToggleDir={(p) => flip(setOpen, `${r.repo}:${p}`)} selected={at?.repo === r.repo ? at.path : null} onOpen={onOpen} />
+          <RepoRow key={r.repo} repo={r} todo={todo} onAll={() => setTodo(false)} collapsed={expansion.closedRepos.has(r.repo)} onToggle={() => toggle("closedRepos", r.repo)}
+            openDirs={expansion.openDirs} onToggleDir={(p) => toggle("openDirs", designTarget(r.repo, p))} selected={at?.repo === r.repo ? at.path : null} onOpen={onOpen} />
         ))}
       </ul>
     </section>
@@ -267,7 +261,7 @@ function NodeRow({ node, depth, repo, todo, marks, fresh, openDirs, onToggleDir,
       </li>
     );
   }
-  const open = openDirs.has(`${repo}:${node.path}`);
+  const open = openDirs.has(designTarget(repo, node.path));
   const toggle = () => onToggleDir(node.path);
   return (
     <li role="treeitem" aria-expanded={open}>
