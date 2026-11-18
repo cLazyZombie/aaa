@@ -422,6 +422,17 @@ async fn mark_ids_on_main_in_one_commit() {
 #[tokio::test]
 async fn open_does_not_wait_behind_a_running_write() {
     let (_t, clone, _origin, cfg) = setup().await;
+    #[cfg(windows)]
+    let cfg = {
+        let mut cfg = cfg;
+        std::fs::create_dir(&cfg.work_root).unwrap();
+        // 대소문자를 구분하지 않는 볼륨에서 Git이 실제 폴더의 표기로 등록하게 한다.
+        let alias = cfg.work_root.with_file_name("WORK-ROOT");
+        if alias.is_dir() {
+            cfg.work_root = alias;
+        }
+        cfg
+    };
     let repo = clone.to_str().unwrap();
     let Ok(AgentResponse::DesignBranch { cwd, .. }) = open(&cfg, "demo", repo).await else { panic!("처음 열기") };
     let top = crate::design::toplevel(repo).await.unwrap();
@@ -431,4 +442,6 @@ async fn open_does_not_wait_behind_a_running_write() {
         .expect("쓰기를 기다리지 않는다");
     let Ok(AgentResponse::DesignBranch { cwd: same, opened, .. }) = again else { panic!("다시 열기") };
     assert_eq!((same.as_str(), opened.as_str()), (cwd.as_str(), "main"));
+    let listed = out(&clone, &["worktree", "list", "--porcelain", "-z"], b"").await;
+    assert!(listed.split('\0').any(|field| field.strip_prefix("worktree ") == Some(cwd.as_str())), "{cwd}");
 }
