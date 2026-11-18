@@ -432,21 +432,32 @@ async fn completed_thread_prunes_old_versions_below_capacity_and_preserves_histo
     assert!(active.candidates.is_empty(), "미완료 작업은 과거 판도 보호한다");
     assert_eq!(active.protected_size, active.size);
     rec.status = aaa_proto::ThreadStatus::Resolved;
+    rec.resolve_pending = Some(crate::orch::ResolveOpts::default());
+    h.db.thread_save("demo", &rec.id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
+    let closing = h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert_eq!(closing.protected_size, closing.size, "마지막 정리가 끝날 때까지 이전 판도 보호한다");
+    rec.resolve_pending = None;
     h.db.thread_save("demo", &rec.id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
     let unreferenced = h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
-    assert_eq!(unreferenced.candidates.iter().map(|r| &r.name).collect::<Vec<_>>(), vec![&ids[0], &ids[1]]);
-    assert!(
-        !unreferenced.candidates.iter().any(|r| r.name == rec.id || r.name == ids[2]),
-        "참조가 없어도 최신 결과는 남긴다"
-    );
-    let row: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
-        "task_id":"fixture-task", "task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true},
+    let expected = vec![&ids[0], &ids[1], &rec.id, &ids[2]];
+    assert_eq!(unreferenced.candidates.iter().map(|r| &r.name).collect::<Vec<_>>(), expected);
+    let mut row: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
+        "task_id":"fixture-task", "task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true,
+            "thread":"t-0001"},
         "body":"완료", "reason":"완료", "report":"threads/t-0001.md", "completed_ms":1,
         "restored":true,"committed":true,"removed_sha256":"",
         "history":[{"id":1,"at_ms":1,"actor":"test","by":"시험","action":"completed","list":"Backlog","title":"완료",
-            "thread":"t-0001", "before":format!("[근거](library/{}/result.md)",ids[0]), "after":null}]
+            "thread":"t-0001", "before":null, "after":null}]
     }))
     .unwrap();
+    h.db.archive_save("demo", &row).unwrap();
+    let linked = h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert_eq!(linked.candidates.iter().map(|r| &r.name).collect::<Vec<_>>(), expected);
+    let report = h.library_reports(None, false).unwrap().into_iter().find(|r| r.name == rec.id).unwrap();
+    assert!(!report.busy, "완료 기록의 thread 연결만으로 사본을 보호하지 않는다");
+    assert!(!h.report_view_without_repo("demo", &ids[2], false).unwrap().busy);
+
+    row.history[0].before = Some(format!("[근거](library/{}/result.md)", ids[0]));
     h.db.archive_save("demo", &row).unwrap();
     let preview = h.library_prune_preview(None, None, 2).unwrap();
     assert!(preview.size > preview.max_size);
@@ -468,7 +479,7 @@ async fn completed_thread_prunes_old_versions_below_capacity_and_preserves_histo
     assert_eq!(lab.file(&rec.id, "result.md").await, vec![b'C'; 300_000]);
     let reopened = Host::open(h.cfg.clone(), lab.root.join("state")).unwrap();
     let remaining = reopened.library_prune_preview(None, Some(1), u64::MAX).unwrap();
-    assert!(remaining.candidates.is_empty(), "복원된 완료 기록의 참조와 최신 결과는 기한 뒤에도 남는다");
+    assert!(remaining.candidates.is_empty(), "복원된 완료 기록의 첨부와 연결된 최신 결과는 기한 뒤에도 남는다");
     assert!(remaining.size <= remaining.max_size);
     assert_eq!(reopened.report_id("demo", &rec.id).as_deref(), Some(ids[2].as_str()));
 }
