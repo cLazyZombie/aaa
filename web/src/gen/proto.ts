@@ -1968,7 +1968,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
  */
 valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_detached", path: string, commit: string, warnings: Array<string>, } | { "kind": "design_log", entries: Array<DesignLogEntry>, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
 /**
- * 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
+ * 고른 문서 중 넣지 않은 수: 그 사이 옮겼거나 지웠거나 이미 표지가 있다
  */
 skipped: number, commit: string | null, } | { "kind": "design_handoff", handoff: DesignHandoffView, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
