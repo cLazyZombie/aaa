@@ -589,6 +589,7 @@ impl Host {
             }
             let summary = match now {
                 None => "끝남으로 지움",
+                Some(t) if t.done => "완료 체크",
                 Some(t) if t.thread.is_none() => "연결만 풂",
                 Some(t) if t.thread != *thread => "다시 맡김",
                 Some(_) => "처리함",

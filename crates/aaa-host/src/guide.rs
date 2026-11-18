@@ -580,7 +580,9 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
   맡긴 task는 `aaa context`의 열린 thread에서 그 thread의 지금 묶음을 보인다. task 줄이 없는 열린 thread는 따로 머리를 두어
   보인다. 사용자를 기다리는 task를 말한다. 파일을 그대로 붙이지 않는다.
-- thread가 끝나면: 먼저 보고·요약의 Next를 확인해 후속 할 일 연결이나 명시적 버림·정리 완료 사유를 기록한다(위 TASKS.md 규칙). CLI resolve는 정리 전용 외 미처리 후속이 있으면 거부한다(`aaa guide threads`). 웹에서 직접 끝낸 후속은 `task needs check`의 「후속 남음」으로 남는다. host가 그 thread에 이어진 task를 정리한다. 원격 main에 포함됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
+- thread가 끝나면: 먼저 보고·요약의 Next를 확인해 후속 할 일 연결이나 명시적 버림·정리 완료 사유를 기록한다(위 TASKS.md 규칙).
+  사용자 답에 따라 후속을 별도 할 일로 등록했고 원래 할 일이 끝났다면, resolve 전에 원래 할 일을 `aaa task edit <task ID> --done`으로 체크한다.
+  CLI resolve는 정리 전용 외 미처리 후속이 있으면 거부한다(`aaa guide threads`). 웹에서 직접 끝낸 후속은 `task needs check`의 「후속 남음」으로 남는다. host가 그 thread에 이어진 task를 정리한다. 원격 main에 포함됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
   inbox에 `task auto-cleaned`로 알린다(되살리기 `aaa task restore <기록 id>`). 그 밖이면 줄을 남기고 「확인 필요」로 둔다
   (`aaa task list`의 ⚠, inbox `task needs check`). 확인 필요로 남은 task만 사용자에게 끝났는지·다시 맡길지·연결만 풀지 묻는다
   (그 task를 이미 물었으면 묻지 않는다). 하위 task가 남은 task는 지우지 않고, 하위가 모두 끝난 상위는 확인 필요로 올라온다.

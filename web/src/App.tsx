@@ -1320,7 +1320,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}${t.group === "parked" ? ":parked" : ""}`).sort().join(" ");
-  const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
+  const taskBoard = useTaskBoard(up, openThreadIds, tasksShown ? "tasks" : asksShown || panel === "asks" ? "asks" : null);
   const seenMine = useSeenMine(taskBoard.board);
   // 기획 대화 thread는 작업 목록·배지에 보이지 않는다(기획 화면의 대화다, t-1894). 그 pane도 목록에서 뺀다
   const shownThreads = allThreads.filter((t) => inSidebar(t) && !chatOnly(t));
