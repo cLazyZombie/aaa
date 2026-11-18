@@ -130,6 +130,9 @@ impl Host {
             R::DesignSave { project, repo, branch, path, base, text, summary } => {
                 self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary).await
             }
+            R::DesignAttach { project, repo, branch, dir, upload, offset, total, data } => {
+                self.design_image_chunk(role, actor, &project, &repo, &branch, dir, upload, offset, total, data.0).await
+            }
             R::DesignSay { project, repo, branch, text } => {
                 self.design_say(role, actor, &project, &repo, &branch, &text).await
             }

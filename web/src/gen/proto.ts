@@ -1711,7 +1711,11 @@ profile?: string, } | { "op": "design_save", project?: string, repo: string, bra
 /**
  * commit 메시지의 요약(없으면 「<경로> 고침」)
  */
-summary?: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
+summary?: string, } | { "op": "design_attach", project: string, repo: string, branch: string,
+/**
+ * 저장소 기준 폴더. 생략하면 저장소의 기획 폴더
+ */
+dir?: string, upload: string, offset: bigint, total: bigint, data: B64, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */

@@ -157,7 +157,7 @@ fn idle_design_branch_rests_without_losing_commits_and_reopens() {
 }
 
 /// 기획 대화(2-2): 저장소가 다른 머신(labB)에 있으면 `aaa plan say`가 그 머신에 대화 thread를 띄우고 말을 brief 뒤 보낸다.
-/// thread 세션(front.sock 없음)은 agent 중계로 자기 기획 branch에만 저장하고, 열기·말하기·다른 branch는 거부된다.
+/// thread 세션(front.sock 없음)은 agent 중계로 자기 기획 branch에만 문서·그림을 저장하고, 열기·말하기·다른 branch는 거부된다.
 /// 올린 기획 branch에서 갈라진 구현 thread(`--base origin/design/<주제>`)는 그 기획 commit을 받는다. 버리면 대화 thread도 끝난다
 #[test]
 fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
@@ -215,7 +215,7 @@ fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
         "design-probe.py",
         &format!(
             r#"
-import json, os, subprocess
+import hashlib, json, os, struct, subprocess, zlib
 AA = {bin:?}
 def call(*args, ok=True):
     p = subprocess.run([AA, '--json', *args], capture_output=True)
@@ -234,6 +234,31 @@ got = call('plan', 'show', 'game', 'docs/big.md', '--branch', 'boss-dex')['doc']
 assert got['text'] == big.replace('\n', '\n<!-- aaa-id: ' + got['id'] + ' -->\n\n', 1), got['id']
 open(big_path, 'w').write(big + line * 1000)
 assert '너무 크다' in call('plan', 'save', 'game', 'docs/big2.md', '--branch', 'boss-dex', '--new', '--file', big_path, ok=False)
+# 실제 PNG를 한 조각으로 보낼 수 없는 크기로 만들어 CLI 원격 중계에서 원본 바이트까지 본다.
+def png_chunk(tag, data):
+    return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+png = (b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 512, 512, 8, 2, 0, 0, 0))
+       + png_chunk(b'IDAT', zlib.compress(b'\0' * (512 * 3 + 1) * 512, 0)) + png_chunk(b'IEND', b''))
+assert len(png) > 512 * 1024
+image = os.path.join(os.path.dirname({body:?}), 'sketch.png')
+with open(image, 'wb') as f:
+    f.write(png)
+attach = ('plan', 'attach', 'game', '--branch', 'boss-dex', '--file', image)
+name = hashlib.sha256(png).hexdigest()[:16] + '.png'
+default = subprocess.check_output([AA, *attach], text=True).strip()
+assert default == 'docs/' + name, default
+nested = call(*attach, '--dir', 'docs/bestiary')
+assert nested['path'] == 'docs/bestiary/' + name, nested
+assert call(*attach, '--dir', 'docs/bestiary')['commit'] == nested['commit']
+for branch in ['other', 'main']:
+    assert '자기 branch' in call('plan', 'attach', 'game', '--branch', branch, '--file', image, ok=False)
+for outside in ['outside', 'docs/../outside', '/docs']:
+    assert '경로' in call(*attach, '--dir', outside, ok=False)
+assert 'PNG·JPEG·GIF·WebP' in call('plan', 'attach', 'game', '--branch', 'boss-dex', '--file', {body:?}, ok=False)
+oversized = image + '.large'
+with open(oversized, 'wb') as f:
+    f.truncate(16 * 1024 * 1024 + 1)
+assert '16MiB' in call('plan', 'attach', 'game', '--branch', 'boss-dex', '--file', oversized, ok=False)
 saved = call('plan', 'save', 'game', 'docs/boss.md', '--branch', 'boss-dex', '--new', '--file', {body:?}, '--summary', '해골 왕 정리')
 doc = call('plan', 'show', 'game', 'docs/boss.md', '--branch', 'boss-dex')['doc']
 assert doc['text'] == '# 보스 도감\n<!-- aaa-id: ' + doc['id'] + ' -->\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
@@ -243,6 +268,7 @@ assert '자기 branch' in call('plan', 'save', 'game', 'docs/x.md', '--branch', 
 for args in [('plan', 'new', 'game', 'other'), ('plan', 'say', 'game', 'boss-dex', 'x'), ('plan', 'discard', 'game', 'boss-dex')]:
     call(*args, ok=False)
 print('design-relay-ok', saved['commit'])
+print('design-image', nested['commit'], nested['path'], default)
 "#,
             bin = lab::BIN,
         ),
@@ -312,6 +338,17 @@ print('design-relay-ok', saved['commit'])
     let boss = std::fs::read_to_string(cwd.join("docs/boss.md")).unwrap();
     let id = aaa_proto::design_text_id(&boss).expect("저장한 문서의 ID 표지");
     assert_eq!(boss, format!("# 보스 도감\n<!-- aaa-id: {id} -->\n\n## 해골 왕\n"));
+    let mut image = output.lines().find_map(|line| line.strip_prefix("design-image ")).unwrap().split_whitespace();
+    let image_commit = image.next().unwrap();
+    assert!(
+        git(&game, &["show", "-s", "--format=%s", image_commit]).ends_with(&format!("({thread})")),
+        "그림 commit에 작성한 thread가 남는다"
+    );
+    let source = std::fs::read(w.lab.root.join("sketch.png")).unwrap();
+    for path in image {
+        assert_eq!(std::fs::read(cwd.join(path)).unwrap(), source, "origin에서 받은 그림의 원본 바이트: {path}");
+        assert!(!game.join(path).exists(), "main checkout은 그대로다: {path}");
+    }
 
     // 2-3: 사람이 고친 문서는 다음 말 앞에 알리고, 대화 사건(새 대화·저장·올림·사람 고침)과 고친 줄 수가 branch 보기에 실린다
     let doc = w.h.ok(&["plan", "show", "game", "docs/boss.md", "--branch", "boss-dex"])["doc"].clone();

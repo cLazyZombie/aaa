@@ -723,6 +723,19 @@ enum PlanCmd {
         #[arg(long)]
         summary: Option<String>,
     },
+    /// 기획 대화 thread가 자기 branch에 그림을 붙이고 저장소 기준 상대 경로를 출력한다
+    Attach {
+        repo: String,
+        /// 기획 branch 주제
+        #[arg(long)]
+        branch: String,
+        /// 저장소 기준 폴더(생략하면 기획 폴더)
+        #[arg(long)]
+        dir: Option<String>,
+        /// PNG·JPEG·GIF·WebP 파일(16MiB 이하)
+        #[arg(long)]
+        file: PathBuf,
+    },
     /// 기획 대화에 말한다: 그 기획 branch의 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다. 쉬던 branch는 다시 연다
     Say {
         repo: String,
@@ -2347,6 +2360,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         std::fs::read_to_string(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
                     front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary })
                 }
+                PlanCmd::Attach { repo, branch, dir, file } => plan_attach(json, project, repo, branch, dir, &file),
                 PlanCmd::Say { repo, slug, text, file } => {
                     let text = match file {
                         Some(file) => std::fs::read_to_string(&file)
@@ -4200,6 +4214,55 @@ fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
     }
 }
 
+fn plan_attach(
+    json: bool,
+    project: String,
+    repo: String,
+    branch: String,
+    dir: Option<String>,
+    file: &std::path::Path,
+) -> Result<ExitCode> {
+    use std::io::Read as _;
+    let read_error = || format!("{}를 읽지 못했다", file.display());
+    anyhow::ensure!(file.metadata().with_context(read_error)?.is_file(), "그림은 일반 파일이어야 한다");
+    let mut bytes = Vec::new();
+    std::fs::File::open(file)
+        .with_context(read_error)?
+        .take(aaa_proto::DESIGN_MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .with_context(read_error)?;
+    let total = bytes.len() as u64;
+    anyhow::ensure!(total > 0 && total <= aaa_proto::DESIGN_MAX_FILE, "그림은 1바이트부터 16MiB까지 붙인다");
+    let upload = aaa_common::util::new_id();
+    let mut offset = 0;
+    for chunk in bytes.chunks(aaa_proto::ATTACH_CHUNK) {
+        let result = front_call(FrontRequest::DesignAttach {
+            project: project.clone(),
+            repo: repo.clone(),
+            branch: branch.clone(),
+            dir: dir.clone(),
+            upload: upload.clone(),
+            offset,
+            total,
+            data: aaa_proto::B64(chunk.to_vec()),
+        })?;
+        offset += chunk.len() as u64;
+        match result {
+            Err(e) => return front_print(json, Err(e)),
+            Ok(FrontResponse::Done) if offset < total => {}
+            Ok(saved @ FrontResponse::DesignSaved { .. }) if offset == total && json => {
+                return front_print(json, Ok(saved));
+            }
+            Ok(FrontResponse::DesignSaved { path, .. }) if offset == total => {
+                println!("{path}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            _ => anyhow::bail!("예상하지 못한 그림 첨부 응답"),
+        }
+    }
+    anyhow::bail!("그림 저장 응답이 없다")
+}
+
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
@@ -4355,6 +4418,9 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
                 };
         if matches!(&req, FrontRequest::LibraryRead { .. }) && c.proto.minor < 146 {
             anyhow::bail!("library 파일 읽기는 Front API 1.146 이상 host가 필요하다");
+        }
+        if matches!(&req, FrontRequest::DesignAttach { .. }) && c.proto.minor < 184 {
+            anyhow::bail!("기획 그림 첨부는 Front API 1.184 이상 host가 필요하다");
         }
         if matches!(&req, FrontRequest::RecordSearch { .. } | FrontRequest::RecordOpen { .. }) && c.proto.minor < 140 {
             anyhow::bail!("작업 기록 검색은 host 1.140 이상이 필요하다");

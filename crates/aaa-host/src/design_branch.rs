@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aaa_proto::{
     AgentRequest, AgentResponse, DesignBranchState, DesignBranchView, DeviceRole, ErrorBody, ErrorCode, FrontResponse,
@@ -32,6 +32,22 @@ pub(crate) const ATTACH_FEATURE: &str = "design_attach.v1";
 pub(crate) const WRITE_WAIT: Duration = Duration::from_secs(120);
 /// 올리기(agent의 검사 300초 + 올리기 60초보다 길게)
 const PUSH_WAIT: Duration = Duration::from_secs(420);
+
+const DESIGN_IMAGE_UPLOAD_TTL: Duration = Duration::from_secs(120);
+const DESIGN_IMAGE_UPLOAD_LIMIT: usize = 8;
+
+pub(crate) struct DesignImageUpload {
+    total: u64,
+    dir: Option<String>,
+    bytes: Vec<u8>,
+    touched: Instant,
+}
+
+enum AttachmentSource {
+    WebEdit,
+    WebChat,
+    Thread,
+}
 /// 실패한 올리기를 다시 하기까지(쉼 창의 10배, 적어도 10분, 거듭 실패하면 두 배씩 최대 64배)
 fn push_retry_ms(push_ms: u64, failures: u32) -> u64 {
     push_ms.saturating_mul(10).max(600_000).saturating_mul(1 << failures.saturating_sub(1).min(6))
@@ -524,7 +540,7 @@ impl Host {
         dir: &str,
         bytes: &[u8],
     ) -> Result<FrontResponse, ErrorBody> {
-        self.design_attach_with(role, actor, project, repo, slug, dir, bytes, true).await
+        self.design_attach_with(role, actor, project, repo, slug, Some(dir), bytes, AttachmentSource::WebEdit).await
     }
 
     /// 기획 대화 입력창의 그림(t-1950): 보낼 말 앞 「(그림: …)」이 경로를 알리므로 다음 말 앞 「사람이 고친 문서」에 넣지 않는다.
@@ -540,10 +556,77 @@ impl Host {
         dir: &str,
         bytes: &[u8],
     ) -> Result<String, ErrorBody> {
-        match self.design_attach_with(role, actor, project, repo, slug, dir, bytes, false).await? {
+        match self
+            .design_attach_with(role, actor, project, repo, slug, Some(dir), bytes, AttachmentSource::WebChat)
+            .await?
+        {
             FrontResponse::DesignSaved { path, .. } => Ok(path),
             other => Err(internal(format!("그림 저장 응답이 아니다: {other:?}"))),
         }
+    }
+
+    /// CLI의 여러 frame을 받아 마지막 조각에서만 웹과 같은 Git 저장 경로를 호출한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn design_image_chunk(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        dir: Option<String>,
+        upload: String,
+        offset: u64,
+        total: u64,
+        data: Vec<u8>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
+        if !actor.starts_with("worker:") {
+            return Err(err(ErrorCode::Forbidden, "기획 대화 thread만 자기 branch에 CLI로 그림을 붙인다"));
+        }
+        if total == 0 || total > aaa_proto::DESIGN_MAX_FILE {
+            return Err(bad("그림은 1바이트부터 16MiB까지 붙인다"));
+        }
+        let end = offset.saturating_add(data.len() as u64);
+        if upload.len() != 26
+            || !upload.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            || data.is_empty()
+            || data.len() > aaa_proto::ATTACH_CHUNK
+            || end > total
+        {
+            return Err(bad("그림 전송 ID·조각 크기·위치가 잘못됐다"));
+        }
+        // 전송 ID는 권한이 확인된 프로젝트·thread에 묶는다. 끊긴 전송은 기한과 개수로 메모리를 제한한다.
+        let key = (project.to_string(), by, upload);
+        let bytes = {
+            let mut pending = self.design_image_uploads.lock().unwrap();
+            pending.retain(|_, image| image.touched.elapsed() < DESIGN_IMAGE_UPLOAD_TTL);
+            if offset == 0 && end == total && !pending.contains_key(&key) {
+                data
+            } else {
+                if offset == 0 && !pending.contains_key(&key) {
+                    if pending.len() >= DESIGN_IMAGE_UPLOAD_LIMIT {
+                        return Err(err(ErrorCode::Unavailable, "동시 기획 그림 전송 한도에 도달했다"));
+                    }
+                    pending.insert(
+                        key.clone(),
+                        DesignImageUpload { total, dir: dir.clone(), bytes: Vec::new(), touched: Instant::now() },
+                    );
+                }
+                let image = pending.get_mut(&key).ok_or_else(|| bad("그림의 앞 조각이 없다"))?;
+                if image.total != total || image.dir != dir || image.bytes.len() as u64 != offset {
+                    return Err(bad("그림의 조각 순서·크기·저장 폴더가 맞지 않다"));
+                }
+                image.bytes.extend_from_slice(&data);
+                image.touched = Instant::now();
+                if end < total {
+                    return Ok(FrontResponse::Done);
+                }
+                pending.remove(&key).expect("마지막 조각을 받은 그림").bytes
+            }
+        };
+        self.design_attach_with(role, actor, project, repo, slug, dir.as_deref(), &bytes, AttachmentSource::Thread)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -554,20 +637,32 @@ impl Host {
         project: &str,
         repo: &str,
         slug: &str,
-        dir: &str,
+        dir: Option<&str>,
         bytes: &[u8],
-        tell: bool,
+        source: AttachmentSource,
     ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor, project, None)?;
+        let thread = matches!(source, AttachmentSource::Thread);
+        let by = self.design_writer(role, actor, project, thread.then_some((repo, slug)))?;
         if bytes.is_empty() || bytes.len() as u64 > aaa_proto::DESIGN_MAX_FILE {
             return Err(bad("파일은 1바이트부터 16MiB까지 붙인다"));
         }
-        let ext = media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?;
+        let ext = if thread {
+            crate::attach::sniff(bytes).ok_or_else(|| bad("PNG·JPEG·GIF·WebP 그림만 붙인다"))?
+        } else {
+            media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?
+        };
         use sha2::Digest as _;
         let sha256 = hex::encode(sha2::Sha256::digest(bytes));
         let (target, mid) = self.design_target(project, repo)?;
         let folder = target.folder.clone().unwrap_or_default();
-        let dir = dir.trim_matches('/');
+        let clean_dir;
+        let dir = dir.unwrap_or(&folder);
+        let dir = if thread {
+            clean_dir = aaa_proto::design_clean_path(dir).ok_or_else(|| bad("그림 폴더 경로가 잘못됐다"))?;
+            clean_dir.as_str()
+        } else {
+            dir.trim_matches('/')
+        };
         let path = crate::design::checked_path(&folder, &format!("{dir}/{}.{ext}", &sha256[..16]))?;
         let conn = self.design_write_conn(&mid)?;
         if !self.machine_feature(&mid, ATTACH_FEATURE) {
@@ -581,6 +676,9 @@ impl Host {
         }
         let lock = self.design_branch_lock(project, &target.name, slug);
         let _one = lock.lock().await;
+        if thread && self.design_writer(role, actor, project, Some((repo, slug)))? != by {
+            return Err(err(ErrorCode::Forbidden, "기획 대화 thread가 바뀌었다"));
+        }
         let mut rec = self
             .design_branch_load(project, &target.name, slug)?
             .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
@@ -615,8 +713,9 @@ impl Host {
         rec.push_failures = 0;
         rec.rest_error = None;
         self.design_branch_store(project, &rec)?;
-        self.design_chat_event(project, &target.name, slug, "edit", &path, Some(commit.clone())).await;
-        if tell {
+        let event = if thread { "create" } else { "edit" };
+        self.design_chat_event(project, &target.name, slug, event, &path, Some(commit.clone())).await;
+        if matches!(source, AttachmentSource::WebEdit) {
             let told = path.clone();
             aaa_common::diagnostic::ignored(
                 self.design_chat_edit(project, &target.name, slug, |c| {
@@ -1001,6 +1100,7 @@ impl Host {
 
     /// 놓친·실패한 올리기를 잇고, 오래 쓰지 않은 기획 branch를 쉼으로 둔다(worktree를 돌려준다)
     pub(crate) async fn design_rest_pass(self: &Arc<Self>, project: &str) {
+        self.design_image_uploads.lock().unwrap().retain(|_, image| image.touched.elapsed() < DESIGN_IMAGE_UPLOAD_TTL);
         let Ok(targets) = self.design_targets(project) else { return };
         let now = aaa_common::util::now_ms();
         let push_ms = self.cfg.projects.design_push_secs.saturating_mul(1000);

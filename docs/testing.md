@@ -1,3 +1,4 @@
+- t-1993: [기획 대화 CLI 그림 첨부](testing-design-attach-t-1993.md)
 - t-1975: [기획 대화 목록의 바깥 누름·Esc 닫기](testing-design-chat-dismiss-t-1975.md)
 - t-1986: [질문 감시의 시안·카드 교체와 정정 안내](testing-question-guard-t1986.md): 네 관측 오탐·실제 미결 결정·독립 승인과 Host/DB 회귀.
 - t-1959: [옛 아이디어 지우기와 n-ID 링크 표 검증](testing-idea-removal-t-1959.md)

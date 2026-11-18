@@ -331,7 +331,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.182: DesignTree.repo·cached(t-1969). 웹은 host의 목록을 먼저 그리고 저장소마다 따로 읽어 실패를 격리한다.
 // 1.183: 옛 아이디어를 지웠다(t-1959): Idea* 요청·응답·`ideas` 사건·ThreadView.idea·NoticeView.idea를 뺐다. `idea_links`
 //        (n-ID → 옮긴 기획 문서)를 더했다. 옛 host에는 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 183 };
+// 1.184: 자기 기획 branch에 CLI 그림 붙이기(`design_attach`, t-1993).
+pub const FRONT_API: Version = Version { major: 1, minor: 184 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

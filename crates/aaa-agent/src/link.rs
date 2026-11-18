@@ -262,6 +262,10 @@ async fn session_state_mode(
             agent
                 .host_thread_read
                 .store(w.features.iter().any(|f| f == "thread_read.v1"), std::sync::atomic::Ordering::Relaxed);
+            agent.host_design_attach.store(
+                w.features.iter().any(|f| f == aaa_proto::DESIGN_ATTACH_RELAY_FEATURE),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             agent.host_image.store(w.features.iter().any(|f| f == "imagegen.v1"), std::sync::atomic::Ordering::Relaxed);
             *agent.host_work_files.lock().unwrap() = w.features.iter().any(|f| f == "work_files.v1");
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
