@@ -117,7 +117,7 @@ export default async function () {
     git(clone, "config", "user.email", "demo@example.com");
     aaa("project", "create", "demo", "--thread-profile", "fake");
     // aaa.toml이 있으면 그것이 프로젝트 설정이다: thread profile도 여기에 둔다(대화·구현 thread가 쓴다)
-    fs.writeFileSync(`${root}/projects/demo/aaa.toml`, `schema = 1\nthread_profile = "fake"\n\n[[workspaces]]\npath = "${clone}"\nmachine = "labA"\ndesign = "docs"\n`);
+    fs.writeFileSync(`${root}/projects/demo/aaa.toml`, `schema = 1\nthread_profile = "fake"\n\n[[workspaces]]\npath = "${clone}"\nmachine = "labA"\ndesign = "docs"\ndesign_media = "mockups"\n`);
     for (const [k, title] of [["work", "가호 칸 6칸"], ["wait", "나가기 통로"], ["done", "층 표 상한"]]) {
       aaa("task", "add", title, "--list", "Backlog");
       tasks[k] = aaa("task", "list").tasks.find((t) => t.title === title).short_id;
@@ -226,8 +226,9 @@ export default async function () {
     await editor.evaluate((t) => { t.focus(); t.setSelectionRange(t.value.length, t.value.length); });
     const before = mainHead();
     await page.getByTestId("design-attach-input").setInputFiles({ name: "지도.png", mimeType: "image/png", buffer: png(200, 100, [80, 120, 200]) });
-    await domIs(page, "그림 줄", () => /!\[지도\]\([0-9a-f]{16}\.png\)/.test(document.querySelector("[data-testid=design-editor]").value));
-    const pic = (await editor.inputValue()).match(/\(([0-9a-f]{16}\.png)\)/)[1];
+    // 저장소 손 그림 폴더(`design_media = "mockups"`, 문서 폴더 아래)에 들어오고 문서 기준 상대 경로로 넣는다
+    await domIs(page, "그림 줄", () => /!\[지도\]\(mockups\/[0-9a-f]{16}\.png\)/.test(document.querySelector("[data-testid=design-editor]").value));
+    const pic = (await editor.inputValue()).match(/\((mockups\/[0-9a-f]{16}\.png)\)/)[1];
     assert.notEqual(mainHead(), before, "그림은 main에 따로 commit한다");
     assert.match(git(root, "--git-dir", ORIGIN(), "log", "-1", "--format=%s", "main"), /^기획: 그림 [0-9a-f]{16}\.png 붙임 \(사람\)$/);
     await shot(page, "design-main-edit");
@@ -239,6 +240,7 @@ export default async function () {
     const shop = branches().find((b) => b.slug === "shop");
     assert.ok(shop.edited.includes("docs/loop/README.md"), "사람이 고친 문서는 다음 말 앞에 알린다");
     assert.deepEqual(shop.events.filter((e) => e.kind === "edit").map((e) => e.text).slice(-2), [`docs/loop/${pic}`, "docs/loop/README.md"]);
+    assert.ok(git(root, "--git-dir", ORIGIN(), "ls-tree", "--name-only", "main", `docs/loop/${pic}`), "손 그림 폴더에 commit");
     await page.getByTestId("design-context").getByText("사람이 고침").waitFor();
   });
 
@@ -292,9 +294,9 @@ export default async function () {
     const chat = page.getByTestId("design-chat");
     const before = mainHead();
     await chat.locator("input[type=file]").setInputFiles({ name: "시안.png", mimeType: "image/png", buffer: png(120, 80, [200, 90, 60]) });
-    await domIs(page, "초안의 그림 경로", () => /@docs\/loop\/[0-9a-f]{16}\.png /.test(document.querySelector("[data-testid=design-chat] textarea").value));
+    await domIs(page, "초안의 그림 경로", () => /@docs\/loop\/mockups\/[0-9a-f]{16}\.png /.test(document.querySelector("[data-testid=design-chat] textarea").value));
     await domIs(page, "고치지 않은 문서 칩", () => document.querySelector("[data-testid=design-viewing]")?.textContent.includes("이 대화가 고치지 않음"));
-    const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/[0-9a-f]{16}\.png)/)[1];
+    const pic = (await chat.locator("textarea").inputValue()).match(/@(docs\/loop\/mockups\/[0-9a-f]{16}\.png)/)[1];
     assert.notEqual(mainHead(), before, "보는 문서 폴더에 main commit");
     assert.ok(git(root, "--git-dir", ORIGIN(), "ls-tree", "--name-only", "main", pic), "그림이 main에 있다");
     assert.deepEqual(branches().find((b) => b.slug === "pics").edited, [], "말 앞 「(그림: …)」이 알리므로 「사람이 고친 문서」에 넣지 않는다");

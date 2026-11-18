@@ -796,9 +796,14 @@ impl Host {
         let dir = dir.unwrap_or(&folder);
         let dir = if thread {
             clean_dir = aaa_proto::design_clean_path(dir).ok_or_else(|| bad("그림 폴더 경로가 잘못됐다"))?;
-            clean_dir.as_str()
+            clean_dir
         } else {
-            dir.trim_matches('/')
+            // 웹 「그림」·대화 입력창 그림은 저장소 규칙의 손 그림 폴더(`design_media`, 문서 폴더 아래)에 둔다(t-2002, q-4217)
+            let doc_dir = dir.trim_matches('/');
+            match target.media.as_deref() {
+                Some(media) => format!("{doc_dir}/{media}"),
+                None => doc_dir.to_string(),
+            }
         };
         let file = match name {
             Some(name) => attach_name(name, ext)?,

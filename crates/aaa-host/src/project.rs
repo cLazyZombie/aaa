@@ -24,6 +24,9 @@ pub(crate) struct Repo {
 pub(crate) struct DesignFolder {
     pub repo: Repo,
     pub folder: String,
+    /// `design_media`(t-2002, q-4217): 웹 「그림」·대화 입력창 그림을 둘 문서 폴더 아래 하위 폴더(예: `mockups`). 생성 그림
+    /// 폴더와 손 그림을 나누는 저장소 규칙이다. 없으면 문서 폴더
+    pub media: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +115,7 @@ impl ProjectSettings {
         let start_threads = s("start_threads").filter(|v| matches!(v.as_str(), "propose" | "auto"));
         let trust_screens = s("trust_screens")
             .filter(|v| matches!(v.as_str(), crate::trust_screen::USER | crate::trust_screen::COORDINATOR));
-        let entries: Vec<(Repo, Option<String>)> = t
+        let entries: Vec<(Repo, Option<(String, Option<String>)>)> = t
             .get("workspaces")
             .or_else(|| t.get("repos"))
             .and_then(|v| v.as_array())
@@ -123,14 +126,22 @@ impl ProjectSettings {
                         let path = r.get("path")?.as_str()?.trim().to_string();
                         let machine = r.get("machine").and_then(|m| m.as_str()).map(str::to_string);
                         let design = r.get("design").and_then(|d| d.as_str()).and_then(aaa_proto::design_clean_path);
-                        (!path.is_empty()).then_some((Repo { path, machine }, design))
+                        // 그림 하위 폴더는 문서 폴더 아래 상대 경로만(`..`·절대 경로·빈 값은 없는 것)
+                        let media = r
+                            .get("design_media")
+                            .and_then(|d| d.as_str())
+                            .and_then(aaa_proto::design_clean_path)
+                            .filter(|m| !m.split('/').any(|p| p == ".."));
+                        (!path.is_empty()).then_some((Repo { path, machine }, design.map(|d| (d, media))))
                     })
                     .collect()
             })
             .unwrap_or_default();
         let designs = entries
             .iter()
-            .filter_map(|(repo, design)| design.clone().map(|folder| DesignFolder { repo: repo.clone(), folder }))
+            .filter_map(|(repo, design)| {
+                design.clone().map(|(folder, media)| DesignFolder { repo: repo.clone(), folder, media })
+            })
             .collect();
         let repos = entries.into_iter().map(|(repo, _)| repo).collect();
         ProjectSettings {
@@ -504,10 +515,21 @@ mod tests {
             vec![DesignFolder {
                 repo: Repo { path: "/work/app".into(), machine: Some("mac-b".into()) },
                 folder: "docs/plan".into(),
+                media: None,
             }],
             "{t}"
         );
         assert_eq!(ProjectSettings::load_str(text).designs.len(), 1, "절대 경로 design은 없는 것");
+        // 손 그림 하위 폴더(t-2002): 문서 폴더 아래 상대 경로만
+        let media = |m: &str| {
+            let t = format!("schema = 1\n\n[[workspaces]]\npath = \"/work/app\"\ndesign = \"docs\"\ndesign_media = {m:?}\n");
+            ProjectSettings::load_str(&t).designs[0].media.clone()
+        };
+        assert_eq!(media("mockups").as_deref(), Some("mockups"));
+        assert_eq!(media("mockups/").as_deref(), Some("mockups"));
+        assert_eq!(media("../x"), None);
+        assert_eq!(media("/abs"), None);
+        assert_eq!(media(""), None);
     }
 
     /// 웹 「저장소」 페이지의 고치기(관리 GUI W4): 한 번에 제자리에서 바꾸고(차례·다른 칸 그대로), 설정 읽기가 그것을 보인다

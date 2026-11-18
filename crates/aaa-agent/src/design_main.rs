@@ -398,10 +398,22 @@ impl Slot {
         git_told(&self.cwd, &add, GIT_WAIT).await?;
         git_told(&self.cwd, &commit, GIT_WAIT).await?;
         let head = git_told(&self.cwd, &["rev-parse", "HEAD"], GIT_WAIT).await?;
-        if !check.is_empty() {
-            run_check(&self.cwd, check, main, &head).await?;
+        let pushed = async {
+            if !check.is_empty() {
+                run_check(&self.cwd, check, main, &head).await?;
+            }
+            push(&self.cwd, &head, branch, main).await
         }
-        match push(&self.cwd, &head, branch, main).await? {
+        .await;
+        let pushed = match pushed {
+            Ok(p) => p,
+            Err(e) => {
+                // 올리지 못한 commit을 자리에 두지 않는다: 대화 thread가 main에 없는 글을 읽지 않게 origin 끝으로 되돌린다
+                aaa_common::diagnostic::ignored(sync(&self.cwd, main).await, "올리지 못한 기획 commit 되돌리기");
+                return Err(e);
+            }
+        };
+        match pushed {
             Pushed::Done => Ok(Some(head)),
             Pushed::Behind => {
                 tracing::info!(top = %self.top.display(), "기획 저장 사이 main이 바뀌었다: 새 끝에서 다시 한다");

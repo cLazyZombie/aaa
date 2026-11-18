@@ -32,8 +32,10 @@ pub(crate) struct Target {
     pub(crate) path: String,
     pub(crate) machine: Option<String>,
     pub(crate) folder: Option<String>,
-    /// 기획 branch를 올리기 전 검사(`design_check`)
+    /// 저장마다 도는 저장소 문서 검사(host.toml `design_check`)
     pub(crate) check: Vec<String>,
+    /// 웹 그림을 둘 문서 폴더 아래 하위 폴더(`design_media`)
+    pub(crate) media: Option<String>,
 }
 
 /// 프로젝트 저장소 목록에서 이름마다 한 자리를 고른다: `design`을 단 항목이 있으면 그것, 없으면 처음 항목. 설정 차례를 지킨다
@@ -52,6 +54,7 @@ fn targets(settings: &crate::project::ProjectSettings) -> Vec<Target> {
             machine: repo.machine.clone(),
             folder: design.map(|d| d.folder.clone()),
             check: Vec::new(),
+            media: design.and_then(|d| d.media.clone()),
         };
         match by_name.get(&name) {
             None => {

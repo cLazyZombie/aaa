@@ -199,7 +199,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const [saving, setSaving] = useState(false);
   const editor = useRef<HTMLTextAreaElement | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
-  // 그림: main의 문서 폴더에 commit하고 글 커서 자리에 그림 줄을 넣는다(같은 폴더라 이름만 쓴다)
+  // 그림: main의 문서 폴더(저장소 `design_media`가 있으면 그 아래 손 그림 폴더)에 commit하고 글 커서 자리에 그림 줄을 넣는다
   const attach = async (files: FileList | null) => {
     if (!at || !editing || !current || !files?.length) return;
     // 올리는 동안 글은 읽기만 한다(그 사이 친 글을 잃지 않게). 올린 것만큼은 실패해도 줄을 넣는다
@@ -210,8 +210,9 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
       const dir = at.path.slice(0, at.path.lastIndexOf("/"));
       for (const file of [...files]) {
         const r = await uploadDesignFile(current.project, at.repo, chat?.slug ?? "main", dir, file);
-        const name = r.path.slice(r.path.lastIndexOf("/") + 1);
-        lines.push(`![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${name})`);
+        // 저장소가 손 그림 폴더(`design_media`)를 정했으면 문서 폴더 아래 그 폴더에 들어온다: 문서 기준 상대 경로로 넣는다
+        const rel = dir && r.path.startsWith(`${dir}/`) ? r.path.slice(dir.length + 1) : r.path.slice(r.path.lastIndexOf("/") + 1);
+        lines.push(`![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${rel})`);
       }
     } catch (e) {
       setSaveError(e instanceof ApiError ? e.message : String(e));
