@@ -333,7 +333,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 //        (n-ID → 옮긴 기획 문서)를 더했다. 옛 host에는 보내지 않는다.
 // 1.184: 자기 기획 branch에 CLI 그림 붙이기(`design_attach`, t-1993).
 // 1.185: 자기 기획 branch에서 CLI 그림 지우기(`design_detach`, t-1995).
-pub const FRONT_API: Version = Version { major: 1, minor: 185 };
+// 1.186: 실행 중인 thread의 번개 표지 `ThreadView.speed`(t-2011). 옛 front는 버리고 AGENT_LINK는 유지한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 186 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

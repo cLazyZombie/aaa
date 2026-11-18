@@ -1054,7 +1054,7 @@ export function ThreadName({ id, title }: { id: string | undefined; title: strin
 function ThreadChips({ t, running }: { t: ThreadView; running: boolean }) {
   const slow = t.responsibility != null && t.responsibility.state !== "launcher";
   // fast mode는 지금 도는 agent의 것만: 끝난 실행의 마지막 관측은 카드 「최근 확인 모델」에만 남는다
-  const speed = running ? t.agent?.model_observation?.speed : null;
+  const speed = running ? t.speed : null;
   if (!slow && !t.stage && !t.over_limit && !t.auto_merge && !speed) return null;
   return (
     <span className="thread-chips">

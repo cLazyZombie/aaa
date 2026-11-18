@@ -82,6 +82,7 @@ async fn report_copy_recovers(fail_library: bool, fail_history: bool, interleave
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         }],

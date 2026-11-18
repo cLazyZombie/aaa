@@ -437,6 +437,8 @@ struct PaneRt {
     lease: Option<FrontRef>,
     /// harness 상태(agent의 화면 감지, 옛 agent는 hook 사건)
     agent: Option<aaa_proto::AgentStatus>,
+    /// 모델 관측과 별개인 Codex 실행 속도와 관측 시각.
+    codex_speed: Option<(aaa_proto::CodexSpeed, u64)>,
     /// 지금 턴이 시작된 때(작업·질문으로 들어선 harness 시각, notice.rs `turn_from`). 턴 밖이거나 시작을 못 봤으면 None
     turn_from: Option<u64>,
     /// 이 턴에서 완료·확인 필요 보고를 이미 알렸으면 턴 끝남 카드를 중복하지 않는다.
@@ -1112,6 +1114,7 @@ impl Host {
                     events: broadcast::channel(1024).0,
                     lease: None,
                     agent: None,
+                    codex_speed: None,
                     turn_from: None,
                     turn_reported: false,
                     alert: None,
@@ -1124,6 +1127,7 @@ impl Host {
                 if exited_by_itself(&p.info, s, p.kill_sent) {
                     exited.push(s.id.clone());
                 }
+                p.codex_speed = None;
                 p.info = s.clone();
                 if let Some(m) = p.mirror.as_mut() {
                     m.synced = false;
@@ -1278,6 +1282,7 @@ impl Host {
                 events: broadcast::channel(1024).0,
                 lease: None,
                 agent: None,
+                codex_speed: None,
                 turn_from: None,
                 turn_reported: false,
                 alert: None,

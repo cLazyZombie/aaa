@@ -645,8 +645,33 @@ impl Agent {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
+        })
+        .await;
+    }
+
+    async fn detect_codex_speed(self: &Arc<Self>, session: &str, title: &str) {
+        let at_ms = util::now_ms();
+        let Some(speed) = self.observe_codex_title(session, title, at_ms) else { return };
+        self.harness_event(aaa_proto::HarnessEvent {
+            session: session.into(),
+            harness: "codex".into(),
+            kind: "codex_speed".into(),
+            at_ms,
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            transcript: None,
+            plan: None,
+            background: None,
+            context: None,
+            model_observation: None,
+            codex_speed: Some(speed),
+            turn_reply: None,
+            provider_turn: None,
         })
         .await;
     }
@@ -1370,7 +1395,7 @@ impl Agent {
                                 if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
                                     let harness = w.harness();
                                     if harness == detect::Harness::Codex && let Outcome::Ok(AgentResponse::Detect(d)) = &result {
-                                        self.observe_codex_title(&id, &d.osc_title, util::now_ms());
+                                        self.detect_codex_speed(&id, &d.osc_title).await;
                                     }
                                     if let Some(r) = w.answer(std::time::Instant::now(), result) {
                                         self.detected(&id, harness, r).await;
@@ -2430,6 +2455,8 @@ enum Slot {
     State,
     /// 계획·배경 작업 수(plan.rs)
     Plan,
+    /// Codex가 OSC 제목에 알린 처리 속도
+    CodexSpeed,
     /// 마지막 완료 답. 연결 복구 때 같은 사건을 재전송하며 host가 중복을 거른다.
     Reply,
     /// 완료 오류와 다음 turn 시작 관측. 상태 사건과 따로 재전송한다.
@@ -2443,6 +2470,7 @@ impl Slot {
             _ if e.harness == "report" => Some(Slot::Report),
             "session_start" | "session" => Some(Slot::Session),
             "plan" => Some(Slot::Plan),
+            "codex_speed" => Some(Slot::CodexSpeed),
             "turn_reply" => Some(Slot::Reply),
             "provider_turn" => Some(Slot::ProviderTurn),
             "prompt_submit" => None,
@@ -2623,6 +2651,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         };

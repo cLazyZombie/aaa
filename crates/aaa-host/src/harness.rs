@@ -306,6 +306,19 @@ impl Host {
             if p.machine_id != mid {
                 return;
             }
+            if ev.kind == "codex_speed" {
+                if ev.harness == "codex"
+                    && let Some(speed) = ev.codex_speed
+                    && p.info.state.is_running()
+                    && ev.at_ms >= p.info.started_at_ms
+                    && p.codex_speed.is_none_or(|(_, at_ms)| ev.at_ms >= at_ms)
+                {
+                    p.codex_speed = Some((speed, ev.at_ms));
+                    drop(i);
+                    self.thread_changed(&ev.session);
+                }
+                return;
+            }
             // native 표시만 갱신한다. 화면 감지의 활동·질문·승인은 바꾸지 않는다.
             if ev.kind == "provider_turn"
                 && p.agent.as_ref().and_then(|st| provider_turn_after(st, &ev, p.info.started_at_ms)).is_none()
@@ -317,6 +330,7 @@ impl Host {
             if ev.kind == "released" {
                 self.bgwait.lock().unwrap().forget(&ev.session);
                 p.agent = None;
+                p.codex_speed = None;
                 p.turn_from = None;
                 p.turn_reported = false;
                 p.alert = None;
@@ -328,6 +342,7 @@ impl Host {
                 );
                 drop(i);
                 self.bump();
+                self.thread_changed(&ev.session);
                 self.close_questions_of(&ev.session);
                 self.tick_wake.notify_one();
                 return;
@@ -574,12 +589,7 @@ impl Host {
             }
             _ => {}
         }
-        if let Some(rec) = self.thread_of_pane(&ev.session) {
-            aaa_common::diagnostic::ignored(
-                self.thread_events.send(self.thread_view(&rec)),
-                "수신자가 끝난 뒤에도 현재 작업은 마친다",
-            );
-        }
+        self.thread_changed(&ev.session);
     }
 
     // ───────────── 질문 ─────────────
@@ -1562,6 +1572,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         };
@@ -1741,9 +1752,45 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         }
+    }
+
+    #[test]
+    fn codex_thread_speed_uses_launch_and_updates_without_model_observation() {
+        use aaa_proto::CodexSpeed;
+        let (h, _tmp) = host_with_pane();
+        let mut info = h.inner.lock().unwrap().panes["s"].info.clone();
+        info.harness = Some("codex".into());
+        info.argv = [
+            "codex",
+            "-c",
+            "service_tier=priority",
+            "resume",
+            "example-session",
+            "--config=service_tier='ultrafast'",
+            "--",
+            "-cservice_tier=default",
+        ]
+        .map(str::to_owned)
+        .into();
+        h.on_session("m", info.clone(), false);
+        let speed = || h.inner.lock().unwrap().panes["s"].thread_speed();
+        let observe = |tier, at_ms| {
+            h.on_harness("m", HarnessEvent { codex_speed: Some(tier), ..codex_event("codex_speed", at_ms) });
+        };
+        assert_eq!(speed().as_deref(), Some("ultrafast"));
+        observe(CodexSpeed::Standard, 2_000);
+        observe(CodexSpeed::Fast, 1_000);
+        assert_eq!(speed(), None);
+        observe(CodexSpeed::Fast, 3_000);
+        assert_eq!(speed().as_deref(), Some("fast"));
+        assert!(h.pane_agent("s").is_none());
+        info.state = aaa_proto::SessionState::Lost;
+        h.on_session("m", info, false);
+        assert_eq!(speed(), None);
     }
 
     fn submission_machine(h: &Arc<Host>, conn: crate::AgentConn, os: &str, features: Vec<String>) {
@@ -2445,6 +2492,7 @@ mod tests {
             background,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         };
@@ -2464,6 +2512,7 @@ mod tests {
             HarnessEvent {
                 context: Some(context.clone()),
                 model_observation: Some(model.clone()),
+                codex_speed: None,
                 provider_turn: None,
                 turn_reply: None,
                 ..ev("plan", 2_000, Some(plan.clone()), Some(2))
@@ -2515,6 +2564,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            codex_speed: None,
             provider_turn: None,
             turn_reply: None,
         };
