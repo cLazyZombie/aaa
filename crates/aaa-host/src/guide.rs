@@ -684,7 +684,9 @@ const PLAN: &str = r#"# 기획 대화로 넘기기(coordinator)
 
 coordinator는 열기·말하기만 한다. 사람이 직접 문서를 저장하거나 branch를 버리거나 main에 반영하거나 구현을 맡기려면 웹 「기획」을 안내한다. 기획 대화 thread는 자기 branch에 `plan save`로 문서를 저장할 수 있다.
 
-기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --branch <주제> --file <그림>`으로 직접 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 기본은 기획 폴더이며 문서와 같은 폴더에 두려면 `--dir <저장소 기준 폴더>`를 준다. 출력한 저장소 기준 경로는 문서 기준 상대 경로로 바꾸어 링크한다.
+기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --branch <주제> --file <그림>`으로 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 기본은 기획 폴더다. 저장소의 그림 폴더 규칙(예: `docs/design/skills/assets/`)이 있으면 그 위치를 `--dir <저장소 기준 폴더>`로 준다. 출력한 경로는 문서 폴더 기준 상대 경로로 바꾸어 링크한다.
+
+`aaa plan detach <저장소> --branch <주제> <저장소 기준 그림 경로>`로 자기 branch의 기획 폴더 안 그림 하나를 지운다. 옮길 때는 새 폴더에 붙이고 참조 문서를 저장한 뒤 옛 그림을 지운다. 참조가 남으면 경고가 나온다.
 
 옛 아이디어(`n-NNNN`)는 지웠다. 글에 나온 n-ID가 옮긴 기획 문서는 `aaa plan links`로 찾는다.
 "#;
@@ -757,6 +759,7 @@ mod tests {
             "`aaa plan say <저장소> <주제> --file",
             "`plan save`",
             "`aaa plan attach <저장소> --branch <주제> --file",
+            "`aaa plan detach <저장소> --branch <주제>",
             "`aaa plan links`",
         ] {
             assert!(text.contains(needle), "{needle}");

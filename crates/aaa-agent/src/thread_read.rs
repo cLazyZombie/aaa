@@ -43,7 +43,13 @@ impl Agent {
                 "기획 그림 첨부는 Front API 1.184 이상 host가 필요하다"
             );
         }
-        // 기획 저장과 첨부는 Git 쓰기를 기다린다(읽기보다 길게)
+        if matches!(request, FrontRequest::DesignDetach { .. }) {
+            ensure!(
+                self.host_design_detach.load(std::sync::atomic::Ordering::Relaxed),
+                "기획 그림 삭제는 Front API 1.185 이상 host가 필요하다"
+            );
+        }
+        // 기획 저장과 그림 첨부·삭제는 Git 쓰기를 기다린다(읽기보다 길게)
         let wait = if request.design_relay_write() {
             Duration::from_secs(aaa_proto::DESIGN_RELAY_SAVE_SECS)
         } else {

@@ -103,6 +103,15 @@ pub(crate) struct Rec {
 }
 
 impl Rec {
+    fn record_write(&mut self, commit: &str) {
+        self.updated_ms = aaa_common::util::now_ms();
+        self.head = Some(commit.to_string());
+        self.own_head = Some(commit.to_string());
+        self.push_error = None;
+        self.push_failures = 0;
+        self.rest_error = None;
+    }
+
     fn view(&self) -> DesignBranchView {
         DesignBranchView {
             repo: self.repo.clone(),
@@ -136,7 +145,7 @@ fn repo_ok(repo: &str) -> bool {
 
 /// 붙일 그림·영상의 종류를 파일 머리로 정한다(그림은 task 첨부와 같은 판정)
 fn media_ext(bytes: &[u8]) -> Option<&'static str> {
-    if let Some(ext) = crate::attach::sniff(bytes) {
+    if let Some(ext) = aaa_common::util::image_extension(bytes) {
         return Some(ext);
     }
     if bytes.len() > 12 && &bytes[4..8] == b"ftyp" {
@@ -503,12 +512,7 @@ impl Host {
                 "다음 말 앞 알림만 빠진다",
             );
         }
-        rec.updated_ms = aaa_common::util::now_ms();
-        rec.head = Some(commit.clone());
-        rec.own_head = Some(commit.clone());
-        rec.push_error = None;
-        rec.push_failures = 0;
-        rec.rest_error = None;
+        rec.record_write(&commit);
         self.design_branch_store(project, &rec)?;
         self.db.audit(actor, "design_save", &format!("{project} {}/{slug} {path} {commit}", target.name));
         self.design_push_later(project, &target.name, slug);
@@ -565,6 +569,85 @@ impl Host {
         }
     }
 
+    fn design_image_writer(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+    ) -> Result<String, ErrorBody> {
+        let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
+        if !actor.starts_with("worker:") {
+            return Err(err(ErrorCode::Forbidden, "기획 대화 thread만 자기 branch의 그림을 CLI로 바꾼다"));
+        }
+        Ok(by)
+    }
+
+    /// 자기 기획 branch에서 그림 하나를 지우고 문서에 남은 참조를 알린다.
+    pub(crate) async fn design_detach(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        project: &str,
+        repo: &str,
+        slug: &str,
+        path: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let by = self.design_image_writer(role, actor, project, repo, slug)?;
+        let (target, mid) = self.design_target(project, repo)?;
+        let folder = target.folder.clone().unwrap_or_default();
+        let path = crate::design::checked_path(&folder, path)?;
+        let feature = aaa_proto::DESIGN_DETACH_FEATURE;
+        let conn = self.design_write_conn(&mid)?;
+        if !self.machine_feature(&mid, feature) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!(
+                    "{} agent가 기획 그림 삭제를 모른다({feature} 없음). 그 머신 aaa를 갱신한다",
+                    self.machine_name(&mid)
+                ),
+            ));
+        }
+
+        let lock = self.design_branch_lock(project, &target.name, slug);
+        let _one = lock.lock().await;
+        if self.design_image_writer(role, actor, project, repo, slug)? != by {
+            return Err(err(ErrorCode::Forbidden, "기획 대화 thread가 바뀌었다"));
+        }
+        let mut rec = self.design_open_record(project, &target.name, slug)?;
+        let file = path.rsplit('/').next().unwrap_or(&path);
+        let request = AgentRequest::DesignDetach {
+            project: project.to_string(),
+            repo: target.path,
+            folder,
+            slug: slug.to_string(),
+            path: path.clone(),
+            message: format!("기획: 그림 {file} 삭제 ({by})"),
+        };
+        let AgentResponse::DesignDetached { commit, warnings } = conn.request_timeout(request, WRITE_WAIT).await?
+        else {
+            return Err(err(ErrorCode::Internal, "예상하지 못한 그림 삭제 응답"));
+        };
+        rec.record_write(&commit);
+        self.design_branch_store(project, &rec)?;
+        let event = format!("그림 {file} 삭제");
+        self.design_chat_event(project, &target.name, slug, "remove", &event, Some(commit.clone())).await;
+        self.db.audit(actor, "design_detach", &format!("{project} {}/{slug} {path} {commit}", target.name));
+        self.design_push_later(project, &target.name, slug);
+        Ok(FrontResponse::DesignDetached { path, commit, warnings })
+    }
+
+    fn design_open_record(&self, project: &str, repo: &str, slug: &str) -> Result<Rec, ErrorBody> {
+        let rec = self
+            .design_branch_load(project, repo, slug)?
+            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
+        if rec.state == DesignBranchState::Rest {
+            return Err(err(ErrorCode::Conflict, format!("쉬는 기획 branch다: design/{slug}(다시 연 뒤 쓴다)")));
+        }
+        Ok(rec)
+    }
+
     /// CLI의 여러 frame을 받아 마지막 조각에서만 웹과 같은 Git 저장 경로를 호출한다.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn design_image_chunk(
@@ -580,10 +663,7 @@ impl Host {
         total: u64,
         data: Vec<u8>,
     ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor, project, Some((repo, slug)))?;
-        if !actor.starts_with("worker:") {
-            return Err(err(ErrorCode::Forbidden, "기획 대화 thread만 자기 branch에 CLI로 그림을 붙인다"));
-        }
+        let by = self.design_image_writer(role, actor, project, repo, slug)?;
         if total == 0 || total > aaa_proto::DESIGN_MAX_FILE {
             return Err(bad("그림은 1바이트부터 16MiB까지 붙인다"));
         }
@@ -647,7 +727,7 @@ impl Host {
             return Err(bad("파일은 1바이트부터 16MiB까지 붙인다"));
         }
         let ext = if thread {
-            crate::attach::sniff(bytes).ok_or_else(|| bad("PNG·JPEG·GIF·WebP 그림만 붙인다"))?
+            aaa_common::util::image_extension(bytes).ok_or_else(|| bad("PNG·JPEG·GIF·WebP 그림만 붙인다"))?
         } else {
             media_ext(bytes).ok_or_else(|| bad("그림(PNG·JPEG·GIF·WebP)·영상(MP4·WebM)만 붙인다"))?
         };
@@ -679,12 +759,7 @@ impl Host {
         if thread && self.design_writer(role, actor, project, Some((repo, slug)))? != by {
             return Err(err(ErrorCode::Forbidden, "기획 대화 thread가 바뀌었다"));
         }
-        let mut rec = self
-            .design_branch_load(project, &target.name, slug)?
-            .ok_or_else(|| err(ErrorCode::NotFound, format!("기획 branch가 없다: design/{slug}(먼저 연다)")))?;
-        if rec.state == DesignBranchState::Rest {
-            return Err(err(ErrorCode::Conflict, format!("쉬는 기획 branch다: design/{slug}(다시 연 뒤 쓴다)")));
-        }
+        let mut rec = self.design_open_record(project, &target.name, slug)?;
         let file = path.rsplit('/').next().unwrap_or(&path).to_string();
         let mut saved = None;
         for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
@@ -706,12 +781,7 @@ impl Host {
             }
         }
         let (commit, blob) = saved.ok_or_else(|| err(ErrorCode::Internal, "그림 저장 응답이 없다"))?;
-        rec.updated_ms = aaa_common::util::now_ms();
-        rec.head = Some(commit.clone());
-        rec.own_head = Some(commit.clone());
-        rec.push_error = None;
-        rec.push_failures = 0;
-        rec.rest_error = None;
+        rec.record_write(&commit);
         self.design_branch_store(project, &rec)?;
         let event = if thread { "create" } else { "edit" };
         self.design_chat_event(project, &target.name, slug, event, &path, Some(commit.clone())).await;

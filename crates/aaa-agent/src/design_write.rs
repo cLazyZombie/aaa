@@ -260,6 +260,33 @@ fn case_twin<'a>(names: impl Iterator<Item = &'a str>, path: &str) -> Option<Str
     None
 }
 
+fn write_path(folder: &str, path: &str) -> Result<(String, String)> {
+    let (folder, path) = crate::design::inside(folder, path)?;
+    if !design_write_path_ok(&path) {
+        bail!(
+            "어느 OS에서나 같은 파일로 쓸 수 있는 이름이 아니다(`.git`, 끝의 `.`·빈칸, `:` 등, `CON` 같은 예약 이름): {path}"
+        );
+    }
+    Ok((folder, path))
+}
+
+/// 저장과 삭제는 해당 branch를 꺼낸 깨끗한 기획 worktree에서만 한다.
+async fn write_worktree(cfg: &ThreadsConfig, repo: &str, project: &str, slug: &str, branch: &str) -> Result<PathBuf> {
+    let top = toplevel(repo).await?;
+    let (cwd, _) = own_worktree(cfg, &top, project, slug)
+        .await?
+        .ok_or_else(|| Missing(format!("{branch}의 worktree가 없다(쉬는 branch면 먼저 연다)")))?;
+    let head = git_told(&cwd, &["symbolic-ref", "-q", "HEAD"], GIT_WAIT).await?;
+    if head != format!("refs/heads/{branch}") {
+        bail!("기획 worktree가 {branch}에 있지 않다({head})");
+    }
+    let dirty = git_told(&cwd, &["status", "--porcelain", "--untracked-files=all"], GIT_WAIT).await?;
+    if !dirty.is_empty() {
+        bail!("기획 worktree에 commit하지 않은 변경이 있다: 사람이 확인한다({})", cwd.display());
+    }
+    Ok(cwd)
+}
+
 /// 기획 branch에 문서 하나를 쓰고 그 파일만 commit한다
 #[allow(clippy::too_many_arguments)]
 pub async fn save(
@@ -291,32 +318,14 @@ pub async fn save_bytes(
     reply(
         async {
             let branch = checked(project, slug)?;
-            let folder = design_clean_path(folder).context("기획 폴더 경로가 잘못됐다")?;
-            let path = design_clean_path(path).context("문서 경로가 잘못됐다")?;
-            if !design_inside(&folder, &path) {
-                bail!("기획 폴더 밖 경로다");
-            }
-            if !design_write_path_ok(&path) {
-                bail!("어느 OS에서나 같은 파일로 쓸 수 있는 이름이 아니다(`.git`, 끝의 `.`·빈칸, `:` 등, `CON` 같은 예약 이름): {path}");
-            }
+            let (folder, path) = write_path(folder, path)?;
             if text.len() as u64 > max {
                 bail!("문서가 너무 크다({}바이트, 상한 {max})", text.len());
             }
             if message.trim().is_empty() {
                 bail!("commit 메시지가 비었다");
             }
-            let top = toplevel(repo).await?;
-            let (cwd, _) = own_worktree(cfg, &top, project, slug)
-                .await?
-                .ok_or_else(|| Missing(format!("{branch}의 worktree가 없다(쉬는 branch면 먼저 연다)")))?;
-            let head = git_told(&cwd, &["symbolic-ref", "-q", "HEAD"], GIT_WAIT).await.unwrap_or_default();
-            if head != format!("refs/heads/{branch}") {
-                bail!("기획 worktree가 {branch}에 있지 않다({head})");
-            }
-            let dirty = git_told(&cwd, &["status", "--porcelain", "--untracked-files=all"], GIT_WAIT).await?;
-            if !dirty.is_empty() {
-                bail!("기획 worktree에 commit하지 않은 변경이 있다: 사람이 확인한다({})", cwd.display());
-            }
+            let cwd = write_worktree(cfg, repo, project, slug, &branch).await?;
             let listed =
                 git(&cwd, &["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD", "--", &folder], 8 << 20).await?;
             let listed = entries(&listed)?;
@@ -475,11 +484,11 @@ pub async fn mark_ids(
     )
 }
 
-/// 한 번에 달기에서 쓴 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
+/// 바꾼 파일을 index·작업 파일 모두 HEAD로 되돌린다(남기면 다음 저장이 「commit하지 않은 변경」으로 막힌다)
 async fn restore(cwd: &Path, paths: &[String]) {
     let mut args: Vec<&str> = vec!["checkout", "--quiet", "HEAD", "--"];
     args.extend(paths.iter().map(String::as_str));
-    aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획서 ID 달기 되돌리기");
+    aaa_common::diagnostic::ignored(git_told(cwd, &args, GIT_WAIT).await, "실패한 기획 파일 변경 되돌리기");
 }
 
 /// 저장소 기획 검사를 그 worktree에서 셸 없이 돌린다(출력은 받지 않는다: 비밀값이 섞일 수 있다)
@@ -612,6 +621,52 @@ pub async fn close(
                 .context("origin branch를 지우지 못했다(그 사이 다른 판이 올라왔으면 사람이 확인한다)")?;
             }
             Ok(AgentResponse::Done)
+        }
+        .await,
+    )
+}
+
+/// 기획 branch에 있는 일반 그림 파일 하나만 지우고 그 삭제를 commit한다.
+pub async fn detach(
+    cfg: &ThreadsConfig,
+    (project, repo, folder, slug): (&str, &str, &str, &str),
+    path: &str,
+    message: &str,
+) -> Result<AgentResponse, ErrorBody> {
+    reply(
+        async {
+            let branch = checked(project, slug)?;
+            let (folder, path) = write_path(folder, path)?;
+            let ext = Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+            let ext = match ext.as_str() {
+                "jpeg" => "jpg",
+                "png" | "jpg" | "gif" | "webp" => &ext,
+                _ => bail!("PNG·JPEG·GIF·WebP 그림만 지운다: {path}"),
+            };
+            let cwd = write_worktree(cfg, repo, project, slug, &branch).await?;
+            let head = rev(&cwd, "HEAD").await?;
+            let (blob, size) = crate::design::blob(&cwd, &head, &folder, &path).await?;
+            let header = crate::design::blob_slice(&cwd, &blob, 0, size.min(12) as usize).await?;
+            if aaa_common::util::image_extension(&header) != Some(ext) {
+                bail!("파일 내용이 그림 형식과 맞지 않다: {path}");
+            }
+            let warnings = tokio::time::timeout(GIT_WAIT, crate::design::image_reference_warnings(&cwd, &head, &path))
+                .await
+                .context("그림 참조 검사 시간 상한이다")??;
+            if rev(&cwd, "HEAD").await? != head {
+                return Err(Stale("그림을 검사하는 동안 기획 branch가 바뀌었다".into()).into());
+            }
+            plain_parents(&cwd, &path)?;
+            let literal = format!(":(literal){path}");
+            git_told(&cwd, &["rm", "--quiet", "--", &literal], GIT_WAIT).await?;
+            let committed =
+                git_told(&cwd, &["commit", "--quiet", "--no-verify", "-m", message, "--", &literal], GIT_WAIT).await;
+            if let Err(e) = committed {
+                restore(&cwd, std::slice::from_ref(&literal)).await;
+                return Err(e);
+            }
+            let commit = rev(&cwd, "HEAD").await?;
+            Ok(AgentResponse::DesignDetached { commit, warnings })
         }
         .await,
     )

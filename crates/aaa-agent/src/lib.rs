@@ -231,6 +231,7 @@ pub struct Agent {
     host_automation_results: Mutex<bool>,
     host_thread_read: std::sync::atomic::AtomicBool,
     host_design_attach: std::sync::atomic::AtomicBool,
+    host_design_detach: std::sync::atomic::AtomicBool,
     read_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::FrontResponse>>>>,
     host_image: std::sync::atomic::AtomicBool,
     image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
@@ -301,6 +302,7 @@ impl Agent {
             host_automation_results: Mutex::new(false),
             host_thread_read: std::sync::atomic::AtomicBool::new(false),
             host_design_attach: std::sync::atomic::AtomicBool::new(false),
+            host_design_detach: std::sync::atomic::AtomicBool::new(false),
             read_waiters: Mutex::new(HashMap::new()),
             host_image: std::sync::atomic::AtomicBool::new(false),
             image_waiters: Mutex::new(HashMap::new()),
@@ -2189,6 +2191,10 @@ impl Agent {
                     &message,
                 )
                 .await
+            }
+            AgentRequest::DesignDetach { project, repo, folder, slug, path, message } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                Box::pin(design_write::detach(&cfg, (&project, &repo, &folder, &slug), &path, &message)).await
             }
             AgentRequest::DesignPush { project, repo, slug, check } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();

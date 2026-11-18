@@ -17,6 +17,7 @@ use aaa_proto::{AgentRequest, AgentResponse, B64, DeviceRole, ErrorBody, ErrorCo
 use crate::harness::modal_of;
 use crate::{FrontRef, Host, err};
 
+use aaa_common::util::image_extension;
 use aaa_proto::ATTACH_CHUNK as CHUNK;
 /// 첨부 한 개 상한(agent도 같은 값으로 막는다)
 const MAX_BYTES: u64 = 16 << 20;
@@ -33,21 +34,6 @@ pub(crate) struct Attached {
     pub path: String,
     pub inserted: bool,
     pub note: Option<String>,
-}
-
-/// 확장자. 브라우저가 알린 MIME이 아니라 내용의 signature로 정한다.
-pub(crate) fn sniff(b: &[u8]) -> Option<&'static str> {
-    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("png")
-    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("jpg")
-    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
-        Some("gif")
-    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
-        Some("webp")
-    } else {
-        None
-    }
 }
 
 impl Host {
@@ -69,7 +55,8 @@ impl Host {
         if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
             return Err(err(ErrorCode::BadRequest, "그림은 1바이트부터 16MiB까지 붙여 넣는다"));
         }
-        let ext = sniff(bytes).ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
+        let ext =
+            image_extension(bytes).ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
         let project = self
             .projects_all()
             .into_iter()
@@ -167,7 +154,8 @@ impl Host {
             if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
                 return Err(err(ErrorCode::BadRequest, "sha256 형식이 아니다"));
             }
-            let ext = sniff(&data).ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
+            let ext = image_extension(&data)
+                .ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
             *up = Some(Upload {
                 att: format!("{}.{ext}", hex::encode(rand::random::<[u8; 8]>())),
                 total,
@@ -270,12 +258,12 @@ mod tests {
 
     #[test]
     fn signatures() {
-        assert_eq!(sniff(b"\x89PNG\r\n\x1a\n...."), Some("png"));
-        assert_eq!(sniff(&[0xff, 0xd8, 0xff, 0xe0]), Some("jpg"));
-        assert_eq!(sniff(b"GIF89a.."), Some("gif"));
-        assert_eq!(sniff(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
+        assert_eq!(image_extension(b"\x89PNG\r\n\x1a\n...."), Some("png"));
+        assert_eq!(image_extension(&[0xff, 0xd8, 0xff, 0xe0]), Some("jpg"));
+        assert_eq!(image_extension(b"GIF89a.."), Some("gif"));
+        assert_eq!(image_extension(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
         for bad in [&b"<svg xmlns"[..], b"%PDF-1.7", b"RIFF\0\0\0\0WAVE", b""] {
-            assert_eq!(sniff(bad), None);
+            assert_eq!(image_extension(bad), None);
         }
     }
 }

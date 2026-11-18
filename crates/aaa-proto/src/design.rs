@@ -17,6 +17,8 @@ pub const DESIGN_RELAY_SAVE_SECS: u64 = 600;
 pub const DESIGN_MAX_FILE: u64 = 16 * 1024 * 1024;
 /// 원격 기획 thread가 CLI 그림을 host로 중계할 수 있는 기능
 pub const DESIGN_ATTACH_RELAY_FEATURE: &str = "design_attach_relay.v1";
+/// host의 원격 CLI 중계와 저장소 agent의 그림 삭제 요청 지원
+pub const DESIGN_DETACH_FEATURE: &str = "design_detach.v1";
 
 /// 기획 branch 주제(`design/<slug>`)의 글자 수 상한
 pub const DESIGN_SLUG_MAX: usize = 48;

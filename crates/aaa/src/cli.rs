@@ -736,6 +736,15 @@ enum PlanCmd {
         #[arg(long)]
         file: PathBuf,
     },
+    /// 기획 대화 thread가 자기 branch에서 그림 하나를 지운다
+    Detach {
+        repo: String,
+        /// 기획 branch 주제
+        #[arg(long)]
+        branch: String,
+        /// 지울 그림의 저장소 기준 경로
+        path: String,
+    },
     /// 기획 대화에 말한다: 그 기획 branch의 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다. 쉬던 branch는 다시 연다
     Say {
         repo: String,
@@ -2361,6 +2370,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary })
                 }
                 PlanCmd::Attach { repo, branch, dir, file } => plan_attach(json, project, repo, branch, dir, &file),
+                PlanCmd::Detach { repo, branch, path } => {
+                    let res = front_call(FrontRequest::DesignDetach { project, repo, branch, path })?;
+                    if !json && let Ok(FrontResponse::DesignDetached { warnings, .. }) = &res {
+                        for warning in warnings {
+                            eprintln!("경고: {warning}");
+                        }
+                    }
+                    front_print(json, res)
+                }
                 PlanCmd::Say { repo, slug, text, file } => {
                     let text = match file {
                         Some(file) => std::fs::read_to_string(&file)
@@ -4422,6 +4440,9 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         if matches!(&req, FrontRequest::DesignAttach { .. }) && c.proto.minor < 184 {
             anyhow::bail!("기획 그림 첨부는 Front API 1.184 이상 host가 필요하다");
         }
+        if matches!(&req, FrontRequest::DesignDetach { .. }) && c.proto.minor < 185 {
+            anyhow::bail!("기획 그림 삭제는 Front API 1.185 이상 host가 필요하다");
+        }
         if matches!(&req, FrontRequest::RecordSearch { .. } | FrontRequest::RecordOpen { .. }) && c.proto.minor < 140 {
             anyhow::bail!("작업 기록 검색은 host 1.140 이상이 필요하다");
         }
@@ -6406,6 +6427,9 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::DesignSaved { path, commit, blob } => {
             let _ = writeln!(s, "{path} · commit {commit} · blob {blob}");
+        }
+        FrontResponse::DesignDetached { path, commit, .. } => {
+            let _ = writeln!(s, "{path} 삭제 · commit {commit}");
         }
         FrontResponse::DesignHandoff { handoff } => {
             let commit = handoff.commit.as_deref().map(|c| format!(" · commit {c}")).unwrap_or_default();

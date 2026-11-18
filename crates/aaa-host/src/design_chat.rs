@@ -4,7 +4,7 @@
 //!   한도·coordinator 요약·자동 끝내기에서 빼고(`ThreadRec::chat_only`), 쉬면 조용히 보류한다(chat_rest.rs `chat_rest_pass`).
 //! - 보낸 말은 대화 기록(host 상태 폴더 `design-chats/<프로젝트>/<저장소>/<주제>.json`, 기획 branch 기록과 따로 잠근다)에 남기고,
 //!   thread가 brief를 받은 뒤 차례로 보낸다. host가 다시 뜨면 ticker가 남은 말을 잇는다.
-//! - thread는 자기 기획 branch에만 `aaa plan save`·`aaa plan attach`로 쓴다(`design_writer`). 다른 머신 세션은 agent 중계로 쓴다.
+//! - thread는 자기 기획 branch에만 `aaa plan save`·`aaa plan attach`·`aaa plan detach`로 쓴다(`design_writer`). 다른 머신 세션은 agent 중계로 쓴다.
 //! - 쉬는 branch에 말하면 branch를 다시 연다. 버리면 대화 thread도 알림 없이 끝낸다(띄우는 중이었으면 뜬 뒤 끝낸다).
 
 use std::path::PathBuf;

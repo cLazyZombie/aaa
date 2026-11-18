@@ -171,6 +171,10 @@ fn design_chat_thread_on_the_repo_machine_saves_only_its_own_branch() {
     git(&w.repo, &["config", "user.email", "t@example.com"]);
     std::fs::create_dir_all(w.repo.join("docs")).unwrap();
     std::fs::write(w.repo.join("docs/README.md"), "# 개요\n").unwrap();
+    std::fs::write(w.repo.join("docs/fake.png"), "그림이 아닌 글").unwrap();
+    for path in ["docs/old[1].gif", "docs/old1.gif"] {
+        std::fs::write(w.repo.join(path), b"GIF89a").unwrap();
+    }
     git(&w.repo, &["add", "."]);
     git(&w.repo, &["commit", "-qm", "기획 폴더"]);
     git(&w.repo, &["push", "-q", "origin", "main"]);
@@ -264,11 +268,35 @@ doc = call('plan', 'show', 'game', 'docs/boss.md', '--branch', 'boss-dex')['doc'
 assert doc['text'] == '# 보스 도감\n<!-- aaa-id: ' + doc['id'] + ' -->\n\n## 해골 왕\n' and doc['commit'] == saved['commit'], doc
 assert any(r['repo'] == 'game' for r in call('plan', 'list')['repos'])
 assert '자기 branch' in call('plan', 'save', 'game', 'docs/x.md', '--branch', 'other', '--new', '--file', {body:?}, ok=False)
+# 같은 그림을 옮길 폴더에 먼저 첨부했고, 기존 위치를 참조하는 문서는 삭제 응답에서 찾을 수 있다.
+refs = image + '.md'
+with open(refs, 'w') as f:
+    f.write(f'# 그림 링크\n\n![옛 위치][old]\n\n[old]: ./{{name}}?v=1#preview\n')
+call('plan', 'save', 'game', 'docs/refs.md', '--branch', 'boss-dex', '--new', '--file', refs)
+def detach(branch, path):
+    return ('plan', 'detach', 'game', '--branch', branch, path)
+for branch in ['other', 'main']:
+    assert '자기 branch' in call(*detach(branch, default), ok=False)
+for outside in ['outside.png', 'docs/../outside.png', '/docs/image.png']:
+    assert '경로' in call(*detach('boss-dex', outside), ok=False)
+assert '그림만 지운다' in call(*detach('boss-dex', 'docs/boss.md'), ok=False)
+assert '그림 형식' in call(*detach('boss-dex', 'docs/fake.png'), ok=False)
+removed_literal = call(*detach('boss-dex', 'docs/old[1].gif'))
+assert removed_literal['path'] == 'docs/old[1].gif' and removed_literal['warnings'] == [], removed_literal
+p = subprocess.run([AA, *detach('boss-dex', default)], capture_output=True, text=True, check=True)
+assert p.stdout.startswith(default + ' 삭제 · commit '), p.stdout
+assert '경고:' in p.stderr and 'docs/refs.md' in p.stderr, p.stderr
+assert '기획 폴더에 없다' in call(*detach('boss-dex', default), ok=False)
+doc = call('plan', 'show', 'game', 'docs/refs.md', '--branch', 'boss-dex')['doc']
+with open(refs, 'w') as f:
+    f.write(f'# 그림 링크\n\n![새 위치]({{nested["path"].removeprefix("docs/")}})\n')
+moved = call('plan', 'save', 'game', 'docs/refs.md', '--branch', 'boss-dex', '--base', doc['blob'], '--file', refs, '--summary', '그림 경로 고침')
 # 열기·말하기·버리기는 중계 목록 밖이라 CLI가 보내지 않는다(host·agent 중계 검사는 단위 시험)
 for args in [('plan', 'new', 'game', 'other'), ('plan', 'say', 'game', 'boss-dex', 'x'), ('plan', 'discard', 'game', 'boss-dex')]:
     call(*args, ok=False)
-print('design-relay-ok', saved['commit'])
+print('design-relay-ok', moved['commit'])
 print('design-image', nested['commit'], nested['path'], default)
+print('design-delete', p.stdout.split()[-1])
 "#,
             bin = lab::BIN,
         ),
@@ -288,7 +316,7 @@ print('design-image', nested['commit'], nested['path'], default)
     let commit = output.split_whitespace().skip_while(|s| *s != "design-relay-ok").nth(1).unwrap().to_string();
     assert_eq!(
         git(&game, &["log", "-1", "--format=%s", "refs/heads/design/boss-dex"]),
-        format!("기획: 해골 왕 정리 ({thread})"),
+        format!("기획: 그림 경로 고침 ({thread})"),
         "저장한 thread가 commit 메시지에 남는다"
     );
     assert_eq!(git(&game, &["rev-parse", "HEAD"]), game_head, "저장소 checkout은 그대로");
@@ -315,6 +343,16 @@ print('design-image', nested['commit'], nested['path'], default)
         "{}",
         String::from_utf8_lossy(&claimed.stderr)
     );
+    for actor in [None, Some(pane.as_str())] {
+        let mut cmd = w.h.cmd(&["plan", "detach", "game", "--branch", "boss-dex", "docs/old1.gif"]);
+        if let Some(session) = actor {
+            cmd.env("AAA_SESSION_ID", session);
+        } else {
+            cmd.env_remove("AAA_SESSION_ID");
+        }
+        let result = cmd.capture_output().unwrap();
+        assert!(!result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+    }
     assert!(!game.join("docs/boss.md").exists());
 
     // 올린 기획 branch에서 갈라진 구현 thread는 그 기획 commit을 받는다(2-3 「main에 반영」·3단계 구현 맡기기의 바탕)
@@ -345,10 +383,22 @@ print('design-image', nested['commit'], nested['path'], default)
         "그림 commit에 작성한 thread가 남는다"
     );
     let source = std::fs::read(w.lab.root.join("sketch.png")).unwrap();
-    for path in image {
-        assert_eq!(std::fs::read(cwd.join(path)).unwrap(), source, "origin에서 받은 그림의 원본 바이트: {path}");
-        assert!(!game.join(path).exists(), "main checkout은 그대로다: {path}");
-    }
+    let new_path = image.next().unwrap();
+    let old_path = image.next().unwrap();
+    let deletion = output.lines().find_map(|line| line.strip_prefix("design-delete ")).unwrap();
+    assert_eq!(
+        git(&game, &["show", "--format=%s", "--name-status", deletion]),
+        format!("기획: 그림 {} 삭제 ({thread})\n\nD\t{old_path}", old_path.rsplit('/').next().unwrap())
+    );
+    assert_eq!(std::fs::read(cwd.join(new_path)).unwrap(), source, "origin에서 받은 그림의 원본 바이트");
+    assert!(!cwd.join(old_path).exists(), "origin 기획 branch에서 옛 그림이 없어졌다");
+    assert!(!cwd.join("docs/old[1].gif").exists());
+    assert!(cwd.join("docs/old1.gif").exists(), "비슷한 이름의 그림은 남는다");
+    assert!(game.join("docs/old[1].gif").exists(), "main에 있는 그림은 남는다");
+    assert!(!game.join(new_path).exists() && !game.join(old_path).exists(), "main checkout은 그대로다");
+    assert!(
+        std::fs::read_to_string(cwd.join("docs/refs.md")).unwrap().contains(new_path.strip_prefix("docs/").unwrap())
+    );
 
     // 2-3: 사람이 고친 문서는 다음 말 앞에 알리고, 대화 사건(새 대화·저장·올림·사람 고침)과 고친 줄 수가 branch 보기에 실린다
     let doc = w.h.ok(&["plan", "show", "game", "docs/boss.md", "--branch", "boss-dex"])["doc"].clone();

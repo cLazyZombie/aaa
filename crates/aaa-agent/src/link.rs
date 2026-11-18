@@ -216,6 +216,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "design_chat.v1".into(),
             // 기획 branch에 그림·영상을 조각으로 넘겨 commit한다(DesignAttach, t-1894 2-3)
             "design_attach.v1".into(),
+            aaa_proto::DESIGN_DETACH_FEATURE.into(),
             // 기획서 ID(t-1957): 트리 문서마다 ID 표지를 읽고(DesignTree.ids), 표지를 한 commit으로 넣는다(DesignMarkIds)
             "design_ids.v1".into(),
         ],
@@ -264,6 +265,10 @@ async fn session_state_mode(
                 .store(w.features.iter().any(|f| f == "thread_read.v1"), std::sync::atomic::Ordering::Relaxed);
             agent.host_design_attach.store(
                 w.features.iter().any(|f| f == aaa_proto::DESIGN_ATTACH_RELAY_FEATURE),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            agent.host_design_detach.store(
+                w.features.iter().any(|f| f == aaa_proto::DESIGN_DETACH_FEATURE),
                 std::sync::atomic::Ordering::Relaxed,
             );
             agent.host_image.store(w.features.iter().any(|f| f == "imagegen.v1"), std::sync::atomic::Ordering::Relaxed);

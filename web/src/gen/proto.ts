@@ -1715,7 +1715,7 @@ summary?: string, } | { "op": "design_attach", project: string, repo: string, br
 /**
  * 저장소 기준 폴더. 생략하면 저장소의 기획 폴더
  */
-dir?: string, upload: string, offset: bigint, total: bigint, data: B64, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
+dir?: string, upload: string, offset: bigint, total: bigint, data: B64, } | { "op": "design_detach", project: string, repo: string, branch: string, path: string, } | { "op": "design_say", project?: string, repo: string, branch: string, text: string, } | { "op": "design_discard", project?: string, repo: string, branch: string, } | { "op": "design_apply", project?: string, repo: string, branch: string, } | { "op": "design_apply_cancel", project?: string, repo: string, branch: string, } | { "op": "design_ids", project?: string, } | { "op": "design_mark_ids", project?: string, repo: string, } | { "op": "design_handoff", project?: string, repo: string,
 /**
  * 기획 branch 주제. 비면 main 문서에서 바로 맡긴다(FRONT_API 1.176): 표지는 구현 branch 첫 commit에 적는다
  */
@@ -1934,7 +1934,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "design_tree", repos: Array<DesignRepoView>, } | { "kind": "idea_links", links: { [key in string]: string }, } | { "kind": "design_doc", doc: DesignDoc, } | { "kind": "design_branch", branch: DesignBranchView, } | { "kind": "design_saved", path: string, commit: string, blob: string, } | { "kind": "design_detached", path: string, commit: string, warnings: Array<string>, } | { "kind": "design_ids", ids: Array<DesignIdView>, } | { "kind": "design_ids_marked", branch: string, marked: number,
 /**
  * 고른 문서 중 넣지 않은 수: 이 branch에 없거나(main보다 옛 branch) 이미 표지가 있다
  */
