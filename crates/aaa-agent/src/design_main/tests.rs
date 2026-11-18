@@ -161,7 +161,11 @@ async fn failed_check_tells_why_and_pushes_nothing() {
     assert!(e.message.contains("종료 코드 Some(3)"), "{e}");
     assert_eq!(origin_main(&origin).await, before, "올리지 않았다");
     let slot = clone.parent().unwrap().join("work-root/clone/demo-design-main");
-    assert_eq!(out(&slot, &["rev-parse", "HEAD"], b"").await, before, "자리는 origin 끝으로 되돌렸다(올리지 않은 글을 읽지 않게)");
+    assert_eq!(
+        out(&slot, &["rev-parse", "HEAD"], b"").await,
+        before,
+        "자리는 origin 끝으로 되돌렸다(올리지 않은 글을 읽지 않게)"
+    );
     assert!(!slot.join("docs/bad.md").exists());
     let (b, h) = std::fs::read_to_string(&seen)
         .unwrap()

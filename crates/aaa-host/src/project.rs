@@ -522,7 +522,9 @@ mod tests {
         assert_eq!(ProjectSettings::load_str(text).designs.len(), 1, "절대 경로 design은 없는 것");
         // 손 그림 하위 폴더(t-2002): 문서 폴더 아래 상대 경로만
         let media = |m: &str| {
-            let t = format!("schema = 1\n\n[[workspaces]]\npath = \"/work/app\"\ndesign = \"docs\"\ndesign_media = {m:?}\n");
+            let t = format!(
+                "schema = 1\n\n[[workspaces]]\npath = \"/work/app\"\ndesign = \"docs\"\ndesign_media = {m:?}\n"
+            );
             ProjectSettings::load_str(&t).designs[0].media.clone()
         };
         assert_eq!(media("mockups").as_deref(), Some("mockups"));
