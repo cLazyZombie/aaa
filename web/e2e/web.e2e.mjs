@@ -7,7 +7,7 @@
 //     --workers 1                    함께 도는 작업 수(기본: core 둘마다 하나·최대6개).
 //                                    AAA_E2E_WORKERS와 같다.
 //                                    1이면 차례로 돌며 출력을 바로 보이고, 2 이상이면 파일이 끝날 때 그 파일 출력을 한 덩어리로 찍는다
-//     --spec 07-scroll-history,09    고른 파일만(이름이나 앞 번호)
+//     --spec 07-scroll-history,09    이름·번호 접두사 또는 정확한 .mjs 파일명
 //     --grep '앞 기록'               이름이 맞는 단계만(AAA_E2E_ONLY와 같다). 그 단계가 든 파일만 띄운다
 //     --repeat 25                    고른 파일을 새 실험실로 25번(간헐 실패 재기)
 //     --list                         파일과 단계 이름만 찍는다
@@ -80,8 +80,12 @@ const specs = fs
     return { file: f, name: f.replace(/\.mjs$/, ""), steps };
   });
 const durations = JSON.parse(fs.readFileSync(durationsFile, "utf8"));
+for (const name of opt.spec ?? []) {
+  if (name.endsWith(".mjs") && !specs.some(s => s.file === name))
+    throw new Error(`요청한 E2E 파일이 없다: ${name}`);
+}
 const picked = shardSpecs(specs, opt.shard, durations)
-  .filter((s) => !opt.spec || opt.spec.some((w) => s.name.startsWith(w)))
+  .filter((s) => !opt.spec || opt.spec.some((w) => w.endsWith(".mjs") ? s.file === w : s.name.startsWith(w)))
   .filter((s) => !only || s.steps.some((n) => only.test(n)));
 if (!picked.length) throw new Error(`고른 파일이 없다(--spec ${opt.spec ?? "-"}, --grep ${grep ?? "-"}): --list로 이름을 본다`);
 

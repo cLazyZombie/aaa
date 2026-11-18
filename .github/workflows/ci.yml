@@ -179,7 +179,9 @@ jobs:
         run: bash scripts/ci-local.sh --only fmt --logs . --tee
       - name: build
         id: build
-        run: bash scripts/ci-local.sh --only build --logs . --tee
+        # Unix Rust job의 독립 CLI와 시험은 verify 의존 산출물을 공유한다.
+        # Windows 실제 설치 owner는 target/e2e/aaa.exe를 소비한다.
+        run: bash scripts/ci-local.sh --only build ${{ runner.os != 'Windows' && '--verify-cli' || '' }} --logs . --tee
       - name: clippy
         run: bash scripts/ci-local.sh --only clippy --logs . --tee
       # 유닛·프로토콜 계약 테스트와 PTY smoke(Windows는 ConPTY + Named Pipe). e2e는 Unix에서만 돈다.

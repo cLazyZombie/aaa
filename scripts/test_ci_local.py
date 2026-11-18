@@ -19,7 +19,7 @@ from scripts.fixture_secret import token
 ROOT = Path(__file__).resolve().parent.parent
 
 TOOL = r'''
-import os, pathlib, socket, sys
+import json, os, pathlib, socket, sys
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
 tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -42,7 +42,9 @@ if tool == "python3":
 elif tool == "cargo":
     stage = "build" if "--no-run" in args else args[0]
     if stage == "build":
-        binary = root / ("target/verify/aaa" if "--no-run" in args else "target/e2e/aaa")
+        profile = args[args.index("--profile") + 1]
+        print(json.dumps(args), flush=True)
+        binary = root / "target" / profile / "aaa"
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("fixture binary")
     if stage != "clippy":
@@ -242,14 +244,27 @@ class CiLocal(unittest.TestCase):
         self.assert_python_and_rust()
 
     def test_web_and_fmt_overlap_and_keep_fmt_failure(self):
-        (self.root / "scripts/ci_resources.py").write_text('print("2|0|0")\n')
+        (self.root / "scripts/ci_resources.py").write_text('print("2|1|1")\n')
         self.env.update(PREP_GATE="1", FAIL_STAGE="fmt", EXPECT_STAGES="web fmt")
-        result = self.run_ci("--only", "web,fmt,public", "--tee", gate=True,
-                             stages=("web", "fmt"), live_output=False)
+        result = self.run_ci("--tee", gate=True, stages=("web", "fmt"), live_output=False)
         self.assertEqual(result.returncode, 1, result.stdout)
         summary = (self.root / "logs/workspace-summary.tsv").read_text()
         for stage, status in (("web", "ok"), ("fmt", "FAIL"), ("public", "ok")):
             self.assertIn(f"{stage}|{status}|", summary)
+        for stage in ("build", "test", "e2e"):
+            self.assertIn(f"{stage}|건너뜀:", summary)
+            self.assertFalse((self.root / f"logs/{stage}.log").exists())
+
+    def test_rust_job_links_standalone_cli_before_precompiling_workspace(self):
+        for flags, profile in (([], "e2e"), (["--verify-cli"], "verify")):
+            result = self.run_ci("--only", "build", *flags)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            calls = (self.root / "logs/build.log").read_text().splitlines()
+            self.assertEqual([json.loads(line) for line in calls], [
+                ["build", "--profile", profile, "--locked", "-p", "aaa", "--bin", "aaa"],
+                ["test", "--profile", "verify", "--workspace", "--locked", "--no-fail-fast", "--no-run", "--timings"],
+            ])
+        self.assertEqual(self.run_ci("--only", "build,e2e", "--verify-cli").returncode, 2)
 
     def test_python_failure_waits_for_rust_and_fails_the_stage(self):
         self.assert_python_and_rust("python")

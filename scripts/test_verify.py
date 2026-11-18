@@ -54,7 +54,7 @@ class Verification(unittest.TestCase):
         self.assertEqual(data["scope"], "web")
         self.assertEqual(data["base"], self.base)
         self.assertEqual(data["commands"], [["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]])
-        for option in (("--spec", "23"), ("--package", "aaa-host")):
+        for option in (("--spec", "23"), ("--all-specs",), ("--package", "aaa-host")):
             self.assertNotEqual(self.cli("landing", "--dry-run", *option).returncode, 0)
         for key, value in (("AAA_E2E_ONLY", "one"), ("AAA_E2E_SHARD", "1/3"), ("AAA_E2E_RETRIES", "1"), ("AAA_CI_WINDOWS_INSTALL_RECHECK", "1")):
             with self.subTest(key=key):
@@ -82,6 +82,8 @@ class Verification(unittest.TestCase):
         self.assertEqual(verify.commands("landing", "full", None, []), [["bash", "scripts/ci-local.sh"]])
 
     def test_dirty_and_untracked_paths_are_counted_and_cannot_be_landed(self):
+        plan = json.loads(self.cli("landing", "--dry-run").stdout)
+        self.assertEqual((plan["scope"], plan["e2e_selection"]), ("full", "all"))
         (self.root / "web/src/a.ts").write_text("changed")
         (self.root / "new backend.rs").write_text("untracked")
         _, paths = verify.changed_paths(self.base)
@@ -97,8 +99,39 @@ class Verification(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify.commands("develop", "full", None, [])
         plan = verify.commands("develop", "full", None, ["aaa-host"])
-        self.assertEqual(plan[0], ["cargo", "test", "--profile", "verify", "--locked", "-p", "aaa-host"])
-        self.assertIn("--all-targets", plan[1])
+        self.assertEqual(plan[0], ["cargo", "fmt", "-p", "aaa-host", "--check"])
+        self.assertEqual(plan[1], ["cargo", "test", "--profile", "verify", "--locked", "-p", "aaa-host"])
+        self.assertIn("--all-targets", plan[2])
+
+    def test_changed_specs_are_development_only_and_include_untracked_files(self):
+        folder = self.root / "web/e2e/specs"
+        folder.mkdir(parents=True)
+        first = folder / "12-push.mjs"
+        first.write_text("before")
+        self.commit()
+        self.base = self.git("rev-parse", "HEAD").strip()
+        first.write_text("after")
+        (folder / "123-drafts.mjs").touch()
+        (self.root / "web/src/a.ts").write_text("new")
+        result = self.cli("develop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record, = self.root.glob("target/verification/develop-*/result.json")
+        plan = json.loads(record.read_text())
+        self.assertEqual(plan["e2e_selection"], "changed-specs")
+        self.assertEqual(plan["commands"][0][-2:], ["--spec", "12-push.mjs,123-drafts.mjs"])
+
+        self.commit()
+        for args in (("develop", "--all-specs"), ("landing",)):
+            plan = json.loads(self.cli(*args, "--dry-run").stdout)
+            self.assertEqual(plan["e2e_selection"], "all")
+            self.assertEqual(plan["commands"], [["bash", "scripts/ci-local.sh", "--only", "web,e2e,public"]])
+        plan = json.loads(self.cli("develop", "--spec", "09", "--dry-run").stdout)
+        self.assertEqual(plan["e2e_selection"], "explicit")
+        self.assertEqual(plan["commands"][0][-1], "09")
+        self.assertNotEqual(self.cli("develop", "--all-specs", AAA_E2E_ONLY="한 단계").returncode, 0)
+        first.rename(folder / "12-renamed.mjs")
+        plan = json.loads(self.cli("develop", "--dry-run").stdout)
+        self.assertEqual(plan["e2e_selection"], "all", "이동 원본이 빠지면 전수다")
 
     def test_child_failure_is_recorded_once_and_stops_without_retry(self):
         (self.root / "web/src/a.ts").write_text("new")
