@@ -251,6 +251,7 @@
 .design-hand-section { color: var(--text-dim); }
 .design-hand-why { margin-left: auto; font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; }
 .design-new .design-hand-memo { height: auto; min-height: 96px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; resize: vertical; }
+.design-hand-model-status:not(:empty) { display: block; margin-top: 6px; color: var(--text-dim); font-size: var(--fs-sm); }
 .design-new label.design-hand-check { flex-direction: row; align-items: center; gap: var(--space-2); color: var(--text); }
 .design-hand-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .design-hand .modal-footer { flex-wrap: wrap; }

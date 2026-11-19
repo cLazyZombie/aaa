@@ -117,7 +117,7 @@ export default async function () {
     git(clone, "config", "user.email", "demo@example.com");
     aaa("project", "create", "demo", "--thread-profile", "fake");
     // aaa.toml이 있으면 그것이 프로젝트 설정이다: thread profile도 여기에 둔다(대화·구현 thread가 쓴다)
-    fs.writeFileSync(`${root}/projects/demo/aaa.toml`, `schema = 1\nthread_profile = "fake"\n\n[[workspaces]]\npath = "${clone}"\nmachine = "labA"\ndesign = "docs"\ndesign_media = "mockups"\n`);
+    fs.writeFileSync(`${root}/projects/demo/aaa.toml`, `schema = 1\nthread_profile = "fake"\n\n[[workspaces]]\npath = "${clone}"\ndesign = "docs"\ndesign_media = "mockups"\n`);
     for (const [k, title] of [["work", "가호 칸 6칸"], ["wait", "나가기 통로"], ["done", "층 표 상한"]]) {
       aaa("task", "add", title, "--list", "Backlog");
       tasks[k] = aaa("task", "list").tasks.find((t) => t.title === title).short_id;
@@ -420,17 +420,61 @@ export default async function () {
   await step("구현 맡기기: 고른 계획 블록을 할 일 하나로 넘기고 표지를 main에 바로 적으며, 예약한 구현 thread는 main에서 갈라진다", async () => {
     const d = aaa("plan", "show", "app", "docs/exit.md").doc;
     save("docs/exit.md", d.text.replace("## 바뀐 것", "> [!계획]\n> **층 이벤트** — 다섯 층마다 이벤트 방.\n\n## 바뀐 것"), d.blob, "boss");
+    // 최신 트리 없이 캐시에서 연 창을 확인한다. 기다림은 응답을 풀거나 상태가 나타날 때 끝난다.
+    const fresh = Promise.withResolvers();
+    const assignable = Promise.withResolvers();
+    let modelReply = "live";
     const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, {
       hash: `#design=${encodeURIComponent("app/docs/exit.md")}`,
       init: () => localStorage.setItem("herdr-web-ui:design-chat:app", "boss"),
+      serviceWorkers: "block",
+      route: ["**/api/v1/call", async (route) => {
+        const req = route.request().postDataJSON();
+        if (req.op === "design_tree" && !req.cached) await fresh.promise;
+        if (req.op === "assignable") {
+          if (modelReply === "empty") {
+            return route.fulfill({ json: { ok: { kind: "assignable", owners: [
+              { machine: "labA", connected: true, profiles: [] },
+              { machine: "labB", connected: true, profiles: ["other-model"] },
+            ], valid: null } } });
+          }
+          if (modelReply === "failed") return route.abort("failed");
+          await assignable.promise;
+        }
+        await route.continue();
+      }],
     });
     try {
       await p.getByTestId("design-body").getByText("층 이벤트").first().waitFor();
       assert.equal(await p.getByTestId("design-handoff").count(), 3, "넘기지 않은 계획만(캠프 지도·상점 위치·층 이벤트)");
-      // 창을 연 뒤 그 문서가 바뀌면 맡기지 않는다: 창은 연 때의 판으로 보내고 host가 다시 본다
-      await p.getByTestId("design-handoff").first().click();
+      const openHandoff = () => p.getByTestId("design-handoff").first().click();
       const first = p.getByTestId("design-hand-dialog");
-      await first.waitFor();
+      const firstModel = first.getByTestId("design-hand-model");
+      const modelStatus = first.getByRole("status");
+      const closeHandoff = () => first.getByRole("button", { name: "닫기" }).click();
+      await openHandoff();
+      await modelStatus.filter({ hasText: "모델 불러오는 중" }).waitFor();
+      assert.equal(await firstModel.locator('option[value=""]').textContent(), "프로젝트 기본 · labA");
+      assignable.resolve();
+      await firstModel.locator('option[value="fake"]').waitFor({ state: "attached" });
+      assert.deepEqual(await firstModel.locator("option").evaluateAll((options) => options.map((option) => option.value)), ["", "fake"]);
+      await closeHandoff();
+
+      modelReply = "empty";
+      await openHandoff();
+      await modelStatus.filter({ hasText: "선택할 수 있는 모델이 없습니다" }).waitFor();
+      assert.equal(await firstModel.locator("option").count(), 1, "다른 머신의 모델을 고르지 않는다");
+      await closeHandoff();
+
+      modelReply = "failed";
+      await openHandoff();
+      await modelStatus.filter({ hasText: "모델 목록을 불러오지 못했습니다" }).waitFor();
+      await closeHandoff();
+
+      modelReply = "live";
+      fresh.resolve();
+      // 창을 연 뒤 그 문서가 바뀌면 맡기지 않는다: 창은 연 때의 판으로 보내고 host가 다시 본다
+      await openHandoff();
       await p.getByTestId("design-hand-main").waitFor();
       assert.match(await p.getByTestId("design-hand-main").textContent(), /main에 바로 저장/);
       const now = aaa("plan", "show", "app", "docs/exit.md").doc;
@@ -454,11 +498,15 @@ export default async function () {
       const title = "상한 — 캠프 지도 · 층 이벤트";
       assert.equal(await p.getByTestId("design-hand-title").inputValue(), title);
       assert.ok(await p.getByTestId("design-hand-reserve").isChecked(), "예약이 기본(q-3957 2A)");
+      await dialog.getByTestId("design-hand-model").selectOption("fake");
       const before = mainHead();
       await p.getByTestId("design-hand-submit").click();
       await dialog.waitFor({ state: "detached" });
-      const id = aaa("task", "list").tasks.find((t) => t.title === title)?.short_id;
+      const task = aaa("task", "list").tasks.find((t) => t.title === title);
+      const id = task?.short_id;
       assert.ok(id, "할 일 하나");
+      assert.equal(task.profile, "fake");
+      assert.equal(task.machine, "labA");
       // 고른 두 블록 표지에 같은 d-ID를 적어 main에 바로 저장했다
       const text = onMain("docs/exit.md");
       assert.ok(text.includes(`> [!계획] ${id}\n> **캠프 지도**`) && text.includes(`> [!계획] ${id}\n> **층 이벤트**`), text);
@@ -482,6 +530,8 @@ export default async function () {
       git(tree, "merge-base", "--is-ancestor", mainHead(), "HEAD");
       Object.assign(handed, { id, thread });
     } finally {
+      fresh.resolve();
+      assignable.resolve();
       await p.context().close();
     }
   });
