@@ -211,16 +211,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "model_catalog.v1".into(),
             // 기획: 저장소 기획 폴더를 origin 기본 branch의 git 객체에서 읽는다(DesignTree·DesignRead·DesignFile, t-1894)
             "design.v1".into(),
-            "design_write.v1".into(),
-            // 기획 대화 thread 세션의 자기 기획 branch 저장을 host에 원격 전달한다(thread_read에 DesignSave, t-1894 2-2)
-            "design_chat.v1".into(),
-            // 기획 branch에 그림·영상을 조각으로 넘겨 commit한다(DesignAttach, t-1894 2-3)
-            "design_attach.v1".into(),
-            aaa_proto::DESIGN_DETACH_FEATURE.into(),
-            // 기획서 ID(t-1957): 트리 문서마다 ID 표지를 읽고(DesignTree.ids), 표지를 한 commit으로 넣는다(DesignMarkIds)
             "design_ids.v1".into(),
-            // 기획 main 직접 저장(t-2002): 기획 쓰기를 origin 기본 branch에 바로 commit·push하고 문서 이력을 읽는다(DesignMain*·DesignLog)
-            aaa_proto::DESIGN_MAIN_FEATURE.into(),
+            "design_log.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

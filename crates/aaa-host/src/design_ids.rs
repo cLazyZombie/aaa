@@ -1,21 +1,10 @@
-//! 기획서 ID(`k-NNNN`, t-1957). 정본은 문서 첫 `# ` 제목 아래 숨은 표지 `<!-- aaa-id: k-NNNN -->`이고, 번호는 host 전역 원장
-//! (`db::design_ids`)이 낸다. main 트리를 읽을 때마다 표지와 원장을 맞추고(옮기기·이름 바꾸기는 표지가 따라간다), 표지가 없는
-//! 문서는 경로로 번호를 잇는다. 표지는 aaa가 저장할 때(웹 「고치기」·`aaa plan save`) 넣고, 이미 있는 문서는 「한 번에 달기」가
-//! main에 한 commit으로 넣는다(t-2002: 저장소 문서 검사를 지난다).
-use std::sync::Arc;
-
-use aaa_proto::{
-    AgentRequest, AgentResponse, DESIGN_MAX_TEXT, DesignIdMark, DesignTree, DeviceRole, ErrorBody, ErrorCode,
-    FrontResponse,
+//! 기획 문서 ID와 main 트리를 맞춘다.
+use crate::{
+    Host,
+    db::{DesignIdDoc, design_id_text},
+    orch::internal,
 };
-
-use crate::db::{DesignIdDoc, design_id_text};
-use crate::orch::internal;
-use crate::{Host, err};
-
-/// 트리 문서마다 표지를 읽고 표지를 넣는다(DesignTree.ids·DesignMarkIds)
-pub(crate) const IDS_FEATURE: &str = "design_ids.v1";
-
+use aaa_proto::{DesignTree, ErrorBody, FrontResponse};
 impl Host {
     /// main 트리의 문서마다 원장과 맞춘 ID를 싣는다. 옛 agent의 트리(`ids` 거짓)는 표지를 모르므로 번호를 주지 않는다
     pub(crate) fn design_ids_fill(&self, project: &str, repo: &str, tree: &mut DesignTree) {
@@ -56,112 +45,10 @@ impl Host {
             }
         }
     }
-
-    /// 저장할 글에 표지가 없으면 넣는다(Markdown 문서만, `vendor/` 아래·상한을 넘으면 그대로). 번호는 main의 옛 글에 있던
-    /// 표지(표지 줄을 지우고 저장했다), 없으면 그 경로의 아직 표지로 적히지 않은 원장 번호, 없으면 새 번호다
-    pub(crate) async fn design_text_with_id(
-        &self,
-        project: &str,
-        repo: &str,
-        path: &str,
-        existing: bool,
-        text: String,
-    ) -> String {
-        let markdown = std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
-        if !markdown || aaa_proto::design_id_unmarked_path(path) || aaa_proto::design_text_id(&text).is_some() {
-            return text;
-        }
-        let before = if existing {
-            match self.design_read(project, repo, path, None).await {
-                Ok(FrontResponse::DesignDoc { doc }) => aaa_proto::design_text_id(&doc.text),
-                _ => None,
-            }
-        } else {
-            None
-        };
-        let id = match before {
-            Some(id) => id,
-            None => match self.db.design_id_for_path(project, repo, path) {
-                Ok(n) => design_id_text(n),
-                Err(e) => {
-                    tracing::warn!(project, repo, path, error = %format!("{e:#}"), "기획서 ID 번호를 내지 못해 표지 없이 저장한다");
-                    return text;
-                }
-            },
-        };
-        let out = aaa_proto::design_put_id(&text, &id);
-        if out.len() as u64 > DESIGN_MAX_TEXT { text } else { out }
-    }
-
     /// 지금 main 트리에 있는 문서의 ID(원장에서, agent를 거치지 않는다)
     pub(crate) fn design_ids_list(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         let ids = self.db.design_ids_present(project).map_err(|e| internal(format!("{e:#}")))?;
         Ok(FrontResponse::DesignIds { ids })
-    }
-
-    /// 한 번에 달기(사람만): main 트리를 새로 읽어 표지가 없는 문서를 고르고, 그 문서들에 표지를 main에 한 commit으로 넣는다
-    /// (저장소 문서 검사를 지난다). 다시 불러도 이미 단 문서는 건너뛴다
-    pub(crate) async fn design_mark_ids(
-        self: &Arc<Self>,
-        role: DeviceRole,
-        actor: &str,
-        project: &str,
-        repo: &str,
-    ) -> Result<FrontResponse, ErrorBody> {
-        let by = self.design_writer(role, actor, project, None)?;
-        let (target, mid) = self.design_target(project, repo)?;
-        if !self.machine_feature(&mid, IDS_FEATURE) {
-            return Err(err(
-                ErrorCode::Unavailable,
-                "그 머신 agent가 기획서 ID를 아직 모른다(agent binary를 바꿔야 한다)",
-            ));
-        }
-        let conn = self.design_main_conn(&mid)?;
-        let folder = target.folder.clone().unwrap_or_default();
-        let view = self.design_repo(project, target.clone()).await;
-        let tree = match (view.tree, view.error) {
-            (Some(tree), None) if tree.ids => tree,
-            (_, Some(e)) => return Err(err(ErrorCode::Unavailable, format!("기획 트리를 새로 읽지 못했다: {e}"))),
-            _ => return Err(err(ErrorCode::Unavailable, "기획 트리의 ID를 읽지 못했다")),
-        };
-        // 표지가 없는 문서만(복사·다른 저장소 표지는 고쳐 쓰지 않으므로 고르지 않는다)
-        let ids: Vec<DesignIdMark> = tree
-            .docs
-            .iter()
-            .filter(|d| d.id_file.is_none() && !aaa_proto::design_id_unmarked_path(&d.path))
-            .filter_map(|d| d.id.clone().map(|id| DesignIdMark { path: d.path.clone(), id }))
-            .collect();
-        if ids.is_empty() {
-            return Ok(FrontResponse::DesignIdsMarked { branch: "main".into(), marked: 0, skipped: 0, commit: None });
-        }
-        let count = ids.len();
-        let req = AgentRequest::DesignMainMarkIds {
-            project: project.to_string(),
-            repo: target.path.clone(),
-            folder,
-            ids,
-            message: format!("기획: 기획서 ID 표지 {count}개 ({by})"),
-            check: target.check.clone(),
-        };
-        let reply = {
-            let lock = self.design_main_lock(project, &target.name);
-            let _one = lock.lock().await;
-            conn.request_timeout(req, crate::design_branch::MAIN_WAIT).await?
-        };
-        let AgentResponse::DesignIdsMarked { commit, marked } = reply else {
-            return Err(err(ErrorCode::Internal, "예상하지 못한 응답"));
-        };
-        if commit.is_some() {
-            Box::pin(self.design_repo(project, target.clone())).await;
-        }
-        self.db.audit(
-            actor,
-            "design_mark_ids",
-            &format!("{project} {} main {} {}", target.name, marked.len(), commit.as_deref().unwrap_or("-")),
-        );
-        // 고른 문서 중 그 사이 main에서 옮겼거나 지웠거나 이미 단 문서
-        let skipped = (count - marked.len()) as u32;
-        Ok(FrontResponse::DesignIdsMarked { branch: "main".into(), marked: marked.len() as u32, skipped, commit })
     }
 }

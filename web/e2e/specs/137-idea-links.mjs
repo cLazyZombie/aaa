@@ -93,25 +93,4 @@ export default async function () {
       await wk?.close();
     }
   });
-
-  // 옛 137(옮기기)이 보던 t-1950 계약을 옮겼다: 대화의 commit이 모두 main에 들어가면 「main에 반영」 대신 「main에 들어감」
-  await step("기획 대화 저장은 바로 main에 들어가고 「main에 반영」·「main에 들어감」이 없다(t-2002)", async () => {
-    aaa("plan", "new", "app", "camp", "--title", "캠프 게시판");
-    const blob = aaa("plan", "show", "app", "docs/camp.md").doc.blob;
-    fs.writeFileSync(`${root}/camp.md`, "# 캠프 게시판\n\n의뢰는 셋 중에서 고른다. 게시판은 문 옆에 선다.\n");
-    const saved = aaa("plan", "save", "app", "docs/camp.md", "--branch", "camp", "--base", blob, "--file", `${root}/camp.md`);
-    assert.equal(git(`${root}/app`, "ls-remote", "origin", "refs/heads/main").split(/\s/)[0], saved.commit, "저장이 곧 origin main");
-    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 844 }, {
-      hash: `#design=${encodeURIComponent("app/docs/camp.md")}`,
-      init: () => localStorage.setItem("herdr-web-ui:design-chat:app", "camp"),
-    });
-    try {
-      await p.getByTestId("design-body").getByText("게시판은 문 옆에 선다.").waitFor();
-      await p.getByTestId("design-pick").getByText("캠프 게시판").waitFor();
-      assert.equal(await p.getByTestId("design-apply").count(), 0);
-      assert.equal(await p.getByTestId("design-merged").count(), 0);
-    } finally {
-      await p.context().close();
-    }
-  });
 }

@@ -1,8 +1,4 @@
-//! 구현 맡기기(t-1894 3-2, 확정 계획 §4, t-2002 q-4224 1A): main 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
-//! 할 일을 만들고, 고른 블록 표지에 그 d-ID를 적어 main에 바로 저장하고(저장소 검사 포함), 고르면 예약한다.
-//! 그 할 일의 thread는 어느 길로 시작하든(`apply_from_task`) main에서 갈라지고 brief가 맡긴 자리를 알린다.
-//! 옛 기록(t-2002 전: 기획 branch 맡김, 표지 없이 글로 찾는 main 맡김)도 읽는다.
-//! 맡김 기록은 host 상태 폴더 `design-handoffs/<프로젝트>/<d-ID>.json`에 둔다(TASKS.md에 쓰면 예약한 블록이 바뀐다).
+//! 기획 블록을 구현 할 일로 넘긴다. 선택한 원문을 기록하고 구현 branch의 brief에 담는다.
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,9 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::orch::{StartArgs, bad, internal};
 use crate::{Host, err, task_edit, tasks};
 
-/// 넘긴 블록 고침을 막 뜬 구현 thread가 brief를 받을 때까지 기다리는 한도
-const RELAY_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
-
 /// 맡김 기록을 쓴 뒤 표지 commit까지 기다리는 한도: 넘으면 끝나지 못한 맡김으로 본다. main 쓰기(`MAIN_WAIT` 20분)와 앞
 /// 저장의 차례보다 길게 둔다(t-2002)
 const HANDOFF_PENDING_MS: u64 = 30 * 60 * 1000;
@@ -22,7 +15,6 @@ const HANDOFF_PENDING_MS: u64 = 30 * 60 * 1000;
 /// 웹 창에서 고른 것
 pub(crate) struct Handoff {
     pub repo: String,
-    pub slug: String,
     pub path: String,
     pub blob: String,
     pub blocks: Vec<DesignPick>,
@@ -83,7 +75,7 @@ impl HandoffRec {
         format!(
             "## 기획에서 맡긴 일\n\n기획: `{}`{sections}({}, main 문서에 표지 `[!계획] {}`가 있다). \
              이 branch에서 그 블록들의 표지를 풀고 본문을 실제 구현대로 고친다. 바뀐 결정과 실제 화면도 반영하고 다른 블록은 \
-             건드리지 않는다. 그 블록이 바뀌면 host가 알린다: origin main을 합쳐 반영한다.\n",
+             건드리지 않는다. origin main에서 그 블록이 바뀌면 새 내용을 확인한다.\n",
             self.path, self.task, self.task
         )
     }
@@ -137,32 +129,6 @@ fn fenced(block: &str) -> String {
     let longest = block.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest.max(2) + 1);
     format!("{fence}\n{block}\n{fence}")
-}
-
-/// 넘긴 블록 중 바뀐 것(전에 알린 글에 없는 블록)만, 지금 차례대로
-fn changed_blocks(before: &[String], now: &[String]) -> Vec<String> {
-    now.iter().filter(|b| !before.contains(b)).cloned().collect()
-}
-
-/// 구현 thread에 보낼 고침 글: 바뀐 블록(지금 글)과, 블록 수가 줄었으면 빠진 수. 차례만 바뀌었으면 None.
-/// 고친 블록의 옛 글은 「빠진 블록」이 아니다(고침은 바뀐 블록으로만 적는다)
-fn relay_body(before: &[String], now: &[String]) -> Option<String> {
-    let changed = changed_blocks(before, now);
-    let dropped = before.len().saturating_sub(now.len());
-    if changed.is_empty() && dropped == 0 {
-        return None;
-    }
-    let mut body = String::new();
-    if !changed.is_empty() {
-        body.push_str(&format!("바뀐 블록:\n\n{}\n", changed.join("\n\n")));
-    }
-    if dropped > 0 {
-        if !body.is_empty() {
-            body.push('\n');
-        }
-        body.push_str(&format!("이 할 일의 블록 {dropped}개는 표지가 없어져 빠졌다(기획 문서에서 확인한다).\n"));
-    }
-    Some(body)
 }
 
 impl Host {
@@ -260,6 +226,7 @@ impl Host {
     }
 
     /// 버린 기획 branch(그 만든 때)에서 맡긴 기록을 지운다
+    #[cfg(test)]
     pub(crate) fn design_handoff_forget(&self, project: &str, repo: &str, slug: &str, created_ms: u64) {
         let Ok(dir) = self.design_handoff_dir(project) else { return };
         let Ok(entries) = std::fs::read_dir(&dir) else { return };
@@ -272,14 +239,6 @@ impl Host {
             if rec.repo == repo && rec.slug == slug && rec.branch_created_ms == created_ms {
                 aaa_common::diagnostic::ignored(std::fs::remove_file(&path), "맡김 기록 지우기");
             }
-        }
-    }
-
-    fn design_handoff_remove(&self, project: &str, task: &str) {
-        if let Ok(dir) = self.design_handoff_dir(project)
-            && task_id_ok(task)
-        {
-            aaa_common::diagnostic::ignored(std::fs::remove_file(dir.join(format!("{task}.json"))), "맡김 기록 지우기");
         }
     }
 
@@ -331,142 +290,7 @@ impl Host {
             .collect()
     }
 
-    /// main 저장 뒤(사람·대화 thread): 맡긴 블록의 글이 바뀌었으면 그 할 일의 구현 thread에 바뀐 글을 보낸다(확정 계획 §4).
-    /// 할 일마다 한 번에 하나씩, 잠금 안에서 main의 지금 글을 다시 읽어 견준다(저장이 겹쳐도 옛 글을 나중에 보내지 않는다).
-    /// 그 저장의 대화(`slug`, 비면 없음)에 「넘긴 블록 고침」 사건을 남긴다
-    pub(crate) async fn design_handoff_relay(
-        self: &Arc<Self>,
-        project: &str,
-        repo: &str,
-        slug: &str,
-        path: &str,
-        commit: &str,
-    ) {
-        let tasks: Vec<String> = self
-            .design_handoff_records(project)
-            .into_iter()
-            .filter(|r| r.main && r.marked_ms > 0 && r.repo == repo && r.path == path)
-            .map(|r| r.task)
-            .collect();
-        for task in tasks {
-            let lock = self.thread_op_lock(project, &format!("design-relay:{task}"));
-            let _one = lock.lock().await;
-            let Some(rec) = self.design_handoff_load(project, &task) else { continue };
-            let Ok(FrontResponse::DesignDoc { doc }) = self.design_read(project, repo, path, None).await else {
-                continue;
-            };
-            let now: Vec<String> = aaa_proto::design_marks(&doc.text)
-                .iter()
-                .filter(|m| m.task.as_deref() == Some(task.as_str()))
-                .map(|m| aaa_proto::design_mark_text(&doc.text, m))
-                .collect();
-            // 표지가 모두 빠졌으면(구현됨·되돌림) 알릴 블록이 없다
-            if now.is_empty() || now == rec.blocks {
-                continue;
-            }
-            let thread = self
-                .task_board(project)
-                .ok()
-                .and_then(|b| b.tasks.into_iter().find(|t| t.short_id.as_deref() == Some(task.as_str())))
-                .and_then(|t| t.thread)
-                .filter(|id| {
-                    self.load(project, id).is_ok_and(|r| {
-                        matches!(
-                            r.status,
-                            aaa_proto::ThreadStatus::Open
-                                | aaa_proto::ThreadStatus::Starting
-                                | aaa_proto::ThreadStatus::Parked
-                        )
-                    })
-                });
-            let Some(thread) = thread else {
-                // 아직 thread가 없으면 main에서 갈라지므로 바뀐 글을 그대로 받는다
-                self.design_handoff_blocks(project, &task, now);
-                continue;
-            };
-            let Some(body) = relay_body(&rec.blocks, &now) else {
-                // 차례만 바뀌었다
-                self.design_handoff_blocks(project, &task, now);
-                continue;
-            };
-            let msg = format!(
-                "main 문서에서 맡긴 블록({task})이 바뀌었다(`{path}`, commit {}). 자기 branch에 origin main을 합쳐 반영한다.\n\n{}",
-                &doc.commit[..doc.commit.len().min(7)],
-                capped(&body)
-            );
-            let note = match self.design_handoff_send(project, &thread, msg).await {
-                Some(aaa_proto::DeliveryState::Unknown) => format!("{task} → {thread}(받았는지 모름)"),
-                Some(_) => format!("{task} → {thread}"),
-                None => {
-                    // 보내지 못했다(보류가 풀리지 않음·시한): 기록을 두어 다음 저장에 다시 본다. 대화에 남겨 사람이 안다
-                    let note = format!("{task} → {thread}(보내지 못함)");
-                    if !slug.is_empty() {
-                        self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
-                    }
-                    continue;
-                }
-            };
-            // 받았는지 모르는 것도 다시 보내지 않는다(같은 말이 두 번 갈 수 있다)
-            self.design_handoff_blocks(project, &task, now);
-            if !slug.is_empty() {
-                self.design_chat_event(project, repo, slug, "relay", &note, Some(commit.to_string())).await;
-            }
-        }
-    }
-
-    /// 넘긴 블록의 지금 글을 기록에 둔다(알린 뒤, 또는 thread가 없어 알릴 것이 없을 때). 그 할 일의 relay 잠금 안에서 부른다
-    fn design_handoff_blocks(&self, project: &str, task: &str, blocks: Vec<String>) {
-        if let Some(mut rec) = self.design_handoff_load(project, task) {
-            rec.blocks = blocks;
-            aaa_common::diagnostic::ignored(self.design_handoff_store(project, &rec), "다음 고침에 다시 알린다");
-        }
-    }
-
-    /// 구현 thread에 고침을 보낸다. 뜨는 중이거나 보류된 thread, 막 떠 brief를 아직 받지 않은 thread는 열리고 brief를 받은 뒤에
-    /// 보낸다(대화 말 보내기와 같이 thread 사건마다 다시 본다, 10분까지). 보냈으면 그 전달 상태, 못 보냈으면 None
-    async fn design_handoff_send(
-        self: &Arc<Self>,
-        project: &str,
-        thread: &str,
-        msg: String,
-    ) -> Option<aaa_proto::DeliveryState> {
-        let mut events = self.thread_events.subscribe();
-        let deadline = tokio::time::Instant::now() + RELAY_WAIT;
-        loop {
-            match self.load(project, thread) {
-                Ok(r) if r.status == aaa_proto::ThreadStatus::Open && r.brief == aaa_proto::BriefState::Delivered => {
-                    match self
-                        .thread_message(project, thread, msg.clone(), aaa_proto::MessageMode::Queue, "design")
-                        .await
-                    {
-                        Ok(m) => return Some(m.state),
-                        // 확인창·쓰던 글 같은 막힘: 다음 thread 사건 뒤에 다시 본다
-                        Err(e) => tracing::info!(project, thread, "넘긴 블록 고침을 아직 보내지 못했다: {}", e.message),
-                    }
-                }
-                Ok(r)
-                    if matches!(
-                        r.status,
-                        aaa_proto::ThreadStatus::Open
-                            | aaa_proto::ThreadStatus::Starting
-                            | aaa_proto::ThreadStatus::Parked
-                    ) => {}
-                _ => return None,
-            }
-            match tokio::time::timeout_at(deadline, events.recv()).await {
-                Ok(Ok(_)) | Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
-                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => return None,
-                Err(_) => {
-                    tracing::warn!(project, thread, "넘긴 블록 고침을 {}초 안에 보내지 못했다", RELAY_WAIT.as_secs());
-                    return None;
-                }
-            }
-        }
-    }
-
-    /// 구현 맡기기(사람만, t-2002 q-4224 1A): main 문서를 읽어 고른 블록을 대조하고, 할 일·맡김 기록을 만든 뒤 고른 블록 표지에
-    /// d-ID를 적어 main에 저장한다(저장소 검사 포함). 저장하지 못하면 만든 할 일과 기록을 지우고 거절한다. 예약 실패는 경고다.
-    /// `h.slug`는 사건을 남길 기획 대화다(비면 없음)
+    /// 사용자가 읽은 판과 블록을 확인한 뒤 할 일을 만들고 선택에 따라 시작을 예약한다.
     pub(crate) async fn design_handoff(
         self: &Arc<Self>,
         role: DeviceRole,
@@ -474,11 +298,7 @@ impl Host {
         project: &str,
         h: Handoff,
     ) -> Result<FrontResponse, ErrorBody> {
-        // 사람만 맡긴다(thread·coordinator 세션은 기획에 쓰지 않는다)
-        if actor.starts_with("worker:") {
-            return Err(err(ErrorCode::Forbidden, "구현 맡기기는 사람이 한다"));
-        }
-        self.design_writer(role, actor, project, None)?;
+        self.design_handoff_authorize(role, actor)?;
         let (target, mid) = self.design_target(project, &h.repo)?;
         let title = h.title.split_whitespace().collect::<Vec<_>>().join(" ");
         if title.is_empty() {
@@ -532,7 +352,7 @@ impl Host {
         let task =
             self.design_handoff_task(project, actor, &target.name, &title, h.profile.as_deref(), machine, memo).await?;
         let id = task.short_id.clone().ok_or_else(|| internal("새 할 일에 표시 번호가 없다"))?;
-        let mut rec = HandoffRec {
+        let rec = HandoffRec {
             task: id.clone(),
             task_id: task.id.clone().unwrap_or_default(),
             repo: target.name.clone(),
@@ -541,57 +361,20 @@ impl Host {
             by: actor.to_string(),
             created_ms: aaa_common::util::now_ms(),
             main: true,
+            commit: Some(doc.commit),
+            blocks: picks.iter().map(|&p| aaa_proto::design_mark_text(&doc.text, &marks[p])).collect(),
             ..Default::default()
         };
-        // 기록을 표지 저장보다 먼저 둔다: 그 사이 누가 시작해도 맡긴 자리를 안다(표지를 적기 전에는 미룬다)
-        let stored = self.design_handoff_store(project, &rec);
-        let marked = aaa_proto::design_mark_tasks(&doc.text, &picks, &id).map_err(internal)?;
-        let saved = match &stored {
-            Ok(()) => {
-                Box::pin(self.design_save_event(
-                    role,
-                    actor,
-                    project,
-                    &h.repo,
-                    &h.slug,
-                    (&doc.path, Some(h.blob.clone()), marked.clone()),
-                    Vec::new(),
-                    Some(format!("구현 맡김 {id}")),
-                    Some(("handoff", format!("{id} · 블록 {}", picks.len()))),
-                ))
-                .await
-            }
-            Err(e) => Err(e.clone()),
-        };
-        let commit = match saved {
-            Ok(FrontResponse::DesignSaved { commit, .. }) => commit,
-            other => {
-                // 표지 없는 할 일은 맡긴 것이 아니다: 지우고 거절한다(다시 맡길 수 있게)
-                let why = match other {
-                    Err(e) => e.message,
-                    Ok(_) => "예상하지 못한 응답".into(),
-                };
-                self.design_handoff_remove(project, &id);
-                let left = match self.design_handoff_task_remove(project, actor, &task).await {
-                    Ok(()) => String::new(),
-                    Err(e) => format!(" 만든 할 일 {id}도 지우지 못했다: {}", e.message),
-                };
-                return Err(err(ErrorCode::Conflict, format!("표지를 main에 적지 못해 맡기지 않았다: {why}.{left}")));
-            }
-        };
-        rec.commit = Some(commit.clone());
-        rec.marked_ms = aaa_common::util::now_ms();
-        rec.pushed = true;
-        let after = aaa_proto::design_marks(&marked);
-        rec.blocks = after
-            .iter()
-            .filter(|m| m.task.as_deref() == Some(id.as_str()))
-            .map(|m| aaa_proto::design_mark_text(&marked, m))
-            .collect();
-        let mut warnings: Vec<String> = Vec::new();
         if let Err(e) = self.design_handoff_store(project, &rec) {
-            warnings.push(format!("맡김 기록을 쓰지 못했다({}): 구현 thread brief에 맡긴 자리가 빠진다", e.message));
+            if let Err(cleanup) = self.design_handoff_task_remove(project, actor, &task).await {
+                return Err(internal(format!(
+                    "맡김 기록 저장 실패: {}. 할 일 {id} 정리 실패: {}",
+                    e.message, cleanup.message
+                )));
+            }
+            return Err(e);
         }
+        let mut warnings = Vec::new();
         let mut reserved = false;
         if h.reserve {
             match self.design_handoff_reserve(project, actor, &task).await {
@@ -606,7 +389,7 @@ impl Host {
             &format!("{project} {} main {} {id} 블록 {} 예약 {reserved}", target.name, doc.path, picks.len()),
         );
         Ok(FrontResponse::DesignHandoff {
-            handoff: DesignHandoffView { task: id, commit: Some(commit), pushed: true, reserved, warning },
+            handoff: DesignHandoffView { task: id, commit: None, pushed: false, reserved, warning },
         })
     }
 
@@ -967,35 +750,6 @@ mod tests {
     }
 
     /// 고침 글: 고친 블록은 바뀐 블록으로만, 빠짐은 줄어든 수로만, 차례만 바뀌면 보내지 않는다
-    #[test]
-    fn relay_body_names_edits_and_drops_without_listing_old_text() {
-        let (a, b, b2, c) = (
-            "> [!계획] d-1\n> A".to_string(),
-            "> [!계획] d-1\n> B".to_string(),
-            "> [!계획] d-1\n> B2".to_string(),
-            "> [!계획] d-1\n> C".to_string(),
-        );
-        let edit = relay_body(&[a.clone(), b.clone()], &[a.clone(), b2.clone()]).unwrap();
-        assert!(
-            edit.contains(&b2) && !edit.contains("> B\n") && !edit.ends_with("> B") && !edit.contains("빠졌다"),
-            "{edit}"
-        );
-        let drop = relay_body(&[a.clone(), b.clone()], std::slice::from_ref(&a)).unwrap();
-        assert!(drop.contains("블록 1개는 표지가 없어져 빠졌다") && !drop.contains("바뀐 블록"), "{drop}");
-        assert_eq!(relay_body(&[a.clone(), b.clone()], &[b.clone(), a.clone()]), None, "차례만 바뀜");
-        let both = relay_body(&[a.clone(), b.clone(), c.clone()], &[a.clone(), b2.clone()]).unwrap();
-        assert!(both.contains(&b2) && both.contains("블록 1개는"), "{both}");
-    }
-
-    #[test]
-    fn only_changed_blocks_are_relayed() {
-        let before = vec!["> [!계획] d-0006\n> 100층".to_string(), "> [!계획] d-0006\n> 층 이벤트".to_string()];
-        let now =
-            vec!["> [!계획] d-0006\n> 100층".to_string(), "> [!계획] d-0006\n> 층 이벤트(보스 층 제외)".to_string()];
-        assert_eq!(changed_blocks(&before, &now), vec![now[1].clone()]);
-        assert!(changed_blocks(&now, &now).is_empty());
-    }
-
     #[test]
     fn record_names_and_note_lines() {
         assert!(task_id_ok("d-0005") && task_id_ok("d-12345"));

@@ -8646,6 +8646,8 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 
 ### 8.567 기획 main 직접 저장(t-2002)
 
+이 절은 지난 동작의 기록이다. 현재 편집은 [기획서 편집과 검토](usage.md#기획)를 따른다.
+
 사용자 요청(11-18): 기획서를 매번 branch로 고치고 다시 병합하는 흐름이 불편하다. 결정(q-4213~q-4218 1A 2A 3A 4A 5B 6A, q-4224 1A, 웹 시안 q-4227 1A): 저장마다 바로 origin main에 commit·push, 대화 thread 저장도 바로 main, 저장소 finish는 기획 문서만 앞선 main을 다시 검증 없이 합침(pt t-2004·rc t-2005), 저장마다 문서 검사·실패면 저장 거절, pt 손 그림은 전용 폴더, 웹 이력·되돌리기, 구현 맡기기 표지는 main에 바로. §8.565의 「기획 branch」·「main에 반영」(2-1·2-3)·반영 예약(t-1955)·쉼을 대신한다. 계획과 근거는 thread 보고(t-2002 library/plan.md)에 있다. 참고: Decap CMS(MIT)의 `publish_mode: simple`(저장마다 기본 branch에 commit)과 `editorial_workflow`(글마다 branch·PR)의 구분을 따르고 코드는 가져오지 않았다.
 
 - **agent `design_main.v1`**(AGENT_LINK 1.11의 선택 기능, 새 요청 종류라 옛 agent는 모른다고 거절한다: 옛 요청에 표지를 더하면 옛 agent가 조용히 기획 branch에 쓴다): `DesignMainOpen`(저장소·프로젝트마다 「main 기획 자리」 `<작업 root>/<저장소>/<프로젝트>-design-main`을 detached로 만들거나 origin 기본 branch 끝으로 맞춘다, 휴대용 작업 root면 잠근다, 대화 thread가 읽는다)·`DesignMainStage`(그림 조각을 상태 폴더에 모아 sha256 확인)·`DesignMainWrite`(파일 여럿 한 commit: 받기 → `checkout --detach --force`·`clean -fd`로 맞춤 → 파일마다 기준 blob 비교, 다르면 Stale → 쓰기·지우기 → `commit --no-verify` → 검사(`{base}`·`{head}` 바꿈, 실패면 stderr 앞 2KiB를 까닭으로) → force 없이 `push --porcelain`. non-fast-forward만 새 끝에서 처음부터 다시(`DESIGN_MAIN_TRIES` 3), 거절 까닭은 porcelain 상태 줄로만 가른다(stderr·첫 줄에 원격 주소가 섞인다). 올리면 추적 ref를 옮긴다)·`DesignMainMarkIds`(같은 절차로 ID 표지)·`DesignLog`(`log --first-parent`, 새것부터 100개, 커밋 꼬리 `기획: <요약> (<누가>)`로 누가). 조각으로 넘긴 그림은 같은 내용이 이미 있으면 바뀐 것이 없다. 기준 판 없는 지우기는 있는 파일을 지운다(그림 지우기).

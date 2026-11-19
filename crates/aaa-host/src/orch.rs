@@ -1662,7 +1662,20 @@ impl Host {
             .collect();
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
-        let guide = if r.design.is_some() { crate::brief_text::DESIGN_GUIDE } else { THREAD_GUIDE }.to_string();
+        let mut guide = THREAD_GUIDE.to_string();
+        if let Some(repo) = r.repo.as_deref().map(crate::brief_text::repo_leaf)
+            && let Ok(targets) = self.design_targets(&r.project)
+            && let Some(target) = targets.iter().find(|t| t.name == repo && t.folder.is_some())
+        {
+            guide.push_str("\n## 기획 문서 편집과 착지\n");
+            guide.push_str("기획 문서를 고치면 저장소 루트에서 `aaa plan preview <문서 경로> --base <요청 기준 commit> --output <library 아래 새 폴더>`를 실행하고 index.html을 보고에 연결한다. 검토한 판을 사용자가 승인한 뒤 일반 착지로 진행한다. 충돌로 문서 내용이 바뀌면 다시 검수한다. 배포는 따로 묻는다.\n");
+            if let Some(media) = &target.media {
+                guide.push_str(&format!(
+                    "새 손 그림·GIF는 문서 폴더 아래 `{media}`에 두고 착지할 때 상대 링크와 자료를 확인한다.\n"
+                ));
+            }
+            guide.push_str(&format!("착지 창의 최종 통합 worktree에서 `aaa verify -- aaa plan check <문서 경로> --base <착지 시작 main SHA> --head <최종 통합 SHA> --command-json <아래 JSON 배열을 인자 하나로>`를 실행한다. design_media가 있으면 `--media <설정값>`도 준다. 고친 기획 문서와 새 그림을 확인하고 통과한 SHA를 push한다.\ndesign_check: {}\n", serde_json::json!(target.check)));
+        }
         let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
             title: &title,

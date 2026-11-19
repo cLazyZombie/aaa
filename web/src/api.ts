@@ -155,23 +155,7 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
   return (await unwrap<{ path: string }>(response)).path;
 }
 
-/** 기획 「그림」(t-1894 2-3): 그 기획 branch의 문서 폴더(`dir`, 저장소 기준)에 내용 hash 이름으로 commit하고 저장소 기준 경로를 받는다 */
-export async function uploadDesignFile(project: string, repo: string, branch: string, dir: string, file: Blob): Promise<{ path: string; commit: string }> {
-  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/design-files/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}?dir=${encodeURIComponent(dir)}`, {
-    method: "POST", body: file, credentials: "same-origin",
-  });
-  return unwrap<{ path: string; commit: string }>(response);
-}
-
-/** 기획 대화 입력창의 그림(t-1950): 「그림」과 같이 그 branch에 commit하되 「사람이 고친 문서」에 넣지 않는다(보낼 말 앞 「(그림: …)」이 알린다) */
-export async function uploadDesignChatImage(project: string, repo: string, branch: string, dir: string, file: Blob): Promise<string> {
-  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/design-files/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}?dir=${encodeURIComponent(dir)}&quiet=true`, {
-    method: "POST", body: file, credentials: "same-origin",
-  });
-  return (await unwrap<{ path: string }>(response)).path;
-}
-
-/** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.355): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
+/** 보고서 library에 자료를 올린다. */
 export async function uploadReportFile(project: string, upload: string, path: string, file: Blob): Promise<{ files: number; total: number }> {
   const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {
     method: "POST", body: file, credentials: "same-origin",

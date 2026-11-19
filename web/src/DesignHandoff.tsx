@@ -1,10 +1,10 @@
-// 구현 맡기기 창(t-1894 3-2, 확정 계획 §4, t-2002 q-4224 1A): main 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
-// 고른 블록 표지에 같은 d-ID를 적어 main에 바로 저장하고(저장소 문서 검사를 지난다), 구현 thread는 main에서 갈라진 자기 branch에서 일한다.
+// 구현할 계획 블록을 일반 할 일로 넘긴다. 표지는 구현 branch에서 적는다.
 import { Hammer } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
-import { ApiError, call } from "./api";
+import { ApiError, call, me } from "./api";
+import { apiAtLeast } from "./automationModel";
 import { modelChoices, type Callout } from "./designModel";
-import type { DesignBranchView, DesignRepoView, OwnerChoice } from "./gen/proto";
+import type { DesignRepoView, OwnerChoice } from "./gen/proto";
 
 /** 표지 블록 하나: 덩어리 번호, 표지 블록끼리의 차례(host `design_marks`와 같은 차례)와 첫 줄(host가 같은 블록인지 다시 본다) */
 export type HandoffBlock = { c: Callout; i: number; ordinal: number; head: string };
@@ -32,10 +32,8 @@ function autoMemo(repo: string, path: string, picked: HandoffBlock[]): string {
   return lines.join("\n");
 }
 
-export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose, onDone }: {
+export function HandoffDialog({ repo, path, blob, blocks, initial, onClose, onDone }: {
   repo: DesignRepoView;
-  /** 사건을 남길 고른 기획 대화(없으면 남기지 않는다) */
-  chat: DesignBranchView | null;
   path: string;
   /** 고를 때 읽은 판 */
   blob: string;
@@ -78,8 +76,9 @@ export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose
     setBusy(true);
     setProblem(null);
     try {
+      if (!apiAtLeast((await me())?.front_api, 1, 189)) throw new Error("작업 branch에서 구현을 맡기려면 host를 갱신해 주세요.");
       const r = await call({
-        op: "design_handoff", repo: repo.repo, branch: chat?.slug ?? "", path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
+        op: "design_handoff", repo: repo.repo, branch: "", path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
         title: shownTitle.trim(), profile: selectedProfile || null, memo: shownMemo, reserve,
       });
       if (r.kind !== "design_handoff") throw new Error("예상하지 못한 답");
@@ -139,8 +138,7 @@ export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose
           {warning && <p className="confirm-error" role="alert" data-testid="design-hand-warning">{warning}</p>}
         </div>
         <footer className="modal-footer">
-          <span className="design-hand-note" data-testid="design-hand-main">블록 {picked.length}개 표지에 d-ID를 적어 main에 바로 저장한다(저장소 문서 검사를 지난다).
-            구현 thread는 main에서 갈라진 자기 branch에서 일한다</span>
+          <span className="design-hand-note" data-testid="design-hand-main">선택한 블록 {picked.length}개</span>
           <span className="spacer" />
           <button type="button" className="btn" disabled={busy} onClick={onClose}>닫기</button>
           <button type="button" className="btn primary" disabled={!ok} data-testid="design-hand-submit" onClick={() => void submit()}>할 일 1개 만들기</button>

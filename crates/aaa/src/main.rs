@@ -11,6 +11,7 @@ use aaa_agent::integration;
 mod launchd;
 mod migrate;
 mod person;
+mod plan_preview;
 mod restart;
 mod rollout;
 mod service;

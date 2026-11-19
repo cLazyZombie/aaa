@@ -775,12 +775,6 @@ pub struct Host {
     file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// 기획: `<프로젝트>/<저장소>`마다 마지막으로 읽은 트리(머신이 꺼졌을 때 보인다, t-1894)
     design_trees: Mutex<HashMap<String, aaa_proto::DesignTree>>,
-    /// CLI 그림 전송 조각(프로젝트·쓰는 이·전송 ID)
-    design_image_uploads: Mutex<HashMap<(String, String, String), design_branch::DesignImageUpload>>,
-    /// 도는 기획 ticker 일(프로젝트)
-    design_passes: Mutex<std::collections::HashSet<String>>,
-    /// 말을 보내는 기획 대화 배경 일(`<프로젝트>/<저장소>/<주제>`)
-    design_chatting: Mutex<std::collections::HashSet<String>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
@@ -1025,9 +1019,6 @@ impl Host {
             library_reaper: std::sync::OnceLock::new(),
             file_caps: Mutex::new(HashMap::new()),
             design_trees: Mutex::new(HashMap::new()),
-            design_image_uploads: Mutex::new(HashMap::new()),
-            design_passes: Mutex::new(Default::default()),
-            design_chatting: Mutex::new(Default::default()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
             account_quota: Default::default(),

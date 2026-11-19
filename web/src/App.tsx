@@ -1833,7 +1833,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         )}
         {designAt !== null && (
-          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} panes={panes} canControl={canControl}
+          <DesignView shown={designShown} target={designAt} repos={design.repos} threads={allThreads} canControl={canControl}
             tree={<DesignPanel design={design} surface="document" visible={designShown && !drawerOpen}
               selected={designShown ? designAt : null} onOpen={(t) => goSel(`design:${t}`)} />}
             onOpen={(t) => goSel(`design:${t}`)} onReload={design.reload} />

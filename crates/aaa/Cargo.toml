@@ -19,6 +19,7 @@ aaa-session.workspace = true
 aaa-agent.workspace = true
 aaa-host.workspace = true
 anyhow.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 serde.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
