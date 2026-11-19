@@ -1450,11 +1450,14 @@ fn unmark_leading(text: &str) -> String {
     out
 }
 
-/// A~Z 뒤에 글자·숫자가 이어지는 단어(A를·A안·t3code)는 후보가 아니다.
+/// 글자 뒤에 글자·숫자가 이어지는 단어와 `t-번호:`로 시작하는 설명은 후보에서 뺀다.
 /// 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
 fn choice_letter(text: &str) -> Option<char> {
     let item = text.trim().strip_prefix("- ").or_else(|| text.trim().strip_prefix("* "))?;
     let item = item.trim_start_matches(['*', '_']);
+    if item.starts_with("t-") && item.split_once(':').is_some_and(|(id, _)| crate::short_id_number(id, 't').is_some()) {
+        return None;
+    }
     let mut chars = item.chars();
     let letter = chars.next()?;
     (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_alphanumeric()))
@@ -2548,6 +2551,33 @@ mod tests {
         }
         for word in ["A를 달성", "A안 추천", "B안", "t3code", "A1 항목"] {
             assert_eq!(choice_letter(&format!("- {word}")), None, "{word}");
+        }
+    }
+
+    #[test]
+    fn report_questions_keep_deploy_thread_list_in_body() {
+        // 수정해서 등록한 q-4321의 본문에 거절 당시 목록 표기를 되돌렸다.
+        let report = include_str!("../tests/fixtures/deploy-approval-questions.md");
+        let parsed = parse_report_questions(report);
+        assert!(parsed.warning.is_none(), "{parsed:?}");
+        assert_eq!(parsed.items.len(), 1);
+        let question = &parsed.items[0];
+        let body = question.body.as_deref().unwrap();
+        for id in ["t-2030", "t-2031", "t-2032"] {
+            assert!(body.lines().any(|line| line.starts_with(&format!("- {id}: "))), "{body}");
+        }
+        let choices: Vec<_> = question.choices.iter().map(|c| (c.letter.as_deref(), c.label.as_str())).collect();
+        assert_eq!(choices, [(Some("A"), "지금 배포"), (Some("B"), "나중에")]);
+    }
+
+    #[test]
+    fn report_questions_count_malformed_choices_next_to_deploy_thread_list() {
+        let report = include_str!("../tests/fixtures/deploy-approval-questions.md");
+        for wrong in ["C: 중단", "C-2030: 중단", "**C 중단", "T-2030: 중단", "t-2030x: 중단"] {
+            let broken = report.replace("\n세 건 모두", &format!("\n- {wrong}\n\n세 건 모두"));
+            let parsed = parse_report_questions(&broken);
+            let warning = parsed.warning.as_deref().unwrap();
+            assert!(warning.contains("선택지 3개 중 2개"), "{wrong}: {warning}");
         }
     }
 

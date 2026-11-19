@@ -1113,7 +1113,7 @@ mod tests {
         assert!(h.db.post_list("demo").unwrap().is_empty());
         let i = PostInput {
             to: "user".into(),
-            body: "## Questions\n### 1. 인증\n- A 완료했다\n- B 보류\n".into(),
+            body: "## Questions\n### 1. 배포 승인\n- t-2030: 질문 카드 경고 수리\n\n- A 배포\n- B 보류\n".into(),
             ..input(25)
         };
         let result = h.front_post("demo", i.clone(), "local:cli").unwrap();
