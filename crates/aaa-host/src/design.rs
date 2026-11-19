@@ -210,7 +210,7 @@ impl Host {
             let mut repos = Vec::new();
             for t in targets {
                 repos.push(if cached {
-                    self.design_cached_repo(project, &t)
+                    self.design_repo_snapshot(project, &t).0
                 } else {
                     self.design_repo(project, t).await
                 });
@@ -229,16 +229,22 @@ impl Host {
         result
     }
 
-    fn design_cached_repo(&self, project: &str, t: &Target) -> DesignRepoView {
-        DesignRepoView {
+    fn design_repo_snapshot(&self, project: &str, t: &Target) -> (DesignRepoView, Result<String, ErrorBody>) {
+        let mid = self.resolve_machine(t.machine.as_deref());
+        let machine = match &mid {
+            Ok(mid) if t.folder.is_some() => self.machine_name(mid),
+            _ => t.machine.clone().unwrap_or_default(),
+        };
+        let view = DesignRepoView {
             repo: t.name.clone(),
-            machine: t.machine.clone().unwrap_or_default(),
+            machine,
             folder: t.folder.clone(),
             tree: self.design_trees.lock().unwrap().get(&format!("{project}/{}", t.name)).cloned(),
             error: None,
             branches: self.design_branch_list(project, &t.name).iter().map(|r| self.design_view(project, r)).collect(),
             handoffs: self.design_handoff_notes(project, &t.name),
-        }
+        };
+        (view, mid)
     }
 
     /// 프로젝트 저장소마다 기획 트리(머신마다 동시에 읽는다)
@@ -293,16 +299,15 @@ impl Host {
     }
 
     pub(crate) async fn design_repo(&self, project: &str, t: Target) -> DesignRepoView {
-        let mut view = self.design_cached_repo(project, &t);
+        let (mut view, mid) = self.design_repo_snapshot(project, &t);
         let Some(folder) = t.folder.clone() else { return view };
-        let mid = match self.resolve_machine(t.machine.as_deref()) {
+        let mid = match mid {
             Ok(mid) => mid,
             Err(e) => {
                 view.error = Some(e.message);
                 return view;
             }
         };
-        view.machine = self.machine_name(&mid);
         let key = format!("{project}/{}", t.name);
         let fresh = async {
             let conn = self.design_conn(&mid)?;
@@ -586,15 +591,22 @@ mod tests {
         cfg.notify.web_push = false;
         let h = Arc::new(Host::open(cfg, root.join("host")).unwrap());
         h.project_create("demo", Default::default(), "test").unwrap();
-        std::fs::write(root.join("projects/demo/aaa.toml"),
-            "schema = 1\n[[workspaces]]\npath = \"/w/app\"\nmachine = \"mac-a\"\ndesign = \"docs\"\n\n[[workspaces]]\npath = \"/w/tool\"\n").unwrap();
+        std::fs::write(
+            root.join("projects/demo/aaa.toml"),
+            "schema = 1\n[[workspaces]]\npath = \"/w/app\"\nmachine = \"mac-a\"\ndesign = \"docs\"\n\
+             \n[[workspaces]]\npath = \"/w/tool\"\n\n[[workspaces]]\npath = \"/w/local\"\ndesign = \"docs\"\n",
+        )
+        .unwrap();
+        h.machine_registered("m-local", "mac-b");
+        h.inner.lock().unwrap().machines.get_mut("m-local").unwrap().local = true;
         let tree = DesignTree { commit: "old".into(), ..Default::default() };
         h.design_trees.lock().unwrap().insert("demo/app".into(), tree.clone());
         let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", None, true).await.unwrap() else {
             panic!("목록")
         };
-        assert_eq!(repos.iter().map(|r| r.repo.as_str()).collect::<Vec<_>>(), ["app", "tool"]);
+        assert_eq!(repos.iter().map(|r| r.repo.as_str()).collect::<Vec<_>>(), ["app", "tool", "local"]);
         assert_eq!(repos[0].tree.as_ref(), Some(&tree));
+        assert_eq!(repos[2].machine, "mac-b", "캐시에서도 머신 생략은 host 로컬 agent로 해석한다");
         assert!(repos.iter().all(|r| r.error.is_none()));
         let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", Some("app"), false).await.unwrap()
         else {
@@ -606,9 +618,11 @@ mod tests {
         let FrontResponse::DesignTree { repos } = h.design_tree_request("demo", None, false).await.unwrap() else {
             panic!("전체")
         };
-        assert_eq!(repos.len(), 2);
+        assert_eq!(repos.len(), 3);
         assert!(repos[0].error.is_some());
         assert!(repos[1].error.is_none());
+        assert_eq!(repos[2].machine, "mac-b");
+        assert!(repos[2].error.is_some(), "연결 실패에도 해석한 머신 이름은 보존한다");
         assert_eq!(h.design_tree_request("demo", Some("missing"), false).await.unwrap_err().code, ErrorCode::NotFound);
         drop(h);
         std::fs::remove_dir_all(root).unwrap();

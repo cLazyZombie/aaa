@@ -1,7 +1,7 @@
 // 구현 맡기기 창(t-1894 3-2, 확정 계획 §4, t-2002 q-4224 1A): main 문서의 계획 블록 여럿을 할 일 하나로 넘긴다.
 // 고른 블록 표지에 같은 d-ID를 적어 main에 바로 저장하고(저장소 문서 검사를 지난다), 구현 thread는 main에서 갈라진 자기 branch에서 일한다.
 import { Hammer } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { ApiError, call } from "./api";
 import { modelChoices, type Callout } from "./designModel";
 import type { DesignBranchView, DesignRepoView, OwnerChoice } from "./gen/proto";
@@ -52,14 +52,23 @@ export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose
   const [memo, setMemo] = useState<string | null>(null);
   const [profile, setProfile] = useState("");
   const [reserve, setReserve] = useState(true);
-  const [owners, setOwners] = useState<OwnerChoice[]>([]);
+  const [owners, setOwners] = useState<OwnerChoice[] | "failed" | null>(null);
+  const modelStatusId = useId();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   useEffect(() => {
-    call({ op: "assignable", check: null }).then((r) => { if (r.kind === "assignable") setOwners(r.owners); }, () => {});
+    call({ op: "assignable", check: null }).then(
+      (r) => setOwners(r.kind === "assignable" ? r.owners : "failed"),
+      () => setOwners("failed"),
+    );
   }, []);
-  const names = modelChoices(owners, repo.machine, "").filter(Boolean);
+  const names = modelChoices(Array.isArray(owners) ? owners : [], repo.machine, "").filter(Boolean);
+  let modelStatus = "";
+  if (owners === null) modelStatus = "모델 불러오는 중";
+  else if (owners === "failed") modelStatus = "모델 목록을 불러오지 못했습니다";
+  else if (names.length === 0) modelStatus = "선택할 수 있는 모델이 없습니다";
+  const selectedProfile = names.includes(profile) ? profile : "";
   const picked = useMemo(() => blocks.filter((b) => picks.has(b.i)), [blocks, picks]);
   const shownTitle = title ?? autoTitle(picked);
   const shownMemo = memo ?? autoMemo(repo.repo, path, picked);
@@ -71,7 +80,7 @@ export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose
     try {
       const r = await call({
         op: "design_handoff", repo: repo.repo, branch: chat?.slug ?? "", path, blob, blocks: picked.map((p) => ({ ordinal: p.ordinal, head: p.head })),
-        title: shownTitle.trim(), profile: profile || null, memo: shownMemo, reserve,
+        title: shownTitle.trim(), profile: selectedProfile || null, memo: shownMemo, reserve,
       });
       if (r.kind !== "design_handoff") throw new Error("예상하지 못한 답");
       onDone();
@@ -111,12 +120,15 @@ export function HandoffDialog({ repo, chat, path, blob, blocks, initial, onClose
           <label>제목<input className="input" value={shownTitle} data-testid="design-hand-title" onChange={(e) => setTitle(e.target.value)} /></label>
           <div className="design-new-row">
             <label>저장소<input className="input" value={`${repo.repo} (문서의 저장소)`} readOnly /></label>
-            <label>모델·머신
-              <select className="input" value={profile} data-testid="design-hand-model" onChange={(e) => setProfile(e.target.value)}>
-                <option value="">프로젝트 기본{repo.machine ? ` · ${repo.machine}` : ""}</option>
-                {names.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
+            <div>
+              <label>모델·머신
+                <select className="input" value={selectedProfile} aria-describedby={modelStatusId} data-testid="design-hand-model" onChange={(e) => setProfile(e.target.value)}>
+                  <option value="">프로젝트 기본{repo.machine ? ` · ${repo.machine}` : ""}</option>
+                  {names.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <span id={modelStatusId} className="design-hand-model-status" role="status">{modelStatus}</span>
+            </div>
           </div>
           <label>메모<textarea className="input design-hand-memo" rows={5} value={shownMemo} spellCheck={false} data-testid="design-hand-memo" onChange={(e) => setMemo(e.target.value)} /></label>
           <label className="design-hand-check">
