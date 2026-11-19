@@ -519,11 +519,9 @@ impl Host {
             }
         };
         let line = match rec.design.as_deref() {
-            Some(branch) => format!(
-                "쉬었다가 이어 간다({id}). 기획 대화 「{}」의 문서를 `aaa plan show`로 main에서 다시 읽고 사용자의 다음 말을 \
-                 기다린다.",
-                branch.split_once('/').map_or(branch, |(_, slug)| slug)
-            ),
+            Some(_) => {
+                format!("지난 기획 대화 기록이다({id}). 문서 편집 요청은 일반 할 일과 worktree thread로 맡긴다.")
+            }
             None => format!("보류를 풀었다({id} 이어 하기). 마지막 보고의 Handoff대로 이어 간다."),
         };
         let rec = self.update_rec(project, id, |r| {

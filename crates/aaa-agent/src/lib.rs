@@ -14,8 +14,6 @@ mod command;
 mod cwd;
 pub mod deploy;
 mod design;
-mod design_main;
-mod design_write;
 pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod diff;
@@ -2191,63 +2189,21 @@ impl Agent {
             AgentRequest::DesignFile { repo, folder, commit, path, offset, len, branch } => {
                 design::file(&repo, &folder, &commit, &path, (offset, len), branch.as_deref()).await
             }
-            AgentRequest::DesignOpen { project, repo, slug } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                design_write::open(&cfg, &project, &repo, &slug).await
-            }
-            AgentRequest::DesignSave { project, repo, folder, slug, path, base, text, message } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                design_write::save(&cfg, &project, &repo, &folder, &slug, &path, base.as_deref(), (&text, &message))
-                    .await
-            }
-            AgentRequest::DesignMarkIds { project, repo, folder, slug, ids, message } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                Box::pin(design_write::mark_ids(&cfg, (&project, &repo, &folder, &slug), &ids, &message)).await
-            }
-            AgentRequest::DesignAttach { project, repo, folder, slug, path, offset, data, eof, sha256, message } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                design_write::attach(
-                    &cfg,
-                    &self.state,
-                    (&project, &repo, &folder, &slug, &path),
-                    offset,
-                    &data.0,
-                    eof,
-                    &sha256,
-                    &message,
-                )
-                .await
-            }
-            AgentRequest::DesignDetach { project, repo, folder, slug, path, message } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                Box::pin(design_write::detach(&cfg, (&project, &repo, &folder, &slug), &path, &message)).await
-            }
-            AgentRequest::DesignPush { project, repo, slug, check } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                design_write::push(&cfg, &project, &repo, &slug, &check).await
-            }
-            AgentRequest::DesignClose { project, repo, slug, discard, keep_local, remote } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                design_write::close(&cfg, &project, &repo, &slug, (discard, keep_local), remote.as_deref()).await
-            }
-            AgentRequest::DesignMainOpen { project, repo } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                Box::pin(design_main::open(&cfg, &project, &repo)).await
-            }
-            AgentRequest::DesignMainStage { project, repo, upload, sha256, offset, data, eof } => {
-                design_main::stage(&self.state, (&project, &repo, &upload), &sha256, offset, &data.0, eof)
-            }
-            AgentRequest::DesignMainWrite { project, repo, folder, files, message, check } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                Box::pin(design_main::write(&cfg, &self.state, (&project, &repo, &folder), &files, &message, &check))
-                    .await
-            }
-            AgentRequest::DesignMainMarkIds { project, repo, folder, ids, message, check } => {
-                let cfg = self.threads_cfg.lock().unwrap().clone();
-                Box::pin(design_main::mark_ids(&cfg, (&project, &repo, &folder), &ids, &message, &check)).await
+            AgentRequest::DesignOpen { .. }
+            | AgentRequest::DesignSave { .. }
+            | AgentRequest::DesignMarkIds { .. }
+            | AgentRequest::DesignAttach { .. }
+            | AgentRequest::DesignDetach { .. }
+            | AgentRequest::DesignPush { .. }
+            | AgentRequest::DesignClose { .. }
+            | AgentRequest::DesignMainOpen { .. }
+            | AgentRequest::DesignMainStage { .. }
+            | AgentRequest::DesignMainWrite { .. }
+            | AgentRequest::DesignMainMarkIds { .. } => {
+                Err(ErrorBody::new(ErrorCode::BadRequest, "기획 편집은 일반 worktree에서 진행한다"))
             }
             AgentRequest::DesignLog { repo, folder, path, limit } => {
-                Box::pin(design_main::log(&repo, &folder, &path, limit)).await
+                Box::pin(design::log(&repo, &folder, &path, limit)).await
             }
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,

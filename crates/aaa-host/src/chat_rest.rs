@@ -50,10 +50,6 @@ impl Host {
             })
             .collect();
         for r in resting {
-            // 보낼 말이 남았으면 내리지 않는다
-            if r.design.as_deref().is_some_and(|d| self.design_chat_waiting(project, d)) {
-                continue;
-            }
             let request = aaa_proto::ThreadPark {
                 actor: "ticker".into(),
                 requested_at_ms: now,

@@ -724,50 +724,8 @@ async fn library_upload(
     }
 }
 
-#[derive(serde::Deserialize)]
-struct DesignAttachQuery {
-    /// 문서 폴더(저장소 기준)
-    dir: String,
-    /// 기획 대화 입력창의 그림(t-1950): 웹이 보낼 말 앞에 「(그림: …)」으로 알리므로 「사람이 고친 문서」에 넣지 않는다
-    #[serde(default)]
-    quiet: bool,
-}
-
-/// 기획 「그림」: 그 기획 branch의 문서 폴더에 그림·영상을 붙인다(조작 기기만, t-1894 2-3)
-async fn design_file_post(
-    State(host): State<Arc<Host>>,
-    Path((project, repo, branch)): Path<(String, String, String)>,
-    Query(q): Query<DesignAttachQuery>,
-    req: Request,
-) -> Response {
-    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
-    if !role.can_control() {
-        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 붙일 수 없다"));
-    }
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), aaa_proto::DESIGN_MAX_FILE as usize)
-        .await
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
-    else {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일은 16MiB까지 붙인다"))),
-        )
-            .into_response();
-    };
-    let actor = format!("device:{id}");
-    if q.quiet {
-        return match Box::pin(host.design_attach_quiet(role, &actor, &project, &repo, &branch, &q.dir, &bytes)).await {
-            Ok(path) => Json(Outcome::Ok(serde_json::json!({ "path": path }))).into_response(),
-            Err(e) => error_response(e),
-        };
-    }
-    match host.design_attach(role, &actor, &project, &repo, &branch, &q.dir, &bytes).await {
-        Ok(aaa_proto::FrontResponse::DesignSaved { path, commit, blob }) => {
-            Json(Outcome::Ok(serde_json::json!({ "path": path, "commit": commit, "blob": blob }))).into_response()
-        }
-        Ok(_) => error_response(ErrorBody::new(ErrorCode::Internal, "예상하지 못한 응답")),
-        Err(e) => error_response(e),
-    }
+async fn design_file_post() -> Response {
+    error_response(ErrorBody::new(ErrorCode::BadRequest, "그림은 기획 편집 작업의 branch에서 추가한다"))
 }
 
 #[derive(Deserialize)]

@@ -604,7 +604,6 @@ impl Host {
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
             self.chat_rest_pass(&p.name).await;
-            self.design_pass_spawn(&p.name);
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, !self.coordinator_panes(dir).is_empty());
             self.automation_tick(&p.name);

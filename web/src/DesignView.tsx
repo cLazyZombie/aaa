@@ -1,17 +1,13 @@
-// 기획 문서 보기(t-1894, t-2002 확정 시안 library/mock): 사이드바 「기획」 트리에서 고른 문서 하나와 오른쪽 기획 대화.
-// 문서는 늘 main 판이다. 「고치기」는 main에 바로 저장하고(저장소 문서 검사를 지나야 올라간다, 실패하면 까닭을 보이고 글은 남긴다),
-// 「이력」은 main이 가졌던 판과 지금 판의 차이를 보이고 고른 판으로 되돌린다. 그림·영상은 같은 commit의 저장소 파일이고,
-// 문서 안 다른 문서 링크(상대 경로 .md)는 앱 안에서 연다.
 import "./DesignView.css";
-import { Check, CircleDot, Hammer, History, ImagePlus, MessageSquare, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiError, call, onTasksChanged, uploadDesignFile } from "./api";
+import { CircleDot, Hammer, History, Pencil, RefreshCw, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ApiError, call, onTasksChanged } from "./api";
 import { splitAppIds, type AppId } from "./appIds";
-import { DesignChat, NewChatDialog } from "./DesignChat";
+import { DesignEditRequest } from "./DesignEditRequest";
 import { handable, HandoffDialog, type HandoffBlock } from "./DesignHandoff";
 import { blockDiff, calloutOf, designFileUrl, designTarget, idLineOf, isMarkdown, markCounts, marksOf, mdBlocks, resolveDocPath, sectionsOf, splitTarget, taskState, withoutIdLines, type ArchiveLookup, type Callout } from "./designModel";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
-import type { DesignDoc, DesignLogEntry, DesignRepoView, PaneView, TaskView, ThreadView } from "./gen/proto";
+import type { DesignDoc, DesignLogEntry, DesignRepoView, TaskView, ThreadView } from "./gen/proto";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { useLightbox } from "./Lightbox";
 import { AppIdChipContext } from "./Markdown";
@@ -20,7 +16,7 @@ import { ReportMarkdown } from "./ReportsView";
 import { useMedia } from "./settings";
 import { useMinute } from "./Sidebar";
 
-type Page = "tree" | "doc" | "chat";
+type Page = "tree" | "doc";
 /** 문서 보기: 전체, 지금 모습(표지 블록을 뺀 구현된 사실), 남은 것(표지 블록 목록) */
 type Look = "all" | "now" | "left";
 
@@ -97,21 +93,13 @@ function DesignCallout({ c, tasks, lookup, threads, onDiscuss, onHandoff, childr
       </div>
       <div className="design-callout-body">{children}</div>
       {c.kind === "open" && onDiscuss && (
-        <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={onDiscuss}><MessageSquare className="i" aria-hidden="true" />대화로 정하기</button>
+        <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={onDiscuss}><Pencil className="i" aria-hidden="true" />편집 요청</button>
       )}
       {onHandoff && (
         <button type="button" className="btn small design-discuss" data-testid="design-handoff" onClick={onHandoff}><Hammer className="i" aria-hidden="true" />구현 맡기기</button>
       )}
     </div>
   );
-}
-
-/** 저장소마다 고른 대화(기기에 남긴다) */
-function storedChat(repo: string): string | null {
-  try { return localStorage.getItem(`herdr-web-ui:design-chat:${repo}`); } catch { return null; }
-}
-function storeChat(repo: string, slug: string) {
-  try { localStorage.setItem(`herdr-web-ui:design-chat:${repo}`, slug); } catch { /* 이 기기만의 편의 */ }
 }
 
 const stamp = (ms: number) => {
@@ -123,14 +111,13 @@ const stamp = (ms: number) => {
 /** 문서 이력(main이 가졌던 판)과 고른 옛 판 */
 type History = { entries: DesignLogEntry[] | null; at: string | null; old: DesignDoc | null; error: string | null };
 
-export function DesignView({ shown, target, repos, threads, panes, canControl, tree, onOpen, onReload }: {
+export function DesignView({ shown, target, repos, threads, canControl, tree, onOpen, onReload }: {
   shown: boolean;
   /** `<저장소>/<경로>`, 없으면 고른 문서 없음 */
   target: string | null;
   /** 트리(문서 안 링크가 가리키는 문서가 있는지 본다). 트리를 다시 읽어 판이 바뀌면 문서도 그 판으로 다시 읽는다 */
   repos: DesignRepoView[] | null;
   threads: ThreadView[];
-  panes: PaneView[];
   canControl: boolean;
   /** 좁은 화면 「트리」 칸에 그릴 트리 */
   tree: ReactNode;
@@ -146,20 +133,6 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   const [page, setPage] = useState<Page>("doc");
   const now = useMinute();
   const lightbox = useLightbox();
-  // 고른 대화(저장소마다): 저장·그림·맡기기의 사건을 그 대화에 남긴다(없으면 남기지 않는다)
-  const [chatSlug, setChatSlug] = useState<string | null>(null);
-  useEffect(() => {
-    if (!repo) return;
-    const kept = storedChat(repo.repo);
-    const recent = [...repo.branches].sort((a, b) => b.updated_ms - a.updated_ms);
-    setChatSlug((cur) => (cur && repo.branches.some((b) => b.slug === cur) ? cur
-      : kept && repo.branches.some((b) => b.slug === kept) ? kept : recent[0]?.slug ?? null));
-  }, [repo]);
-  const chat = repo?.branches.find((b) => b.slug === chatSlug) ?? null;
-  const pick = useCallback((slug: string) => {
-    setChatSlug(slug);
-    if (repo) storeChat(repo.repo, slug);
-  }, [repo]);
   // 받은 문서(늘 main 판)
   const [doc, setDoc] = useState<{ key: string; doc: DesignDoc } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -192,77 +165,11 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     const hit = tries.find((p) => p && isMarkdown(p) && (docs ?? []).some((d) => d.path === p));
     if (hit) onOpen(designTarget(current.repo, hit));
   }, [current, docs, onOpen]);
-  // 고치기: main에 바로 저장한다. 고른 대화가 있으면 그 대화에 「사람이 고침」으로 남는다
-  const [editing, setEditing] = useState<{ text: string; base: string; was: string } | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [newChat, setNewChat] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const editor = useRef<HTMLTextAreaElement | null>(null);
-  const picker = useRef<HTMLInputElement | null>(null);
-  // 그림: main의 문서 폴더(저장소 `design_media`가 있으면 그 아래 손 그림 폴더)에 commit하고 글 커서 자리에 그림 줄을 넣는다
-  const attach = async (files: FileList | null) => {
-    if (!at || !editing || !current || !files?.length) return;
-    // 올리는 동안 글은 읽기만 한다(그 사이 친 글을 잃지 않게). 올린 것만큼은 실패해도 줄을 넣는다
-    setSaving(true);
-    const cursor = editor.current?.selectionStart ?? editing.text.length;
-    const lines: string[] = [];
-    try {
-      const dir = at.path.slice(0, at.path.lastIndexOf("/"));
-      for (const file of [...files]) {
-        const r = await uploadDesignFile(current.project, at.repo, chat?.slug ?? "main", dir, file);
-        // 저장소가 손 그림 폴더(`design_media`)를 정했으면 문서 폴더 아래 그 폴더에 들어온다: 문서 기준 상대 경로로 넣는다
-        const rel = dir && r.path.startsWith(`${dir}/`) ? r.path.slice(dir.length + 1) : r.path.slice(r.path.lastIndexOf("/") + 1);
-        lines.push(`![${file.name.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "")}](${rel})`);
-      }
-    } catch (e) {
-      setSaveError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      // 지금 고치는 글에 넣는다: 그 사이 취소했거나 다른 문서를 열었으면 넣지 않는다
-      if (lines.length > 0) {
-        setEditing((now) => {
-          if (!now) return now;
-          const at = Math.min(cursor, now.text.length);
-          const block = `${at > 0 && now.text[at - 1] !== "\n" ? "\n" : ""}${lines.join("\n")}\n`;
-          return { ...now, text: now.text.slice(0, at) + block + now.text.slice(at) };
-        });
-        onReload();
-      }
-      setSaving(false);
-      if (picker.current) picker.current.value = "";
-    }
-  };
-  const [chatError, setChatError] = useState<string | null>(null);
-  useEffect(() => { setEditing(null); setSaveError(null); }, [key]);
-  const startEdit = async () => {
-    if (!at) return;
-    try {
-      const r = await call({ op: "design_read", repo: at.repo, path: at.path });
-      if (r.kind === "design_doc") { setSaveError(null); setEditing({ text: r.doc.text, base: r.doc.blob, was: r.doc.text }); }
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    }
-  };
-  const save = async () => {
-    if (!at || !editing) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await call({ op: "design_save", repo: at.repo, branch: chat?.slug ?? "", path: at.path, base: editing.base, text: editing.text });
-      setEditing(null);
-      onReload();
-      setRev((n) => n + 1);
-    } catch (e) {
-      // 검사 실패·그 사이 다른 판: main은 그대로이고 쓴 글은 남는다. 트리는 다시 읽어 다른 기기가 올린 판을 안다
-      setSaveError(e instanceof ApiError ? e.message : String(e));
-      onReload();
-    } finally {
-      setSaving(false);
-    }
-  };
+  const [edit, setEdit] = useState<{ doc: DesignDoc; block?: string; restore?: string } | null>(null);
+  useEffect(() => setEdit(null), [key]);
   // 이력: main이 가졌던 판을 새것부터. 판을 고르면 지금 판과 다른 덩어리를 보이고 그 판으로 되돌린다
   const [hist, setHist] = useState<History | null>(null);
-  const [revert, setRevert] = useState(false);
-  useEffect(() => { setHist(null); setRevert(false); }, [key]);
+  useEffect(() => { setHist(null); }, [key]);
   const openHistory = () => {
     if (!at) return;
     setHist({ entries: null, at: null, old: null, error: null });
@@ -322,10 +229,6 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
   }, [tasks, threads, lookup]);
   // 트리 줄과 같은 셈(같은 d-ID는 한 번)
   const counts = useMemo(() => markCounts([marksOf(callouts)]), [callouts]);
-  // 대화로 정하기: 고른 블록을 대화 입력의 맥락으로 넘긴다
-  const [picked, setPicked] = useState<{ path: string; section: string; title: string } | null>(null);
-  useEffect(() => setPicked(null), [key]);
-  // 구현 맡기기: 고른 블록 표지에 d-ID를 적어 main에 바로 저장한다(t-2002 q-4224 1A). 「남은 것」에서 고른 블록과 창
   const canHand = canControl;
   const [checked, setChecked] = useState<Set<number>>(() => new Set());
   // 창은 연 때의 판과 블록으로 맡긴다: 그 사이 문서가 다시 읽혀도 고른 번호가 다른 블록을 가리키지 않는다(host가 판을 다시 본다)
@@ -339,7 +242,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     setHandoff({ initial, blob: current.blob, blocks: list });
   };
   const flipCheck = (i: number) => setChecked((old) => { const next = new Set(old); if (!next.delete(i)) next.add(i); return next; });
-  const discuss = (c: Callout) => { if (at) { setPicked({ path: at.path, section: c.section, title: c.title }); if (narrow) setPage("chat"); } };
+  const discuss = (c: Callout) => { if (current) setEdit({ doc: current, block: c.body }); };
   // 「지금 모습」은 표지 블록만 든 절의 제목도 숨긴다(확정 계획 §3)
   const onlyPlans = (i: number) => {
     if (!blocks || !/^#{1,6}\s/.test(blocks[i]!)) return false;
@@ -412,9 +315,9 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
     <div className={`design-screen${shown ? "" : " is-hidden"}`} inert={!shown} data-testid="design-view" data-shown={shown ? "true" : "false"}>
       {narrow && (
         <nav className="design-pages" aria-label="기획 칸">
-          {(["tree", "doc", "chat"] as const).map((p) => (
+          {(["tree", "doc"] as const).map((p) => (
             <button key={p} type="button" className={page === p ? "is-on" : undefined} aria-pressed={page === p} data-testid={`design-page-${p}`} onClick={() => setPage(p)}>
-              {p === "tree" ? "트리" : p === "doc" ? "문서" : "대화"}
+              {p === "tree" ? "트리" : "문서"}
             </button>
           ))}
         </nav>
@@ -429,28 +332,14 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
               {at ? <span className="design-crumb" data-testid="design-crumb">{at.repo} / {at.path.split("/").join(" / ")}</span> : <strong>기획</strong>}
               {hist && <span className="design-pill is-plan" data-testid="design-history-on">이력</span>}
             </div>
-            {at && !editing && !hist && canControl && current && (
-              <button type="button" className="btn design-edit" aria-label="고치기" title="고치기" data-testid="design-edit" onClick={() => void startEdit()}><Pencil className="i" aria-hidden="true" /><span className="design-btn-label">고치기</span></button>
+            {at && !hist && canControl && current && (
+              <button type="button" className="btn design-edit" aria-label="편집 요청" title="편집 요청" data-testid="design-edit" onClick={() => setEdit({ doc: current })}><Pencil className="i" aria-hidden="true" /><span className="design-btn-label">편집 요청</span></button>
             )}
-            {at && !editing && !hist && current && (
+            {at && !hist && current && (
               <button type="button" className="btn design-edit" aria-label="이력" title="이력" data-testid="design-history" onClick={openHistory}><History className="i" aria-hidden="true" /><span className="design-btn-label">이력</span></button>
             )}
             {hist && <button type="button" className="btn" data-testid="design-history-close" onClick={() => setHist(null)}>닫기</button>}
-            {editing && (
-              <>
-                <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm" multiple hidden data-testid="design-attach-input"
-                  onChange={(e) => void attach(e.target.files)} />
-                <button type="button" className="btn design-edit" aria-label="그림" title="그림" disabled={saving} data-testid="design-attach" onClick={() => picker.current?.click()}>
-                  <ImagePlus className="i" aria-hidden="true" /><span className="design-btn-label">그림</span>
-                </button>
-                <button type="button" className="btn" disabled={saving} data-testid="design-edit-cancel"
-                  onClick={() => { setEditing(null); setSaveError(null); setRev((n) => n + 1); }}>취소</button>
-                <button type="button" className="btn primary" disabled={saving || editing.text === editing.was} data-testid="design-edit-save" onClick={() => void save()}>
-                  <Check className="i" aria-hidden="true" />main에 저장
-                </button>
-              </>
-            )}
-            {at && !editing && !hist && (
+            {at && !hist && (
               <button type="button" className="btn icon" aria-label="새로 읽기" title="새로 읽기" disabled={busy} data-testid="design-doc-reload" onClick={() => { onReload(); setRev((n) => n + 1); }}>
                 <RefreshCw className={`i${busy ? " is-spinning" : ""}`} aria-hidden="true" />
               </button>
@@ -459,24 +348,11 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
           </header>
           {!at && <p className="design-empty" data-testid="design-none">고른 문서 없음</p>}
           {error && <div className="banner err" role="alert">{error}</div>}
-          {editing ? (
-            <div className="design-body">
-              {saveError ? (
-                <div className="design-save-error" role="alert" data-testid="design-save-error">
-                  <strong><X className="i" aria-hidden="true" />저장하지 않았다</strong>
-                  <span>main은 그대로다. 고친 뒤 다시 저장한다. 쓴 글은 그대로 남아 있다.</span>
-                  <pre>{saveError}</pre>
-                </div>
-              ) : (
-                <p className="design-save-note" data-testid="design-save-note">저장하면 저장소 문서 검사를 지나 바로 main에 들어간다 · 기준 판 <code>{editing.base.slice(0, 7)}</code></p>
-              )}
-              <textarea ref={editor} className="design-editor" value={editing.text} readOnly={saving} spellCheck={false} autoFocus aria-label="문서 글" data-testid="design-editor"
-                onChange={(e) => setEditing({ ...editing, text: e.target.value })} />
-            </div>
-          ) : hist && current ? (
+          {hist && current ? (
             <div className="design-history" data-testid="design-history-view">
               <div className="design-history-list" data-testid="design-history-list">
                 <p className="design-history-head">이 문서의 main 판 · 새것부터</p>
+                {repo?.branches.filter((b) => b.thread).map((b) => <a key={b.slug} className="design-history-row" href={`#thread=${encodeURIComponent(b.thread!)}`}>지난 대화 · {b.title}</a>)}
                 {hist.error && <p className="banner err" role="alert">{hist.error}</p>}
                 {!hist.entries && !hist.error && <p className="design-empty">읽는 중</p>}
                 {hist.entries?.map((e, i) => {
@@ -496,7 +372,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                     <div className="design-history-bar">
                       <span>{histPicked >= 0 && hist.entries ? stamp(hist.entries[histPicked]!.committed_ms) : ""} 판 <code>{hist.at.slice(0, 7)}</code></span>
                       <span className="spacer" />
-                      {canControl && hist.old && <button type="button" className="btn small primary" data-testid="design-revert" onClick={() => setRevert(true)}><RotateCcw className="i" aria-hidden="true" />이 판으로 되돌리기</button>}
+                      {canControl && hist.old && <button type="button" className="btn small primary" data-testid="design-revert" onClick={() => setEdit({ doc: current, restore: hist.at! })}><RotateCcw className="i" aria-hidden="true" />이 판으로 복원 요청</button>}
                     </div>
                     {hist.error && <p className="banner err" role="alert">{hist.error}</p>}
                     {diff && (
@@ -559,7 +435,7 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
                                   : <span className={`design-pill is-${c.kind}`}>{c.kind === "open" ? "미정" : "계획"}</span>}
                                 <span className="design-left-title">{c.title}</span>
                                 <span className="spacer" />
-                                {c.kind === "open" && canControl && <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={() => discuss(c)}><MessageSquare className="i" aria-hidden="true" />대화로 정하기</button>}
+                                {c.kind === "open" && canControl && <button type="button" className="btn small design-discuss" data-testid="design-discuss" onClick={() => discuss(c)}><Pencil className="i" aria-hidden="true" />편집 요청</button>}
                               </div>
                             );
                           })}
@@ -574,87 +450,13 @@ export function DesignView({ shown, target, repos, threads, panes, canControl, t
             </div>
           )}
         </section>
-        {repo && repo.folder && (
-          <section className="design-chat-pane" aria-label="기획 대화" hidden={!show("chat")} data-testid="design-chat-pane">
-            {chatError && <div className="banner err" role="alert">{chatError}</div>}
-            {/* 프로젝트는 판을 다시 읽는 동안에도 남는 앞 문서에서 얻는다: 대화를 바꾸면 판이 바뀌어 `current`가 잠시 빈다(t-1950 착지 실패) */}
-            <DesignChat project={doc?.doc.project ?? null} repo={repo} branch={chat} threads={threads} panes={panes} canControl={canControl} viewing={at?.path ?? null}
-              picked={picked} onUnpick={() => setPicked(null)}
-              active={shown && show("chat")} onPick={(s) => { pick(s); }} onNew={() => setNewChat(true)} onChanged={onReload} onError={setChatError} />
-          </section>
-        )}
       </div>
       {handoff && repo && at && (
-        <HandoffDialog repo={repo} chat={chat} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
+        <HandoffDialog repo={repo} path={at.path} blob={handoff.blob} initial={handoff.initial} blocks={handoff.blocks}
           onClose={() => setHandoff(null)} onDone={() => { setChecked(new Set()); onReload(); setRev((n) => n + 1); }} />
       )}
-      {revert && hist?.at && hist.old && current && at && (
-        <RevertDialog repo={at.repo} path={at.path} at={hist.at} base={current.blob} chat={chat?.slug ?? ""}
-          lost={(hist.entries ?? []).slice(0, Math.max(0, histPicked)).map((e) => ({ e, who: whoOf(e) }))}
-          onClose={() => setRevert(false)} onDone={() => { setRevert(false); setHist(null); onReload(); setRev((n) => n + 1); }} />
-      )}
-      {newChat && repo && <NewChatDialog repo={repo} onClose={() => setNewChat(false)} onDone={(slug) => { setNewChat(false); pick(slug); onReload(); }} />}
+      {edit && <DesignEditRequest doc={edit.doc} machine={repo?.machine ?? null} block={edit.block} restore={edit.restore} onClose={() => setEdit(null)} />}
       {lightbox.node}
-    </div>
-  );
-}
-
-/** 이 판으로 되돌리기: 옛 판 글을 지금 main 위에 새로 저장한다. 사라지는 저장(이력에는 남는다)을 보인다 */
-function RevertDialog({ repo, path, at, base, chat, lost, onClose, onDone }: {
-  repo: string;
-  path: string;
-  at: string;
-  base: string;
-  chat: string;
-  lost: { e: DesignLogEntry; who: { label: string; tone: string } }[];
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const submit = async () => {
-    setBusy(true);
-    setProblem(null);
-    try {
-      await call({ op: "design_revert", repo, path, at, base, branch: chat });
-      onDone();
-    } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className="modal design-dialog" role="dialog" aria-modal="true" aria-label="이 판으로 되돌리기" data-testid="design-revert-dialog">
-        <header className="modal-header"><h2 className="modal-title"><RotateCcw className="i" aria-hidden="true" />이 판으로 되돌리기 <code>{path.slice(path.indexOf("/") + 1)}</code></h2></header>
-        <div className="modal-body">
-          <p>판 <code>{at.slice(0, 7)}</code>의 글을 지금 main 위에 새로 저장한다.</p>
-          {lost.length > 0 && (
-            <ul className="design-files">
-              {lost.map(({ e, who }) => (
-                <li key={e.commit} className="design-file-row">
-                  <span className={`design-who is-${who.tone}`}>{who.label}</span>
-                  <span>{stamp(e.committed_ms)} {e.subject.replace(/^기획: /, "").replace(/ \([^()]*\)$/, "")}</span>
-                  <span className="spacer" /><span className="design-minus">사라짐</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <ul className="design-checks">
-            <li className="is-ok"><Check className="i" aria-hidden="true" />사라지는 저장도 이력에 남아 다시 되돌릴 수 있다</li>
-            <li className="is-ok"><Check className="i" aria-hidden="true" />넘긴 블록 표지(<code>[!계획] d-NNNN</code>)는 그대로 둔다</li>
-            <li className="is-ok"><Check className="i" aria-hidden="true" />저장할 때 저장소 문서 검사를 한다</li>
-          </ul>
-          {problem && <p className="confirm-error" role="alert">{problem}</p>}
-        </div>
-        <footer className="modal-footer">
-          <span className="design-hand-note">main에 바로 들어간다</span>
-          <span className="spacer" />
-          <button type="button" className="btn" disabled={busy} onClick={onClose}>취소</button>
-          <button type="button" className="btn primary" disabled={busy} data-testid="design-revert-submit" onClick={() => void submit()}><RotateCcw className="i" aria-hidden="true" />되돌리기</button>
-        </footer>
-      </div>
     </div>
   );
 }

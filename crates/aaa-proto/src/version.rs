@@ -340,7 +340,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // (문서 이력)·`design_revert`(이 판으로 되돌리기). 「main에 반영」(`design_apply`·`design_apply_cancel`)은 없어졌다고 거절한다.
 // 1.187: 실행 중인 thread의 번개 표지 `ThreadView.speed`(t-2011). 옛 front는 버리고 AGENT_LINK는 유지한다.
 // 1.188: 메시지의 PTY 입력 단계 `MessageView.input`(선택, t-2031).
-pub const FRONT_API: Version = Version { major: 1, minor: 188 };
+// 1.189: 기획 편집과 구현 맡기기는 일반 작업 branch에서 반영한다. 옛 직접 쓰기 요청은 거절한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 189 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

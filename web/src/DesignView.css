@@ -334,3 +334,5 @@
   .design-save-note, .design-save-error { margin-left: var(--space-4); margin-right: var(--space-4); }
 }
 .design-history-what { overflow-wrap: anywhere; }
+
+.design-edit-original { margin: 0; padding: var(--space-3); border-left: 2px solid var(--border); white-space: pre-wrap; overflow: auto; max-height: 9rem; color: var(--text-dim); }

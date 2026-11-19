@@ -73,47 +73,6 @@ impl Lab {
         .unwrap()
     }
 }
-/// 기획 branch worktree(t-1894)도 휴대용 root에서는 thread 자리처럼 잠그고, 내릴 때 풀었다가 못 지우면 다시 잠근다
-#[tokio::test]
-async fn design_worktrees_lock_on_portable_roots() {
-    use aaa_proto::AgentResponse;
-    let lab = Lab::new().await;
-    activate(&lab.state, &lab.cfg.work_root, lab.cfg.work_mount.as_deref()).unwrap();
-    let repo = lab.repo.to_str().unwrap();
-    git(&lab.repo, &["config", "user.name", "Example"]).await;
-    git(&lab.repo, &["config", "user.email", "example@example.com"]).await;
-    let Ok(AgentResponse::DesignBranch { cwd, .. }) = crate::design_write::open(&lab.cfg, "demo", repo, "boss").await
-    else {
-        panic!("열기")
-    };
-    let locked =
-        |list: &str| list.split("\n\n").any(|r| r.contains(&format!("worktree {cwd}")) && r.contains("locked aaa:"));
-    assert!(locked(&git(&lab.repo, &["worktree", "list", "--porcelain"]).await), "휴대용 root의 기획 자리는 잠근다");
-    let saved =
-        crate::design_write::save(&lab.cfg, "demo", repo, "docs", "boss", "docs/a.md", None, ("# a\n", "기획: a"))
-            .await;
-    assert!(matches!(saved, Ok(AgentResponse::DesignSaved { .. })), "{saved:?}");
-    // 남은 파일이 있으면 지우지 못하고 다시 잠근다
-    std::fs::write(Path::new(&cwd).join("scratch.md"), "초안").unwrap();
-    assert!(crate::design_write::close(&lab.cfg, "demo", repo, "boss", (false, false), None).await.is_err());
-    assert!(locked(&git(&lab.repo, &["worktree", "list", "--porcelain"]).await), "다시 잠근다");
-    std::fs::remove_file(Path::new(&cwd).join("scratch.md")).unwrap();
-    let closed = crate::design_write::close(&lab.cfg, "demo", repo, "boss", (false, false), None).await;
-    assert!(matches!(closed, Ok(AgentResponse::Done)), "{closed:?}");
-    assert!(!Path::new(&cwd).exists());
-    assert!(git(&lab.repo, &["branch", "--list", "design/boss"]).await.contains("design/boss"), "쉼은 branch를 남긴다");
-    let Ok(AgentResponse::DesignBranch { cwd: again, .. }) =
-        crate::design_write::open(&lab.cfg, "demo", repo, "boss").await
-    else {
-        panic!("다시 열기")
-    };
-    assert_eq!(again, cwd);
-    assert!(locked(&git(&lab.repo, &["worktree", "list", "--porcelain"]).await));
-    let discarded = crate::design_write::close(&lab.cfg, "demo", repo, "boss", (true, false), None).await;
-    assert!(matches!(discarded, Ok(AgentResponse::Done)), "{discarded:?}");
-    assert!(git(&lab.repo, &["branch", "--list", "design/boss"]).await.is_empty());
-}
-
 impl Drop for Lab {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.dir).unwrap();

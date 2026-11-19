@@ -32,7 +32,7 @@ pub(crate) struct Target {
     pub(crate) path: String,
     pub(crate) machine: Option<String>,
     pub(crate) folder: Option<String>,
-    /// 저장마다 도는 저장소 문서 검사(host.toml `design_check`)
+    /// 착지할 때 도는 저장소 문서 검사(host.toml `design_check`)
     pub(crate) check: Vec<String>,
     /// 웹 그림을 둘 문서 폴더 아래 하위 폴더(`design_media`)
     pub(crate) media: Option<String>,
@@ -100,7 +100,7 @@ impl Host {
         Ok((target, mid))
     }
 
-    fn design_conn(&self, mid: &str) -> Result<crate::AgentConn, ErrorBody> {
+    pub(crate) fn design_conn(&self, mid: &str) -> Result<crate::AgentConn, ErrorBody> {
         let conn = self.live_conn(mid)?;
         if !self.machine_feature(mid, FEATURE) {
             return Err(err(
@@ -128,60 +128,25 @@ impl Host {
             R::DesignRead { project, repo, path, at, .. } => {
                 self.design_read(&project, &repo, &path, at.as_deref()).await
             }
-            R::DesignBranchOpen { project, repo, slug, title, profile } => {
-                self.design_branch_open(role, actor, &project, &repo, &slug, title, profile).await
-            }
-            R::DesignSave { project, repo, branch, path, base, text, summary, extra } => {
-                Box::pin(self.design_save(role, actor, &project, &repo, &branch, &path, base, text, summary, extra))
-                    .await
-            }
-            R::DesignAttach { project, repo, branch, name, dir, upload, offset, total, data } => {
-                Box::pin(self.design_image_chunk(
-                    role,
-                    actor,
-                    &project,
-                    &repo,
-                    &branch,
-                    (dir, name),
-                    upload,
-                    offset,
-                    total,
-                    data.0,
-                ))
-                .await
-            }
-            R::DesignDetach { project, repo, branch, path } => {
-                self.design_detach(role, actor, &project, &repo, &branch, &path).await
-            }
-            R::DesignSay { project, repo, branch, text } => {
-                self.design_say(role, actor, &project, &repo, &branch, &text).await
-            }
-            R::DesignDiscard { project, repo, branch } => {
-                self.design_discard(role, actor, &project, &repo, &branch).await
-            }
-            R::DesignApply { .. } | R::DesignApplyCancel { .. } => self.design_apply_gone(),
             R::DesignLog { project, repo, path } => self.design_log(&project, &repo, &path).await,
-            R::DesignRevert { project, repo, path, at, base, branch } => {
-                Box::pin(self.design_revert(role, actor, &project, &repo, &path, (&at, &base), &branch)).await
-            }
-            R::DesignHandoff { project, repo, branch, path, blob, blocks, title, profile, memo, reserve } => {
-                let pick = crate::design_handoff::Handoff {
-                    repo,
-                    slug: branch,
-                    path,
-                    blob,
-                    blocks,
-                    title,
-                    profile,
-                    memo,
-                    reserve,
-                };
+            R::DesignHandoff { project, repo, branch: _, path, blob, blocks, title, profile, memo, reserve } => {
+                let pick = crate::design_handoff::Handoff { repo, path, blob, blocks, title, profile, memo, reserve };
                 // 할 일·저장·올리기·예약을 차례로 기다리는 큰 future다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
                 Box::pin(self.design_handoff(role, actor, &project, pick)).await
             }
             R::DesignIds { project } => self.design_ids_list(&project),
-            // 트리 읽기·branch 열기·agent 쓰기를 차례로 기다리는 큰 future다: 공용 dispatcher 스택에 얹지 않게 heap에 둔다
-            R::DesignMarkIds { project, repo } => Box::pin(self.design_mark_ids(role, actor, &project, &repo)).await,
+            R::DesignBranchOpen { .. }
+            | R::DesignSave { .. }
+            | R::DesignAttach { .. }
+            | R::DesignDetach { .. }
+            | R::DesignSay { .. }
+            | R::DesignDiscard { .. }
+            | R::DesignRevert { .. }
+            | R::DesignMarkIds { .. }
+            | R::DesignApply { .. }
+            | R::DesignApplyCancel { .. } => {
+                Err(err(ErrorCode::BadRequest, "기획 문서의 편집 요청으로 일반 작업을 시작한다"))
+            }
             _ => Err(err(ErrorCode::Internal, "기획 요청이 아니다")),
         }
     }
@@ -580,6 +545,39 @@ mod tests {
         drop(h);
         std::fs::remove_dir_all(&root).unwrap();
         assert!(size <= 8 * 1024, "기획 요청 future {size}바이트: 큰 future는 그 길 안에서 Box::pin 한다");
+    }
+
+    #[tokio::test]
+    async fn direct_writes_from_previous_clients_are_rejected_before_agent_access() {
+        use aaa_proto::{DeviceRole, FrontRequest};
+        let root = std::env::temp_dir().join(format!("aaa-design-retired-{}", aaa_common::util::new_id()));
+        let host = std::sync::Arc::new(crate::Host::open(aaa_config::HostConfig::default(), root.clone()).unwrap());
+        let project = "demo".to_string();
+        let repo = "app".to_string();
+        let open = FrontRequest::DesignBranchOpen {
+            project: project.clone(),
+            repo: repo.clone(),
+            slug: "boss".into(),
+            title: None,
+            profile: None,
+        };
+        let mark = FrontRequest::DesignMarkIds { project: project.clone(), repo: repo.clone() };
+        let save = FrontRequest::DesignSave {
+            project,
+            repo,
+            branch: String::new(),
+            path: "docs/a.md".into(),
+            base: None,
+            text: "# 새 글".into(),
+            summary: None,
+            extra: Vec::new(),
+        };
+        for request in [open, mark, save] {
+            let err = host.call_design(DeviceRole::Controller, "device:sample", request).await.unwrap_err();
+            assert!(err.message.contains("편집 요청"), "{}", err.message);
+        }
+        drop(host);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// agent가 없는 저장소도 목록·마지막 트리는 즉시 돌려주며, 한 저장소 오류를 전체 오류로 올리지 않는다.

@@ -117,31 +117,6 @@ impl Db {
         Ok(out.into_iter().map(|o| o.expect("모든 문서에 번호를 줬다")).collect())
     }
 
-    /// 표지가 없는 문서를 저장할 때 적을 번호: 그 경로의 아직 표지로 적히지 않은 원장 번호 중 가장 큰 것, 없으면 새 번호.
-    /// main에서 표지로 적힌 번호는 다시 쓰지 않는다: 기획 branch에서 그 문서를 옮긴 뒤 같은 경로에 만든 새 문서가 옮긴 문서의 ID를
-    /// 가져가지 않게 한다(표지를 지운 문서는 호출자가 그 branch의 옛 글에서 번호를 되찾는다)
-    pub(crate) fn design_id_for_path(&self, project: &str, repo: &str, path: &str) -> Result<i64> {
-        let mut c = self.conn.lock().unwrap();
-        let tx = c.transaction()?;
-        let have: Option<i64> = tx
-            .query_row(
-                "SELECT MAX(number) FROM design_ids WHERE project=?1 AND repo=?2 AND path=?3 AND marked=0",
-                params![project, repo, path],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
-        let n = match have {
-            Some(n) => n,
-            None => {
-                tx.execute("INSERT INTO design_ids(project,repo,path) VALUES(?1,?2,?3)", params![project, repo, path])?;
-                tx.last_insert_rowid()
-            }
-        };
-        tx.commit()?;
-        Ok(n)
-    }
-
     /// 그 경로의 원장 번호(읽기만, 없으면 None)
     pub(crate) fn design_id_of_path(&self, project: &str, repo: &str, path: &str) -> Result<Option<i64>> {
         Ok(self
@@ -220,11 +195,6 @@ mod tests {
         let clash =
             db.design_ids_sync("demo", "app", &[doc("docs/b.md", Some(40)), doc("docs/x/a.md", Some(1))]).unwrap();
         assert_eq!(clash[0], DesignIdOf { number: 2, marked: false });
-        // 저장할 때: 아직 표지로 적히지 않은 경로 번호(b.md의 2), main에서 표지로 적힌 번호(x/a.md의 1)는 다시 쓰지 않고 새 번호
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/b.md").unwrap(), 2);
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/x/a.md").unwrap(), 42);
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/new.md").unwrap(), 43);
-        assert_eq!(db.design_id_for_path("demo", "app", "docs/new.md").unwrap(), 43, "같은 경로는 같은 번호");
         // 문서에 적힌 터무니없이 큰 번호는 받지 않는다(그 뒤 새 번호가 막히지 않게)
         let huge =
             db.design_ids_sync("demo", "lib", &[doc("docs/z.md", Some(40)), doc("docs/h.md", Some(i64::MAX))]).unwrap();
@@ -232,7 +202,7 @@ mod tests {
         assert!(huge[1].number < 100, "{huge:?}");
         db.project_forget("demo").unwrap();
         assert!(
-            db.design_id_for_path("demo", "app", "docs/a.md").unwrap() > 43,
+            db.design_ids_sync("demo", "app", &[doc("docs/a.md", None)]).unwrap()[0].number > huge[1].number,
             "지운 프로젝트의 번호도 다시 쓰지 않는다"
         );
         drop(db);

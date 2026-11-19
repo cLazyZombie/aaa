@@ -88,22 +88,4 @@ export default async function () {
       assert.equal(await p.getByTestId("design-id").textContent(), "k-0009");
     } finally { await p.context().close(); }
   });
-
-  await step("한 번에 달기: 표지 없는 문서만 main에 한 commit, 다시 해도 그대로", async () => {
-    const before = git(root, "--git-dir", origin, "rev-parse", "refs/heads/main");
-    const r = aaa("plan", "ids", "app");
-    assert.equal(r.branch, "main");
-    assert.equal(r.marked, 2, JSON.stringify(r));
-    const show = (path) => git(root, "--git-dir", origin, "show", `refs/heads/main:${path}`);
-    assert.equal(show("docs/loop.md"), "# 게임 루프\n<!-- aaa-id: k-0008 -->\n\n> [!계획]\n> 성 안 보스를 더한다.\n\n마을에서 출발한다. 개요는 k-7.");
-    assert.equal(show("docs/README.md"), DOCS["docs/README.md"].trimEnd(), "있던 표지는 그대로");
-    assert.equal(git(root, "--git-dir", origin, "rev-parse", "refs/heads/main^"), before, "한 commit");
-    assert.deepEqual(git(root, "--git-dir", origin, "diff", "--name-only", before, "refs/heads/main").split("\n"), ["docs/loop.md", "docs/skills.md"], "vendor는 그대로");
-    // 표지 블록 수는 그대로(표지 줄이 계획 블록을 삼키지 않는다)
-    assert.equal(aaa("plan", "show", "app", "docs/loop.md").doc.id, "k-0008");
-    const again = aaa("plan", "ids", "app");
-    assert.equal(again.commit, null, "모두 달았다");
-    assert.equal(again.marked, 0, JSON.stringify(again));
-    assert.equal(git(root, "--git-dir", origin, "rev-parse", "refs/heads/main^"), before, "새 commit 없음");
-  });
 }

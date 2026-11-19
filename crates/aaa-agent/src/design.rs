@@ -383,82 +383,6 @@ fn is_markdown(path: &str) -> bool {
     Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
-/// 현재 branch에 commit된 Markdown의 상대 그림·파일 링크를 검사한다.
-pub(crate) async fn image_reference_warnings(top: &Path, commit: &str, image: &str) -> Result<Vec<String>> {
-    const WARNING_LIMIT: usize = 20;
-    let out = git(top, &["ls-tree", "-r", "-z", "-l", "--full-tree", commit], OUTPUT_MAX).await?;
-    let mut skipped = 0;
-    let docs: Vec<Entry> = entries(&out)?
-        .into_iter()
-        .filter(|e| {
-            e.regular()
-                && (is_markdown(&e.path)
-                    || Path::new(&e.path).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("markdown")))
-        })
-        .filter(|e| {
-            let readable = e.size <= DESIGN_MAX_TEXT;
-            skipped += usize::from(!readable);
-            readable
-        })
-        .collect();
-    let shas: Vec<&str> = docs.iter().map(|e| e.sha.as_str()).collect();
-    let mut warnings = Vec::new();
-    let mut omitted = 0;
-    each_head(top, &shas, DESIGN_MAX_TEXT as usize, |i, bytes| {
-        let path = &docs[i].path;
-        if let Ok(text) = std::str::from_utf8(bytes) {
-            if references_image(path, text, image) {
-                if warnings.len() < WARNING_LIMIT {
-                    warnings.push(format!("{path:?} 문서가 지운 그림을 참조한다"));
-                } else {
-                    omitted += 1;
-                }
-            }
-        } else {
-            skipped += 1;
-        }
-    })
-    .await?;
-    if omitted > 0 {
-        warnings.push(format!("다른 문서 {omitted}개도 지운 그림을 참조한다"));
-    }
-    if skipped > 0 {
-        warnings.push(format!("크기·인코딩 제한으로 Markdown 문서 {skipped}개의 참조를 검사하지 못했다"));
-    }
-    Ok(warnings)
-}
-
-fn references_image(doc: &str, text: &str, image: &str) -> bool {
-    use pulldown_cmark::{Event, Options, Parser, Tag};
-
-    Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES).any(|event| match event {
-        Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) => {
-            image_link_path(doc, &dest_url).as_deref() == Some(image)
-        }
-        _ => false,
-    })
-}
-
-/// 웹 기획서의 상대 경로 해석과 같이 문서 폴더에서 시작하고 절·질의는 경로에서 뺀다.
-fn image_link_path(doc: &str, destination: &str) -> Option<String> {
-    let raw = destination.trim().split(['?', '#']).next()?;
-    if raw.is_empty() || raw.starts_with('/') || raw.split('/').next()?.contains(':') {
-        return None;
-    }
-    let decoded = crate::page::percent_decode(raw);
-    let mut parts: Vec<&str> = doc.rsplit_once('/').map_or_else(Vec::new, |(dir, _)| dir.split('/').collect());
-    for part in decoded.as_deref().unwrap_or(raw).split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop()?;
-            }
-            part => parts.push(part),
-        }
-    }
-    Some(parts.join("/"))
-}
-
 async fn list(
     top: &Path,
     folder: &str,
@@ -668,6 +592,59 @@ pub(crate) async fn blob_slice(top: &Path, blob: &str, offset: u64, len: usize) 
     // 앞부분만 읽고 끝낸다(남은 출력은 버린다)
     aaa_common::diagnostic::ignored(child.kill().await, "읽을 만큼 읽었다");
     Ok(data)
+}
+
+pub async fn log(repo: &str, folder: &str, path: &str, limit: u32) -> Result<AgentResponse, ErrorBody> {
+    reply(
+        async {
+            let (_, path) = crate::design::inside(folder, path)?;
+            let top = toplevel(repo).await?;
+            if let Err(e) = fetch(&top).await {
+                tracing::warn!(repo, "이력을 읽기 전에 origin을 받지 못했다(가진 ref로 읽는다): {e:#}");
+            }
+            let (_, main) = base(&top).await?;
+            let limit = limit.clamp(1, aaa_proto::DESIGN_LOG_MAX).to_string();
+            let literal = format!(":(literal){path}");
+            let out = git(
+                &top,
+                &[
+                    "log",
+                    "--first-parent",
+                    "--no-color",
+                    "--no-show-signature",
+                    "-n",
+                    &limit,
+                    "--format=%H%x1f%ct%x1f%an%x1f%s%x1e",
+                    &main,
+                    "--",
+                    &literal,
+                ],
+                1 << 20,
+            )
+            .await?;
+            let mut entries = Vec::new();
+            for record in String::from_utf8_lossy(&out).split('\x1e') {
+                let mut f = record.trim_start_matches('\n').split('\x1f');
+                let (Some(commit), Some(at), Some(author), Some(subject)) = (f.next(), f.next(), f.next(), f.next())
+                else {
+                    continue;
+                };
+                let (by, other) = match aaa_proto::design_commit_subject(subject) {
+                    Some((_, by)) => (by.to_string(), false),
+                    None => (author.to_string(), true),
+                };
+                entries.push(aaa_proto::DesignLogEntry {
+                    commit: commit.to_string(),
+                    committed_ms: at.parse::<u64>().unwrap_or(0).saturating_mul(1000),
+                    subject: subject.to_string(),
+                    by,
+                    other,
+                });
+            }
+            Ok(AgentResponse::DesignLog { entries })
+        }
+        .await,
+    )
 }
 
 #[cfg(test)]

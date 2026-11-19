@@ -389,7 +389,7 @@ enum Cmd {
         cmd: TaskCmd,
     },
     /// 기획서: 프로젝트 저장소마다 기획 폴더(aaa.toml의 design)의 문서 목록·보기. origin 기본 branch에서 읽는다(웹 「기획」 화면과 같다).
-    /// 저장은 바로 origin main에 들어간다(저장소 문서 검사를 지나야 올라간다, t-2002)
+    /// 수정본은 작업 branch에서 웹 보고서로 발행한다.
     Plan {
         #[command(subcommand)]
         cmd: PlanCmd,
@@ -699,93 +699,30 @@ enum PlanCmd {
         /// 저장소 기준 문서·그림 경로(기획 폴더 안)
         path: String,
     },
-    /// 기획 대화를 연다(주제): 기록을 만들고 저장소 머신의 main 기획 자리를 맞춘다. 저장은 바로 main에 들어간다
-    New {
-        repo: String,
-        /// 주제(영문 소문자·숫자·`-`)
-        slug: String,
-        /// 사람이 읽는 주제
-        #[arg(long)]
-        title: Option<String>,
-        /// 대화 thread profile(없으면 프로젝트 기본)
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// 문서를 origin main에 바로 저장한다(한 commit, 저장소 문서 검사를 지나야 올라간다). 그 사이 다른 판이 생겼으면 쓰지 않는다
-    Save {
-        repo: String,
-        /// 저장소 기준 문서 경로(기획 폴더 안)
+    /// 착지할 최종 통합 worktree에서 저장소 문서 검사와 새 그림 경로를 확인한다
+    Check {
         path: String,
-        /// 사건을 남길 기획 대화 주제(대화 thread는 주지 않아도 자기 대화다)
         #[arg(long)]
-        branch: Option<String>,
-        /// 읽은 판(`aaa plan show`의 blob)
-        #[arg(long, conflicts_with = "new")]
-        base: Option<String>,
-        /// 새 문서
+        base: String,
         #[arg(long)]
-        new: bool,
-        /// 쓸 글이 든 파일
+        head: String,
+        /// 문서 폴더 아래의 design_media
         #[arg(long)]
-        file: std::path::PathBuf,
-        /// 무엇을 바꿨나(commit 메시지)
-        #[arg(long)]
-        summary: Option<String>,
-        /// 같은 commit에 함께 저장할 다른 문서 `<경로>=<파일>`(서로 링크하는 문서·문서 옮기기). 기준 판은 `--also-base`
-        #[arg(long, value_name = "PATH=FILE")]
-        also: Vec<String>,
-        /// `--also` 문서의 읽은 판 `<경로>=<blob>`(없으면 새 문서)
-        #[arg(long, value_name = "PATH=BLOB")]
-        also_base: Vec<String>,
+        media: Option<String>,
+        /// host.toml design_check의 인자 배열(JSON)
+        #[arg(long, default_value = "[]")]
+        command_json: String,
     },
-    /// 기획 대화 thread가 main에 그림을 붙이고 저장소 기준 경로를 출력한다
-    Attach {
-        repo: String,
-        /// 대화 주제(대화 thread는 주지 않아도 자기 대화다)
-        #[arg(long)]
-        branch: Option<String>,
-        /// 저장소 기준 폴더(생략하면 기획 폴더)
-        #[arg(long)]
-        dir: Option<String>,
-        /// 파일 이름(확장자는 내용과 같아야 한다). 생략하면 내용 hash 이름
-        #[arg(long)]
-        name: Option<String>,
-        /// PNG·JPEG·GIF·WebP 파일(16MiB 이하)
-        #[arg(long)]
-        file: PathBuf,
-    },
-    /// 기획 대화 thread가 main에서 그림 하나를 지운다
-    Detach {
-        repo: String,
-        /// 대화 주제(대화 thread는 주지 않아도 자기 대화다)
-        #[arg(long)]
-        branch: Option<String>,
-        /// 지울 그림의 저장소 기준 경로
+    /// 작업 branch HEAD와 기준 판에서 문서·그림을 읽어 library용 검토 페이지를 만든다
+    Preview {
+        /// 저장소 기준 문서 경로
         path: String,
-    },
-    /// 기획 대화에 말한다: 그 대화 thread(저장소 머신)를 띄우거나 이어 말을 보낸다
-    Say {
-        repo: String,
-        slug: String,
-        /// 보낼 말(여럿이면 빈칸으로 잇는다)
-        #[arg(required_unless_present = "file", conflicts_with = "file")]
-        text: Vec<String>,
-        /// 말이 든 파일
         #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-    /// 기획 대화를 끝낸다: 대화 thread를 끝내고 기록을 지운다. main에 저장한 글은 그대로다(되돌리기는 문서 이력으로)
-    Discard { repo: String, slug: String },
-    /// (없어졌다, t-2002) 기획은 저장하면 바로 main에 들어간다
-    #[command(hide = true)]
-    Apply {
-        repo: String,
-        slug: String,
+        base: String,
+        /// 새로 만들 결과 폴더
         #[arg(long)]
-        cancel: bool,
+        output: std::path::PathBuf,
     },
-    /// 기획서 ID 한 번에 달기: main 문서 중 ID 표지가 없는 것에 표지를 main에 한 commit으로 넣는다(저장소 문서 검사를 지난다)
-    Ids { repo: String },
 }
 
 #[derive(Subcommand)]
@@ -2355,9 +2292,30 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
+        Cmd::Plan { cmd: PlanCmd::Check { path, base, head, media, command_json } } => {
+            let command: Vec<String> = serde_json::from_str(&command_json).context("design_check 인자 배열")?;
+            crate::plan_preview::check(&path, &base, &head, media.as_deref(), &command)?;
+            if json {
+                println!("{}", serde_json::json!({"checked":head}));
+            } else {
+                println!("기획 검사 통과 {head}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Plan { cmd: PlanCmd::Preview { path, base, output } } => {
+            crate::plan_preview::write(&path, &base, &output)?;
+            let page = output.join("index.html");
+            if json {
+                println!("{}", serde_json::json!({"path": page}));
+            } else {
+                println!("{}", page.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Plan { cmd } => {
             let project = project_or_here(None)?;
             match cmd {
+                PlanCmd::Preview { .. } | PlanCmd::Check { .. } => unreachable!(),
                 PlanCmd::List => front(json, FrontRequest::DesignTree { project, repo: None, cached: false }),
                 PlanCmd::Links => front(json, FrontRequest::IdeaLinks { project }),
                 PlanCmd::Show { repo, path, at, branch } => {
@@ -2371,50 +2329,6 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     front(json, FrontRequest::DesignRead { project, repo, path, branch: None, at })
                 }
                 PlanCmd::Log { repo, path } => front(json, FrontRequest::DesignLog { project, repo, path }),
-                PlanCmd::Ids { repo } => front(json, FrontRequest::DesignMarkIds { project, repo }),
-                PlanCmd::New { repo, slug, title, profile } => {
-                    front(json, FrontRequest::DesignBranchOpen { project, repo, slug, title, profile })
-                }
-                PlanCmd::Apply { repo, slug, cancel: false } => {
-                    front(json, FrontRequest::DesignApply { project, repo, branch: slug })
-                }
-                PlanCmd::Apply { repo, slug, cancel: true } => {
-                    front(json, FrontRequest::DesignApplyCancel { project, repo, branch: slug })
-                }
-                PlanCmd::Save { repo, path, branch, base, new, file, summary, also, also_base } => {
-                    if base.is_none() && !new {
-                        anyhow::bail!("--base <blob>(고칠 문서의 판) 또는 --new(새 문서)를 준다");
-                    }
-                    let text =
-                        std::fs::read_to_string(&file).with_context(|| format!("{}를 읽지 못했다", file.display()))?;
-                    let extra = plan_also(&also, &also_base)?;
-                    let branch = branch.unwrap_or_default();
-                    front(json, FrontRequest::DesignSave { project, repo, branch, path, base, text, summary, extra })
-                }
-                PlanCmd::Attach { repo, branch, dir, name, file } => {
-                    plan_attach(json, project, repo, branch.unwrap_or_default(), (dir, name), &file)
-                }
-                PlanCmd::Detach { repo, branch, path } => {
-                    let branch = branch.unwrap_or_default();
-                    let res = front_call(FrontRequest::DesignDetach { project, repo, branch, path })?;
-                    if !json && let Ok(FrontResponse::DesignDetached { warnings, .. }) = &res {
-                        for warning in warnings {
-                            eprintln!("경고: {warning}");
-                        }
-                    }
-                    front_print(json, res)
-                }
-                PlanCmd::Say { repo, slug, text, file } => {
-                    let text = match file {
-                        Some(file) => std::fs::read_to_string(&file)
-                            .with_context(|| format!("{}를 읽지 못했다", file.display()))?,
-                        None => text.join(" "),
-                    };
-                    front(json, FrontRequest::DesignSay { project, repo, branch: slug, text })
-                }
-                PlanCmd::Discard { repo, slug } => {
-                    front(json, FrontRequest::DesignDiscard { project, repo, branch: slug })
-                }
             }
         }
         Cmd::Task { cmd: TaskCmd::Queue } => {
@@ -4255,75 +4169,6 @@ fn design_id_target(project: &str, id: &str) -> Result<(String, String)> {
         Ok(_) => anyhow::bail!("예상하지 못한 응답"),
         Err(e) => anyhow::bail!("{}", e.message),
     }
-}
-
-/// `--also <경로>=<파일>`·`--also-base <경로>=<blob>`를 함께 저장할 파일로 읽는다
-fn plan_also(also: &[String], bases: &[String]) -> Result<Vec<aaa_proto::DesignSaveFile>> {
-    let mut base_of = std::collections::BTreeMap::new();
-    for b in bases {
-        let (path, blob) = b.split_once('=').context("--also-base는 <경로>=<blob>이다")?;
-        base_of.insert(path.to_string(), blob.to_string());
-    }
-    let mut out = Vec::new();
-    for a in also {
-        let (path, file) = a.split_once('=').context("--also는 <경로>=<파일>이다")?;
-        let text = std::fs::read_to_string(file).with_context(|| format!("{file}를 읽지 못했다"))?;
-        out.push(aaa_proto::DesignSaveFile { path: path.to_string(), base: base_of.remove(path), text });
-    }
-    if let Some(path) = base_of.keys().next() {
-        anyhow::bail!("--also-base의 {path}에 맞는 --also가 없다");
-    }
-    Ok(out)
-}
-
-fn plan_attach(
-    json: bool,
-    project: String,
-    repo: String,
-    branch: String,
-    (dir, name): (Option<String>, Option<String>),
-    file: &std::path::Path,
-) -> Result<ExitCode> {
-    use std::io::Read as _;
-    let read_error = || format!("{}를 읽지 못했다", file.display());
-    anyhow::ensure!(file.metadata().with_context(read_error)?.is_file(), "그림은 일반 파일이어야 한다");
-    let mut bytes = Vec::new();
-    std::fs::File::open(file)
-        .with_context(read_error)?
-        .take(aaa_proto::DESIGN_MAX_FILE + 1)
-        .read_to_end(&mut bytes)
-        .with_context(read_error)?;
-    let total = bytes.len() as u64;
-    anyhow::ensure!(total > 0 && total <= aaa_proto::DESIGN_MAX_FILE, "그림은 1바이트부터 16MiB까지 붙인다");
-    let upload = aaa_common::util::new_id();
-    let mut offset = 0;
-    for chunk in bytes.chunks(aaa_proto::ATTACH_CHUNK) {
-        let result = front_call(FrontRequest::DesignAttach {
-            project: project.clone(),
-            repo: repo.clone(),
-            branch: branch.clone(),
-            name: name.clone(),
-            dir: dir.clone(),
-            upload: upload.clone(),
-            offset,
-            total,
-            data: aaa_proto::B64(chunk.to_vec()),
-        })?;
-        offset += chunk.len() as u64;
-        match result {
-            Err(e) => return front_print(json, Err(e)),
-            Ok(FrontResponse::Done) if offset < total => {}
-            Ok(saved @ FrontResponse::DesignSaved { .. }) if offset == total && json => {
-                return front_print(json, Ok(saved));
-            }
-            Ok(FrontResponse::DesignSaved { path, .. }) if offset == total => {
-                println!("{path}");
-                return Ok(ExitCode::SUCCESS);
-            }
-            _ => anyhow::bail!("예상하지 못한 그림 첨부 응답"),
-        }
-    }
-    anyhow::bail!("그림 저장 응답이 없다")
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {

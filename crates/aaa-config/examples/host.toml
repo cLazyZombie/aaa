@@ -86,7 +86,7 @@ delivered_working_secs = 15
 thread_stall_secs = 90
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
-# 기획 대화 thread가 이만큼(초) 쉬면 알림 없이 보류한다. 다시 말하면 같은 대화로 잇는다
+# 이전 판에서 만든 기획 대화 thread를 쉬면 보류하는 시간(초)
 chat_rest_secs = 1800
 # routine 명령을 실행해도 되는 프로젝트(옛 자리, "*"는 모두). [safety.*] routine_commands가 있으면 그것이 먼저다.
 # 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.

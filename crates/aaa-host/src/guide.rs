@@ -152,7 +152,7 @@ needs_user면 대신 정하지 않고 묻는다. post는 inbox done, 맡은 thre
 post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 
 ## 메시지마다 세 가지 중 하나
-「아이디어」·「기획」 요청은 할 일·thread 없이 기획 대화로 넘긴다(`aaa guide plan`).
+기획서 편집 요청은 저장소를 지정한 일반 할 일로 만든다(`aaa guide plan`).
 
 - **그 자리에서 답한다**: context로 답할 수 있는 질문, 선호, TASKS.md 변경. 새 작업은 직접 처리하지 않는다.
 - **그 영역을 맡은 열린 thread에 넘긴다**: 아래 「이어지는 말」.
@@ -674,23 +674,16 @@ thread·post의 질문은 `aaa question answer q-NNNN B --auto --reason-file <�
 사용자가 자동 결정을 다시 정하면 inbox의 새 답을 읽는다. host는 이미 실행한 작업을 되돌리지 않는다. 병합 전이면 지시를 바꾸고, 배포 뒤면 되돌림 배포를 제안하는 등 실제 상태를 확인해 처리한다. auto mode를 꺼도 이전 결정 기록과 이미 진행한 작업은 남는다.
 "#;
 
-/// 「아이디어」·「기획」 요청(t-1928, q-4013 2B). coordinator는 기획 대화를 열고 말하기만 한다(host `design_opener`)
-const PLAN: &str = r#"# 기획 대화로 넘기기(coordinator)
+/// 기획 편집은 저장소를 지정한 일반 할 일로 맡긴다.
+const PLAN: &str = r#"# 기획서 편집
 
-사용자의 「아이디어」·「기획」 요청은 할 일·thread를 만들지 않고 저장소의 기획 대화로 넘긴다. 대화 thread는 host가 그 저장소 머신에 띄우고, 사용자와 이야기하며 기획 문서를 고친다. 기획 저장은 바로 origin main에 들어간다(branch·「main에 반영」 없음, 저장소 문서 검사를 지나야 올라간다).
+`aaa plan list`에서 저장소와 문서를 확인한다. 문서·절·기준 판·사용자의 요청을 메모에 담고 저장소를 지정한 일반 할 일과 worktree thread로 맡긴다. 웹에서는 기획서의 「편집 요청」이 할 일과 시작 예약을 만든다. 후속 수정은 같은 thread에 보낸다.
 
-1. `aaa plan list`로 저장소마다 기획 폴더와 기획 대화(`대화 <주제> 「제목」`)를 본다. 기획 폴더가 없는 저장소에는 열지 못한다. 어느 저장소인지 분명하지 않으면 사용자에게 묻는다.
-2. 같은 주제의 대화가 있으면 그 주제에 말한다. 없으면 `aaa plan new <저장소> <주제> --title '<제목>'`으로 연다. 주제는 영문 소문자·숫자·`-` 1~48자, 제목은 사용자 말로 짧게 쓴다.
-3. `aaa plan say <저장소> <주제> --file <파일>`로 사용자 말을 보낸다. 줄이거나 바꾸지 않고 그대로 싣고, 사용자가 준 파일·근거 경로가 있으면 함께 적는다. 처음이면 host가 대화 thread를 띄우고 brief 뒤에 보낸다.
-4. 사용자에게 저장소와 주제를 알리고, 웹 「기획」에서 그 대화를 이어 갈 수 있다고 한 줄로 답한다. 채팅으로 이어지는 말도 같은 주제에 `aaa plan say`로 보낸다(`aaa thread message`를 쓰지 않는다).
+thread는 문서·그림을 자기 branch에 커밋한다. 저장소 루트에서 `aaa plan preview <문서 경로> --base <요청 기준 commit> --output <library 아래 새 폴더>`로 웹 페이지를 만들고 보고에서 그 index.html을 연결한다. 같은 이름으로 다시 수정하면 새 폴더와 새 보고 판을 쓴다.
 
-coordinator는 열기·말하기만 한다. 사람이 직접 문서를 저장하거나 되돌리거나 대화를 끝내거나 구현을 맡기려면 웹 「기획」을 안내한다. 기획 대화 thread는 `plan save`로 문서를 main에 저장한다.
+사용자가 검토한 판을 승인하면 일반 착지 창에서 최종 통합 SHA로 저장소 gate와 brief의 design_check를 실행한다. 새 손 그림은 design_media 위치와 상대 링크를 확인한다. 통합 중 검토한 내용이 달라지면 다시 보여 준다. 배포는 별도로 묻는다.
 
-기획 대화 thread가 만든 그림은 그 thread에서 `aaa plan attach <저장소> --file <그림> --dir <저장소 기준 그림 폴더> --name <이름>`으로 main에 붙인다. PNG·JPEG·GIF·WebP는 16MiB까지 받는다. 저장소 지침과 문서 주변의 배치를 보고 기획 손 그림 폴더(생성 그림 폴더가 아닌 곳)와 이름 규칙을 고른다. 출력한 경로는 문서 폴더 기준 상대 경로로 바꾸어 링크한다.
-
-`aaa plan detach <저장소> <저장소 기준 그림 경로>`로 기획 폴더 안 그림 하나를 지운다. 옮길 때는 새 자리에 붙이고 참조 문서를 저장한 뒤 옛 그림을 지운다. 참조가 남으면 경고가 나온다.
-
-문서 이력은 `aaa plan log <저장소> <경로>`, 옛 판은 `aaa plan show <저장소> <경로> --at <commit>`이다. 옛 아이디어(`n-NNNN`)는 지웠다. 글에 나온 n-ID가 옮긴 기획 문서는 `aaa plan links`로 찾는다.
+이력은 `aaa plan log <저장소> <경로>`, 옛 판은 `aaa plan show <저장소> <경로> --at <commit>`으로 본다. 표지가 없는 문서는 트리의 ID를 작업 branch에서 첫 제목 아래에 붙인다. 옛 아이디어 링크는 `aaa plan links`로 읽는다.
 "#;
 
 /// thread가 웹 보고서를 만들 때(brief의 「보고」 절이 가리킨다). 자세한 예시는 aaa 저장소 docs/library.md에 있다.
@@ -748,27 +741,14 @@ mod tests {
         assert!(qs[0].body.as_deref().unwrap_or_default().contains("![시안 영상](library/preview/a.mp4)"), "{fence}");
     }
 
-    /// 「아이디어」·「기획」 요청은 기획 대화로 넘긴다(t-1928): 매 턴 본문이 `plan` 주제를 가리키고, 주제는 열기·말하기 명령과
-    /// coordinator가 하지 않는 쓰기를 적는다. 지운 아이디어 명령은 안내하지 않는다
     #[test]
-    fn idea_requests_go_to_a_plan_chat() {
-        let guide = coordinator_guide("demo");
-        assert!(guide.contains("「아이디어」·「기획」 요청은 할 일·thread 없이 기획 대화로 넘긴다(`aaa guide plan`)."));
-        let text = topic("plan").unwrap().text;
-        for needle in [
-            "`aaa plan list`",
-            "`aaa plan new <저장소> <주제>",
-            "`aaa plan say <저장소> <주제> --file",
-            "`plan save`",
-            "`aaa plan attach <저장소> --file",
-            "`aaa plan detach <저장소> <저장소 기준 그림 경로>`",
-            "`aaa plan log <저장소> <경로>`",
-            "`aaa plan links`",
-        ] {
-            assert!(text.contains(needle), "{needle}");
-        }
-        for text in [guide.as_str(), text] {
-            assert!(!text.contains("aaa idea"));
+    fn plan_edits_use_regular_threads() {
+        assert!(coordinator_guide("demo").contains("기획서 편집 요청은 저장소를 지정한 일반 할 일로 만든다"));
+        let plan = topic("plan").unwrap().text;
+        for required in
+            ["worktree thread", "aaa plan preview", "사용자가 검토한 판을 승인", "design_check", "design_media"]
+        {
+            assert!(plan.contains(required));
         }
     }
 
