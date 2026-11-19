@@ -574,6 +574,42 @@ fn conditional_feedback_does_not_require_an_answer_or_hide_a_decision() {
     assert_eq!(evidence.line, 3);
 }
 
+/// t-2064의 이름 의견은 앞에 확정 안내가 있을 때만 선택 사항이다.
+#[test]
+fn optional_feedback_on_a_decided_name_does_not_hide_requests() {
+    let cards = cards();
+    let decided = "이름은 제가 `docs/design/themes/`로 정했습니다.";
+    let feedback = "다른 이름이 좋으시면 말씀해 주세요";
+    for gap in [" ", "\n", "\n\n"] {
+        let text = format!("{decided}{gap}{feedback}.");
+        let result = inspect(&text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+    }
+    for text in [
+        format!("{feedback}."),
+        format!("이름은 아직 정하지 않았습니다. {feedback}."),
+        format!("이름은 이쪽으로 정했습니다? {feedback}."),
+        format!("{decided}\n\n## 다른 폴더\n{feedback}."),
+        format!("{decided} 파일은 옮기지 않았습니다. {feedback}."),
+        format!("{decided} 어느 이름으로 할까요?"),
+        format!("{decided} 다른 이름이 좋으시면 새 이름을 정해 주세요."),
+        format!("{decided} 다른 이름이 좋으시면 변경 승인 여부를 말씀해 주세요."),
+        format!("{decided} {feedback}. 별도로 배포할까요?"),
+        format!("{decided} {feedback}.\n- A 현재 이름 (추천)\n- B 새 이름"),
+        "새 원격 저장소를 만들까요?".into(),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    }
+    for text in [
+        format!("{decided} {feedback}, 배포 승인 여부를 알려 주세요."),
+        format!("{decided} 배포 승인 여부를 알려 주세요, {feedback}."),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        let text = prose(&text);
+        assert_eq!(requests(&text, false, None), [("request", text.find("알려 주세요").unwrap())], "{text}");
+    }
+}
+
 /// 뜻을 바로잡는 안내만 제외하며 같은 문장의 승인·선택 요청은 보존한다.
 #[test]
 fn meaning_corrections_are_optional_without_hiding_decisions() {
