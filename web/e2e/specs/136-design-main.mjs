@@ -172,19 +172,115 @@ export default async function () {
       await p.context().close();
     }
   });
-  await step("구현 맡기기는 main을 보존하고 구현 branch에서 표지를 작성한다", async () => {
-    const before = mainHead();
-    const {page:p} = await pairPage(browser, aaa("web","pair").code, {width:1280,height:900}, { hash:`#design=${encodeURIComponent("app/docs/exit.md")}` });
+  await step("구현 맡기기의 모델·블록 선택과 검토한 판 확인", async () => {
+    const landFixture = (text) => {
+      const seed = `${root}/seed/app`;
+      fs.writeFileSync(`${seed}/docs/exit.md`, text);
+      git(seed, "commit", "-qam", "기획 문서 갱신");
+      git(seed, "push", "-q", "origin", "HEAD:main");
+      git(`${root}/app`, "fetch", "-q", "origin");
+      aaa("plan", "list");
+    };
+    const d = aaa("plan", "show", "app", "docs/exit.md").doc;
+    landFixture(d.text.replace("## 바뀐 것", "> [!계획]\n> **층 이벤트** — 다섯 층마다 이벤트 방.\n\n## 바뀐 것"));
+    // 최신 트리 없이 캐시에서 연 창을 확인한다. 기다림은 응답을 풀거나 상태가 나타날 때 끝난다.
+    const fresh = Promise.withResolvers();
+    const assignable = Promise.withResolvers();
+    let modelReply = "live";
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 900 }, {
+      hash: `#design=${encodeURIComponent("app/docs/exit.md")}`,
+      serviceWorkers: "block",
+      route: ["**/api/v1/call", async (route) => {
+        const req = route.request().postDataJSON();
+        if (req.op === "design_tree" && !req.cached) await fresh.promise;
+        if (req.op === "assignable") {
+          if (modelReply === "empty") {
+            return route.fulfill({ json: { ok: { kind: "assignable", owners: [
+              { machine: "labA", connected: true, profiles: [] },
+              { machine: "labB", connected: true, profiles: ["other-model"] },
+            ], valid: null } } });
+          }
+          if (modelReply === "failed") return route.abort("failed");
+          await assignable.promise;
+        }
+        await route.continue();
+      }],
+    });
     try {
-      await p.getByTestId("design-handoff").first().click();
+      await p.getByTestId("design-body").getByText("층 이벤트").first().waitFor();
+      assert.equal(await p.getByTestId("design-handoff").count(), 3, "넘기지 않은 계획만(캠프 지도·상점 위치·층 이벤트)");
+      const openHandoff = () => p.getByTestId("design-handoff").first().click();
+      const first = p.getByTestId("design-hand-dialog");
+      const firstModel = first.getByTestId("design-hand-model");
+      const modelStatus = first.getByRole("status");
+      const closeHandoff = () => first.getByRole("button", { name: "닫기" }).click();
+      await openHandoff();
+      await modelStatus.filter({ hasText: "모델 불러오는 중" }).waitFor();
+      assert.equal(await firstModel.locator('option[value=""]').textContent(), "프로젝트 기본 · labA");
+      assignable.resolve();
+      await firstModel.locator('option[value="fake"]').waitFor({ state: "attached" });
+      assert.deepEqual(await firstModel.locator("option").evaluateAll((options) => options.map((option) => option.value)), ["", "fake"]);
+      await closeHandoff();
+
+      modelReply = "empty";
+      await openHandoff();
+      await modelStatus.filter({ hasText: "선택할 수 있는 모델이 없습니다" }).waitFor();
+      assert.equal(await firstModel.locator("option").count(), 1, "다른 머신의 모델을 고르지 않는다");
+      await closeHandoff();
+
+      modelReply = "failed";
+      await openHandoff();
+      await modelStatus.filter({ hasText: "모델 목록을 불러오지 못했습니다" }).waitFor();
+      await closeHandoff();
+
+      modelReply = "live";
+      fresh.resolve();
+      // 창을 연 뒤 그 문서가 바뀌면 맡기지 않는다: 창은 연 때의 판으로 보내고 host가 다시 본다
+      await openHandoff();
+      await p.getByTestId("design-hand-main").waitFor();
+      assert.match(await p.getByTestId("design-hand-main").textContent(), /선택한 블록/);
+      const now = aaa("plan", "show", "app", "docs/exit.md").doc;
+      landFixture(now.text.replace("- 11-16: 통로를", "- 11-16: 상한 표지를 정리함.\n- 11-16: 통로를"));
+      await p.getByTestId("design-hand-submit").click();
+      await first.locator(".confirm-error").first().waitFor();
+      assert.match(await first.locator(".confirm-error").first().textContent(), /그 사이 main 문서가 바뀌었다/);
+      assert.ok(!aaa("task", "list").tasks.some((t) => t.title === "캠프 지도"), "할 일을 만들지 않았다");
+      await first.getByRole("button", { name: "닫기" }).click();
+      await first.waitFor({ state: "detached" });
+      await p.getByTestId("design-doc-reload").click();
+      await domIs(p, "새 판", () => !!document.querySelector("[data-testid=design-body]")?.textContent.includes("상한 표지를 정리함"));
+      await p.locator("[data-testid=design-look][data-look=left]").click();
+      const checks = p.getByTestId("design-left-check");
+      assert.equal(await checks.count(), 3, "미정·넘긴 줄은 고르지 않는다");
+      await checks.nth(0).check();
+      await checks.nth(2).check();
+      await p.getByTestId("design-left-handoff").click();
       const dialog = p.getByTestId("design-hand-dialog");
+      await dialog.waitFor();
+      const title = "상한 — 캠프 지도 · 층 이벤트";
+      assert.equal(await p.getByTestId("design-hand-title").inputValue(), title);
+      assert.ok(await p.getByTestId("design-hand-reserve").isChecked(), "예약이 기본(q-3957 2A)");
       await dialog.getByTestId("design-hand-model").selectOption("fake");
-      await dialog.getByTestId("design-hand-submit").click();
-      await dialog.waitFor({state:"detached"});
-      await p.locator(".design-pending").first().waitFor();
-      assert.equal(mainHead(),before);
-    } finally { await p.context().close(); }
+      const before = mainHead();
+      await p.getByTestId("design-hand-submit").click();
+      await dialog.waitFor({ state: "detached" });
+      const task = aaa("task", "list").tasks.find((t) => t.title === title);
+      const id = task?.short_id;
+      assert.ok(id, "할 일 하나");
+      assert.equal(task.profile, "fake");
+      assert.equal(task.machine, "labA");
+      assert.equal(mainHead(), before);
+      await p.locator("[data-testid=design-look][data-look=all]").click();
+      await domIs(p, "넘긴 두 블록", (task) => document.querySelectorAll(`[data-testid=design-callout][data-task="${task}"]`).length === 2, id);
+      assert.equal(await p.locator(".design-pending").count(), 2);
+      assert.equal(await p.getByTestId("design-handoff").count(), 1);
+    } finally {
+      fresh.resolve();
+      assignable.resolve();
+      await p.context().close();
+    }
   });
+
   for (const name of ["chromium", "webkit"]) await step(`휴대폰: 트리·문서 칸 ${name} 390px`, async () => {
     const wk = name === "webkit" ? await webkit.launch({ headless: true }) : null;
     const { page: p } = await pairPage(wk ?? browser, aaa("web", "pair").code, { width: 390, height: 844 });
