@@ -1,9 +1,10 @@
 //! coordinator 완료 답의 요청과 카드 연결을 검사한다. 원문은 진단에 복사하지 않는다.
 use crate::Host;
 use aaa_proto::HarnessEvent;
+use pulldown_cmark::{Event, Parser, Tag};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::LazyLock};
+use std::{collections::HashMap, ops::Range, sync::LazyLock};
 
 pub(crate) const EVENT: &str = "question card missing";
 pub(crate) const STALE_EVENT: &str = "question card outdated";
@@ -217,6 +218,12 @@ fn fresh_request(text: &str) -> bool {
     fresh_tail(text).is_some()
 }
 
+fn choice_prefix(line: &str) -> Option<usize> {
+    static CHOICE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?:?\*{0,2}:?\s+").unwrap());
+    CHOICE.find(line).map(|m| m.end()).filter(|&end| end < line.len())
+}
+
 fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
     static QUESTION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)[^\n.!?。;]*?(?:[가-힣]+까요|[가-힣]+나요|하시겠|원하시|어느|어떤|무엇|어떻게|해도 될|진행해도)[^\n.!?。;]*[?？]|\b(?:shall i|should i|can i|would you like|do you want|which .{0,100}prefer)\b[^\n]*[?？]").unwrap()
@@ -228,7 +235,7 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|보신 뒤|보시고 정해|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:필요하면|필요하다면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|다른\s*[가-힣 ]{1,40}(?:을|를)\s*말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+        Regex::new(r"(?:필요하면|필요하다면|모델\s*을\s*바꾸려면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|다른\s*[가-힣 ]{1,40}(?:을|를)\s*말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
     });
     static NO_INFORMATION_NEEDED: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
@@ -236,8 +243,6 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         )
         .unwrap()
     });
-    static CHOICE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?\*{0,2}\s+\S").unwrap());
     let mut out = QUESTION.find_iter(text).map(|m| ("question", m.start())).collect::<Vec<_>>();
     // 조건부 제안은 실제 질문 어미와 분리한다. 한 문장의 제안이 다음 문장의 요청을 가리지 않는다.
     let mut offset = 0;
@@ -268,7 +273,7 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         }
         offset += sentence.len();
     }
-    let choices = CHOICE.find_iter(text).count();
+    let choices = text.lines().filter(|line| choice_prefix(line).is_some()).count();
     if choices >= 2
         && (text.contains("추천")
             || text.contains("선택지")
@@ -278,6 +283,41 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
         out.push(("choices", 0));
     }
     out
+}
+
+fn sentence_start(text: &str, offset: usize, links: &[Range<usize>]) -> usize {
+    text[..offset]
+        .rmatch_indices(['.', '!', '?', '？', '。', ';', '\n'])
+        .find(|(at, separator)| {
+            let before = links.partition_point(|link| link.start <= *at);
+            *separator == "\n" || before == 0 || !links[before - 1].contains(at)
+        })
+        .map_or(0, |(at, separator)| at + separator.len())
+}
+
+/// 선택지 첫 문장의 요청은 붙어 있는 선택지 묶음 바로 앞의 답변 안내에 연결한다.
+fn option_intro_end(text: &str, offset: usize, start: usize) -> Option<usize> {
+    let line_start = text[..offset].rfind('\n')? + 1;
+    let mut lines = text[line_start..].lines();
+    if start > line_start + choice_prefix(lines.next()?)? {
+        return None;
+    }
+    let mut intro_end = line_start - 1;
+    let mut previous = text[..intro_end].rsplit('\n');
+    let mut intro = previous.next()?;
+    if choice_prefix(intro).is_none() {
+        choice_prefix(lines.next()?)?;
+    } else {
+        while choice_prefix(intro).is_some() {
+            let prior = previous.next()?;
+            intro_end -= intro.len() + 1;
+            intro = prior;
+        }
+    }
+    let clean = intro.trim_end_matches(|c: char| c.is_whitespace() || ".!。".contains(c));
+    static INSTRUCTION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?:골라|선택해|답해)\s*(?:주세요|주십시오)$").unwrap());
+    INSTRUCTION.is_match(clean).then_some(intro_end - (intro.len() - clean.len()))
 }
 
 /// 답변 방법만 적힌 구절은 앞선 카드를 가리킨다. 별도 결정 내용은 허용하지 않는다.
@@ -325,16 +365,36 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
                 .iter()
                 .any(|marker| b.text.contains(marker))
         });
-        for (rule, offset) in requests(&block.text, required) {
+        let requests = requests(&block.text, required);
+        if requests.is_empty() {
+            continue;
+        }
+        // 링크 원문은 q-ID 확인에 쓰고 링크 안의 문장부호만 경계에서 제외한다.
+        let mut links: Vec<Range<usize>> = Vec::new();
+        for (event, span) in Parser::new(&block.text).into_offset_iter() {
+            if matches!(event, Event::Start(Tag::Link { .. }))
+                && links.last().is_none_or(|outer| span.start >= outer.end)
+            {
+                links.push(span);
+            }
+        }
+        for (rule, offset) in requests {
             let same_section = |b: &Block| {
                 if rule == "choices" { b.choices_section == block.choices_section } else { b.section == block.section }
             };
             // 앞 문장의 카드 안내가 같은 줄의 별개 질문까지 면제하지 않는다.
-            let start = block.text[..offset]
-                .rfind(['.', '!', '?', '？', '。', ';', '\n'])
-                .map_or(0, |at| at + block.text[at..].chars().next().unwrap().len_utf8());
-            let own_ids = answer_ids(fresh_tail(&block.text).unwrap_or(&block.text[start..]));
-            let fresh = fresh_request(&block.text);
+            let start = sentence_start(&block.text, offset, &links);
+            let tail = fresh_tail(&block.text);
+            let fresh = tail.is_some();
+            let mut own_ids = answer_ids(tail.unwrap_or(&block.text[start..]));
+            if own_ids.is_empty()
+                && !fresh
+                && rule == "request"
+                && let Some(end) = option_intro_end(&block.text, offset, start)
+            {
+                let intro = sentence_start(&block.text, end, &links);
+                own_ids = answer_ids(&block.text[intro..end]);
+            }
             let unresolved = own_ids.iter().any(|id| !cards.contains_key(id));
             let own =
                 own_ids.iter().filter_map(|id| cards.get(id).map(|state| (id.clone(), *state))).collect::<Vec<_>>();

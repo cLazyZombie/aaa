@@ -1,3 +1,4 @@
+- t-2030: [질문 감시의 선택적 모델 안내와 카드 연결](testing-question-guard-t2030.md)
 - t-2013: [Windows 기획 main worktree 경로 검증](testing-design-main-path-t-2013.md)
 - t-2011: [Codex thread 번개 표시 검증](testing-thread-speed-t-2011.md)
 - t-1995: [기획 대화 CLI 그림 삭제](testing-design-detach-t-1995.md)
