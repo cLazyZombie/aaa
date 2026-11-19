@@ -1,5 +1,66 @@
 use super::*;
 
+/// 11-18의 오탐 세 건과 실제 터미널 조작 요청. 주소와 주변 작업 설명은 예시로 바꿨다.
+#[test]
+fn observed_model_offer_and_existing_card_options_do_not_warn() {
+    let samples = [
+        ("17:40", "기획서에서 맡긴 작업은 기본 모델로 시작됐습니다. 모델을 바꾸려면 말씀해 주세요.", None),
+        (
+            "18:00",
+            "**정하실 것:** [q-4272 질문](https://example.ts.net/#question=q-4272)에서 실제 게임 화면을 보고 골라 주세요.\n- **A(추천):** 이대로 문서를 반영하고 전체 검증을 진행합니다.\n- **B:** 위치나 표시에서 바꿀 곳을 알려 주세요.",
+            Some(("q-4272", CardState::Answered)),
+        ),
+        (
+            "22:13",
+            "**정하실 것:** [q-4295 질문](https://example.ts.net/#question=q-4295)에서 [웹 검수본](library/t-2022/index.html)을 보고 골라 주세요.\n- **A:** 좋습니다. 착지합니다.\n- **B:** 고칠 점을 글로 적어 주세요.",
+            Some(("q-4295", CardState::Open)),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (time, text, card) in samples {
+        let cards = card.into_iter().map(|(id, state)| (id.to_owned(), state)).collect();
+        let result = inspect(text, &cards);
+        if result.missing.is_some() || result.stale.is_some() {
+            failures.push(format!("{time}: missing={:?}, stale={:?}", result.missing, result.stale));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn model_offer_keeps_real_requests_for_input_and_terminal_actions() {
+    for text in [
+        "모델을 바꾸려면 말씀해 주세요, 배포 승인 여부를 알려 주세요.",
+        "배포 승인 여부를 알려 주세요, 모델을 바꾸려면 말씀해 주세요.",
+        "모델을 바꾸려면 쓸 모델 이름을 알려 주세요.",
+        "새 작업에 쓸 모델을 골라 주세요.",
+        "aaa 밖 터미널에서 프로필을 추가해 주세요.\n\n- **주의:** 실행해서 오류가 나면 출력을 알려 주세요.",
+    ] {
+        assert_eq!(inspect(text, &cards()).missing.unwrap().rule, "request", "{text}");
+    }
+}
+
+#[test]
+fn card_options_and_markdown_keep_separate_requests_and_card_statuses() {
+    let cards = cards();
+    let linked = "[질문](https://example.ts.net/#question=q-1001)에서 [웹 검수본?](library/preview(a).html?view=1) 보고 골라 주세요.";
+    let options = "- **A(추천):** 진행합니다.\n- **B:** 고칠 곳을 알려 주세요.";
+    let closed = linked.replace("q-1001", "q-1003");
+    let result = inspect(&format!("{closed}\n{options}"), &cards);
+    assert!(result.missing.is_none());
+    assert_eq!(result.stale.unwrap().refs, [("q-1003".into(), CardState::Closed)]);
+    for text in [
+        linked.replace("q-1001", "q-9999"),
+        format!("{linked} 배포 승인 여부를 알려 주세요."),
+        format!("{linked}\n{options} 배포 승인 여부를 알려 주세요."),
+        format!("{linked}\n{options}\n배포 승인 여부를 알려 주세요."),
+        format!("{linked}\n{options}\n\n**별개 작업**\n배포 승인 여부를 알려 주세요."),
+        format!("{linked}\n- **B:** 배포 승인 여부를 알려 주세요."),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    }
+}
+
 /// t-1983의 네 실제 오탐 구절. 최신 카드 안내와 이미 적용한 기준만 재구성한다.
 #[test]
 fn observed_preview_card_replacements_and_corrections_do_not_require_answers() {
