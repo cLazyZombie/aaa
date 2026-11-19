@@ -224,7 +224,7 @@ fn choice_prefix(line: &str) -> Option<usize> {
     CHOICE.find(line).map(|m| m.end()).filter(|&end| end < line.len())
 }
 
-fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
+fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'static str, usize)> {
     static QUESTION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)[^\n.!?。;]*?(?:[가-힣]+까요|[가-힣]+나요|하시겠|원하시|어느|어떤|무엇|어떻게|해도 될|진행해도)[^\n.!?。;]*[?？]|\b(?:shall i|should i|can i|would you like|do you want|which .{0,100}prefer)\b[^\n]*[?？]").unwrap()
     });
@@ -237,6 +237,13 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:필요하면|필요하다면|모델\s*을\s*바꾸려면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|다른\s*[가-힣 ]{1,40}(?:을|를)\s*말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
     });
+    static DECIDED_NAME: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[.!?？。\n])\s*(?:(?:폴더|디렉터리)\s+)?이름(?:은|을)\s+(?:제가\s+)?(?:[\w/-]*로\s+)?(?:정했습니다|확정했습니다)[.!。]?\s*$").unwrap()
+    });
+    static NAME_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[,，])\s*다른\s+이름이\s+좋으시면\s*[,，]?\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\b")
+            .unwrap()
+    });
     static NO_INFORMATION_NEEDED: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?:정해\s*주실\s*것|알려\s*주시면\s*좋은\s*것)(?:은|이|도)?\s*없(?:습니다|어요|고|으며|지만|는데|다)",
@@ -246,11 +253,21 @@ fn requests(text: &str, required: bool) -> Vec<(&'static str, usize)> {
     let mut out = QUESTION.find_iter(text).map(|m| ("question", m.start())).collect::<Vec<_>>();
     // 조건부 제안은 실제 질문 어미와 분리한다. 한 문장의 제안이 다음 문장의 요청을 가리지 않는다.
     let mut offset = 0;
+    let mut previous = previous_block.unwrap_or_default();
+    let mask = |m: &regex::Captures<'_>| " ".repeat(m[0].len());
     for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
+        // 직전 이름 확정 안내에 붙은 의견 구절만 같은 바이트 길이의 공백으로 바꾼다.
+        let actionable = if NAME_FEEDBACK.is_match(sentence) && DECIDED_NAME.is_match(previous) {
+            NAME_FEEDBACK.replace_all(sentence, mask)
+        } else {
+            std::borrow::Cow::Borrowed(sentence)
+        };
+        if !sentence.trim().is_empty() {
+            previous = sentence;
+        }
         // 피드백 구절만 지운다. 같은 문장의 별개 승인·선택 요청까지 면제하지 않는다.
-        let actionable = OPTIONAL_FEEDBACK.replace_all(sentence, |m: &regex::Captures<'_>| " ".repeat(m[0].len()));
-        let actionable =
-            NO_INFORMATION_NEEDED.replace_all(&actionable, |m: &regex::Captures<'_>| " ".repeat(m[0].len()));
+        let actionable = OPTIONAL_FEEDBACK.replace_all(&actionable, mask);
+        let actionable = NO_INFORMATION_NEEDED.replace_all(&actionable, mask);
         let sentence = actionable.as_ref();
         let future_permission = sentence.contains("해도 되면") && text.contains("여쭙겠습니다");
         if !CONDITIONAL.is_match(sentence) && !future_permission {
@@ -365,7 +382,9 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
                 .iter()
                 .any(|marker| b.text.contains(marker))
         });
-        let requests = requests(&block.text, required);
+        let previous_block =
+            blocks[..index].last().filter(|prev| prev.section == block.section).map(|prev| prev.text.as_str());
+        let requests = requests(&block.text, required, previous_block);
         if requests.is_empty() {
             continue;
         }

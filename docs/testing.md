@@ -1,3 +1,4 @@
+- t-2070: [질문 감시의 확정 이름 의견 요청](testing-question-guard-t2070.md)
 - t-2031: [메시지 입력 단계와 늦은 수락 알림 검증](testing-message-delivery-t-2031.md)
 - t-2030: [질문 감시의 선택적 모델 안내와 카드 연결](testing-question-guard-t2030.md)
 - t-2013: [Windows 기획 main worktree 경로 검증](testing-design-main-path-t-2013.md)
