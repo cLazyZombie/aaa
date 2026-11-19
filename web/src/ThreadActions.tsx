@@ -535,7 +535,17 @@ function NextDialog({ t, running, onClose }: { t: ThreadView; running: boolean; 
       const r = await call({ op: "thread_next", project: t.project, thread: t.id, line, add: more });
       if (r.kind === "next") {
         setLines(r.lines);
-        if (line !== null) setNote(`${line}번째 줄을 보냈다${r.message?.state === "queued" ? "(차례 기다림)" : ""}`);
+        if (line !== null && r.message) {
+          const input = r.message.input && {
+            not_written: "입력 안 함",
+            paste_unconfirmed: "붙여넣기 쓰기 확인 못함",
+            draft_written: "본문 입력됨 · Enter 미전송",
+            enter_unconfirmed: "Enter 쓰기 확인 못함",
+            submitted: "Enter 입력됨",
+          }[r.message.input];
+          const state = { queued: "차례 기다림", accepted: "수락 확인", unknown: "수락 확인 못함" }[r.message.state];
+          setNote([`${line}번째 줄`, input, state].filter(Boolean).join(" · "));
+        }
         if (more !== null) setAdd("");
       }
     } catch (e) {

@@ -323,6 +323,7 @@ pub fn typescript_bindings() -> String {
         MenuPick::decl(&cfg),
         MessageMode::decl(&cfg),
         DeliveryState::decl(&cfg),
+        MessageInput::decl(&cfg),
         MessageView::decl(&cfg),
         InboxItem::decl(&cfg),
         AutomationCompletion::decl(&cfg),

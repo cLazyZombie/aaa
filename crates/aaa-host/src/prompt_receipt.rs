@@ -4,6 +4,13 @@ use sha2::{Digest, Sha256};
 
 use crate::Host;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviousMessage {
+    None,
+    Accepted,
+    Unconfirmed,
+}
+
 pub(crate) struct ReceiptPage {
     generation: u64,
     session: String,
@@ -22,8 +29,7 @@ pub(crate) struct ReceiptProbe {
 
 impl ReceiptProbe {
     pub(crate) fn new(page: ReceiptPage, text: &str) -> Self {
-        let text: String = text.chars().filter(|c| !matches!(c, '\x1b' | '\u{9b}')).collect();
-        let sha256 = format!("{:x}", Sha256::digest(aaa_proto::input::receipt_text(&text).as_bytes()));
+        let sha256 = receipt_hash(text);
         let pending = page.messages.iter().filter(|m| m.pending && matches_hash(m, &sha256)).count();
         Self {
             generation: page.generation,
@@ -36,7 +42,30 @@ impl ReceiptProbe {
     }
 
     pub(crate) fn observed(&self, page: &ReceiptPage) -> Option<&'static str> {
-        if self.generation != page.generation || self.session != page.session || self.history != page.history {
+        self.observe(page, false)
+    }
+
+    pub(crate) fn same_execution(&self, page: &ReceiptPage) -> bool {
+        self.generation == page.generation && self.session == page.session && self.history == page.history
+    }
+
+    pub(crate) fn still_running(&self, host: &Host, pane: &str) -> bool {
+        host.inner.lock().unwrap().panes.get(pane).is_some_and(|p| {
+            p.info.state.is_running()
+                && p.info.started_at_ms == self.generation
+                && p.agent.as_ref().is_some_and(|a| {
+                    a.activity != aaa_proto::AgentActivity::Exited
+                        && a.harness_session.as_deref() == Some(&self.session)
+                })
+        })
+    }
+
+    pub(crate) fn observed_late(&self, page: &ReceiptPage) -> Option<&'static str> {
+        self.observe(page, true)
+    }
+
+    fn observe(&self, page: &ReceiptPage, require_id: bool) -> Option<&'static str> {
+        if !self.same_execution(page) {
             return None;
         }
         let delivered = page
@@ -61,11 +90,16 @@ impl ReceiptProbe {
                     && matches_hash(m, &self.sha256)
                     && match &m.id {
                         Some(id) => self.last_id.as_ref().is_none_or(|last| id > last),
-                        None => self.pending == 0,
+                        None => !require_id && self.pending == 0,
                     }
             })
             .then_some("queued_receipt")
     }
+}
+
+pub(crate) fn receipt_hash(text: &str) -> String {
+    let text: String = text.chars().filter(|c| !matches!(c, '\x1b' | '\u{9b}')).collect();
+    format!("{:x}", Sha256::digest(aaa_proto::input::receipt_text(&text).as_bytes()))
 }
 
 fn matches_hash(message: &ChatMessage, sha256: &str) -> bool {

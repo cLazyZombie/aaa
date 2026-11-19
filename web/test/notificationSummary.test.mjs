@@ -29,6 +29,7 @@ test("알림 목록은 원문 속 단어 대신 구조화된 종류·사건으�
   for (const [kind, event, topic, label] of [
     ["thread-state", "new report", "reports", "새 보고"],
     ["thread-state", "message not delivered", "work", "메시지 수락 확인 못함"],
+    ["thread-state", "message accepted late", "work", "늦게 수락 확인"],
     ["coordinator-check", "question card missing", "asks", "질문 카드 확인"],
     ["coordinator-check", "question card outdated", "asks", "질문 카드 갱신"],
     ["thread-state", "report needs user", "asks", "확인 필요"],

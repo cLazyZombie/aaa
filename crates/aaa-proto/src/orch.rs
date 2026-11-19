@@ -746,6 +746,29 @@ pub enum DeliveryState {
     Unknown,
 }
 
+/// PTY에 쓴 단계. harness 수락 여부는 DeliveryState에 따로 남긴다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageInput {
+    NotWritten,
+    PasteUnconfirmed,
+    DraftWritten,
+    EnterUnconfirmed,
+    Submitted,
+}
+
+impl MessageInput {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NotWritten => "입력 안 함",
+            Self::PasteUnconfirmed => "붙여넣기 쓰기 확인 못함",
+            Self::DraftWritten => "본문 입력됨 · Enter 미전송",
+            Self::EnterUnconfirmed => "Enter 쓰기 확인 못함",
+            Self::Submitted => "Enter 입력됨",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MessageView {
     pub id: String,
@@ -753,6 +776,9 @@ pub struct MessageView {
     pub thread: String,
     pub mode: MessageMode,
     pub state: DeliveryState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input: Option<MessageInput>,
     pub text: String,
     #[ts(type = "number")]
     pub created_at_ms: u64,
@@ -2418,6 +2444,7 @@ mod tests {
             thread: "t-0001".into(),
             mode: MessageMode::Interrupt,
             state: DeliveryState::Accepted,
+            input: Some(MessageInput::Submitted),
             text: "x".into(),
             created_at_ms: 1,
         };
