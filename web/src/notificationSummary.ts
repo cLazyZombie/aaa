@@ -44,6 +44,7 @@ export function inboxContent(item: Pick<InboxItem, "item_kind" | "event" | "subj
     down: "연결 끊김", recovered: "다시 연결됨", "sessions ended": "세션 종료", "not launched": "시작 실패",
     "question card missing": "질문 카드 확인", "question card outdated": "질문 카드 갱신",
     "brief not delivered": "지시 전달 실패", "message not delivered": "메시지 수락 확인 못함", "post notice for user": "새 소식",
+    "message accepted late": "늦게 수락 확인",
   };
   return { topic, label: labels[event] ?? event, summary: notificationSummary(item.summary) };
 }

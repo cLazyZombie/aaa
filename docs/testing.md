@@ -1,3 +1,4 @@
+- t-2031: [메시지 입력 단계와 늦은 수락 알림 검증](testing-message-delivery-t-2031.md)
 - t-2013: [Windows 기획 main worktree 경로 검증](testing-design-main-path-t-2013.md)
 - t-2011: [Codex thread 번개 표시 검증](testing-thread-speed-t-2011.md)
 - t-1995: [기획 대화 CLI 그림 삭제](testing-design-detach-t-1995.md)

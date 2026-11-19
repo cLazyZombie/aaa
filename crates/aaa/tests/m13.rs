@@ -1845,6 +1845,7 @@ fn claude_thread_states_questions_and_messages() {
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
     let m = w.message(&id, "x", false);
     assert_eq!(m["state"], "unknown", "{m}");
+    assert_eq!(m["input"], "draft_written", "{m}");
     assert!(!w.h.screen(&pane).contains("race 1. Yes"), "Enter가 권한 창을 골랐다: {}", w.h.screen(&pane));
     flow_event(&mut ev, "message_unknown", "Enter를 보내지 않았다");
     // 받음은 Enter가 일으킨 사건으로만 센다: 치는 동안 뜬 확인창(질문)도 받음 사건이라 친 글 앞부터 기다리면 그 글을

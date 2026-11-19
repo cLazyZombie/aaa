@@ -15,12 +15,39 @@ use std::time::{Duration, Instant};
 
 use aaa_proto::{
     AgentActivity, AgentRequest, AgentStatus, B64, BriefState, DeliveryState, ErrorBody, ErrorCode, HarnessEvent,
-    MenuPick, MessageMode, MessageView, QuestionMenu, QuestionState, QuestionView, ThreadStatus,
+    MenuPick, MessageInput, MessageMode, MessageView, QuestionMenu, QuestionState, QuestionView, ThreadStatus,
 };
 use tokio::sync::oneshot;
 
 use crate::orch::ThreadRec;
+use crate::prompt_receipt::{PreviousMessage, ReceiptProbe};
 use crate::{Host, err};
+
+struct Submission<'a> {
+    id: &'a str,
+    message: bool,
+    previous_message: PreviousMessage,
+    input: MessageInput,
+    late: Option<LateReceipt>,
+}
+
+struct LateReceipt {
+    watch: crate::InputWatch,
+    probe: ReceiptProbe,
+    waiting_at: Option<u64>,
+}
+
+impl<'a> Submission<'a> {
+    fn new(id: &'a str) -> Self {
+        Self {
+            id,
+            message: false,
+            previous_message: PreviousMessage::None,
+            input: MessageInput::NotWritten,
+            late: None,
+        }
+    }
+}
 
 /// 질문에 답할 때 선택 창이 화면에 그려지기를 기다리는 시간
 const MENU_WAIT: Duration = Duration::from_secs(3);
@@ -931,7 +958,8 @@ impl Host {
         text: Option<&str>,
         on_accept: Option<OnFire>,
     ) -> Result<bool, SubmitErr> {
-        self.submit_traced(mid, pane, text, on_accept, &aaa_common::util::new_id()).await
+        let id = aaa_common::util::new_id();
+        self.submit_traced(mid, pane, text, on_accept, &mut Submission::new(&id)).await
     }
 
     async fn submit_traced(
@@ -940,15 +968,16 @@ impl Host {
         pane: &str,
         text: Option<&str>,
         on_accept: Option<OnFire>,
-        trace: &str,
+        submission: &mut Submission<'_>,
     ) -> Result<bool, SubmitErr> {
+        let trace = submission.id;
         self.input_event(
             pane,
             trace,
             "preparing",
             &text.map(|t| crate::input_log::submit_meta(t, false)).unwrap_or_else(|| "enter_only=true".into()),
         );
-        let result = self.submit_steps(mid, pane, text, on_accept, trace).await;
+        let result = self.submit_steps(mid, pane, text, on_accept, submission).await;
         match &result {
             Ok(false) => self.input_event(pane, trace, "unknown", "수락 증거 없음; 재전송하지 않음"),
             Err(error) => self.input_event(pane, trace, "failed", &format!("typed={}", error.typed)),
@@ -963,8 +992,9 @@ impl Host {
         pane: &str,
         text: Option<&str>,
         on_accept: Option<OnFire>,
-        trace: &str,
+        submission: &mut Submission<'_>,
     ) -> Result<bool, SubmitErr> {
+        let trace = submission.id;
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
@@ -992,11 +1022,16 @@ impl Host {
             .as_ref()
             .filter(|a| a.progress.as_deref() == Some(crate::orch::WAITING))
             .and_then(|a| a.progress_at_ms);
+        let watch = submission.message.then(|| conn.watch_input(pane));
+        let input_watch = watch.as_ref().map(Arc::downgrade);
         // unknown으로 끝난 대기자가 남아도 host 자체를 붙잡지 않는다.
         let me = Arc::downgrade(self);
         let target = pane.to_string();
         let accepted_trace = trace.to_owned();
         let on_accept: Option<OnFire> = Some(Box::new(move || {
+            if input_watch.is_some_and(|watch| !watch.upgrade().is_some_and(|watch| *watch.borrow())) {
+                return;
+            }
             if let Some(me) = me.upgrade() {
                 me.input_event(&target, &accepted_trace, "accepted", "method=post_enter_evidence");
                 me.input_accepted(&target, waiting_at);
@@ -1012,7 +1047,7 @@ impl Host {
         // 비동기 대기와 같은 시계다. 운영의 단조 시각은 그대로이며, 시험은
         // 실제 10초 받음 시한을 줄이지 않고 Tokio 시각으로 경계를 넘긴다.
         let deadline = tokio::time::Instant::now() + accept_wait;
-        let probe = if busy {
+        let probe = if busy || submission.message {
             if let Some(text) = text {
                 self.prompt_receipt_page(mid, pane, deadline)
                     .await
@@ -1042,9 +1077,15 @@ impl Host {
             ),
         );
         if let Some(text) = text {
-            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
-                .await
-                .map_err(|e| after(e.message))?;
+            submission.input = MessageInput::PasteUnconfirmed;
+            conn.request_watched(
+                AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) },
+                crate::REQUEST_TIMEOUT,
+                watch.as_ref(),
+            )
+            .await
+            .map_err(|e| after(e.message))?;
+            submission.input = MessageInput::DraftWritten;
             self.input_event(
                 pane,
                 trace,
@@ -1080,9 +1121,13 @@ impl Host {
             // ConPTY의 실제 Codex는 긴 입력을 key burst로 읽는다. 비문자 키가 버퍼와
             // Enter 억제 상태를 확정한다. 새 입력 끝의 Right는 본문을 바꾸지 않으며 제출하지 않는다.
             let boundary = modes.key("right").unwrap();
-            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(boundary) })
-                .await
-                .map_err(|e| after(e.message))?;
+            conn.request_watched(
+                AgentRequest::Input { session: pane.to_string(), data: B64(boundary) },
+                crate::REQUEST_TIMEOUT,
+                watch.as_ref(),
+            )
+            .await
+            .map_err(|e| after(e.message))?;
             self.input_event(pane, trace, "paste_boundary", "key=right; enter_count=0");
             let shown = self.screen_lines(mid, pane).await;
             if shown.as_deref().and_then(modal_of).is_some()
@@ -1094,16 +1139,29 @@ impl Host {
         let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
         // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
-        let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
+        let uses_receipt = busy && probe.is_some();
+        let prior_unknown = submission.previous_message == PreviousMessage::Unconfirmed;
+        let accepted = (!uses_receipt && !prior_unknown).then(|| self.wait_kind_then(pane, ACCEPTED, hook_accept));
         let enter = modes.key("enter").unwrap_or_else(|| b"\r".to_vec());
-        conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
-            .await
-            .map_err(|e| after(e.message))?;
+        submission.input = MessageInput::EnterUnconfirmed;
+        conn.request_watched(
+            AgentRequest::Input { session: pane.to_string(), data: B64(enter) },
+            crate::REQUEST_TIMEOUT,
+            watch.as_ref(),
+        )
+        .await
+        .map_err(|e| after(e.message))?;
+        submission.input = MessageInput::Submitted;
         self.input_event(pane, trace, "enter_written", "key=enter bytes=0d enter_count=1");
-        if busy && let Some(probe) = probe {
-            while tokio::time::Instant::now() < deadline {
+        let valid = || watch.as_ref().is_none_or(|watch| *watch.borrow());
+        if prior_unknown || !valid() {
+            return Ok(false);
+        }
+        if let Some(probe) = probe.as_ref().filter(|_| uses_receipt) {
+            while tokio::time::Instant::now() < deadline && valid() {
                 if let Some(page) = self.prompt_receipt_page(mid, pane, deadline).await
                     && let Some(method) = probe.observed(&page)
+                    && valid()
                 {
                     self.input_event(pane, trace, "receipt", &format!("method={method}"));
                     if let Some(f) = screen_accept.take() {
@@ -1112,7 +1170,7 @@ impl Host {
                     return Ok(true);
                 }
                 if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
-                    return Ok(false);
+                    break;
                 }
                 crate::text::pane_change(
                     &mut changes,
@@ -1120,12 +1178,10 @@ impl Host {
                 )
                 .await;
             }
-            return Ok(false);
-        }
-        if busy {
+        } else if hooked {
             // Enter 뒤 확인창이면 그 Enter가 창에 갔을 수 있다: 받은 것으로 치지 않는다(t-0340 보안 감사)
             // 이전부터 Working이라는 사실만으로 새 본문이 수락됐다고 보지 않는다.
-            let ok = tokio::time::timeout(left(), accepted)
+            let ok = tokio::time::timeout(left(), accepted.expect("영수증 대신 상태 사건을 기다린다"))
                 .await
                 .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
                 .is_ok_and(|r| {
@@ -1135,36 +1191,33 @@ impl Host {
                         })
                         .is_ok()
                 });
+            let ok = ok && valid();
             if ok && let Some(f) = screen_accept.take() {
                 f();
             }
-            return Ok(ok);
-        }
-        if hooked {
-            return Ok(tokio::time::timeout(left(), accepted)
-                .await
-                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
-                .is_ok_and(|r| {
-                    r.as_ref()
-                        .inspect_err(|error| {
-                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
-                        })
-                        .is_ok()
-                }));
-        }
-        // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
-        while tokio::time::Instant::now() < deadline {
-            if self.screen_lines(mid, pane).await != typed {
-                if let Some(f) = screen_accept.take() {
-                    f();
-                }
+            if ok {
                 return Ok(true);
             }
-            crate::text::pane_change(
-                &mut changes,
-                deadline.min(tokio::time::Instant::now() + Duration::from_millis(250)),
-            )
-            .await;
+        } else {
+            // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
+            while tokio::time::Instant::now() < deadline && valid() {
+                if self.screen_lines(mid, pane).await != typed && valid() {
+                    if let Some(f) = screen_accept.take() {
+                        f();
+                    }
+                    return Ok(true);
+                }
+                crate::text::pane_change(
+                    &mut changes,
+                    deadline.min(tokio::time::Instant::now() + Duration::from_millis(250)),
+                )
+                .await;
+            }
+        }
+        if submission.previous_message == PreviousMessage::None
+            && let (Some(watch), Some(probe)) = (watch.filter(|watch| *watch.borrow()), probe)
+        {
+            submission.late = Some(LateReceipt { watch, probe, waiting_at });
         }
         Ok(false)
     }
@@ -1309,6 +1362,7 @@ impl Host {
             thread: id.to_string(),
             mode,
             state: DeliveryState::Queued,
+            input: Some(MessageInput::NotWritten),
             text,
             created_at_ms: aaa_common::util::now_ms(),
         };
@@ -1332,8 +1386,8 @@ impl Host {
                 self.flow(
                     &r,
                     "message_unknown",
-                    None,
-                    format!("{} (확인창이 떠 보내지 않았다. 다시 보내지 않는다)", m.id),
+                    Some(m.id.clone()),
+                    format!("{} 입력 안 함 · 확인창이 떠 입력하지 않았다", m.id),
                 );
             }
             MessageMode::Interrupt => {
@@ -1366,8 +1420,15 @@ impl Host {
                 let id = m.id.clone();
                 Box::new(move || me.flow(&rec, "message_accepted", None, id)) as OnFire
             });
-        let r = self.submit_traced(mid, pane, Some(&m.text), on_accept, &m.id).await.map_err(|e| e.msg);
+        let mut submission = Submission::new(&m.id);
+        submission.message = true;
+        submission.previous_message = self.db.previous_message(m).unwrap_or_else(|error| {
+            tracing::warn!("앞선 메시지 수락 기록을 읽지 못했다: {error:#}");
+            PreviousMessage::Unconfirmed
+        });
+        let r = self.submit_traced(mid, pane, Some(&m.text), on_accept, &mut submission).await.map_err(|e| e.msg);
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
+        m.input = Some(submission.input);
         self.save_message(m);
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
         // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
@@ -1383,11 +1444,70 @@ impl Host {
             && let Ok(rec) = self.load(&m.project, &m.thread)
         {
             let why = match r {
-                Ok(_) => " (받았다는 사건·화면 변화가 없었다. 다시 보내지 않는다)".to_string(),
-                Err(e) => format!(" ({e})"),
+                Ok(_) => submission.input.label().to_string(),
+                Err(e) => format!("{} · {e}", submission.input.label()),
             };
-            self.flow(&rec, "message_unknown", None, format!("{}{why}", m.id));
+            self.flow(&rec, "message_unknown", Some(m.id.clone()), format!("{} {why}", m.id));
+            if let Some(late) = submission.late {
+                let (me, mid, pane, id) = (self.clone(), mid.to_owned(), pane.to_owned(), m.id.clone());
+                tokio::spawn(async move {
+                    me.watch_late_message(&mid, &pane, &rec, &id, late).await;
+                });
+            }
         }
+    }
+
+    async fn watch_late_message(self: &Arc<Self>, mid: &str, pane: &str, rec: &ThreadRec, id: &str, late: LateReceipt) {
+        let Ok(mut changes) = self.pane_events(pane) else { return };
+        let mut chat = self.chat_notes();
+        let mut watch = late.watch.subscribe();
+        let push = self
+            .inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(mid)
+            .is_some_and(|m| m.features.iter().any(|f| f == "chat_watch.v1"));
+        self.chat_watch(pane, true);
+        'observe: while *watch.borrow() && late.probe.still_running(self, pane) {
+            let deadline = tokio::time::Instant::now() + crate::REQUEST_TIMEOUT;
+            let page = tokio::select! {
+                biased;
+                _ = watch.wait_for(|valid| !*valid) => break,
+                page = self.prompt_receipt_page(mid, pane, deadline) => page,
+            };
+            if let Some(page) = page {
+                if !late.probe.same_execution(&page) {
+                    break;
+                }
+                if let Some(method) = late.probe.observed_late(&page)
+                    && *watch.borrow()
+                    && late.probe.still_running(self, pane)
+                {
+                    self.input_event(pane, id, "accepted", &format!("method={method}; late=true"));
+                    self.input_accepted(pane, late.waiting_at);
+                    self.flow(rec, "message_accepted_late", Some(id.to_owned()), id);
+                    break;
+                }
+            }
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = watch.wait_for(|valid| !*valid) => break 'observe,
+                    event = changes.recv() => match event {
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break 'observe,
+                        Ok(crate::PaneEvent::Output(..)) if push => {}
+                        _ => break,
+                    },
+                    note = chat.recv() => match note {
+                        Ok(crate::chatwatch::ChatNote::Changed { pane: changed, .. }) if changed == pane => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        self.chat_watch(pane, false);
     }
 
     /// 옛 host가 턴 끝을 기다리며 대기열에 둔 메시지, 또는 보내던 중 host가 끝난 메시지: 보냈는지 모른다고 남긴다
@@ -1408,13 +1528,15 @@ impl Host {
             .collect();
         for mut m in left {
             m.state = DeliveryState::Unknown;
+            // 중간에 멈춘 host에서 실제로 어디까지 썼는지는 응답으로 확인하지 못했다.
+            m.input = None;
             self.save_message(&m);
             if let Ok(rec) = self.load(&m.project, &m.thread) {
                 self.flow(
                     &rec,
                     "message_unknown",
-                    None,
-                    format!("{} (host가 다시 시작돼 보냈는지 모른다. 다시 보내지 않는다)", m.id),
+                    Some(m.id.clone()),
+                    format!("{} host가 다시 시작돼 입력 단계를 확인하지 못했다", m.id),
                 );
             }
         }
@@ -1979,6 +2101,192 @@ mod tests {
             assert_eq!(events.iter().any(|e| e.event == "unknown"), !new_receipt);
             fake.abort();
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_message_receipts_update_the_original_alert_without_writing_again() {
+        use aaa_proto::{AgentResponse, ChatMessage, ChatReceipt, ChatRole, InputReceiptMethod, LinkMsg, Outcome};
+
+        for (queued, competing_input) in [(false, false), (true, false), (false, true)] {
+            let (h, _lab) = host_with_pane();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let mut rec = ThreadRec::starting(
+                "demo",
+                "영수증",
+                "m",
+                "codex",
+                aaa_proto::Role::Worker,
+                aaa_proto::ThreadKind::Dir,
+                1,
+            );
+            rec.id = "t-0001".into();
+            rec.pane = Some("s".into());
+            rec.brief = BriefState::Delivered;
+            rec.status = ThreadStatus::Open;
+            h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            let mut idle = codex_event("idle", 1);
+            idle.harness_session = Some("11111111-2222-4333-8444-555555555555".into());
+            h.on_harness("m", idle);
+
+            let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+            let conn = crate::AgentConn::new(outgoing, 1);
+            submission_machine(&h, conn.clone(), "macos", vec!["chat_pages.v1".into(), "chat_watch.v1".into()]);
+            let (watch_tx, mut watch_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (read_tx, mut read_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (record, observed) = tokio::sync::watch::channel(0);
+            let agent = conn.clone();
+            let fake = tokio::spawn(async move {
+                let mut writes = Vec::new();
+                while let Some((_, bytes)) = frames.recv().await {
+                    let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else {
+                        panic!("agent 요청")
+                    };
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let text = if writes.is_empty() { "›" } else { "› 보낼 말" };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(text),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: text.into(),
+                            })
+                        }
+                        AgentRequest::Input { data, .. } => {
+                            writes.push(data.0);
+                            AgentResponse::Done
+                        }
+                        AgentRequest::Chat { .. } => {
+                            let message = |id: &str, text: &str, pending| ChatMessage {
+                                id: Some(id.into()),
+                                role: ChatRole::User,
+                                text: text.into(),
+                                pending,
+                                receipt: Some(ChatReceipt {
+                                    sha256: crate::prompt_receipt::receipt_hash(text),
+                                    method: InputReceiptMethod::Normal,
+                                }),
+                            };
+                            let state = *observed.borrow();
+                            let mut messages = vec![message("file:0001", "보낼 말", false)];
+                            if state >= 1 {
+                                messages.push(message("file:0002", "다른 입력", false));
+                            }
+                            if state == 2 {
+                                messages.push(message("file:0003", "보낼 말", queued));
+                            }
+                            read_tx.send(state).unwrap();
+                            AgentResponse::Chat {
+                                messages,
+                                history: Some("file".into()),
+                                before: None,
+                                truncated: false,
+                            }
+                        }
+                        AgentRequest::ChatWatch { enabled, .. } => {
+                            let snapshot = (!enabled).then(|| writes.clone());
+                            watch_tx.send(snapshot).unwrap();
+                            AgentResponse::Done
+                        }
+                        _ => panic!("입력과 무관한 요청"),
+                    };
+                    if let Some(pending) = agent.pending.lock().unwrap().remove(&id) {
+                        pending.send(Outcome::Ok(reply)).unwrap();
+                    }
+                }
+            });
+            let mut flow = h.flow_events.subscribe();
+            let message =
+                h.thread_message("demo", &rec.id, "보낼 말".into(), MessageMode::Queue, "test").await.unwrap();
+            assert_eq!((message.state, message.input), (DeliveryState::Unknown, Some(MessageInput::Submitted)));
+            let mut second = message.clone();
+            second.id = "m-other".into();
+            second.text = "다른 입력".into();
+            h.save_message(&second);
+            h.flow(&rec, "message_unknown", Some(second.id.clone()), format!("{} Enter 입력됨", second.id));
+            let page = h.inbox("demo", false, false).unwrap();
+            let alert = page.items.iter().find(|i| i.summary.contains(&message.id)).unwrap();
+            assert_eq!(alert.event, "message not delivered");
+            assert!(alert.summary.contains("Enter 입력됨"));
+            if queued {
+                h.inbox_done("demo", std::slice::from_ref(&alert.id), false, "test").unwrap();
+            }
+            let limit = Duration::from_secs(1);
+            assert_eq!(tokio::time::timeout(limit, watch_rx.recv()).await.unwrap(), Some(None));
+            record.send_replace(1);
+            h.on_chat_changed("m", "s".into(), "unrelated".into());
+            tokio::time::timeout(limit, async { while read_rx.recv().await.unwrap() != 1 {} }).await.unwrap();
+            if competing_input {
+                conn.request(AgentRequest::Input { session: "s".into(), data: B64("보낼 말".as_bytes().to_vec()) })
+                    .await
+                    .unwrap();
+            }
+            record.send_replace(2);
+            h.on_chat_changed("m", "s".into(), "receipt".into());
+            let mut writes = vec!["보낼 말".as_bytes().to_vec(), b"\r".to_vec()];
+            if competing_input {
+                writes.push("보낼 말".as_bytes().to_vec());
+            }
+            assert_eq!(tokio::time::timeout(limit, watch_rx.recv()).await.unwrap(), Some(Some(writes)));
+            let page = h.inbox("demo", true, true).unwrap();
+            let updated = page.items.iter().find(|i| i.id == alert.id).unwrap();
+            assert_eq!(updated.event, if competing_input { "message not delivered" } else { "message accepted late" });
+            assert!(updated.seen);
+            assert_eq!(updated.done, queued);
+            if !competing_input {
+                assert!(updated.summary.contains("늦게 수락 확인"));
+                let mut path = h.projects_root().join("demo/inbox");
+                if queued {
+                    path.push("done");
+                }
+                let file = std::fs::read_to_string(path.join(format!("{}.md", alert.id))).unwrap();
+                assert!(file.contains("message accepted late"), "{file}");
+            }
+            assert_eq!(
+                page.items
+                    .iter()
+                    .filter(|i| i.event == "message not delivered" && i.summary.contains("m-other"))
+                    .count(),
+                1
+            );
+            let accepted = h.db.rec_list("messages", Some("accepted")).unwrap();
+            assert_eq!(accepted.len(), usize::from(!competing_input));
+            let events: Vec<_> =
+                std::iter::from_fn(|| flow.try_recv().ok()).filter(|e| e.kind == "message_accepted_late").collect();
+            assert_eq!(events.len(), usize::from(!competing_input));
+            if let Some(e) = events.first() {
+                assert_eq!(e.evidence.as_deref(), Some(message.id.as_str()));
+            }
+            fake.abort();
+            assert!(fake.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    #[test]
+    fn an_earlier_same_body_can_arrive_in_the_transcript_late() {
+        let (h, _lab) = host_with_pane();
+        let mut earlier = MessageView {
+            id: "m-earlier".into(),
+            project: "demo".into(),
+            thread: "t-0001".into(),
+            mode: MessageMode::Queue,
+            state: DeliveryState::Accepted,
+            input: Some(MessageInput::Submitted),
+            text: "같은\r\n본문".into(),
+            created_at_ms: 1,
+        };
+        h.save_message(&earlier);
+        let current = MessageView { id: "m-current".into(), text: "같은\n본문".into(), ..earlier.clone() };
+        assert!(h.db.previous_message(&current).unwrap() == PreviousMessage::Accepted);
+        earlier.state = DeliveryState::Unknown;
+        earlier.input = Some(MessageInput::NotWritten);
+        h.save_message(&earlier);
+        assert!(h.db.previous_message(&current).unwrap() == PreviousMessage::None);
+        earlier.input = Some(MessageInput::EnterUnconfirmed);
+        h.save_message(&earlier);
+        assert!(h.db.previous_message(&current).unwrap() == PreviousMessage::Unconfirmed);
     }
 
     /// 출력 알림만으로 수락하지 않고 실제 화면 변화에 반응해야 한다. 정지 시계로

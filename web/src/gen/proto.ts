@@ -2759,7 +2759,9 @@ export type MessageMode = "interrupt" | "queue";
 
 export type DeliveryState = "queued" | "accepted" | "unknown";
 
-export type MessageView = { id: string, project: string, thread: string, mode: MessageMode, state: DeliveryState, text: string, created_at_ms: number, };
+export type MessageInput = "not_written" | "paste_unconfirmed" | "draft_written" | "enter_unconfirmed" | "submitted";
+
+export type MessageView = { id: string, project: string, thread: string, mode: MessageMode, state: DeliveryState, input?: MessageInput, text: string, created_at_ms: number, };
 
 export type InboxItem = {
 /**

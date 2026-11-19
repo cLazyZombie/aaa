@@ -296,17 +296,49 @@ impl Host {
                     e.detail
                 ),
             ),
-            "message_unknown" => (
-                "message not delivered",
-                format!(
-                    "{thread}: 메시지 수락 확인 못함 {}. 다시 보내지 말고 `aaa thread read {p} {thread}`로 입력창을 본다(남았으면 `aaa thread keys {p} {thread} enter`)",
-                    e.detail
-                ),
-            ),
+            "message_unknown" => {
+                let summary = if let Some(id) = &e.evidence {
+                    let detail = e.detail.strip_prefix(id).unwrap_or(&e.detail).trim_start();
+                    format!("{thread}: {id} · 메시지 수락 확인 못함 · {detail}")
+                } else {
+                    format!(
+                        "{thread}: 메시지 수락 확인 못함 {}. 다시 보내지 말고 `aaa thread read {p} {thread}`로 입력창을 본다(남았으면 `aaa thread keys {p} {thread} enter`)",
+                        e.detail
+                    )
+                };
+                ("message not delivered", summary)
+            }
+            "message_accepted_late" => {
+                if let Some(id) = &e.evidence {
+                    self.inbox_accept_late_message(p, thread, id);
+                }
+                return;
+            }
             "thread_failed" => ("not launched", format!("{thread}: 시작하지 못했다: {}", e.detail)),
             _ => return,
         };
         self.inbox_add(p, "thread-state", thread, event, &summary);
+    }
+
+    fn inbox_accept_late_message(&self, project: &str, thread: &str, id: &str) {
+        let _projection = self.inbox_projection.lock().unwrap();
+        let item = match self.db.message_accept_late(project, thread, id) {
+            Ok(Some(item)) => item,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!("늦은 메시지 수락 상태 저장 실패: {e:#}");
+                return;
+            }
+        };
+        let dir = self.inbox_dir(project);
+        let name = format!("{}.md", item.id);
+        let open = dir.join(&name);
+        // DB에서만 끝난 경우 기존 파일을 고친다. 완료 쪽이 이 잠금을 받은 뒤 그 파일을 옮긴다.
+        let path = if item.done && !open.exists() { dir.join("done").join(name) } else { open };
+        if let Err(e) = crate::orch::write_atomic(&path, render_item(&item).as_bytes()) {
+            tracing::warn!("늦은 메시지 수락 알림 파일 쓰기 실패: {e:#}");
+        }
+        self.inbox_bump();
     }
 
     /// `aaa inbox list`: peek가 아니면 보인 항목을 「봤다」로 표시한다
@@ -483,6 +515,7 @@ impl Host {
         }
         self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
         let dir = self.inbox_dir(&i.project);
+        let _projection = self.inbox_projection.lock().unwrap();
         aaa_common::diagnostic::ignored(
             std::fs::create_dir_all(dir.join("done")),
             "보조 작업 실패 뒤 기존 처리를 계속한다",

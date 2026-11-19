@@ -165,7 +165,11 @@ enum WorkFileReply {
 pub(crate) struct PendingResponse {
     tx: oneshot::Sender<Outcome<AgentResponse>>,
     work_file: Option<WorkFileReply>,
+    input_pane: Option<String>,
 }
+
+type InputWatch = Arc<tokio::sync::watch::Sender<bool>>;
+type InputWatches = Arc<Mutex<HashMap<String, std::sync::Weak<tokio::sync::watch::Sender<bool>>>>>;
 
 impl PendingResponse {
     /// 같은 FileChunk라도 작업 상태 전송만 원본 hash를 검증한다. 파일 보기는 계속 가린다.
@@ -202,6 +206,7 @@ pub struct AgentConn {
     seq: Arc<AtomicU64>,
     /// pending 잠금 아래에서 검사·변경한다. 종료 뒤에도 남는 clone은 새 요청을 받지 않는다.
     closed: Arc<AtomicBool>,
+    input_watches: InputWatches,
     machine_id: String,
     timeouts: aaa_config::HostSection,
     health_host: std::sync::Weak<Host>,
@@ -215,6 +220,7 @@ impl AgentConn {
             generation,
             seq: Arc::new(AtomicU64::new(0)),
             closed: Default::default(),
+            input_watches: Default::default(),
             machine_id: String::new(),
             timeouts: Default::default(),
             health_host: Default::default(),
@@ -239,6 +245,28 @@ impl AgentConn {
 
     /// 오래 걸리는 요청(routine 명령 등)
     pub async fn request_timeout(&self, body: AgentRequest, wait: Duration) -> Result<AgentResponse, ErrorBody> {
+        self.request_watched(body, wait, None).await
+    }
+
+    /// 같은 pane의 다른 입력이 끼면 이 전송의 대화 영수증은 판정에 쓰지 않는다.
+    fn watch_input(&self, pane: &str) -> InputWatch {
+        let pending = self.pending.lock().unwrap();
+        let mut watches = self.input_watches.lock().unwrap();
+        watches.retain(|_, watch| watch.strong_count() > 0);
+        let in_flight = pending.values().any(|r| r.input_pane.as_deref() == Some(pane));
+        let watch = Arc::new(tokio::sync::watch::Sender::new(!in_flight && !self.closed.load(Ordering::Relaxed)));
+        if let Some(old) = watches.insert(pane.into(), Arc::downgrade(&watch)).and_then(|w| w.upgrade()) {
+            old.send_replace(false);
+        }
+        watch
+    }
+
+    async fn request_watched(
+        &self,
+        body: AgentRequest,
+        wait: Duration,
+        watch: Option<&InputWatch>,
+    ) -> Result<AgentResponse, ErrorBody> {
         let id = format!("c{}", self.seq.fetch_add(1, Ordering::Relaxed));
         let input = match &body {
             AgentRequest::Input { session, data } => {
@@ -263,7 +291,17 @@ impl AgentConn {
             if self.closed.load(Ordering::Relaxed) {
                 return Err(disconnected());
             }
-            pending.insert(id.clone(), PendingResponse { tx: otx, work_file });
+            let input_pane = input.as_ref().map(|(pane, _, _)| pane.clone());
+            if let Some(pane) = &input_pane {
+                let mut watches = self.input_watches.lock().unwrap();
+                if let Some(active) = watches.get(pane).and_then(std::sync::Weak::upgrade)
+                    && !watch.is_some_and(|watch| Arc::ptr_eq(&active, watch))
+                {
+                    active.send_replace(false);
+                    watches.remove(pane);
+                }
+            }
+            pending.insert(id.clone(), PendingResponse { tx: otx, work_file, input_pane });
         }
         let _pending = PendingRequest { pending: self.pending.clone(), id: id.clone() };
         let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
@@ -329,6 +367,9 @@ impl AgentConn {
         let drained: Vec<_> = {
             let mut pending = self.pending.lock().unwrap();
             self.closed.store(true, Ordering::Relaxed);
+            for watch in self.input_watches.lock().unwrap().drain().filter_map(|(_, w)| w.upgrade()) {
+                watch.send_replace(false);
+            }
             pending.drain().collect()
         };
         for (_, tx) in drained {
@@ -685,6 +726,8 @@ pub struct Host {
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
     deliver_lock: tokio::sync::Mutex<()>,
+    /// 알림 갱신과 완료 파일 이동을 순서대로 투영한다.
+    inbox_projection: Mutex<()>,
     /// pane 등록 전에 온 harness 사건
     held: Mutex<harness::Held>,
     /// ticker를 바로 깨운다(흐름 사건·harness 사건)
@@ -954,6 +997,7 @@ impl Host {
             passkey_ops: Default::default(),
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
+            inbox_projection: Mutex::new(()),
             held: Mutex::new(HashMap::new()),
             tick_wake: tokio::sync::Notify::new(),
             bgwait: Mutex::new(Default::default()),

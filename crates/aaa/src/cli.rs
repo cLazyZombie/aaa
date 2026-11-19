@@ -5906,7 +5906,11 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Question(q) => render_question(&mut s, q),
         FrontResponse::Message(m) => {
-            let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
+            let _ = write!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
+            if let Some(input) = m.input {
+                let _ = write!(s, " · {}", input.label());
+            }
+            s.push('\n');
         }
         FrontResponse::Missions { .. } => {}
         FrontResponse::Mission { .. } => s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)"),
@@ -6331,7 +6335,11 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Next { lines, message } => {
             if let Some(m) = message {
-                let _ = writeln!(s, "보냈다({:?}): {}", m.state, m.text);
+                let _ = write!(s, "메시지 {} ({:?})", m.id, m.state);
+                if let Some(input) = m.input {
+                    let _ = write!(s, " · {}", input.label());
+                }
+                let _ = writeln!(s, ": {}", m.text);
             } else if lines.is_empty() {
                 s.push_str("Next 목록이 비었다\n");
             } else {
