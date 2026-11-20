@@ -414,6 +414,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS messages(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS messages_answer_waiting ON messages(project,created_at,id) WHERE state='answer_waiting';
              CREATE TABLE IF NOT EXISTS inbox(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, event TEXT NOT NULL,
                done INTEGER NOT NULL DEFAULT 0, done_at INTEGER, created_at INTEGER NOT NULL, data TEXT NOT NULL);
@@ -1370,6 +1371,46 @@ impl Db {
         let mut st = c.prepare(sql)?;
         let rows = st.query_map([state], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(rows)
+    }
+
+    pub(crate) fn advance_waiting_answer(&self, id: &str, state: &str) -> Result<bool> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.execute("UPDATE messages SET state=?2 WHERE id=?1 AND state='answer_waiting'", params![id, state])? == 1)
+    }
+
+    pub(crate) fn pending_answers(&self, project: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st =
+            c.prepare("SELECT data FROM messages WHERE project=?1 AND state='answer_waiting' ORDER BY created_at,id")?;
+        let rows = st.query_map([project], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub(crate) fn inbox_answer_delivery(
+        &self,
+        m: &aaa_proto::MessageView,
+        event: &str,
+        summary: &str,
+    ) -> Result<Option<aaa_proto::InboxItem>> {
+        let c = self.conn.lock().unwrap();
+        let prefix = format!("{}: {} · ", m.thread, m.id);
+        let data: Option<String> = c
+            .query_row(
+                "UPDATE inbox SET event=?5, data=json_set(data,'$.event',?5,'$.summary',?6)
+                 WHERE project=?1 AND subject=?2 AND kind='thread-state' AND event=?3
+                   AND instr(json_extract(data,'$.summary'),?4)=1 RETURNING data",
+                params![
+                    m.project,
+                    m.thread,
+                    crate::answer_delivery::WAITING_EVENT,
+                    prefix,
+                    event,
+                    format!("{prefix}{summary}")
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(data.map(|json| serde_json::from_str(&json)).transpose()?)
     }
 
     /// 앞선 같은 본문의 늦은 기록이 이번 영수증으로 보일 수 있다. 미확인 전송은 즉시 판정도 막는다.

@@ -95,6 +95,7 @@ fn orphan_thread_reference_stays_a_coordinator_question_across_reports_and_recon
     rec.report_hash = Some("old".into());
     rec.questions = aaa_proto::report_questions(BODY);
     let answer = QuestionAnswerView {
+        delivery: None,
         comments: Vec::new(),
         picks: vec![Some(0), Some(1)],
         text: None,

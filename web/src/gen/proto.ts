@@ -2504,7 +2504,9 @@ body: string, created_ms: number,
  */
 questions?: ThreadQuestions, };
 
-export type QuestionAnswerView = {
+export type AnswerDelivery = "waiting" | "held";
+
+export type QuestionAnswerView = { delivery?: AnswerDelivery,
 /**
  * 질문마다 고른 선택지 번호(0부터). 고르지 않고 직접 쓴 질문은 null
  */

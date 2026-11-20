@@ -657,6 +657,7 @@ async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() 
             lab.h.identify_questions("p", "thread", &old.id, "previous", &aaa_proto::report_questions(OLD)).unwrap();
         let id = old.questions[0].id.clone();
         let answer = aaa_proto::QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,

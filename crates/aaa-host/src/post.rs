@@ -1073,6 +1073,7 @@ mod tests {
             PostResult::Refused { reason, .. } if reason.contains("120자")));
         assert_eq!(h.user_requests("demo").unwrap().len(), count, "거부된 요청은 카드를 만들지 않는다");
         rec.question_answer = Some(aaa_proto::QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,

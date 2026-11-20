@@ -18,7 +18,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { answerStatus, answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
@@ -636,9 +636,9 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
       .then(setReport, () => setReport("missing"));
   };
   return (
-    <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind}>
+    <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind} data-delivery={r.answer?.delivery}>
       <header className="prompt-card-header">
-        <KindChip kind={r.kind} done={r.answer ? `답함 ${r.summary}` : r.summary} />
+        <KindChip kind={r.kind} done={r.answer ? `${answerStatus(r.answer.delivery)} ${r.summary}` : r.summary} />
         {r.kind === "question" ? (
           <button type="button" className="linkish prompt-card-where" onClick={() => onThread(r.subject)} title="thread 열기">{r.subject} · {r.title || r.subject}</button>
         ) : (

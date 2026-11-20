@@ -127,6 +127,13 @@ function itemLook(target: string, label: string, q: ThreadQuestions, project?: s
   };
 }
 
+/** 카드에 기록한 답의 전달 상태. */
+export function answerStatus(delivery: NonNullable<ThreadQuestions["answer"]>["delivery"]): string {
+  if (delivery === "waiting") return "전달 대기";
+  if (delivery === "held") return "전달 보류";
+  return "답함";
+}
+
 /** 카드와 같은 대상으로 상태를 찾는다. q ID는 thread·coordinator·보존한 답 모두에 속할 수 있다. */
 export function questionRefLook(target: string, threads: ThreadView[], done: AskBrief[], requests: UserRequestView[] = []): AppRefLook {
   const label = `${target} 질문`;
@@ -142,11 +149,11 @@ export function questionRefLook(target: string, threads: ThreadView[], done: Ask
   if (key?.startsWith("d:")) {
     const rec = done.find((r) => r.id === key.slice(2))!;
     const summary = "question_ids" in rec ? rec.answer_summary : rec.answer?.summary;
-    return { label, tone: "done", state: summary ? `답함 · ${summary}` : rec.summary };
+    return { label, tone: "done", state: summary ? `${answerStatus("question_ids" in rec ? undefined : rec.answer?.delivery)} · ${summary}` : rec.summary };
   }
   // 옛 host가 답 기록을 주지 않아도 현재 thread에 남은 답은 표시한다.
   const q = threads.find((t) => t.id === target || t.questions?.items.some((q) => q.id === target))?.questions;
-  if (q?.answer) return { label, tone: "done", state: `답함 · ${q.answer.summary}` };
+  if (q?.answer) return { label, tone: "done", state: `${answerStatus(q.answer.delivery)} · ${q.answer.summary}` };
   return { label, tone: "plain", state: null };
 }
 

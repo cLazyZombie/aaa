@@ -145,6 +145,7 @@ mod tests {
             aaa_proto::report_questions("## Questions\n### 1. 시안\n![시안](library/a.png)\n- A 적용\n- B 보류\n");
         rec.questions = h.identify_questions("p", "thread", &rec.id, "old", &items).unwrap();
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
@@ -186,6 +187,7 @@ mod tests {
             aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 유지\n### 2. 색\n- A 단색\n- B 두 색\n");
         rec.questions = h.identify_questions("p", "thread", &rec.id, "old", &items).unwrap();
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: vec![Some("첫째 원문".into()), Some("둘째 의견".into())],
             picks: vec![None, Some(1)],
             text: None,
@@ -207,6 +209,7 @@ mod tests {
         h.record_answer(
             &rec,
             &QuestionAnswerView {
+                delivery: None,
                 comments: Vec::new(),
                 picks: vec![None],
                 text: Some("옛 공통 답 원문".into()),

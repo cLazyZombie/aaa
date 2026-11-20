@@ -3,7 +3,8 @@
 //! - 답은 그 보고(hash)의 질문에만 맞는다. 새 보고에서 질문을 다시 읽는다. 전달을 마친 같은 질문은 원래 ID와 답을 잇고, 새 질문은 답을 비운다(orch.rs 사본).
 //! - 한 번만 받는다: 기록에 먼저 자리를 잡고(`question_answer`) 보낸다. 다른 기기가 늦게 누르면 「이미 답함」이다. 보내지
 //!   못하면 자리를 풀어 다시 답할 수 있다.
-//! - 보내는 길은 `thread message`와 같다(확인창·입력창 글·brief 전 거부, task 기록). coordinator를 거치지 않는다.
+//! - 보내는 길은 `thread message`와 같다(확인창·입력창 글·brief 전 거부, task 기록). 글자 하나도 쓰기 전 한도 화면이면
+//!   같은 보고·pane에서 입력을 재개할 때까지 기다린다(answer_delivery.rs).
 //! - 웹에서 답하면 coordinator inbox에 「질문에 답함」을 남긴다: coordinator가 같은 질문을 다시 묻거나 중계하지 않는다.
 //! - 직접 쓴 답은 여러 줄이고 그림 줄(`![그림](uploads/<이름>)`, task 첨부와 같은 프로젝트 uploads/)을 실을 수 있다(t-1635).
 //!   기록·웹은 `uploads/…` 그대로 두고, 보낼 글만 읽는 쪽이 여는 경로로 바꾼다: thread에는 그 머신 작업 폴더 `attachments/`에
@@ -11,8 +12,9 @@
 
 use std::sync::Arc;
 
-use aaa_proto::{ErrorBody, ErrorCode, MessageMode, QuestionAnswerView, ThreadQuestion, ThreadView};
+use aaa_proto::{DeliveryState, ErrorBody, ErrorCode, MessageMode, QuestionAnswerView, ThreadQuestion, ThreadView};
 
+use crate::answer_delivery::CardSend;
 use crate::{Host, err};
 
 /// 고른 것을 확인하고 thread에 보낼 글과 짧은 꼴(「1A 2B」)을 짓는다. 모든 질문은 고르거나 직접 쓴 답으로 대신한다
@@ -171,6 +173,7 @@ impl Host {
         let requests = self.question_requests(project, id)?;
         let by = self.answered_by(actor);
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: normalize_comments(comments),
             picks: picks.clone(),
             text: text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
@@ -181,33 +184,62 @@ impl Host {
         let answer_preview = preview(&rec.questions, &answer);
         let question_ids = rec.questions.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" ");
         // 자리를 먼저 잡는다: 두 기기가 함께 눌러도 한 번만 보낸다
+        let target = self.answer_target(&rec, report_hash, answer.at_ms)?;
         let mut taken: Option<QuestionAnswerView> = None;
+        let mut claimed = false;
         self.update_rec(project, id, |r| {
-            if r.report_hash.as_deref() != Some(report_hash) {
+            if !target.same_report(r)
+                || r.pane.as_deref() != Some(target.pane.as_str())
+                || r.machine_id != target.machine
+            {
                 return;
             }
             match &r.question_answer {
                 Some(old) => taken = Some(old.clone()),
-                None => r.question_answer = Some(answer.clone()),
+                None => {
+                    r.question_answer = Some(answer.clone());
+                    claimed = true;
+                }
             }
         })?;
         if let Some(old) = taken {
             return Err(err(ErrorCode::BadRequest, format!("이미 답함({}): {}", old.by, old.summary)));
         }
-        if let Err(e) = self.thread_message(project, id, to_thread, MessageMode::Queue, actor).await {
-            // 보내지 못했다: 다시 답할 수 있게 자리를 푼다(그사이 새 보고면 이미 비었다)
-            aaa_common::diagnostic::ignored(
-                self.update_rec(project, id, |r| {
-                    if r.question_answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by) {
-                        r.question_answer = None;
-                    }
-                }),
-                "보조 작업 실패 뒤 기존 처리를 계속한다",
-            );
-            return Err(e);
+        if !claimed {
+            return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다. 다시 읽고 답한다"));
         }
+        let result = self
+            .thread_message_inner(
+                project,
+                id,
+                to_thread,
+                MessageMode::Queue,
+                actor,
+                Some(CardSend::Initial(&target, &to_inbox)),
+            )
+            .await;
+        let delivery = match result {
+            Ok(delivery) => delivery,
+            Err(e) => {
+                // 보내지 못했다: 다시 답할 수 있게 자리를 푼다(그사이 새 보고면 이미 비었다)
+                aaa_common::diagnostic::ignored(
+                    self.update_rec(project, id, |r| {
+                        if target.same_report(r)
+                            && r.question_answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by)
+                        {
+                            r.question_answer = None;
+                        }
+                    }),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
+                return Err(e);
+            }
+        };
         self.db.audit(actor, "thread_answer", &format!("{project}/{id} {summary}"));
         let rec = self.load(project, id)?;
+        if delivery.state == DeliveryState::Queued {
+            return Ok(self.thread_view(&rec));
+        }
         // 답할 때의 원문을 남긴다(plan §8.345): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다
         if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
             self.record_answer(&rec, a);
