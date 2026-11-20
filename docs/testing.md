@@ -3214,6 +3214,8 @@ E2E03 「크기 되찾기」의 보낸 순서(resize가 키보다 먼저)는 화
 
 ## CI 감시(§8.274)
 
+- [CI 실패 문맥 전달 검증(t-2091)](testing-ci-context-t-2091.md)
+
 - `cargo test -p aaa-common ci::`: gh 304 exit 1·200/403 HTTP 해석, GET·머리 주입 거부, 응답 필드 축약, SHA의 일부 workflow 대기·취소·재실행·stuck, 실패 집합·병합 번호 계약을 본다. 실패 로그 표지는 실제 windows-2025 줄 모양(job·단계·시각 앞머리, `\` 경로)을 7바이트 조각으로 먹여 꼬리 밖 실패·panic 열 번호 제외·끝나지 않은 시험을 보고, 같은 job·단계의 다른 시험이 다른 실패로 갈리는지 본다(0a8c294f).
 - `cargo test -p aaa --test m13 ci_conditional -- --nocapture`: 실제 host·agent와 가짜 gh, 승인된 임무를 띄운다. 기준 초록 → 304 무음 → 빨강의 CI 항목·임무 inbox와 깨움 한 번 → host 재시작 중복 방지·created pagination → 같은 실패 집합 무깨움 → 같은 job·단계의 다른 실패 시험은 같은 항목에 덧붙이고 다시 깨움(가짜 gh가 실패 줄을 32KiB 꼬리 밖에 둔다) → 꺼진 동안 실패 후 회복·CI fixed 무깨움 → 403 outage 한 건을 본다. 로그 잘림과 한 push의 여러 주인 번호도 이 경계에서 본다.
 - 실험실의 기존 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 `ci_poll_secs` 하한을 1초로 낮춘다(운영은 30초). 고정 sleep을 넣지 않는다. 새 판정은 flow, 아무 일 없음은 다음 304 두 번(앞 CI pass 완료)과 ticker tick 뒤 확인한다.

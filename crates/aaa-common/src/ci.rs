@@ -1,6 +1,6 @@
 //! GitHub Actions 조건부 조회 규칙. 참고: t3code gitHubConditionalChecks.ts의 validator·쪽 넘김.
 use crate::{github::sanitize, util};
-use aaa_proto::{CiAnswer, CiCommit, CiJob, CiQuery, CiRun};
+use aaa_proto::{CiAnswer, CiCommit, CiFailureContext, CiJob, CiLogExcerpt, CiQuery, CiRun};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -176,7 +176,7 @@ pub fn response(out: &str, success: bool, q: &CiQuery) -> Result<CiAnswer> {
                         .collect();
                     steps.sort();
                     steps.dedup();
-                    answer.jobs.push(CiJob { id: num(j, "id"), name: text(j, "name"), steps, failures: vec![] });
+                    answer.jobs.push(CiJob { id: num(j, "id"), name: text(j, "name"), steps, ..Default::default() });
                 }
             }
         }
@@ -245,7 +245,11 @@ pub fn failed_tests(jobs: &[CiJob]) -> BTreeSet<(String, Vec<String>)> {
 pub const FAILURES_CAP: usize = 64;
 const FAILURE_LEN: usize = 300;
 const LINE_CAP: usize = 4096;
-/// 실패 로그를 흘려 읽으며 실패 시험 이름을 모은다. 로그 꼬리만 남겨도 앞쪽 실패를 놓치지 않는다.
+const EXCERPTS_PER_JOB: usize = 4;
+const EXCERPT_BYTES: usize = 2048;
+const EXCERPT_LINES: usize = 12;
+
+/// 실패 로그를 흘려 읽으며 실패 시험 이름과 오류 주변을 모은다.
 /// 시험 이름이 없으면 panic 위치(`path:line`)·끝나지 않은 시험으로 가른다.
 #[derive(Default)]
 pub struct FailureScan {
@@ -258,6 +262,10 @@ pub struct FailureScan {
     stack_overflows: BTreeSet<String>,
     stack_overflow_exit: bool,
     line: Vec<u8>,
+    line_cut: bool,
+    gh_job: String,
+    context: CiFailureContext,
+    context_lines_left: usize,
 }
 impl FailureScan {
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -266,12 +274,15 @@ impl FailureScan {
                 self.end_line();
             } else if self.line.len() < LINE_CAP {
                 self.line.push(b);
+            } else {
+                self.line_cut = true;
             }
         }
     }
     fn end_line(&mut self) {
-        let line = String::from_utf8_lossy(&self.line).trim_end().to_string();
+        let line = String::from_utf8_lossy(&self.line).trim_end_matches('\r').to_string();
         self.line.clear();
+        let line_cut = std::mem::take(&mut self.line_cut);
         // ci-local은 Python suite를 기다린 뒤 실제 종료 코드를 모든 출력 줄에 붙인다.
         // fixture의 가짜 Rust 실패가 annotation에 다시 실려도 성공한 바깥 suite에 속한다.
         // 실패·중단된 suite와 표지가 없는 옛 로그는 그대로 수집한다(시험 이름으로 제외하지 않는다).
@@ -280,20 +291,40 @@ impl FailureScan {
             || line.contains(" [python exit=0] ")
             || line.contains("\t[python exit=0] ")
         {
+            self.context_lines_left = 0;
             return;
         }
         // 원문·gh job/step/time·ci-local 단계·annotation 앞머리만 벗긴다.
         // FAIL 문구를 인용한 성공 fixture·진단 본문까지 검색해 실패로 만들지 않는다.
-        let body = line
-            .splitn(3, '\t')
-            .nth(2)
-            .filter(|body| body.split_once(' ').is_some_and(|(stamp, _)| util::parse_iso(stamp).is_some()))
-            .unwrap_or(&line);
-        let body =
-            body.split_once(' ').filter(|(stamp, _)| util::parse_iso(stamp).is_some()).map_or(body, |(_, rest)| rest);
+        fn unstamp(s: &str) -> Option<&str> {
+            s.split_once(' ').filter(|(stamp, _)| util::parse_iso(stamp).is_some()).map(|(_, body)| body)
+        }
+        let (mut step, mut body) = ("", line.as_str());
+        if let Some((job, rest)) = line.split_once('\t')
+            && let Some((gh_step, rest)) = rest.split_once('\t')
+        {
+            let message = unstamp(rest);
+            if message.is_some() || job == self.gh_job || rest.starts_with("##[error]") {
+                if job != self.gh_job {
+                    job.clone_into(&mut self.gh_job);
+                }
+                (step, body) = (gh_step, message.unwrap_or(rest));
+            }
+        }
+        if step.is_empty() {
+            body = unstamp(body).unwrap_or(body);
+        }
+        let body = body.trim_end();
         let body = body.strip_prefix("[test] ").unwrap_or(body);
         let body = body.strip_prefix("[e2e] ").unwrap_or(body);
+        let annotation = body.starts_with("##[error]");
         let body = body.strip_prefix("##[error]").unwrap_or(body);
+        let context_body = body
+            .strip_prefix("[python exit=")
+            .and_then(|s| s.split_once("] "))
+            .filter(|(code, _)| !code.is_empty() && code.bytes().all(|b| b.is_ascii_digit()))
+            .map_or(body, |(_, message)| message);
+        self.capture_context(step, context_body, annotation, line_cut);
         // Rust는 abort 때 FAILED를 출력하지 않는다. thread 표지와 Cargo 종료 유형을
         // 따로 읽어 이름 없는 종료도 남기되, 인용문·성공한 Python fixture는 받지 않는다.
         if let Some((name, rest)) = body.strip_prefix("thread '").and_then(|s| s.split_once("' ")) {
@@ -375,8 +406,47 @@ impl FailureScan {
             set.insert(item);
         }
     }
-    pub fn finish(mut self) -> Vec<String> {
-        self.end_line();
+    fn capture_context(&mut self, step: &str, body: &str, annotation: bool, line_cut: bool) {
+        let body_start = body.trim_start();
+        if body_start.starts_with("## ") {
+            self.context_lines_left = 0;
+            return;
+        }
+        let starts = error_line(body_start, annotation);
+        if self.context_lines_left == 0 && !starts {
+            return;
+        }
+        let step = clip(step);
+        if self.context.excerpts.last().is_some_and(|excerpt| excerpt.step != step) {
+            self.context_lines_left = 0;
+        }
+        if self.context_lines_left == 0 {
+            if !starts {
+                return;
+            }
+            if self.context.excerpts.len() == EXCERPTS_PER_JOB {
+                self.context.truncated = true;
+                return;
+            }
+            self.context.excerpts.push(CiLogExcerpt { step, text: String::new() });
+            self.context_lines_left = EXCERPT_LINES;
+        }
+        let excerpt = self.context.excerpts.last_mut().unwrap();
+        let remaining = EXCERPT_BYTES - excerpt.byte_len();
+        let body = clean_log(body);
+        let newline = usize::from(!excerpt.text.is_empty() && remaining > 0);
+        let part = log_prefix(&body, (remaining - newline).min(EXCERPT_BYTES / 2));
+        if newline > 0 {
+            excerpt.text.push('\n');
+        }
+        excerpt.text.push_str(part);
+        self.context_lines_left -= 1;
+        self.context.truncated |= line_cut || part.len() < body.len() || self.context_lines_left == 0;
+    }
+    pub fn finish(mut self) -> (Vec<String>, Option<CiFailureContext>) {
+        if !self.line.is_empty() {
+            self.end_line();
+        }
         if self.stack_overflows.is_empty() && self.stack_overflow_exit {
             self.stack_overflows.insert("exit: STATUS_STACK_OVERFLOW".into());
         }
@@ -404,9 +474,48 @@ impl FailureScan {
             }
         }
         let set = if self.tests.is_empty() { self.others } else { self.tests };
-        set.into_iter().collect()
+        for excerpt in &mut self.context.excerpts {
+            excerpt.step = clip(&crate::redact::text(&excerpt.step));
+            excerpt.text = crate::redact::text(excerpt.text.trim_end());
+            let end = log_prefix(&excerpt.text, EXCERPT_BYTES - excerpt.step.len()).len();
+            self.context.truncated |= end < excerpt.text.len();
+            excerpt.text.truncate(end);
+        }
+        let context = (!self.context.excerpts.is_empty()).then_some(self.context);
+        (set.into_iter().collect(), context)
     }
 }
+fn error_line(body: &str, annotation: bool) -> bool {
+    !body.is_empty()
+        && (annotation
+            || ["FAIL ", "error:", "error[", "fatal:", "fatal runtime error:", "Error [", "Traceback (", "thread '"]
+                .iter()
+                .any(|prefix| body.starts_with(prefix))
+            || body.split_once(':').is_some_and(|(kind, _)| {
+                let error_type =
+                    kind.ends_with("Error") && kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.');
+                // Playwright는 Error 대신 API 메서드 이름으로 시작하는 스택도 출력한다.
+                let playwright = kind.split_once('.').is_some_and(|(api, method)| {
+                    matches!(api, "route" | "page" | "locator" | "browser" | "browserContext" | "frame" | "request")
+                        && !method.is_empty()
+                        && method.bytes().all(|b| b.is_ascii_alphabetic())
+                });
+                error_type || playwright
+            }))
+}
+
+pub fn clean_log(text: &str) -> String {
+    crate::redact::text(text).chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
+}
+
+pub fn log_prefix(text: &str, limit: usize) -> &str {
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 fn clip(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(FAILURE_LEN).collect::<String>().trim().to_string()
 }
