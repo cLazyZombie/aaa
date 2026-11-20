@@ -1364,6 +1364,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
   const selectedAsk = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions, threads);
   const historySelection = askKey && !askList.some(a => a.key === askKey)
+    && !(selectedAsk.kind === "done" && selectedAsk.record.answer?.delivery)
     ? (askKey.startsWith("d:") ? asksIndex.find(r => r.id === askKey.slice(2)) : doneOf(askKey, asksIndex)) : null;
   const missingDone = historySelection && !asksDone.some(r => r.id === historySelection.id) ? historySelection.id : null;
   const [doneError, setDoneError] = useState<string | null>(null);

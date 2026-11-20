@@ -94,8 +94,11 @@ export function doneOf<T extends AskBrief>(key: string, done: T[]): T | null {
  * 둘 다 없으면 null(목록만)
  */
 export function questionKey(thread: string, threads: ThreadView[], done: AskBrief[], requests: UserRequestView[] = []): string | null {
-  const t = threads.find((t) => asks(t) && t.questions.items.some((q) => q.id === thread));
-  if (t) return `q:${t.id}`;
+  const t = threads.find((t) => t.questions && (
+    (asks(t) && t.questions.items.some((q) => q.id === thread))
+    || (t.questions.answer?.delivery && (t.id === thread || t.questions.items.some(q => q.id === thread)))
+  ));
+  if (t) return t.questions?.answer?.delivery ? `q:${t.project}/${t.id}` : `q:${t.id}`;
   const request = requests.find((r) => r.question_id === thread || r.questions?.items.some((q) => q.id === thread));
   if (request) return `r:${request.id}`;
   const record = done.find((r) => r.question_id === thread || questionIds(r).includes(thread));
@@ -139,7 +142,10 @@ export function questionRefLook(target: string, threads: ThreadView[], done: Ask
   const label = `${target} 질문`;
   const key = questionKey(target, threads, done, requests);
   if (key?.startsWith("q:")) {
-    const t = threads.find((t) => t.id === key.slice(2))!;
+    const id = key.slice(2);
+    const t = threads.find((t) => t.id === id || `${t.project}/${t.id}` === id)!;
+    const answer = t.questions?.answer;
+    if (answer?.delivery) return { label, tone: "done", state: `${answerStatus(answer.delivery)} · ${answer.summary}` };
     return itemLook(target, label, t.questions!, t.project) ?? { label: `${label} ${t.questions!.items.length}개`, tone: "ask", state: "답할 것" };
   }
   if (key?.startsWith("r:")) {

@@ -83,13 +83,21 @@ async function answerInPane(engine, width) {
     assert.equal(waiting.body, answer);
     assert.equal(fs.existsSync(`${dir}/blocked`), false);
     assert.equal(fs.existsSync(`${dir}/answers`), false);
+    await page.evaluate(id => { location.hash = `question=${id}`; }, question.id);
+    await page.reload();
+    await domIs(page, "질문 ID로 전달 대기 카드 다시 열기", () => {
+      const card = document.querySelector('[data-testid="ask-done-card"][data-delivery="waiting"]');
+      return card?.textContent.includes("전달 대기 1A");
+    });
     fs.writeFileSync(`${dir}/mode`, "prompt");
+    await until("pane 재개 감지", () => aaa("thread", "show", t.id).agent?.activity === "idle"
+      || notice()?.event === "question answered");
+    if (notice()?.event === "question answer waiting") aaa("ticker", "tick");
     const accepted = await until("같은 inbox 항목이 수락으로 전환", () => {
       const item = notice();
       return item?.id === waiting.id && item.event === "question answered" && item;
     });
     assert.match(accepted.summary, /카드 답 전달됨/);
-    aaa("ticker", "tick");
     assert.deepEqual(fs.readFileSync(`${dir}/answers`, "utf8").trimEnd().split("\n").map(JSON.parse), [answer]);
     await domIs(page, "재개 이후 카드 답함", () => {
       const card = document.querySelector('[data-testid="ask-done-card"]:not([data-delivery])');

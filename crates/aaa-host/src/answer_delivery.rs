@@ -168,14 +168,11 @@ impl Host {
     }
 
     pub(crate) fn finish_pending_answer(&self, pending: &PendingAnswer, state: DeliveryState) {
-        let m = &pending.message;
         self.set_answer_delivery(pending, None);
-        let (event, summary) = if state == DeliveryState::Accepted {
-            ("question answered", "카드 답 전달됨")
-        } else {
-            ("question answer unconfirmed", "카드 답 전달 확인 필요")
-        };
-        self.inbox_answer_delivery(m, event, summary);
+        // 수락을 확인하지 못했으면 기존 message_unknown 사건으로 같은 항목을 갱신한다.
+        if state == DeliveryState::Accepted {
+            self.update_answer_notice(pending, "question answered", "카드 답 전달됨");
+        }
     }
 
     fn hold_pending_answer(&self, pending: &PendingAnswer, reason: &str) -> Result<(), ErrorBody> {
@@ -183,8 +180,19 @@ impl Host {
             return Ok(());
         }
         self.set_answer_delivery(pending, Some(AnswerDelivery::Held));
-        self.inbox_answer_delivery(&pending.message, "question answer held", &format!("카드 답 전달 보류 · {reason}"));
+        self.update_answer_notice(pending, "question answer held", &format!("카드 답 전달 보류 · {reason}"));
         Ok(())
+    }
+
+    fn update_answer_notice(&self, pending: &PendingAnswer, event: &str, summary: &str) {
+        let m = &pending.message;
+        self.revise_waiting_answer_notice(
+            &m.project,
+            &m.thread,
+            &m.id,
+            event,
+            &format!("{}: {} · {summary}", m.thread, m.id),
+        );
     }
 
     pub(crate) async fn pending_answer_pass(self: &Arc<Self>, project: &str) {

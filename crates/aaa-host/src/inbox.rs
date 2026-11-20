@@ -306,6 +306,11 @@ impl Host {
                         e.detail
                     )
                 };
+                if let Some(id) = &e.evidence
+                    && self.revise_waiting_answer_notice(p, thread, id, "message not delivered", &summary)
+                {
+                    return;
+                }
                 ("message not delivered", summary)
             }
             "message_accepted_late" => {
@@ -333,12 +338,25 @@ impl Host {
         self.update_inbox_projection(&item);
     }
 
-    pub(crate) fn inbox_answer_delivery(&self, m: &aaa_proto::MessageView, event: &str, summary: &str) {
+    pub(crate) fn revise_waiting_answer_notice(
+        &self,
+        project: &str,
+        thread: &str,
+        message: &str,
+        event: &str,
+        summary: &str,
+    ) -> bool {
         let _projection = self.inbox_projection.lock().unwrap();
-        match self.db.inbox_answer_delivery(m, event, summary) {
-            Ok(Some(item)) => self.update_inbox_projection(&item),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(message = %m.id, "카드 답 알림 상태 저장 실패: {e:#}"),
+        match self.db.revise_waiting_answer_notice(project, thread, message, event, summary) {
+            Ok(Some(item)) => {
+                self.update_inbox_projection(&item);
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(message, "카드 답 알림 상태 저장 실패: {e:#}");
+                false
+            }
         }
     }
 

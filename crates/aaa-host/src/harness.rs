@@ -2056,6 +2056,7 @@ mod tests {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum Case {
             Resume,
+            Unconfirmed,
             NewReport,
             ChangedOnAgent,
             Closed,
@@ -2067,6 +2068,7 @@ mod tests {
 
         for case in [
             Case::Resume,
+            Case::Unconfirmed,
             Case::NewReport,
             Case::ChangedOnAgent,
             Case::Closed,
@@ -2139,7 +2141,7 @@ mod tests {
                         },
                         AgentRequest::Input { session, data } => {
                             assert_eq!(session, "s");
-                            if data.0 == b"\r" {
+                            if data.0 == b"\r" && case != Case::Unconfirmed {
                                 fake_host.on_harness(
                                     "m",
                                     HarnessEvent { harness: "claude".into(), ..codex_event("working", 3) },
@@ -2196,7 +2198,7 @@ mod tests {
                 assert!(writes.lock().unwrap().is_empty());
                 assert_eq!(messages()[0].state, DeliveryState::Unknown);
                 assert_eq!(messages()[0].input, None);
-                assert!(notices().iter().any(|i| i.id == notice.id && i.event == "question answer unconfirmed"));
+                assert!(notices().iter().any(|i| i.id == notice.id && i.event == "message not delivered"));
                 fake.abort();
                 continue;
             }
@@ -2227,14 +2229,24 @@ mod tests {
             let updated = notices().into_iter().find(|i| i.id == notice.id).unwrap();
             assert_eq!(updated.body, notice.body);
             let values = writes.lock().unwrap();
-            if case == Case::Resume {
+            if matches!(case, Case::Resume | Case::Unconfirmed) {
                 assert_eq!(values.as_slice(), &[waiting.text.as_bytes().to_vec(), b"\r".to_vec()]);
                 let sent = messages().pop().unwrap();
                 assert_eq!(sent.id, waiting.id);
-                assert_eq!((sent.state, sent.input), (DeliveryState::Accepted, Some(MessageInput::Submitted)));
-                assert_eq!(updated.event, "question answered");
+                assert_eq!(sent.input, Some(MessageInput::Submitted));
                 assert_eq!(answer_delivery(h.thread_show("demo", &rec.id).unwrap()), None);
                 assert_eq!(h.db.ask_list("demo").unwrap().len(), 1);
+                if case == Case::Resume {
+                    assert_eq!(sent.state, DeliveryState::Accepted);
+                    assert_eq!(updated.event, "question answered");
+                } else {
+                    assert_eq!(sent.state, DeliveryState::Unknown);
+                    assert_eq!(updated.event, "message not delivered");
+                    assert_eq!(notices().iter().filter(|i| i.summary.contains(&sent.id)).count(), 1);
+                    h.flow(&rec, "message_accepted_late", Some(sent.id.clone()), &sent.id);
+                    assert_eq!(messages()[0].state, DeliveryState::Accepted);
+                    assert!(notices().iter().any(|i| i.id == notice.id && i.event == "message accepted late"));
+                }
             } else {
                 assert!(values.is_empty(), "{case:?}: 옛 카드 답 입력");
                 assert_eq!(updated.event, "question answer held", "{case:?}");

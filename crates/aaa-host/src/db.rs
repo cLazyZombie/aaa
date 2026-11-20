@@ -1386,26 +1386,27 @@ impl Db {
         Ok(rows)
     }
 
-    pub(crate) fn inbox_answer_delivery(
+    pub(crate) fn revise_waiting_answer_notice(
         &self,
-        m: &aaa_proto::MessageView,
+        project: &str,
+        thread: &str,
+        message: &str,
         event: &str,
         summary: &str,
     ) -> Result<Option<aaa_proto::InboxItem>> {
         let c = self.conn.lock().unwrap();
-        let prefix = format!("{}: {} · ", m.thread, m.id);
         let data: Option<String> = c
             .query_row(
                 "UPDATE inbox SET event=?5, data=json_set(data,'$.event',?5,'$.summary',?6)
                  WHERE project=?1 AND subject=?2 AND kind='thread-state' AND event=?3
                    AND instr(json_extract(data,'$.summary'),?4)=1 RETURNING data",
                 params![
-                    m.project,
-                    m.thread,
+                    project,
+                    thread,
                     crate::answer_delivery::WAITING_EVENT,
-                    prefix,
+                    format!("{thread}: {message} · "),
                     event,
-                    format!("{prefix}{summary}")
+                    summary
                 ],
                 |r| r.get(0),
             )

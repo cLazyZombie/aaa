@@ -46,7 +46,7 @@ export function inboxContent(item: Pick<InboxItem, "item_kind" | "event" | "subj
     "brief not delivered": "지시 전달 실패", "message not delivered": "메시지 수락 확인 못함", "post notice for user": "새 소식",
     "message accepted late": "늦게 수락 확인",
     "question answer waiting": "전달 대기", "question answer held": "전달 보류",
-    "question answer unconfirmed": "전달 확인 필요", "question answered": "질문에 답함",
+    "question answered": "질문에 답함",
   };
   return { topic, label: labels[event] ?? event, summary: notificationSummary(item.summary) };
 }
