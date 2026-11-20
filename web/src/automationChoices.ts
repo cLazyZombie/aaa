@@ -13,6 +13,9 @@ export const modelLabel = (p: Pick<ProfileView, "model" | "harness">): string =>
 /** 생각 수준 칸 글: 정하지 않은 profile은 「기본」이다 */
 export const effortLabel = (p: Pick<ProfileView, "effort">): string => p.effort?.trim() || "기본";
 
+// 편집기는 첫 후보를 기본으로 고르므로 기기의 로캘과 관계없이 기존 영문 정렬을 쓴다.
+const compareProfileLabels = new Intl.Collator("en").compare;
+
 /**
  * 고를 수 있는 profile: `assignable`이 준 이름(어느 머신에서든)에 host 머신 profile의 모델·생각 수준을 붙인다.
  * `assignable`이 비면(옛 host·끊김) host 머신 profile만 쓴다. 모델을 모르는 이름은 모델 칸이 「다른 머신」이다.
@@ -23,7 +26,9 @@ export function profileChoices(host: readonly ProfileView[], owners: readonly Ow
   return names.map((name) => {
     const p = detail.get(name);
     return p ? { name, model: modelLabel(p), effort: effortLabel(p), known: true } : { name, model: "다른 머신", effort: "기본", known: true };
-  }).sort((a, b) => a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort) || a.name.localeCompare(b.name));
+  }).sort((a, b) => compareProfileLabels(a.model, b.model)
+    || compareProfileLabels(a.effort, b.effort)
+    || compareProfileLabels(a.name, b.name));
 }
 
 export const machineChoices = (owners: readonly OwnerChoice[] | null): MachineChoice[] =>
