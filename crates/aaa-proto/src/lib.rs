@@ -298,6 +298,7 @@ pub fn typescript_bindings() -> String {
         AskRecord::decl(&cfg),
         AskRecordSummary::decl(&cfg),
         UserRequestView::decl(&cfg),
+        AnswerDelivery::decl(&cfg),
         QuestionAnswerView::decl(&cfg),
         SummaryEntry::decl(&cfg),
         FollowUpLine::decl(&cfg),

@@ -549,6 +549,7 @@ impl Host {
             summary: summary.clone(),
             items,
             answer: Some(QuestionAnswerView {
+                delivery: None,
                 comments: crate::answer::normalize_comments(comments),
                 picks,
                 text: text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
@@ -1068,6 +1069,7 @@ mod tests {
         rec.report_hash = Some("hash".into());
         rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 아래 (추천)\n- B 위\n");
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
@@ -1245,6 +1247,7 @@ mod tests {
         let created = h.db.post_inbox("demo", &id).unwrap().unwrap().created_at_ms;
         rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
@@ -1270,6 +1273,7 @@ mod tests {
         rec.report_hash = Some("old".into());
         rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
@@ -1356,6 +1360,7 @@ mod tests {
         let (other, _other_lab) = host();
         post(&other, 5, "다른 host aaa:question/t-0001");
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
@@ -1467,6 +1472,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("uploads")).unwrap();
         std::fs::write(dir.join("uploads").join(shot), b"shot").unwrap();
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: vec![Some(format!("궤적이 꺾인다\n![그림](uploads/{shot})"))],
             picks: vec![Some(0)],
             text: None,

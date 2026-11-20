@@ -2541,7 +2541,11 @@ impl Host {
     }
 
     /// agent에 지금 report.md hash를 묻고(library는 읽지 않는다) 받은 것과 다르거나 앞 회수가 실패했으면 받는다
-    async fn current_report_hash(&self, rec: &ThreadRec, conn: &crate::AgentConn) -> Result<String, ErrorBody> {
+    pub(crate) async fn current_report_hash(
+        &self,
+        rec: &ThreadRec,
+        conn: &crate::AgentConn,
+    ) -> Result<String, ErrorBody> {
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let response = if self.machine_feature(&rec.machine_id, "report_hash.v1") {
             conn.request(AgentRequest::ReportHash { work_dir }).await?

@@ -58,6 +58,7 @@ impl Lab {
             summary: "1A 직접".into(),
             items: q,
             answer: Some(QuestionAnswerView {
+                delivery: None,
                 picks: vec![Some(0)],
                 text: Some("예전 공통 답".into()),
                 comments: vec![Some("내가 직접 쓴 결정".into())],

@@ -18,7 +18,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { answerStatus, answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
@@ -202,7 +202,7 @@ export function AsksView({
           ? { title: selection.ask.request.title, sub: "답할 것 · coordinator 확인 필요" }
           : { title: selection.ask.task.title, sub: "답할 것 · 할 일 확인 필요" }
       : selection.kind === "done"
-        ? { title: doneTitle(selection.record), sub: `답한 것 · ${selection.record.summary}` }
+        ? { title: doneTitle(selection.record), sub: `${selection.record.answer?.delivery ? answerStatus(selection.record.answer.delivery) : "답한 것"} · ${selection.record.summary}` }
         : { title: "답할 것", sub: "질문·확인 필요·할 일" };
   // 본문 그림을 누르면 크게, 같은 본문의 다른 그림으로 넘긴다(선택지 단추 안의 그림은 그 단추가 고르기다: 따로 「크게」 단추가 있다)
   const onBodyClick = (e: MouseEvent<HTMLDivElement>) => {
@@ -636,9 +636,9 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
       .then(setReport, () => setReport("missing"));
   };
   return (
-    <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind}>
+    <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind} data-delivery={r.answer?.delivery}>
       <header className="prompt-card-header">
-        <KindChip kind={r.kind} done={r.answer ? `답함 ${r.summary}` : r.summary} />
+        <KindChip kind={r.kind} done={r.answer ? `${answerStatus(r.answer.delivery)} ${r.summary}` : r.summary} />
         {r.kind === "question" ? (
           <button type="button" className="linkish prompt-card-where" onClick={() => onThread(r.subject)} title="thread 열기">{r.subject} · {r.title || r.subject}</button>
         ) : (
@@ -794,6 +794,13 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     }
     const a = key ? open.find((x) => x.key === key) : undefined;
     if (a) return { kind: "open", ask: a };
+    // 전달 대기·보류는 현재 카드에서 다시 연다. 끝난 답은 보존한 원문을 읽는다.
+    if (key?.startsWith("q:") && threads) {
+      const id = key.slice(2);
+      const thread = threads.get(id) ?? [...threads.values()].find(t => t.id === id && t.questions?.answer?.delivery);
+      const record = thread?.questions?.answer?.delivery && answeredNow(thread);
+      if (thread && record) return { kind: "done", record, now: { project: thread.project } };
+    }
     // 방금 답한 것(그 카드가 답할 것에서 빠졌다): 그때 남긴 기록을 연다
     const answered = key ? doneOf(key, done) : null;
     if (answered) return { kind: "done", record: answered };

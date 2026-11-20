@@ -19,6 +19,7 @@ use aaa_proto::{
 };
 use tokio::sync::oneshot;
 
+use crate::answer_delivery::{CardSend, PendingAnswer};
 use crate::orch::ThreadRec;
 use crate::prompt_receipt::{PreviousMessage, ReceiptProbe};
 use crate::{Host, err};
@@ -29,6 +30,9 @@ struct Submission<'a> {
     previous_message: PreviousMessage,
     input: MessageInput,
     late: Option<LateReceipt>,
+    card: Option<CardSend<'a>>,
+    limit_wait: bool,
+    resume_claimed: bool,
 }
 
 struct LateReceipt {
@@ -45,6 +49,9 @@ impl<'a> Submission<'a> {
             previous_message: PreviousMessage::None,
             input: MessageInput::NotWritten,
             late: None,
+            card: None,
+            limit_wait: false,
+            resume_claimed: false,
         }
     }
 }
@@ -113,6 +120,18 @@ pub(crate) fn modal_of(lines: &[String]) -> Option<(&'static str, String)> {
         .find(|l| l.contains('?'))
         .unwrap_or_else(|| d.last().map(|l| l.trim()).unwrap_or_default());
     Some((kind, text.chars().take(300).collect()))
+}
+
+/// Claude의 한도 메뉴와 자동 재개 대기 화면. 옛 출력이 남아도 새 입력란이 열리면 대기가 끝난 것이다.
+pub(crate) fn limit_wait_screen(lines: &[String]) -> bool {
+    let bottom: Vec<_> = lines.iter().rev().filter(|line| !line.trim().is_empty()).take(8).collect();
+    let shown = bottom.iter().rev().map(|line| line.trim()).collect::<Vec<_>>().join(" ");
+    let wait_option =
+        shown.contains("Wait here, then continue automatically") || shown.contains("Stop and wait for limit to reset");
+    (wait_option && (dialog(lines).is_some() || shown.contains("Enter to select")))
+        || (shown.contains("Claude Code will continue automatically")
+            && shown.contains("Press esc to cancel the wait")
+            && !crate::inbox::prompt_empty(lines))
 }
 
 /// 화면 선택 창의 선택지: (선택됨, 글)
@@ -1004,6 +1023,10 @@ impl Host {
         let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
         let shown = self.screen_lines(mid, pane).await;
+        if shown.as_deref().is_some_and(limit_wait_screen) {
+            submission.limit_wait = true;
+            return Err(before("사용량 한도 대기 화면에 입력하지 않았다".into()));
+        }
         if let Some((_, q)) = shown.as_deref().and_then(modal_of) {
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
@@ -1076,6 +1099,36 @@ impl Host {
                 probe.is_some()
             ),
         );
+        if let Some(card) = submission.card {
+            let screen =
+                self.screen(mid, pane).await.ok_or_else(|| before("카드 답을 보낼 화면을 읽지 못했다".into()))?;
+            if limit_wait_screen(&screen.lines) {
+                submission.limit_wait = true;
+                return Err(before("사용량 한도 대기 화면에 입력하지 않았다".into()));
+            }
+            if modal_of(&screen.lines).is_some()
+                || self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question)
+            {
+                return Err(before("카드 답을 보내기 전에 확인창이 열렸다".into()));
+            }
+            if let CardSend::Resume(pending) = card
+                && !self.pending_report_current(pending).await.map_err(|e| before(e.message))?
+            {
+                return Err(before("새 보고가 와 카드 답을 보류했다".into()));
+            }
+            if !self.card_submission_current(card, mid, pane) {
+                return Err(before("카드 답의 보고나 실행 중인 pane이 바뀌었다".into()));
+            }
+            if let CardSend::Resume(pending) = card {
+                if !self.card_screen_ready(pane, &screen) || watch.as_ref().is_some_and(|w| !*w.borrow()) {
+                    return Err(before("카드 답을 다시 보낼 입력창이 준비되지 않았다".into()));
+                }
+                if !self.claim_pending_answer(pending).map_err(|e| before(e.message))? {
+                    return Err(before("이미 처리한 카드 답이다".into()));
+                }
+                submission.resume_claimed = true;
+            }
+        }
         if let Some(text) = text {
             submission.input = MessageInput::PasteUnconfirmed;
             conn.request_watched(
@@ -1102,6 +1155,9 @@ impl Host {
         // 그 밖의 프로그램(custom·보고만)은 Enter 전에 글을 보이지 않을 수 있어 참고처럼 300ms 뒤에 본다
         let typed = loop {
             let now = self.screen_lines(mid, pane).await;
+            if now.as_deref().is_some_and(limit_wait_screen) {
+                return Err(after("치는 동안 사용량 한도 대기 화면이 떠 Enter를 보내지 않았다".into()));
+            }
             if let Some((_, q)) = now.as_deref().and_then(modal_of) {
                 return Err(after(format!("치는 동안 선택 창이 떠 Enter를 보내지 않았다: {q}")));
             }
@@ -1135,6 +1191,11 @@ impl Host {
             {
                 return Err(after("붙여넣기 확정 중 확인창이 떠 Enter를 보내지 않았다".into()));
             }
+        }
+        if let Some(card) = submission.card
+            && !self.card_submission_current(card, mid, pane)
+        {
+            return Err(after("카드 답의 보고나 pane이 바뀌어 Enter를 보내지 않았다".into()));
         }
         let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
@@ -1305,6 +1366,19 @@ impl Host {
         mode: MessageMode,
         actor: &str,
     ) -> Result<MessageView, ErrorBody> {
+        self.thread_message_inner(project, id, text, mode, actor, None).await
+    }
+
+    #[allow(clippy::too_many_arguments)] // 카드 답도 같은 메시지 입력·수락 경로를 쓴다.
+    pub(crate) async fn thread_message_inner(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        text: String,
+        mode: MessageMode,
+        actor: &str,
+        card: Option<CardSend<'_>>,
+    ) -> Result<MessageView, ErrorBody> {
         let rec = self.thread_show(project, id)?;
         if rec.status != ThreadStatus::Open {
             return Err(err(ErrorCode::BadRequest, "열린 thread에만 보낸다"));
@@ -1326,7 +1400,9 @@ impl Host {
         self.check_running(&pid)?;
         // 확인창에 친 글은 그 창이 받는다(Enter가 선택지를 고르고, interrupt의 Esc는 「아니오」다): 먼저 답한다.
         // 기록하기 전에 거부한다(herdr-projects threads.rs `prompt_state` agent_blocked)
-        if self.pane_agent(&pid).map(|a| a.activity) == Some(AgentActivity::Question) {
+        let card_screen = if card.is_some() { self.screen(&mid, &pid).await } else { None };
+        let limit_wait = card_screen.as_ref().is_some_and(|screen| limit_wait_screen(&screen.lines));
+        if !limit_wait && self.pane_agent(&pid).map(|a| a.activity) == Some(AgentActivity::Question) {
             return Err(err(
                 ErrorCode::BadRequest,
                 format!(
@@ -1338,7 +1414,8 @@ impl Host {
         // herdr-projects threads.rs `prompt`: 신뢰 창은 Enter가 받아들이고, 사람이 입력창에 쓰던 글은 보낸 글과 섞여
         // 보내진다. 둘 다 입력하지 않고 기록하기 전에 거부한다. 읽을 수 없는 입력창(모르는 harness)은 전처럼 보낸다.
         let kind = self.load(project, id)?.launch.map(|l| l.harness).unwrap_or_default();
-        if let Some(screen) = self.screen(&mid, &pid).await {
+        let screen = if card.is_some() { card_screen } else { self.screen(&mid, &pid).await };
+        if let Some(screen) = screen.filter(|_| !limit_wait) {
             if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
                 let by_user = self.trust_screens(project) == crate::trust_screen::USER;
                 return Err(err(
@@ -1380,7 +1457,7 @@ impl Host {
         let activity = self.pane_agent(&pid).map(|a| a.activity);
         match mode {
             // 잠금을 기다리는 동안 확인창이 떴으면 치지 않는다(질문이 열린 채로 둔다)
-            _ if activity == Some(AgentActivity::Question) => {
+            _ if card.is_none() && activity == Some(AgentActivity::Question) => {
                 m.state = DeliveryState::Unknown;
                 self.save_message(&m);
                 self.flow(
@@ -1402,14 +1479,20 @@ impl Host {
                         "중단 확인 실패 뒤 기존 전달 판정을 따른다",
                     );
                 }
-                self.deliver(&mut m, &mid, &pid).await;
+                self.deliver(&mut m, &mid, &pid, card).await?;
             }
-            MessageMode::Queue => self.deliver(&mut m, &mid, &pid).await,
+            MessageMode::Queue => self.deliver(&mut m, &mid, &pid, card).await?,
         }
         Ok(m)
     }
 
-    async fn deliver(self: &Arc<Self>, m: &mut MessageView, mid: &str, pane: &str) {
+    pub(crate) async fn deliver(
+        self: &Arc<Self>,
+        m: &mut MessageView,
+        mid: &str,
+        pane: &str,
+        card: Option<CardSend<'_>>,
+    ) -> Result<(), ErrorBody> {
         // 「받았다」는 받았다고 안 그 자리에서 기록한다: 받자마자 뜬 확인창(question_shown)보다 앞에 남게(CI m13)
         let on_accept: Option<OnFire> = self
             .load(&m.project, &m.thread)
@@ -1422,13 +1505,35 @@ impl Host {
             });
         let mut submission = Submission::new(&m.id);
         submission.message = true;
+        submission.card = card;
         submission.previous_message = self.db.previous_message(m).unwrap_or_else(|error| {
             tracing::warn!("앞선 메시지 수락 기록을 읽지 못했다: {error:#}");
             PreviousMessage::Unconfirmed
         });
         let r = self.submit_traced(mid, pane, Some(&m.text), on_accept, &mut submission).await.map_err(|e| e.msg);
+        if let Some(CardSend::Initial(target, inbox_body)) = card
+            && submission.input == MessageInput::NotWritten
+        {
+            if !self.card_submission_current(CardSend::Initial(target, inbox_body), mid, pane) {
+                m.state = DeliveryState::Unknown;
+                self.save_message(m);
+                return Err(err(ErrorCode::Conflict, "카드 답의 보고나 실행 중인 pane이 바뀌었다"));
+            }
+            if submission.limit_wait {
+                return self.defer_card_answer(m, target, inbox_body);
+            }
+        }
+        if matches!(card, Some(CardSend::Resume(_))) && !submission.resume_claimed {
+            if let Err(e) = r {
+                tracing::debug!(message = %m.id, "카드 답 전달 대기 유지: {e}");
+            }
+            return Ok(());
+        }
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
         m.input = Some(submission.input);
+        if let Some(CardSend::Resume(pending)) = card {
+            self.finish_pending_answer(pending, m.state);
+        }
         self.save_message(m);
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
         // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
@@ -1455,6 +1560,7 @@ impl Host {
                 });
             }
         }
+        Ok(())
     }
 
     async fn watch_late_message(self: &Arc<Self>, mid: &str, pane: &str, rec: &ThreadRec, id: &str, late: LateReceipt) {
@@ -1511,22 +1617,19 @@ impl Host {
     }
 
     /// 옛 host가 턴 끝을 기다리며 대기열에 둔 메시지, 또는 보내던 중 host가 끝난 메시지: 보냈는지 모른다고 남긴다
-    /// (다시 보내지 않는다, §8.5 a). 이 판에는 대기열이 없어 기록 뒤 바로 보낸다.
+    /// (다시 보내지 않는다, §8.5 a). 입력을 시작하지 않은 한도 대기 카드 답은 `answer_waiting`에 남는다.
     pub(crate) fn forget_queued_messages(&self) {
-        let left: Vec<MessageView> = self
-            .db
-            .rec_list("messages", Some("queued"))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|j| {
-                serde_json::from_str(j)
-                    .inspect_err(|error| {
-                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                    })
-                    .ok()
-            })
-            .collect();
-        for mut m in left {
+        let left = self.db.rec_list("messages", Some("queued")).unwrap_or_default();
+        for row in left {
+            let parsed = serde_json::from_str::<MessageView>(&row)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok();
+            let Some(mut m) = parsed else { continue };
+            if let Ok(pending) = serde_json::from_str::<PendingAnswer>(&row) {
+                self.finish_pending_answer(&pending, DeliveryState::Unknown);
+            }
             m.state = DeliveryState::Unknown;
             // 중간에 멈춘 host에서 실제로 어디까지 썼는지는 응답으로 확인하지 못했다.
             m.input = None;
@@ -1549,6 +1652,15 @@ mod tests {
 
     fn lines(t: &str) -> Vec<String> {
         t.lines().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn limit_wait_screen_requires_active_wait_controls() {
+        let banner = "Claude Code will continue automatically at 12:30pm.\nPress esc to cancel the wait.";
+        assert!(limit_wait_screen(&lines(banner)));
+        assert!(!limit_wait_screen(&lines(&format!("{banner}\n────────────────\n❯ \n────────────────"))));
+        assert!(!limit_wait_screen(&lines("Do you want to continue?\n❯ Yes\n  No\nEsc to cancel")));
+        assert!(!limit_wait_screen(&lines("You've hit your usage limit.\n› ")));
     }
 
     /// Claude Code 2.1의 실제 폴더 신뢰 창(경로만 바꿨다). 기본 선택이 「No, exit」다.
@@ -1935,6 +2047,214 @@ mod tests {
                 build: Default::default(),
             },
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn card_answers_wait_for_the_same_report_and_pane_and_start_input_once() {
+        use aaa_proto::{AgentResponse, AnswerDelivery, LinkMsg, Outcome};
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Case {
+            Resume,
+            Unconfirmed,
+            NewReport,
+            ChangedOnAgent,
+            Closed,
+            Replaced,
+            NewExecution,
+            ClaimedBeforeRestart,
+            Partial,
+        }
+
+        for case in [
+            Case::Resume,
+            Case::Unconfirmed,
+            Case::NewReport,
+            Case::ChangedOnAgent,
+            Case::Closed,
+            Case::Replaced,
+            Case::NewExecution,
+            Case::ClaimedBeforeRestart,
+            Case::Partial,
+        ] {
+            let (h, _lab) = host_with_pane();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let mut rec = ThreadRec::starting(
+                "demo",
+                "한도 대기",
+                "m",
+                "claude",
+                aaa_proto::Role::Worker,
+                aaa_proto::ThreadKind::Dir,
+                1,
+            );
+            rec.id = "t-0001".into();
+            rec.pane = Some("s".into());
+            rec.work_dir = Some("fixture".into());
+            rec.brief = BriefState::Delivered;
+            rec.status = ThreadStatus::Open;
+            rec.report_hash = Some("report-a".into());
+            rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 유지\n- B 이동\n");
+            h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            h.on_harness(
+                "m",
+                HarnessEvent {
+                    harness: "claude".into(),
+                    ..codex_event(if case == Case::Partial { "idle" } else { "question" }, 1)
+                },
+            );
+
+            let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+            let conn = crate::AgentConn::new(outgoing, 1);
+            submission_machine(&h, conn.clone(), "macos", vec!["report_hash.v1".into()]);
+            let (running, resumed) = tokio::sync::watch::channel(case == Case::Partial);
+            let writes = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+            let captured = writes.clone();
+            let fake_host = h.clone();
+            let fake = tokio::spawn(async move {
+                while let Some((_, bytes)) = frames.recv().await {
+                    let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else {
+                        panic!("잘못된 요청")
+                    };
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let writes = captured.lock().unwrap();
+                            let screen = match (*resumed.borrow(), writes.as_slice()) {
+                                (false, _) => "You've hit your limit · resets 12:30pm\n❯ Wait here, then continue automatically at 12:30pm\n  Stop\nEnter to select · Esc to cancel".to_string(),
+                                (true, [_]) if case == Case::Partial =>
+                                    "Claude Code will continue automatically at 12:30pm.\nPress esc to cancel the wait.".to_string(),
+                                (true, [paste]) => format!("────────────────\n❯ {}\n────────────────", String::from_utf8_lossy(paste)),
+                                (true, _) => "────────────────\n❯ \n────────────────\n  ? for shortcuts".to_string(),
+                            };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(&screen),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: screen,
+                            })
+                        }
+                        AgentRequest::ReportHash { .. } => AgentResponse::ReportHash {
+                            hash: if case == Case::ChangedOnAgent { "report-b" } else { "report-a" }.into(),
+                        },
+                        AgentRequest::Input { session, data } => {
+                            assert_eq!(session, "s");
+                            if data.0 == b"\r" && case != Case::Unconfirmed {
+                                fake_host.on_harness(
+                                    "m",
+                                    HarnessEvent { harness: "claude".into(), ..codex_event("working", 3) },
+                                );
+                            }
+                            captured.lock().unwrap().push(data.0);
+                            AgentResponse::Done
+                        }
+                        _ => AgentResponse::Done,
+                    };
+                    if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                        tx.send(Outcome::Ok(reply)).unwrap();
+                    }
+                }
+            });
+            let answer = || h.thread_answer("demo", &rec.id, "report-a", vec![Some(0)], None, vec![], "device:fixture");
+            let view = answer().await.unwrap();
+            let answer_delivery = |view: aaa_proto::ThreadView| view.questions.unwrap().answer.unwrap().delivery;
+            let pending = || h.db.pending_answers("demo").unwrap();
+            let notices = || h.inbox("demo", true, true).unwrap().items;
+            let messages = || {
+                h.db.rec_list("messages", None)
+                    .unwrap()
+                    .iter()
+                    .map(|row| serde_json::from_str::<MessageView>(row).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            if case == Case::Partial {
+                assert_eq!(answer_delivery(view), None);
+                h.pending_answer_pass("demo").await;
+                assert_eq!(writes.lock().unwrap().len(), 1);
+                assert!(pending().is_empty());
+                assert_eq!(messages()[0].input, Some(MessageInput::DraftWritten));
+                assert!(notices().iter().any(|i| i.event == "message not delivered"));
+                fake.abort();
+                continue;
+            }
+
+            assert_eq!(answer_delivery(view), Some(AnswerDelivery::Waiting), "{case:?}");
+            assert!(answer().await.is_err(), "같은 카드의 두 번째 답");
+            let notice = notices().into_iter().find(|i| i.event == "question answer waiting").unwrap();
+            let waiting = messages().pop().unwrap();
+            h.pending_answer_pass("demo").await;
+            h.forget_queued_messages();
+            assert_eq!(pending().len(), 1, "대기는 host 재시작 정리 뒤에도 남아야 한다");
+            assert!(writes.lock().unwrap().is_empty(), "{case:?}: 한도 대기 중 입력");
+            if case == Case::ClaimedBeforeRestart {
+                let claimed = serde_json::from_str::<PendingAnswer>(&pending()[0]).unwrap();
+                assert!(h.claim_pending_answer(&claimed).unwrap());
+                assert!(!h.claim_pending_answer(&claimed).unwrap());
+                h.forget_queued_messages();
+                running.send_replace(true);
+                h.pending_answer_pass("demo").await;
+                assert!(writes.lock().unwrap().is_empty());
+                assert_eq!(messages()[0].state, DeliveryState::Unknown);
+                assert_eq!(messages()[0].input, None);
+                assert!(notices().iter().any(|i| i.id == notice.id && i.event == "message not delivered"));
+                fake.abort();
+                continue;
+            }
+            match case {
+                Case::NewReport => {
+                    h.update_rec("demo", &rec.id, |r| {
+                        r.report_hash = Some("report-b".into());
+                        r.question_answer = None;
+                    })
+                    .unwrap();
+                }
+                Case::Closed => {
+                    h.update_rec("demo", &rec.id, |r| r.status = ThreadStatus::Resolved).unwrap();
+                }
+                Case::Replaced => {
+                    h.update_rec("demo", &rec.id, |r| r.pane = Some("replacement".into())).unwrap();
+                }
+                Case::NewExecution => {
+                    h.inner.lock().unwrap().panes.get_mut("s").unwrap().info.started_at_ms += 1;
+                }
+                _ => {}
+            }
+            running.send_replace(true);
+            h.on_harness("m", HarnessEvent { harness: "claude".into(), ..codex_event("idle", 2) });
+            h.pending_answer_pass("demo").await;
+            h.pending_answer_pass("demo").await;
+            assert!(pending().is_empty(), "{case:?}");
+            let updated = notices().into_iter().find(|i| i.id == notice.id).unwrap();
+            assert_eq!(updated.body, notice.body);
+            let values = writes.lock().unwrap();
+            if matches!(case, Case::Resume | Case::Unconfirmed) {
+                assert_eq!(values.as_slice(), &[waiting.text.as_bytes().to_vec(), b"\r".to_vec()]);
+                let sent = messages().pop().unwrap();
+                assert_eq!(sent.id, waiting.id);
+                assert_eq!(sent.input, Some(MessageInput::Submitted));
+                assert_eq!(answer_delivery(h.thread_show("demo", &rec.id).unwrap()), None);
+                assert_eq!(h.db.ask_list("demo").unwrap().len(), 1);
+                if case == Case::Resume {
+                    assert_eq!(sent.state, DeliveryState::Accepted);
+                    assert_eq!(updated.event, "question answered");
+                } else {
+                    assert_eq!(sent.state, DeliveryState::Unknown);
+                    assert_eq!(updated.event, "message not delivered");
+                    assert_eq!(notices().iter().filter(|i| i.summary.contains(&sent.id)).count(), 1);
+                    h.flow(&rec, "message_accepted_late", Some(sent.id.clone()), &sent.id);
+                    assert_eq!(messages()[0].state, DeliveryState::Accepted);
+                    assert!(notices().iter().any(|i| i.id == notice.id && i.event == "message accepted late"));
+                }
+            } else {
+                assert!(values.is_empty(), "{case:?}: 옛 카드 답 입력");
+                assert_eq!(updated.event, "question answer held", "{case:?}");
+                assert!(updated.summary.contains("전달 보류"));
+                assert!(h.db.ask_list("demo").unwrap().is_empty());
+            }
+            fake.abort();
+        }
     }
 
     /// 실제 ConPTY 재현의 버퍼 경계와 Enter 한 번, 경계 중 뜬 승인 창을 지킨다.

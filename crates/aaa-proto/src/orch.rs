@@ -1322,9 +1322,20 @@ impl ThreadQuestion {
     }
 }
 
+/// 한도 대기 때문에 pane에 아직 쓰지 않은 카드 답의 상태.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerDelivery {
+    Waiting,
+    Held,
+}
+
 /// 받은 답. `summary`는 「1A 2B」 꼴(직접 쓴 답이 있으면 「직접」)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionAnswerView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery: Option<AnswerDelivery>,
     /// 질문마다 고른 선택지 번호(0부터). 고르지 않고 직접 쓴 질문은 null
     pub picks: Vec<Option<u32>>,
     /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: 「2 둘 다 보이게」)

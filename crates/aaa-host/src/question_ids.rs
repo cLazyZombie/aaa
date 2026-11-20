@@ -118,6 +118,7 @@ impl Host {
         let comments = answers.iter().map(|a| a.as_ref().and_then(|a| a.text.clone())).collect();
         let last = answers.iter().flatten().max_by_key(|a| a.at_ms)?;
         Some(QuestionAnswerView {
+            delivery: None,
             picks,
             text: None,
             comments,
@@ -333,6 +334,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "선택지 글자나 직접 답이 필요하다"));
         }
         let answer = QuestionAnswerView {
+            delivery: None,
             comments: Vec::new(),
             picks: vec![pick],
             text,

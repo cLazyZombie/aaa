@@ -306,6 +306,11 @@ impl Host {
                         e.detail
                     )
                 };
+                if let Some(id) = &e.evidence
+                    && self.revise_waiting_answer_notice(p, thread, id, "message not delivered", &summary)
+                {
+                    return;
+                }
                 ("message not delivered", summary)
             }
             "message_accepted_late" => {
@@ -330,13 +335,39 @@ impl Host {
                 return;
             }
         };
-        let dir = self.inbox_dir(project);
+        self.update_inbox_projection(&item);
+    }
+
+    pub(crate) fn revise_waiting_answer_notice(
+        &self,
+        project: &str,
+        thread: &str,
+        message: &str,
+        event: &str,
+        summary: &str,
+    ) -> bool {
+        let _projection = self.inbox_projection.lock().unwrap();
+        match self.db.revise_waiting_answer_notice(project, thread, message, event, summary) {
+            Ok(Some(item)) => {
+                self.update_inbox_projection(&item);
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(message, "카드 답 알림 상태 저장 실패: {e:#}");
+                false
+            }
+        }
+    }
+
+    fn update_inbox_projection(&self, item: &InboxItem) {
+        let dir = self.inbox_dir(&item.project);
         let name = format!("{}.md", item.id);
         let open = dir.join(&name);
         // DB에서만 끝난 경우 기존 파일을 고친다. 완료 쪽이 이 잠금을 받은 뒤 그 파일을 옮긴다.
         let path = if item.done && !open.exists() { dir.join("done").join(name) } else { open };
-        if let Err(e) = crate::orch::write_atomic(&path, render_item(&item).as_bytes()) {
-            tracing::warn!("늦은 메시지 수락 알림 파일 쓰기 실패: {e:#}");
+        if let Err(e) = crate::orch::write_atomic(&path, render_item(item).as_bytes()) {
+            tracing::warn!("메시지 전달 알림 파일 쓰기 실패: {e:#}");
         }
         self.inbox_bump();
     }
@@ -600,6 +631,7 @@ impl Host {
                 self.inbox_once(&p.name, "config-error", "missions", "conversion pending", &e.message);
             }
             self.usage_limit_pass(&p.name).await;
+            self.pending_answer_pass(&p.name).await;
             self.thread_stall_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;

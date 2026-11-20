@@ -6,6 +6,7 @@
 use aaa_common::child_process::StdCommandExt as _;
 mod adopt;
 mod answer;
+mod answer_delivery;
 mod app_badge;
 mod asks;
 mod attach;
