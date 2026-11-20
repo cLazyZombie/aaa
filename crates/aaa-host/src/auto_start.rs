@@ -364,7 +364,7 @@ impl Host {
         if crate::front::in_session(actor) {
             return Err(err(
                 ErrorCode::Forbidden,
-                "자동 시작 승인은 사람이 aaa 세션 밖 터미널이나 Controller 웹에서 한다",
+                "자동 시작 승인은 사람이 제어 권한이 있는 웹 기기나 aaa 세션 밖 터미널에서 한다",
             ));
         }
         let (all, _) = crate::routine::load_all(&self.project_dir(p)?);
@@ -438,7 +438,21 @@ impl Host {
                     .del_meta(&format!("automation_start_notice:{p}:{}:needs approval", r.name))
                     .map_err(internal)?;
             } else {
-                self.automation_start_notice(p,&r.name,"needs approval",&sha,"자동 시작의 처음·넓힌 범위는 승인이 필요하다",format!("규칙 {}\n범위:\n{}\n범위 hash {sha}\n사람이 aaa 세션 밖에서 aaa automation approve {} {sha}로 승인한다.",r.name,self.automation_start_scope_text(p,r)?.unwrap_or_default(),r.name))?;
+                let scope = self.automation_start_scope_text(p, r)?.unwrap_or_default();
+                self.automation_start_notice(
+                    p,
+                    &r.name,
+                    "needs approval",
+                    &sha,
+                    "자동 시작의 처음·넓힌 범위는 승인이 필요하다",
+                    format!(
+                        "규칙 {}\n\
+                         제어 권한이 있는 웹 기기에서 「자동화 → 해당 규칙 → 승인 검토」로 들어가 범위를 확인한 뒤 승인한다.\n\
+                         범위:\n{scope}\n범위 hash {sha}\n\
+                         터미널에서는 범위를 확인한 뒤 aaa 세션 밖에서 aaa automation approve {} {sha}를 실행한다.",
+                        r.name, r.name
+                    ),
+                )?;
             }
         }
         Ok(())

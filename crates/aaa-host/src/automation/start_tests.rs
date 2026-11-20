@@ -589,6 +589,17 @@ async fn start_scope_requires_person_only_for_first_or_broader_scope() {
     let r = rule(&l, "");
     let (sha, approved) = l.h.automation_start_approval("demo", &r).unwrap().unwrap();
     assert!(!approved);
+    l.h.automation_start_observe("demo", &r).unwrap();
+    let notices = l.h.db.inbox_list(Some("demo"), false).unwrap();
+    let notice = notices.iter().find(|i| i.event == "needs approval").unwrap();
+    let (before_web, after_web) = notice
+        .body
+        .split_once("제어 권한이 있는 웹 기기에서 「자동화 → 해당 규칙 → 승인 검토」")
+        .expect("inbox에 웹 승인 경로가 있어야 한다");
+    assert!(!before_web.contains("aaa automation approve"));
+    assert!(after_web.contains("조건: every 10m"));
+    assert!(after_web.contains(&format!("범위 hash {sha}")));
+    assert!(after_web.contains(&format!("aaa 세션 밖에서 aaa automation approve check {sha}")));
     assert!(l.h.automation_approve("demo", "check", "stale", "local:cli").is_err());
     assert!(l.h.automation_approve("demo", "check", &sha, "local:cli@s1").is_err());
     approve(&l, &r);
@@ -601,7 +612,12 @@ async fn start_scope_requires_person_only_for_first_or_broader_scope() {
     assert!(l.h.automation_start_approval("demo", &narrow).unwrap().unwrap().1);
     let mut broad = r.clone();
     broad.trigger = crate::routine::Trigger::Schedule(crate::routine::Schedule::Every(60));
-    assert!(!l.h.automation_start_approval("demo", &broad).unwrap().unwrap().1);
+    let (broad_sha, approved) = l.h.automation_start_approval("demo", &broad).unwrap().unwrap();
+    assert!(!approved);
+    l.h.automation_start_observe("demo", &broad).unwrap();
+    let notices = l.h.db.inbox_list(Some("demo"), false).unwrap();
+    let notice = notices.iter().find(|i| i.event == "needs approval").unwrap();
+    assert!(notice.body.contains(&format!("aaa automation approve check {broad_sha}")));
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 0);
 }
 
