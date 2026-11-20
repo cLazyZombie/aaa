@@ -16,6 +16,19 @@ function fixture(t) {
   t.after(() => { holder?.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const events = [];
   const host = new EventEmitter();
+  const log = `${root}/host.log`;
+  const logChanges = new EventEmitter();
+  // 가짜 host가 실제 로그를 쓴 직후 관측 사건도 보낸다.
+  t.mock.method(fs, "watch", (file, check) => {
+    assert.equal(file, log);
+    logChanges.on("change", check);
+    return {
+      close() {
+        logChanges.off("change", check);
+        events.push("watch closed");
+      },
+    };
+  });
   const lab = {
     root,
     stop: async () => {
@@ -26,10 +39,15 @@ function fixture(t) {
     },
     start: () => {
       events.push("started");
-      fs.writeFileSync(`${root}/host.log`, "");
-      setImmediate(() => {
-        fs.appendFileSync(`${root}/host.log`, "웹 listen\n");
-        setImmediate(() => { fs.appendFileSync(`${root}/host.log`, "agent 연결\n"); events.push("ready"); });
+      fs.writeFileSync(log, "");
+      queueMicrotask(() => {
+        fs.appendFileSync(log, "웹 listen\n");
+        logChanges.emit("change");
+        queueMicrotask(() => {
+          fs.appendFileSync(log, "agent 연결\n");
+          events.push("ready");
+          logChanges.emit("change");
+        });
       });
       return host;
     },
@@ -51,7 +69,7 @@ test("살아 있는 writer의 잠금은 실패하고 비동기 종료 뒤 fixtur
   });
   assert.deepEqual(events, [], "잠긴 DB는 callback·host 시작에 도달하지 않는다");
   await seedHost(write, lab);
-  assert.deepEqual(events, ["stopped", "write", "started", "ready"]);
+  assert.deepEqual(events, ["stopped", "write", "started", "ready", "watch closed"]);
   assert.equal(host.listenerCount("exit"), 0);
   const db = new DatabaseSync(file, { readOnly: true });
   try { assert.deepEqual(db.prepare("SELECT key FROM meta ORDER BY key").all().map(row => row.key), ["fixture", "host"]); }
@@ -74,11 +92,12 @@ test("fixture 준비 오류는 부분 쓰기를 rollback하고 원인과 경로�
 });
 
 test("재시작 host의 조기 종료를 숨기지 않는다", { timeout: 5000 }, async t => {
-  const { lab, host } = fixture(t);
+  const { lab, host, events } = fixture(t);
   await assert.rejects(seedHost(() => {}, { ...lab, start: () => {
     fs.writeFileSync(`${lab.root}/host.log`, "웹 listen\n");
     setImmediate(() => host.emit("exit", 17, null));
     return host;
   } }), /fixture host 종료: 17\/null/);
+  assert.deepEqual(events, ["stopped", "watch closed"]);
   assert.equal(host.listenerCount("exit"), 0);
 });
