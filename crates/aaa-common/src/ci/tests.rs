@@ -62,7 +62,7 @@ fn sha_waits_for_all_workflows_cancels_and_reports_reruns_and_stuck() {
 }
 #[test]
 fn same_failure_ignores_ids_and_merge_owners_require_suffix() {
-    let a = CiJob { id: 1, name: "linux".into(), steps: vec!["test".into()], failures: vec![] };
+    let a = CiJob { id: 1, name: "linux".into(), steps: vec!["test".into()], ..Default::default() };
     let mut b = a.clone();
     b.id = 99;
     assert_eq!(failure_set(std::slice::from_ref(&a)), failure_set(std::slice::from_ref(&b)));
@@ -89,13 +89,18 @@ fn failed_tests_split_same_job_and_step_and_survive_tail_cut() {
     for chunk in first.as_bytes().chunks(7) {
         scan.feed(chunk);
     }
-    let a = scan.finish();
+    let a = scan.finish().0;
     assert_eq!(a, vec!["install::native::tests::rejects_open_handle", "library_upload::tests::stale_upload_goes_away"]);
     let mut scan = FailureScan::default();
     scan.feed(line("test library_upload::tests::stale_upload_goes_away ... FAILED").as_bytes());
-    let b = scan.finish();
-    let job =
-        |failures: Vec<String>| CiJob { id: 1, name: "windows-2025".into(), steps: vec!["test".into()], failures };
+    let b = scan.finish().0;
+    let job = |failures: Vec<String>| CiJob {
+        id: 1,
+        name: "windows-2025".into(),
+        steps: vec!["test".into()],
+        failures,
+        ..Default::default()
+    };
     let (ja, jb) = (job(a), job(b));
     assert_eq!(failure_set(std::slice::from_ref(&ja)), failure_set(std::slice::from_ref(&jb)));
     assert_ne!(failed_tests(std::slice::from_ref(&ja)), failed_tests(std::slice::from_ref(&jb)));
@@ -105,10 +110,10 @@ fn failed_tests_split_same_job_and_step_and_survive_tail_cut() {
     let mut scan = FailureScan::default();
     scan.feed(b"thread 'main' panicked at build.rs:12:5:\nnote: run with `RUST_BACKTRACE=1`\n");
     scan.feed(b"test m13::slow has been running for over 60 seconds");
-    assert_eq!(scan.finish(), vec!["panic: build.rs:12", "끝나지 않음: m13::slow"]);
+    assert_eq!(scan.finish().0, vec!["panic: build.rs:12", "끝나지 않음: m13::slow"]);
     let mut scan = FailureScan::default();
     scan.feed(b"test result: FAILED. 1 passed\nfailures:\n    a::b\n");
-    assert!(scan.finish().is_empty());
+    assert!(scan.finish().0.is_empty());
 }
 
 #[test]
@@ -136,12 +141,12 @@ fn successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations() 
     for chunk in lines.concat().as_bytes().chunks(7) {
         scan.feed(chunk);
     }
-    assert_eq!(scan.finish(), ["module::failed", "owner"]);
+    assert_eq!(scan.finish().0, ["module::failed", "owner"]);
     let mut scan = FailureScan::default();
     for chunk in lines[1..lines.len() - 1].concat().trim_end().as_bytes().chunks(7) {
         scan.feed(chunk);
     }
-    assert!(scan.finish().is_empty(), "성공한 suite만 있으면 panic·느린 시험도 실패가 아니다");
+    assert!(scan.finish().0.is_empty(), "성공한 suite만 있으면 panic·느린 시험도 실패가 아니다");
 }
 
 #[test]
@@ -153,13 +158,13 @@ fn failed_or_interrupted_python_suites_keep_their_failure_evidence() {
             for chunk in log.as_bytes().chunks(7) {
                 scan.feed(chunk);
             }
-            assert_eq!(scan.finish(), ["owner"]);
+            assert_eq!(scan.finish().0, ["owner"]);
         }
     }
     // 출처 표지가 없는 옛 로그와 잘린 마지막 줄은 보수적으로 남긴다.
     let mut scan = FailureScan::default();
     scan.feed(b"[python exit=0] test owner ... FAILED\ntest owner ... FAILED");
-    assert_eq!(scan.finish(), ["owner"]);
+    assert_eq!(scan.finish().0, ["owner"]);
 }
 
 #[test]
@@ -180,11 +185,11 @@ fn completed_slow_tests_stay_completed_when_annotations_repeat_the_warning() {
     for chunk in log.as_bytes().chunks(7) {
         scan.feed(chunk);
     }
-    assert_eq!(scan.finish(), ["끝나지 않음: waiting::owner"]);
+    assert_eq!(scan.finish().0, ["끝나지 않음: waiting::owner"]);
     let mut scan = FailureScan::default();
     scan.feed(log.as_bytes());
     scan.feed(b"test rollout::done ... FAILED <5.001s>\n");
-    assert_eq!(scan.finish(), ["rollout::done"], "완료 증거가 실제 실패를 없애면 안 된다");
+    assert_eq!(scan.finish().0, ["rollout::done"], "완료 증거가 실제 실패를 없애면 안 된다");
 }
 
 #[test]
@@ -221,7 +226,7 @@ fn web_fail_lines_survive_gh_prefixes_annotations_chunks_and_tail_cut() {
     for chunk in log.as_bytes().chunks(7) {
         scan.feed(chunk);
     }
-    assert_eq!(scan.finish(), ["FAIL: PWA 대화 focus", "FAIL: 재연결·resize 뒤 연속 PageUp·PageDown", "real::owner"]);
+    assert_eq!(scan.finish().0, ["FAIL: PWA 대화 focus", "FAIL: 재연결·resize 뒤 연속 PageUp·PageDown", "real::owner"]);
 }
 
 #[test]
@@ -230,7 +235,7 @@ fn web_suite_summary_is_a_fallback_and_successful_fixture_output_stays_successfu
     for prefix in ["", "2026-10-27T09:36:12Z ", "web-e2e\te2e\t2026-10-27T09:36:12Z [e2e] "] {
         let mut scan = FailureScan::default();
         scan.feed(format!("{prefix}{summary}").as_bytes());
-        assert_eq!(scan.finish(), ["web: 2/127 작업 실패"]);
+        assert_eq!(scan.finish().0, ["web: 2/127 작업 실패"]);
     }
     let log = [
         "[python exit=0] FAIL fixture: 가짜 실패",
@@ -246,7 +251,54 @@ fn web_suite_summary_is_a_fallback_and_successful_fixture_output_stays_successfu
     .join("\n");
     let mut scan = FailureScan::default();
     scan.feed(log.as_bytes());
-    assert!(scan.finish().is_empty());
+    assert_eq!(scan.finish(), (vec![], None));
+}
+
+#[test]
+fn failure_context_bounds_multibyte_lines_and_keeps_following_frames() {
+    let mut scan = FailureScan::default();
+    scan.feed(format!("Error: {}\n    at handler (router.mjs:41:8)\n", "가".repeat(2000)).as_bytes());
+    for n in 0..4 {
+        scan.feed(format!("## 실행 진행\nFAIL 단계 {n}: 다음 오류\n").as_bytes());
+    }
+    let (failures, context) = scan.finish();
+    assert_eq!(failures.len(), 4);
+    let context = context.unwrap();
+    assert!(context.truncated);
+    assert_eq!(context.excerpts.len(), 4);
+    assert!(context.excerpts[0].text.ends_with("at handler (router.mjs:41:8)"));
+    for excerpt in context.excerpts {
+        assert!(excerpt.byte_len() <= 2048);
+    }
+}
+
+#[test]
+fn playwright_api_error_without_an_error_type_keeps_its_stack() {
+    let mut scan = FailureScan::default();
+    scan.feed(b"route.continue: Route is already handled!\n    at handler (router.mjs:41:8)");
+    let (_, context) = scan.finish();
+    let context = context.unwrap();
+    assert!(!context.truncated);
+    assert_eq!(context.excerpts[0].text, "route.continue: Route is already handled!\n    at handler (router.mjs:41:8)");
+}
+
+#[test]
+fn failed_python_suite_keeps_the_wrapped_traceback() {
+    let mut scan = FailureScan::default();
+    scan.feed(
+        b"linux\tRust tests\t2026-11-17T12:00:00Z [test] [python exit=1] Traceback (most recent call last):\n\
+          linux\tRust tests\t2026-11-17T12:00:00Z [test] [python exit=1]   File \"fixture.py\", line 12, in run\n\
+          linux\tRust tests\t[python exit=1] AssertionError: expected result\n",
+    );
+    let (_, context) = scan.finish();
+    assert_eq!(
+        context.unwrap().excerpts,
+        [CiLogExcerpt {
+            step: "Rust tests".into(),
+            text: "Traceback (most recent call last):\n  File \"fixture.py\", line 12, in run\nAssertionError: expected result"
+                .into(),
+        }]
+    );
 }
 
 #[test]
@@ -258,14 +310,14 @@ fn stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output() {
         for chunk in log.as_bytes().chunks(7) {
             scan.feed(chunk);
         }
-        assert_eq!(scan.finish(), expected);
+        assert_eq!(scan.finish().0, expected);
     }
     // 다른 시험의 FAILED도 함께 남고, 긴 꼬리·annotation 중복·개행 없는 끝에 지워지지 않는다.
     let mut scan = FailureScan::default();
     scan.feed(raw.as_bytes());
     scan.feed(format!("{}\ntest other::owner ... FAILED\n", "x".repeat(LOG_JOB_CAP * 2)).as_bytes());
     scan.feed(b"##[error]thread 'automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control' (3528) has overflowed its stack");
-    assert_eq!(scan.finish(), ["other::owner", expected[0]]);
+    assert_eq!(scan.finish().0, ["other::owner", expected[0]]);
 }
 
 #[test]
@@ -276,11 +328,11 @@ fn stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct() {
             format!("[test]   process didn't exit successfully: `target\\verify\\deps\\test.exe` (exit code: {exit})")
                 .as_bytes(),
         );
-        assert_eq!(scan.finish(), ["exit: STATUS_STACK_OVERFLOW"]);
+        assert_eq!(scan.finish().0, ["exit: STATUS_STACK_OVERFLOW"]);
     }
     let mut scan = FailureScan::default();
     scan.feed(b"thread 'old::owner' has overflowed its stack\n");
-    assert_eq!(scan.finish(), ["stack overflow: old::owner"]);
+    assert_eq!(scan.finish().0, ["stack overflow: old::owner"]);
     let mut scan = FailureScan::default();
     scan.feed(b"[python exit=0] thread 'fake::owner' (12) has overflowed its stack\n");
     scan.feed(b"[test] [python exit=0] process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
@@ -289,5 +341,5 @@ fn stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct() {
     scan.feed(b"quoted: process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
     scan.feed(b"thread 'fake::owner' (not-a-pid) has overflowed its stack\n");
     scan.feed(b"process didn't exit successfully: `test.exe` (exit code: 101)\n");
-    assert!(scan.finish().is_empty());
+    assert!(scan.finish().0.is_empty());
 }

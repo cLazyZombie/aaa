@@ -31,6 +31,24 @@ pub struct CiJob {
     /// 실패 로그 전체에서 뽑은 실패 시험 이름(없으면 panic 위치·끝나지 않은 시험). 옛 agent는 비운다.
     #[serde(default)]
     pub failures: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_context: Option<CiFailureContext>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CiFailureContext {
+    pub excerpts: Vec<CiLogExcerpt>,
+    pub truncated: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CiLogExcerpt {
+    /// gh가 실패 로그 줄에 붙인 단계. 단계와 연결할 수 없는 줄은 비운다.
+    pub step: String,
+    pub text: String,
+}
+impl CiLogExcerpt {
+    pub fn byte_len(&self) -> usize {
+        self.step.len() + self.text.len()
+    }
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CiCommit {
@@ -51,4 +69,7 @@ pub struct CiAnswer {
     /// Log 응답만: 꼬리로 자르기 전 전체 로그에서 뽑은 실패 표지
     #[serde(default)]
     pub failures: Vec<String>,
+    /// Log 응답만. 옛 agent는 꼬리와 실패 표지만 보낸다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_context: Option<CiFailureContext>,
 }

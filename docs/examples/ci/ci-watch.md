@@ -1,5 +1,5 @@
 host가 전달한 CI JSON 입력만 읽는다. 입력이 없으면 대기하고 GitHub를 직접 조회하지 않는다.
-실패 job·단계·로그·주인 thread 보고를 근거로 간헐·결함·환경을 나눈다.
+실패 job·단계·`jobs[].failure_context`의 오류와 스택·로그 꼬리·주인 thread 보고를 근거로 간헐·결함·환경을 나눈다.
 이미 회복했으면 그 사실과 간헐 여부만 기록한다.
 수리가 필요하면 새 수리 thread의 brief 초안을 coordinator에 post한다.
 원 thread를 되살리거나 다른 thread에 직접 말하지 않는다. rerun·코드 수정·push·revert는 하지 않는다.

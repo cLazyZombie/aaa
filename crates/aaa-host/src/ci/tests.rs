@@ -1,6 +1,6 @@
 use super::*;
-use aaa_common::conn::spawn_writer;
-use aaa_proto::{AGENT_LINK, AgentHello, MAX_FRAME};
+use aaa_common::conn::{FrameRx, spawn_writer};
+use aaa_proto::{AGENT_LINK, AgentHello, CiFailureContext, CiLogExcerpt, LinkMsg, MAX_FRAME, Outcome};
 struct Lab {
     root: std::path::PathBuf,
     h: Arc<Host>,
@@ -287,4 +287,87 @@ async fn selected_ci_pass_in_toml_reaches_the_shared_action_once() {
         "새 형식의 명시 passed 조건도 공통 동작을 실행한다"
     );
     assert_eq!(lab.h.automation_count("demo", "green").unwrap(), 1);
+}
+
+#[tokio::test]
+async fn failed_ci_delivers_each_jobs_context_before_full_legacy_tails() {
+    let lab = Lab::new(None);
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let text = "[on.ci]\nrepo='app'\nbranches=['main']\n[do.inbox]\n";
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+    let rule = crate::automation::parse(&dir, "check", text).unwrap();
+    let (write, read) = tokio::io::duplex(1024);
+    let conn = AgentConn::new(spawn_writer(write, MAX_FRAME), 1);
+    let now = util::now_ms();
+    let mut state = State::default();
+    state.source.runs.insert(
+        1,
+        CiRun {
+            id: 1,
+            attempt: 1,
+            branch: "main".into(),
+            sha: "a".repeat(40),
+            status: "completed".into(),
+            conclusion: "failure".into(),
+            created_ms: now,
+            ..Default::default()
+        },
+    );
+    let tail = format!("{}!!", "가".repeat(10922));
+    assert_eq!(tail.len(), 32768);
+    let fake = async {
+        let mut rx = FrameRx::new(read, MAX_FRAME);
+        for query in std::iter::once(CiQuery::Jobs { run: 1, attempt: 1, page: 1 })
+            .chain((1..=6).map(|job| CiQuery::Log { run: 1, job }))
+        {
+            let LinkMsg::Req { id, body: AgentRequest::CiQuery { query: actual, .. }, .. } =
+                rx.control().await.unwrap()
+            else {
+                panic!("CI 조회 요청이 아니다");
+            };
+            assert_eq!(actual, query);
+            let answer = match query {
+                CiQuery::Jobs { .. } => CiAnswer {
+                    jobs: (1..=6).map(|id| CiJob { id, name: format!("job {id}"), ..Default::default() }).collect(),
+                    ..Default::default()
+                },
+                CiQuery::Log { job, .. } if job <= 4 => CiAnswer { log: tail.clone(), ..Default::default() },
+                CiQuery::Log { job, .. } => CiAnswer {
+                    failures: vec![format!("failed::{job}")],
+                    failure_context: Some(CiFailureContext {
+                        excerpts: vec![CiLogExcerpt {
+                            step: "Run tests".into(),
+                            text: format!("Error: job {job}\n    at handler (router.mjs:41:8)"),
+                        }],
+                        truncated: false,
+                    }),
+                    ..Default::default()
+                },
+                _ => unreachable!(),
+            };
+            // 새 응답과 failure_context가 없는 옛 응답을 같은 역직렬화 경계로 읽는다.
+            let answer = serde_json::from_slice(&serde_json::to_vec(&answer).unwrap()).unwrap();
+            conn.pending.lock().unwrap().remove(&id).unwrap().tx.send(Outcome::Ok(AgentResponse::Ci(answer))).unwrap();
+        }
+    };
+    let (result, ()) = tokio::join!(lab.h.ci_rule("demo", &conn, "/work/app", &rule, &mut state, now), fake);
+    result.unwrap();
+    lab.h.ci_drain("demo", "ci:demo:check", &mut state).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&lab.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
+    let input: serde_json::Value = serde_json::from_str(saved["pending"][0]["body"].as_str().unwrap()).unwrap();
+    let jobs: Vec<CiJob> = serde_json::from_value(input["jobs"].clone()).unwrap();
+    assert_eq!(jobs.len(), 6);
+    assert!(jobs[..4].iter().all(|job| job.failure_context.is_none()));
+    let mut size = input["log_tail"].as_str().unwrap().len();
+    for job in &jobs[4..] {
+        assert_eq!(job.failures, [format!("failed::{}", job.id)]);
+        let excerpt = &job.failure_context.as_ref().unwrap().excerpts[0];
+        assert_eq!(excerpt.step, "Run tests");
+        assert_eq!(excerpt.text, format!("Error: job {}\n    at handler (router.mjs:41:8)", job.id));
+        size += excerpt.byte_len();
+    }
+    assert_eq!(input["truncated"], true);
+    assert!((131070..=131072).contains(&size));
 }
