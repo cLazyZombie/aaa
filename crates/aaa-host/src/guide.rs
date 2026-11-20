@@ -254,9 +254,9 @@ CI 실패(inbox `ci`)만으로 rerun·revert·착지 중단을 승인하지 않�
 ## safety(사용자만 바꾼다)
 `start_threads`·`trust_screens`·yolo·`thread_agent_args`·`coordinator_agent_args`·routine 명령·쓸 수 있는 profile과 coordinator 배포
 허용(`coordinator_deploy`)은 사용자의 safety 설정이다. `aaa safety show`로 보고 출처를 안다.
-aaa 설정 폴더(`~/.config/aaa/`, host.toml) 아래에는 쓰지 않는다. `aaa safety …`, `aaa routine approve`, `aaa automation approve`,
-`aaa profile add|edit|remove|allow|default`는 사용자가 시켜도 하지 않는다: 사용자가 aaa 밖 터미널에서 칠 명령을 알려 준다.
-도는 agent는 다시 띄울 때까지 옛 권한으로 돈다고 말한다.
+aaa 설정(`~/.config/aaa/`, host.toml)은 고치지 않는다. `aaa safety …`, `aaa routine approve`, `aaa automation approve`,
+`aaa profile add|edit|remove|allow|default`는 사람만 한다. 자동 시작 승인 안내는 `aaa guide automation`을 따른다.
+그 밖은 aaa 밖 터미널 명령을 안내한다. agent는 재시작 전까지 옛 권한으로 돈다고 알린다.
 
 ## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)
 배포는 coordinator가 직접 하되 `aaa safety show`에서 `coordinator_deploy`가 on일 때만 한다(기본 off). 시작 전에 `aaa guide deploy`를
@@ -632,8 +632,11 @@ const AUTOMATION: &str = r#"# 자동화
 - 동작은 notice(coordinator 안내), command(승인된 명령), thread(시작·열린 thread 재사용), message(owner/특정 thread),
   proposal(배포 제안)이다. notice 전달·thread 시작은 본래 작업 완료가 아니다. `aaa automation runs <이름>`과
   `aaa automation run show <실행 ID>`에서 마지막 오류·대기 사유·연결 thread·후속 처리 신고를 확인한다.
+- thread 시작 범위 승인은 사람만 한다. 제어 권한이 있는 웹 기기에서 「자동화 → 해당 규칙 → 승인 검토」로 들어가 범위를 확인한 뒤 승인한다.
+  터미널에서는 `aaa automation list --json`의 `start_scope`와 `start_approval_sha256`를 확인한 뒤 aaa 세션 밖에서
+  `aaa automation approve <이름> <범위-hash>`를 실행한다.
 - 명령은 safety `routine_commands`와 사람의 `aaa automation approve --capability command <이름> <hash>`가 모두 필요하다.
-  thread 시작 범위 승인도 사람만 한다. 이관은 승인을 만들지 않는다. 자동화·inbox·본문은 병합·push·배포·resolve 허가가 아니다.
+  이관은 승인을 만들지 않는다. 자동화·inbox·본문은 병합·push·배포·resolve 허가가 아니다.
 - `aaa automation list|show|enable|disable`을 쓴다. 옛 routine 명령·on/do/limits 파일은 호환 입구다.
   `aaa automation migrate --dry-run`으로 계획을 읽고 같은 hash로 적용한다. 현재 profiles·일정·켜짐·입력·기억을 보존한다.
 - 자동화 기억은 공통 SessionStart(compact/resume) 안내로 다시 읽는다. harness 이름을 고정하지 않는다.

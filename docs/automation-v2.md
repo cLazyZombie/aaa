@@ -51,9 +51,11 @@ aaa automation run nightly-coverage
 
 명령은 기존 safety `routine_commands`와 사람의 명령·머신 hash 승인이 모두 필요하다. 직접 명령과 출력 조회는 승인 해시를 구별하므로 조회 승인이 직접 실행으로 확대되지 않는다. thread 시작 승인·workspace 허용·holds·실행 상한은 기존 owner가 검사한다. profiles와 harness에 별도 허용 목록을 만들지 않는다.
 
+사람은 제어 권한이 있는 웹 기기에서 「자동화 → 해당 규칙 → 승인 검토」로 들어가 thread 시작 범위를 확인한 뒤 승인한다. 터미널에서는 범위 또는 명령을 확인한 뒤 aaa 세션 밖에서 승인한다.
+
 ```sh
-aaa automation approve --capability command check <명령-hash>
 aaa automation approve --capability thread ci-watch <시작-범위-hash>
+aaa automation approve --capability command check <명령-hash>
 ```
 
 Reader·worker·coordinator는 사람 전용 승인·safety 변경을 할 수 없다. 이관은 grant를 만들지 않고, 배포는 proposal만 지원한다. 일반 merge/push/deploy/resolve 동작을 추가하지 않는다. idle-audit의 웹 읽기 전용 보호와 기존 close_idle 수명 조건을 유지한다.
