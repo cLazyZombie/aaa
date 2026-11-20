@@ -12,10 +12,17 @@ import { installPanelScrollTrace } from "../lib/panel-scroll-diagnostics.mjs";
 
 const sidebarTree = '#sidebar-column [data-testid="design-panel"]';
 const documentTree = '.design-tree-pane [data-testid="design-panel"]';
+const sidebarScrollKey = "herdr-web-ui:design-tree-scroll:sidebar";
 const sidebarToggle = (page) => page.locator(".view [data-testid='drawer-toggle']:visible");
 const dir = (panel, path) => panel.locator(`[data-testid="design-dir"][data-path="${path}"]`);
 const doc = (panel, path) => panel.locator(`[data-testid="design-doc"][data-path="${path}"]`);
 const repoRow = (panel, name) => panel.locator(`[data-testid="design-repo"][data-repo="${name}"]`);
+async function reopenDrawer(page) {
+  await sidebarToggle(page).click();
+  await page.locator("#workspace-drawer.is-open").waitFor();
+  await drawerSettled(page);
+}
+
 const selectedInView = (page, panel) => domIs(page, "선택한 문서가 트리 칸 안에 보임", (selector) => {
   const tree = document.querySelector(selector);
   const selected = tree?.querySelector('[data-testid="design-doc"][aria-current="true"]');
@@ -25,10 +32,24 @@ const selectedInView = (page, panel) => domIs(page, "선택한 문서가 트리 
   return row.top >= top - 1 && row.bottom <= bottom + 1;
 }, panel);
 
-function scrollAt(page, selector, top) {
-  return domIs(page, `트리 위치 ${top} 유지`, ({ selector, top }) => {
-    return document.querySelector(selector)?.scrollTop === top;
-  }, { selector, top });
+async function scrollAt(page, selector, top, phase) {
+  try {
+    await domIs(page, `${phase} 뒤 트리 위치 ${top} 복원`, ({ selector, top }) => {
+      return document.querySelector(selector)?.scrollTop === top;
+    }, { selector, top });
+  } catch (error) {
+    const state = await page.evaluate((selector) => {
+      const tree = document.querySelector(selector);
+      const surface = selector.startsWith("#sidebar-column") ? "sidebar" : "document";
+      let saved;
+      try { saved = localStorage.getItem(`herdr-web-ui:design-tree-scroll:${surface}`); } catch {}
+      return { top: tree?.scrollTop, height: tree?.clientHeight, scrollHeight: tree?.scrollHeight, saved,
+        open: document.querySelector("#workspace-drawer")?.classList.contains("is-open"),
+        loading: tree?.querySelector('[data-testid="design-reload"]')?.disabled,
+        selected: tree?.querySelector('[aria-current="true"]')?.dataset.path };
+    }, selector).catch((cause) => String(cause));
+    throw new Error(`${error.message} · 기획 트리 상태: ${JSON.stringify(state)}`, { cause: error });
+  }
 }
 
 async function scrollTreeTo(tree, top, key) {
@@ -48,11 +69,6 @@ async function scrollTreeTo(tree, top, key) {
 async function rememberTree(page, phone) {
   const sidebar = page.locator(sidebarTree);
   const body = page.getByTestId("design-body");
-  const reopenDrawer = async () => {
-    await sidebarToggle(page).click();
-    await page.locator("#workspace-drawer.is-open").waitFor();
-    await drawerSettled(page);
-  };
   await inList(page, "activity-design");
   await inList(page, repoRow(sidebar, "app").locator(".design-row.is-repo"));
   await inList(page, dir(sidebar, "docs/monsters"));
@@ -60,23 +76,23 @@ async function rememberTree(page, phone) {
   await doc(sidebar, "docs/monsters/archive/README.md").waitFor();
   await inList(page, doc(sidebar, "docs/monsters/m60.md"));
   await body.getByRole("heading", { name: "몬스터 60", exact: true }).waitFor();
-  if (phone) await reopenDrawer();
-  await scrollTreeTo(sidebar, 700, "herdr-web-ui:design-tree-scroll:sidebar");
+  if (phone) await reopenDrawer(page);
+  await scrollTreeTo(sidebar, 700, sidebarScrollKey);
 
   await inList(page, "activity-work");
   await sidebar.waitFor({ state: "detached" });
   await inList(page, "activity-design");
-  await scrollAt(page, sidebarTree, 700);
+  await scrollAt(page, sidebarTree, 700, "작업 패널 왕복");
   await inList(page, "activity-tasks");
   await page.getByTestId("tasks-view").waitFor();
   await inList(page, "activity-tasks");
   await body.getByRole("heading", { name: "몬스터 60", exact: true }).waitFor();
   if (phone) {
-    await reopenDrawer();
-    await scrollAt(page, sidebarTree, 700);
+    await reopenDrawer(page);
+    await scrollAt(page, sidebarTree, 700, "할 일 화면 왕복");
     await inList(page, "activity-design");
-    await reopenDrawer();
-    await scrollAt(page, sidebarTree, 700);
+    await reopenDrawer(page);
+    await scrollAt(page, sidebarTree, 700, "서랍 다시 열기");
   }
 
   await page.evaluate(() => {
@@ -87,8 +103,8 @@ async function rememberTree(page, phone) {
     localStorage.setItem(key, JSON.stringify(value));
   });
   await page.reload();
-  if (phone) await reopenDrawer();
-  await scrollAt(page, sidebarTree, 700);
+  if (phone) await reopenDrawer(page);
+  await scrollAt(page, sidebarTree, 700, "새로고침");
   assert.equal(await repoRow(sidebar, "app").getAttribute("aria-expanded"), "false");
   assert.equal(await doc(sidebar, "docs/monsters/archive/README.md").count(), 1, "중첩 폴더도 다시 펼친다");
   assert.equal(await dir(sidebar, "docs/deleted").count(), 0);
@@ -104,15 +120,68 @@ async function rememberTree(page, phone) {
     await scrollTreeTo(tree, 510, "herdr-web-ui:design-tree-scroll:document");
     await page.getByTestId("design-page-doc").click();
     await page.getByTestId("design-page-tree").click();
-    await scrollAt(page, documentTree, 510);
+    await scrollAt(page, documentTree, 510, "문서에서 트리로 전환");
     await page.getByTestId("design-page-doc").click();
-    await reopenDrawer();
-    await scrollAt(page, sidebarTree, 700);
+    await reopenDrawer(page);
+    await scrollAt(page, sidebarTree, 700, "문서 트리에서 서랍으로 전환");
   } else {
     await body.getByRole("button", { name: "첫 몬스터", exact: true }).click();
     await body.getByRole("heading", { name: "몬스터 1", exact: true }).waitFor();
     await selectedInView(page, sidebarTree);
     assert.ok(await sidebar.evaluate((el) => el.scrollTop < 700), "새 문서를 연 뒤에는 그 줄을 보인다");
+  }
+}
+
+async function rememberTreeWithLateRepo() {
+  const target = "big/docs/monsters/m60.md";
+  const pending = Promise.withResolvers();
+  const received = Promise.withResolvers();
+  let p;
+  try {
+    ({ page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, {
+      hash: `#design=${encodeURIComponent(target)}`,
+      serviceWorkers: "block",
+      setup: (context) => context.addInitScript(({ target, key }) => {
+        localStorage.setItem("herdr-web-ui:design-tree-expansion", JSON.stringify({
+          openDirs: ["big/docs/monsters"], closedRepos: ["app"], selected: target,
+        }));
+        localStorage.setItem(key, "700");
+      }, { target, key: sidebarScrollKey }),
+      route: ["**/api/v1/call", async (route) => {
+        const request = route.request().postDataJSON();
+        if (request?.op !== "design_tree" || (!request.cached && request.repo !== "lore")) return route.continue();
+        const response = await route.fetch();
+        if (request.cached) {
+          // 긴 트리는 즉시 그리되, 그 위 저장소 하나만 캐시에 없는 순서를 만든다.
+          const body = await response.json();
+          const lore = body.ok.repos.find((repo) => repo.repo === "lore");
+          assert.ok(lore?.tree, "실제 캐시에 lore 트리가 있다");
+          lore.tree = null;
+          return route.fulfill({ response, json: body });
+        }
+        received.resolve();
+        await pending.promise;
+        return route.fulfill({ response });
+      }],
+    }));
+    await p.getByTestId("design-body").getByRole("heading", { name: "몬스터 60", exact: true }).waitFor();
+    await reopenDrawer(p);
+    await inTime(received.promise, 20_000, "lore의 실제 트리 응답 보류");
+    const sidebar = p.locator(sidebarTree);
+    const loreDoc = doc(sidebar, "notes/README.md");
+    assert.equal(await loreDoc.count(), 0);
+    await scrollAt(p, sidebarTree, 700, "캐시 트리 그리기");
+    const painted = () => p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // 먼저 복원한 위치를 한 번 그린 다음, 위에 추가될 행의 실제 응답을 푼다.
+    await painted();
+    pending.resolve();
+    await loreDoc.waitFor({ state: "attached" });
+    await painted();
+    const position = await sidebar.evaluate((el, key) => [el.scrollTop, localStorage.getItem(key)], sidebarScrollKey);
+    assert.deepEqual(position, [700, "700"], "늦게 위에 추가된 행 뒤에도 복원 위치와 저장값을 유지한다");
+  } finally {
+    pending.resolve();
+    await p?.context().close();
   }
 }
 
@@ -385,6 +454,7 @@ export default async function () {
       } finally { await wk?.close(); }
     });
   }
+  await step("기획 트리 기억 Chromium 390px: 늦게 추가된 위쪽 저장소 행 뒤에도 복원 위치 유지", rememberTreeWithLateRepo);
   await step("트리 기억의 저장소 접근을 거부해도 이번 화면의 펼침과 스크롤을 유지", async () => {
     const { page: p, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 844 }, {
       setup: (context) => context.addInitScript(() => {
@@ -405,7 +475,7 @@ export default async function () {
       await inList(p, "activity-work");
       await sidebar.waitFor({ state: "detached" });
       await inList(p, "activity-design");
-      await scrollAt(p, sidebarTree, 700);
+      await scrollAt(p, sidebarTree, 700, "저장소 접근 거부 중 패널 왕복");
       assert.equal(await doc(sidebar, "docs/monsters/m60.md").count(), 1);
       assert.deepEqual(errors, []);
     } finally { await p.context().close(); }

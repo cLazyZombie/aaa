@@ -2,7 +2,8 @@
 /* 사이드바 칸(Sidebar.tsx .design-sidebar)은 다른 패널(.asks-sidebar 등)처럼 남은 높이를 받아야 안의 트리(.design-panel)가 굴러간다.
    이 규칙이 없으면 칸이 글 높이만큼 자라 .list의 overflow에 잘린다(t-1934, E2E 135 「긴 기획 트리」) */
 .design-sidebar { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
-.design-panel { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; padding: 0 var(--side-gutter) var(--space-2); overflow-y: auto; overscroll-behavior: contain; }
+/* 저장소 응답이 위에 행을 더해도 브라우저가 복원한 스크롤 위치를 보정하지 않게 한다. */
+.design-panel { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; padding: 0 var(--side-gutter) var(--space-2); overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; }
 .design-panel > * { flex-shrink: 0; }
 .sidebar-shell button.sidebar-row-action.design-reload { display: flex; align-items: center; justify-content: flex-start; width: 100%; padding: 0; border-radius: var(--radius-md); color: var(--text-dim); font-size: var(--fs-sm); }
 @media (hover: hover) { .sidebar-shell button.sidebar-row-action.design-reload:hover:not(:disabled) { background: var(--side-hover); color: var(--text); } }
