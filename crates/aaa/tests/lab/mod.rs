@@ -299,34 +299,54 @@ impl Node {
     }
 
     /// `name` 머신이 연결될 때까지 `machine list`로 기다린다. 시간이 지나면 시도마다의 시각·걸린 시간·종료·그 머신 상태·
-    /// 오류 첫 줄을 남긴다(CLI 오류를 None으로 버리면 host 연결과 판정이 어긋난 까닭을 가를 수 없다, t-1097)
+    /// 오류를 남긴다(CLI 오류를 None으로 버리면 host 연결과 판정이 어긋난 까닭을 가를 수 없다, t-1097)
     pub fn wait_connected(&self, name: &str, timeout: Duration) {
-        let tries = std::cell::RefCell::new(Vec::<String>::new());
+        self.wait_connected_diag(name, &format!("{name} 연결"), timeout, String::new);
+    }
+
+    pub fn wait_connected_diag(&self, name: &str, what: &str, timeout: Duration, diag: impl FnOnce() -> String) {
+        let tries = std::cell::RefCell::new(Vec::new());
+        let started_ms = now_ms();
         let start = Instant::now();
         wait_for_diag(
-            &format!("{name} 연결"),
+            what,
             timeout,
             || {
                 let at = start.elapsed();
                 let o = self.run(&["--json", "machine", "list"]);
-                let v: Option<Value> = serde_json::from_slice(&o.stdout).ok();
-                let state = v.as_ref().and_then(|v| {
-                    v["machines"].as_array()?.iter().find(|m| m["name"] == name).map(|m| m["connection"].to_string())
-                });
-                let err = String::from_utf8_lossy(&o.stderr);
-                tries.borrow_mut().push(format!(
-                    "+{}ms {}ms exit={:?} {name}={} {}",
+                let took = start.elapsed().saturating_sub(at);
+                let parsed = serde_json::from_slice::<Value>(&o.stdout);
+                let state = parsed
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v["machines"].as_array()?.iter().find(|m| m["name"] == name)?["connection"].as_str());
+                let error = if o.status.success() {
+                    parsed.as_ref().err().map(|e| format!("응답 JSON 오류: {e}")).unwrap_or_default()
+                } else {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    aaa_common::redact::text(stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or(""))
+                };
+                let line = format!(
+                    "+{}ms {}ms status={} {name}={} {error}",
                     at.as_millis(),
-                    start.elapsed().saturating_sub(at).as_millis(),
-                    o.status.code(),
-                    state.as_deref().unwrap_or("없음"),
-                    err.lines().next().unwrap_or("")
-                ));
-                (o.status.success() && state.as_deref() == Some("\"connected\"")).then_some(())
+                    took.as_millis(),
+                    o.status,
+                    state.unwrap_or("없음"),
+                );
+                tries.borrow_mut().push((line, !o.status.success() || parsed.is_err()));
+                (o.status.success() && state == Some("connected")).then_some(())
             },
             || {
                 let t = tries.borrow();
-                format!("machine list 시도 {}번(마지막 10번):\n{}", t.len(), t[t.len().saturating_sub(10)..].join("\n"))
+                let last_error =
+                    t.iter().rev().find_map(|(line, failed)| failed.then_some(line.as_str())).unwrap_or("없음");
+                let tail = t[t.len().saturating_sub(10)..].iter().map(|(line, _)| line.as_str()).collect::<Vec<_>>();
+                format!(
+                    "machine list 시작 utc_ms={started_ms}, 시도 {}번(마지막 10번):\n{}\n마지막 조회 오류: {last_error}\n{}",
+                    t.len(),
+                    tail.join("\n"),
+                    diag(),
+                )
             },
         )
     }
