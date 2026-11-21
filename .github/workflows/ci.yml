@@ -197,6 +197,7 @@ jobs:
         env:
           RUST_TEST_THREADS: ${{ matrix.os == 'windows-2025' && '2' || '1' }}
           TOKIO_WORKER_THREADS: "2"
+          AAA_CI_MACOS_INSTALL_PTY_DIAGNOSTICS: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
           AAA_CI_WINDOWS_INSTALL_RECHECK: ${{ matrix.os == 'windows-2025' && !inputs.windows_native_diagnostic && '1' || '0' }}
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 완료를 기다려 출력하던 shard는 단계 중단 시 사라졌다. 준비/목록/실행 중 원문과

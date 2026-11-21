@@ -70,6 +70,10 @@ pub(super) fn terminal_controlled(
     command.env("TERM", "xterm-256color");
     // 실제 Windows API의 준비/호출/반환만 관측한다. 질문과 입력 원문은 로그하지 않는다.
     command.env("AAA_LOG", "aaa::install::prompt=debug");
+    #[cfg(target_os = "macos")]
+    if macos_snapshot::enabled() {
+        command.env("AAA_LOG", "aaa::install::pty=debug");
+    }
     #[cfg(windows)]
     command.env("AAA_TEST_INSTALL_CONSOLE_TRACE", "1");
     if session {
@@ -94,9 +98,12 @@ pub(super) fn terminal_program(command: &Command, steps: &[(&str, &str)]) -> (u3
 }
 enum TerminalEvent {
     Output(Vec<u8>),
-    ReaderDone,
+    ReaderDone(std::io::Result<()>),
     ChildExited(std::io::Result<()>),
 }
+#[cfg(target_os = "macos")]
+#[path = "macos_snapshot.rs"]
+pub(super) mod macos_snapshot;
 #[cfg(windows)]
 #[path = "../support/read_state_probe.rs"]
 mod read_state_probe;
@@ -192,6 +199,8 @@ fn drive_terminal_inner(
             }
         }
     }
+    #[cfg(target_os = "macos")]
+    let snapshot = macos_snapshot::Probe::new(&command);
     let mut child = OwnedChild { child: pair.slave.spawn_command(command).unwrap(), finished: false };
     let pid = child.child.process_id().expect("소유한 PTY 자식 PID");
     drop(pair.slave);
@@ -202,19 +211,19 @@ fn drive_terminal_inner(
     let exited = terminal_exit::watch(child.child.as_mut(), tx.clone());
     let reader = std::thread::spawn(move || {
         let mut buf = [0; 4096];
-        loop {
+        let result = loop {
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) => break Ok(()),
                 Ok(n) => {
                     if tx.send(TerminalEvent::Output(buf[..n].to_vec())).is_err() {
-                        break;
+                        return;
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
+                Err(e) => break Err(e),
             }
-        }
-        let _ = tx.send(TerminalEvent::ReaderDone);
+        };
+        let _ = tx.send(TerminalEvent::ReaderDone(result));
     });
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
@@ -223,13 +232,19 @@ fn drive_terminal_inner(
     let mut answered = 0;
     let mut cursor = 0;
     let mut status = None;
-    let mut reader_done = false;
+    let mut reader_end = None;
+    #[cfg(target_os = "macos")]
+    let mut last_output = None;
     let mut input_writes = Vec::new();
     let mut query_events = Vec::new();
     let mut queries_omitted = 0usize;
-    while status.is_none() || !reader_done {
+    while status.is_none() || reader_end.is_none() {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(TerminalEvent::Output(bytes)) => {
+                #[cfg(target_os = "macos")]
+                {
+                    last_output = Some(started.elapsed());
+                }
                 let mut query_note = |kind, stage, code| {
                     if query_events.len() < 256 {
                         query_events.push((started.elapsed().as_micros(), answered, kind, stage, code));
@@ -270,7 +285,7 @@ fn drive_terminal_inner(
                     }
                 }
             }
-            Ok(TerminalEvent::ReaderDone) => reader_done = true,
+            Ok(TerminalEvent::ReaderDone(result)) => reader_end = Some(result),
             Ok(TerminalEvent::ChildExited(result)) => {
                 result.expect("소유한 PTY 자식 종료 사건");
                 status = Some(child.child.wait().unwrap());
@@ -299,6 +314,20 @@ fn drive_terminal_inner(
                 if child_exit.is_none() {
                     terminal_snapshot::record(pid, _snapshot_image, probe, failure_unix_us);
                 }
+                #[cfg(target_os = "macos")]
+                if let Some(snapshot) = snapshot {
+                    let reader = match &reader_end {
+                        None => "pending",
+                        Some(Ok(())) => "eof",
+                        Some(Err(_)) => "read_error",
+                    };
+                    let os_code = match &reader_end {
+                        Some(Err(error)) => error.raw_os_error(),
+                        _ => None,
+                    };
+                    eprintln!("PTY macOS reader={reader} os_code={os_code:?} last_output_elapsed={last_output:?}");
+                    snapshot.record(pid, child_exit.is_none());
+                }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();
                     child.child.wait().unwrap();
@@ -313,6 +342,7 @@ fn drive_terminal_inner(
                     "reader_done"
                 };
                 let needle = steps.get(answered).map(|(needle, _)| *needle);
+                let reader_done = reader_end.is_some();
                 // 비밀값을 먼저 가린 뒤 마지막 네 줄을 줄마다 200자로 제한한다.
                 let mut tail: Vec<_> = output.lines().rev().take(4).collect();
                 tail.reverse();

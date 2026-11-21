@@ -44,7 +44,10 @@ mod unix {
         // read_line은 VEOL의 Ctrl+C 뒤에도 LF를 더 기다린다. 실제 canonical read 한 덩어리를 읽는다.
         use std::io::Read;
         let mut value = vec![0u8; 65536];
-        let count = std::io::stdin().lock().read(&mut value).map_err(|source_error| {
+        let read = std::io::stdin().lock().read(&mut value);
+        #[cfg(target_os = "macos")]
+        tracing::debug!(target: "aaa::install::pty", ok = read.is_ok(), "install_plain_read_returned");
+        let count = read.map_err(|source_error| {
             aaa_common::diagnostic::context(source_error, error("installation_prompt_closed", 3))
         })?;
         value.truncate(count);
