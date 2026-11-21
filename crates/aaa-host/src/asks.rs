@@ -567,7 +567,7 @@ impl Host {
             body: Some(post.input.body),
             files_base: Some(record_files_base(project, &id)),
             revisions: Vec::new(),
-            thread: self.request_link(i),
+            thread: self.request_link(i, &post.input.title),
             correction: None,
         };
         if let Some(answer) = &record.answer
@@ -755,7 +755,13 @@ impl Host {
 
     pub(crate) fn snapshot_question(&self, dir: &Path, rec: &ThreadRec, root: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(root)?;
-        let report = dir.join("threads").join(format!("{}.md", rec.id));
+        // 답한 보고 판(r-ID)의 불변 사본을 먼저 쓴다: 답을 보내는 사이 새 보고가 와도 그때 보고·그림을 남긴다(t-2117)
+        let version = self.thread_report_id(&rec.project, &rec.id, rec.report_hash.as_deref());
+        let report = version
+            .as_ref()
+            .map(|v| dir.join("threads").join(format!("{v}.md")))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| dir.join("threads").join(format!("{}.md", rec.id)));
         if report.is_file() {
             std::fs::copy(&report, root.join("report.md"))?;
         }
@@ -771,7 +777,11 @@ impl Host {
         }
         let mut total = 0u64;
         for rel in refs {
-            let Ok((from, size)) = crate::library::local_file(dir, &rec.id, &rel).inspect_err(|error| {
+            let found = version
+                .as_deref()
+                .and_then(|v| crate::library::local_file(dir, v, &rel).ok())
+                .map_or_else(|| crate::library::local_file(dir, &rec.id, &rel), Ok);
+            let Ok((from, size)) = found.inspect_err(|error| {
                 aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
             }) else {
                 continue;

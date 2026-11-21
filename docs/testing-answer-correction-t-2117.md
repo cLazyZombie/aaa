@@ -7,8 +7,9 @@
 
 - 기록: 처음 답은 지우지 않고 `AskRecord.revisions`에 덧붙인다. `answer`가 지금 답이다. 카드 아래 「답 이력」에 시각·기기와 함께 보인다.
 - 기한: thread 카드는 그 thread가 열린 동안만 고친다. 보류·시작 중·끝남·실패·기록 없음은 까닭과 함께 잠근다.
-  coordinator 확인 필요 post 카드는 그 post가 중계한 thread 질문이 있으면 그 thread가 끝나기 전까지,
-  없으면 답한 것 기록이 남아 있는 동안 고친다(제목의 t-ID로 연결을 짐작하지 않는다). 판정은 host가 읽을 때마다 정하고 저장하지 않는다(`correction`).
+  coordinator 확인 필요 post 카드는 그 post가 중계한 thread 질문, 없으면 제목에 처음 나온 t-ID의 thread(이 프로젝트에 있는 것만)가
+  끝나기 전까지 고친다. 예: 「t-2117 결과를 이 방식으로 할까?」는 t-2117이 끝나면 잠긴다. 연결된 thread가 없으면 답한 것 기록이
+  남아 있는 동안 고친다. 판정은 host가 읽을 때마다 정하고 저장하지 않는다(`correction`).
 - 알림: thread 카드는 그 thread에 「보고의 질문에 대한 사용자 답 정정(1A→1B)」 글을 보낸다. 바뀐 질문의 이전·고친 줄과
   「앞 답으로 한 일을 맞추거나 되돌리고 보고에 적는다」를 싣는다. 두 카드 모두 coordinator inbox에 `question corrected`를 남긴다.
   host가 모은 답한 뒤 일어난 일(그 thread의 새 보고 판 첫 줄, 그 thread가 보낸 coordinator 요청)을 확인 창과 두 알림에 함께 싣는다.
@@ -20,7 +21,9 @@
   다시 읽어 「더 보기」로 읽은 옛 기록도 갱신한다.
 - 고친 coordinator post 연결: 연결된 post 자동 닫기는 지금 답뿐 아니라 이력의 처음 답도 같은 답으로 본다.
 - 기존 경합 수리: 웹 답을 입력하는 사이 thread가 새 보고를 써 질문이 비면, 전달된 답의 「답한 것」 기록이 생기지 않았다
-  (E2E에서 재현). 이제 답할 때의 thread 기록으로 남긴다. 그러지 않으면 그 답은 고칠 수도 없다.
+  (E2E에서 재현). 이제 답할 때의 thread 기록으로 남긴다. 그러지 않으면 그 답은 고칠 수도 없다. 「그때 보고」·질문 그림 사본은
+  최신 보고 파일이 아니라 답한 보고 판(r-ID)의 불변 사본에서 가져온다.
+- 아직 같은 보고(답한 질문이 열린 채)에서 고치면 thread 화면의 지금 답도 고친 답으로 바꾼다.
 - thread brief의 질문 안내에 「답 정정은 앞 답을 대신한다」를 더했다.
 
 ## 회귀 owner
@@ -30,8 +33,10 @@
 | 정정 글 | `ask_correct::tests::correction_lists_only_changed_questions_and_what_happened_since` |
 | thread 카드 잠금·기준 시각·보내기 실패 되돌리기 | `ask_correct::tests::thread_cards_follow_the_thread_and_never_half_apply` |
 | coordinator 카드 이력·inbox·동시 정정·연결 thread | `ask_correct::tests::coordinator_cards_keep_history_notify_and_follow_their_thread` |
+| 실제 post 답 경로의 thread 연결(제목 t-ID) | `ask_correct::tests::answered_posts_link_the_thread_their_title_names`, `post_titles_name_their_first_thread_id` |
 | 웹 차이 요약 | `web/test/asksModel.test.mjs` 「답 고치기 차이」 |
-| 휴대폰 실제 흐름(답 → 새 보고 → 고치기 → thread 수신·inbox·이력 → 끝내면 잠김) | `web/e2e/specs/53-thread-questions.mjs` 「답 고치기(t-2117)」 |
+| 휴대폰 실제 흐름(답 → 새 보고 → 고치기 → thread 수신·inbox·이력·그때 보고 → 끝내면 잠김) | `web/e2e/specs/53-thread-questions.mjs` 「답 고치기(t-2117)」 |
+| WebKit 휴대폰의 coordinator 카드 정정(차이·inbox·이력) | `web/e2e/specs/69-coordinator-questions.mjs` 카드 답 단계 |
 
 되돌리기 줄을 빼면 thread 카드 시험이 「1B 2A」 기록으로 실패하는 것을 확인했다. 고정 sleep·재시도·시한 확대는 없다.
 

@@ -227,6 +227,24 @@ export default async function ({ page }) {
     await page.setViewportSize(size);
     const again = await call(page, { op: "ask_answer", item: req.id, body_hash: req.questions.report_hash, picks: [0,0], text: null });
     if (!again.err) throw new Error("두 번째 답을 받았다");
+    // 답 고치기(t-2117, WebKit 휴대폰): 연결된 thread가 없는 coordinator 카드는 기록이 남아 있는 동안 고치고, coordinator inbox에
+    // 정정이 남으며 처음 답은 이력에 남는다
+    const card = phone.page.getByTestId("ask-done-card");
+    await domIs(phone.page, "고칠 수 있는 post 기록", () => {
+      const b = document.querySelector('[data-testid="ask-done-card"][data-kind="request"] [data-testid="ask-correct"]');
+      return !!b && !b.disabled;
+    });
+    if (!(await card.getByTestId("ask-correct-state").innerText()).includes("답한 것 기록이 남아 있는 동안")) throw new Error("post 카드 정정 기한");
+    await card.getByTestId("ask-correct").click();
+    await card.getByTestId("ask-correct-pick-1A").click();
+    if ((await card.getByTestId("ask-correct-diff").innerText()).replace(/\s+/g, " ") !== "1B→1A · 2직접 그대로") throw new Error(`post 정정 차이: ${await card.getByTestId("ask-correct-diff").innerText()}`);
+    await card.getByTestId("ask-correct-send").click();
+    await phone.page.getByTestId("confirm-ok").click();
+    await card.getByTestId("ask-history").waitFor();
+    const corrected = aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.event === "question corrected" && i.subject === "coordinator" && i.summary.includes(req.question_id));
+    if (corrected.length !== 1 || !corrected[0].summary.endsWith("1B→1A") || !corrected[0].body.includes("고친 답(1A 2직접):\n1A. ")) throw new Error(`post 정정 inbox: ${JSON.stringify(corrected)}`);
+    const fixed = (await call(page, { op: "asks" })).ok.done.find((r) => r.subject === req.id);
+    if (fixed?.summary !== "1A 2직접" || fixed.revisions?.[0]?.summary !== "1B 2직접") throw new Error(`post 정정 기록: ${JSON.stringify(fixed)}`);
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다
     await images(page, '[data-testid="ask-done-card"]');
     await listIds(page, '[data-testid="asks-panel"] .ask-row.is-done', req.questions.items.map((q) => q.id), "ids-question-answered");

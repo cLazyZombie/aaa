@@ -264,6 +264,12 @@ export default async function ({ page }) {
       const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.event === "question corrected" && i.subject === t.id);
       if (!notice?.summary.includes("답 정정(") || !notice.summary.endsWith("1A→1B") || !notice.body.includes("고친 답(1B 2A):\n1B. ")) throw new Error(`정정 inbox: ${JSON.stringify(notice)}`);
       await shot(phone, "53-correct-history-phone");
+      // 답을 보내는 사이 새 보고가 와도 「그때 보고」는 답한 질문 보고다(답한 판의 사본)
+      await done.getByTestId("ask-report-toggle").click();
+      await done.getByTestId("ask-report").waitFor();
+      await until("그때 보고 사본", async () => !(await done.getByTestId("ask-report").innerText()).includes("불러오는 중"));
+      const then = await done.getByTestId("ask-report").innerText();
+      if (!then.includes("일을 어떻게 맡길까") || then.includes("1A대로 세 할 일로 나눴다")) throw new Error(`그때 보고: ${then}`);
       // thread가 끝나면 열린 화면도 바로 잠긴다(host가 답할 것을 다시 읽게 한다)
       finishFixtureFollowups(t.id);
       aaa("thread", "resolve", t.id);

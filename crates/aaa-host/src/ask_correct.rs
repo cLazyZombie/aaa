@@ -110,15 +110,30 @@ pub(crate) fn correction_message(
     Some((lines.join("\n"), arrows))
 }
 
+/// post 제목에서 처음 나온 thread ID(`t-NNNN`)
+fn mentioned_thread(text: &str) -> Option<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .find(|w| aaa_proto::short_id_number(w, 't').is_some())
+        .map(str::to_string)
+}
+
 impl Host {
-    /// coordinator 확인 필요 post가 이어지는 thread: 그 post가 중계한 thread 질문. 제목에 나온 t-ID로 짐작하지 않는다
-    /// (구조화 질문 post는 제 질문이라 thread 기한을 따르지 않는다)
-    pub(crate) fn request_link(&self, item: &aaa_proto::InboxItem) -> Option<String> {
-        self.request_question_thread(item)
+    /// coordinator 확인 필요 post가 이어지는 thread(사용자 11-21 3A): 그 post가 중계한 thread 질문, 없으면 제목에 처음 나온
+    /// t-ID. 이 프로젝트에 있는 thread만 잇는다. 예: 「t-2117 결과를 이 방식으로 할까?」는 t-2117이 끝나면 잠긴다
+    pub(crate) fn request_link(&self, item: &aaa_proto::InboxItem, title: &str) -> Option<String> {
+        let exists = |t: &String| self.load(&item.project, t).is_ok();
+        self.request_question_thread(item).filter(exists).or_else(|| mentioned_thread(title).filter(exists))
     }
 
     /// 지금 답 뒤 일어난 일: 그 thread의 새 보고 판(첫 줄)과 그 thread가 보낸 coordinator 요청
-    fn ask_since(&self, project: &str, thread: &str, r: &AskRecord, after_ms: u64) -> Vec<String> {
+    fn ask_since(
+        &self,
+        project: &str,
+        thread: &str,
+        r: &AskRecord,
+        after_ms: u64,
+        posts: &[aaa_proto::PostEnvelope],
+    ) -> Vec<String> {
         let mut out = Vec::new();
         if r.kind == AskKind::Question
             && let Some(answered) = r.report_id.as_deref()
@@ -141,19 +156,31 @@ impl Host {
                 out.push(format!("새 보고 {id}: {}", first.chars().take(80).collect::<String>()));
             }
         }
-        if let Ok(posts) = self.db.post_list(project) {
-            let mut sent: Vec<_> = posts
-                .into_iter()
-                .filter(|p| p.from.thread.as_deref() == Some(thread) && p.created_ms > after_ms)
-                .collect();
-            sent.sort_by_key(|p| p.created_ms);
-            out.extend(sent.into_iter().take(5).map(|p| format!("coordinator에 보낸 요청: {}", p.input.title)));
-        }
+        let mut sent: Vec<_> =
+            posts.iter().filter(|p| p.from.thread.as_deref() == Some(thread) && p.created_ms > after_ms).collect();
+        sent.sort_by_key(|p| p.created_ms);
+        out.extend(sent.into_iter().take(5).map(|p| format!("coordinator에 보낸 요청: {}", p.input.title)));
         out
     }
 
     /// 이 기록의 답을 지금 고칠 수 있는지(웹 표시와 정정 처리가 같은 판정을 쓴다)
     pub(crate) fn ask_correction(&self, project: &str, r: &AskRecord) -> Option<AskCorrection> {
+        self.ask_correction_with(project, r, &self.posts_for_since(project))
+    }
+
+    fn posts_for_since(&self, project: &str) -> Vec<aaa_proto::PostEnvelope> {
+        self.db
+            .post_list(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "post 목록을 못 읽어 답 뒤 요청을 싣지 않는다"))
+            .unwrap_or_default()
+    }
+
+    fn ask_correction_with(
+        &self,
+        project: &str,
+        r: &AskRecord,
+        posts: &[aaa_proto::PostEnvelope],
+    ) -> Option<AskCorrection> {
         let answer = r.answer.as_ref()?;
         let thread = match r.kind {
             AskKind::Question => Some(r.subject.clone()),
@@ -171,7 +198,7 @@ impl Host {
             ThreadStatus::Open => Some(AskCorrection {
                 open: true,
                 note: format!("{thread}이 끝나기 전까지 답을 고칠 수 있다"),
-                since: self.ask_since(project, &thread, r, answer.at_ms),
+                since: self.ask_since(project, &thread, r, answer.at_ms, posts),
             }),
             ThreadStatus::Parked => {
                 closed(format!("{thread}이 보류 중이라 지금은 고칠 수 없다. 이어 하면 다시 고칠 수 있다"))
@@ -185,8 +212,9 @@ impl Host {
 
     /// 보낼 기록마다 정정 상태를 채운다(저장하지 않는다)
     pub(crate) fn with_corrections(&self, project: &str, mut done: Vec<AskRecord>) -> Vec<AskRecord> {
+        let posts = self.posts_for_since(project);
         for r in &mut done {
-            r.correction = self.ask_correction(project, r);
+            r.correction = self.ask_correction_with(project, r, &posts);
         }
         done
     }
@@ -272,6 +300,16 @@ impl Host {
             );
             self.asks_bump();
             return Err(err(e.code, format!("{t}에 정정을 보내지 못해 고치지 않았다: {}", e.message)));
+        }
+        // 아직 같은 보고(답한 질문이 열린 채)면 thread 화면의 답도 고친 답으로 바꾼다
+        if let Some(t) = &thread
+            && let Err(e) = self.update_rec(project, t, |rec| {
+                if rec.question_answer.as_ref().is_some_and(|a| a.at_ms == old.at_ms && a.by == old.by) {
+                    rec.question_answer = Some(new.clone());
+                }
+            })
+        {
+            tracing::warn!("{t}의 지금 답을 고친 답으로 바꾸지 못했다: {}", e.message);
         }
         if let Ok(dir) = self.project_dir(project) {
             let root = dir.join("asks").join(&r.id);
@@ -442,6 +480,49 @@ mod tests {
             by: "iPhone".into(),
             at_ms: 1,
         }
+    }
+
+    /// 실제 coordinator post 답 경로(`ask_answer_apply`): 제목의 t-ID(이 프로젝트에 있는 thread)로 이어져 그 thread가 끝나면
+    /// 잠기고(사용자 3A), 없는 thread·t-ID 없는 제목은 기록이 남아 있는 동안 고친다
+    #[test]
+    fn answered_posts_link_the_thread_their_title_names() {
+        let (h, _lab) = host();
+        thread(&h, ThreadStatus::Open);
+        let post = |n: u32, title: &str| {
+            let input = aaa_proto::PostInput {
+                post_id: format!("{n:032x}"),
+                to: "user".into(),
+                post_type: aaa_proto::PostType::Request,
+                topic: "user-action".into(),
+                title: title.into(),
+                body: "## Questions\n### 1. 방식\n- A 이대로\n- B 바꾼다\n".into(),
+                needs_user: true,
+                refs: vec![],
+            };
+            let result = h.front_post("demo", input, "device:phone").unwrap();
+            assert!(matches!(result, aaa_proto::PostResult::Accepted { .. }), "{result:?}");
+            let open = h.user_requests("demo").unwrap();
+            let item = open.iter().find(|r| r.title == title).expect("열린 요청").id.clone();
+            let hash = h.db.post_of_item("demo", &item).unwrap().unwrap().body_sha256;
+            h.ask_answer_apply("demo", &item, &hash, vec![Some(0)], None, vec![], "device:phone").unwrap();
+            h.db.ask_list("demo").unwrap().into_iter().find(|r| r.title == title).unwrap()
+        };
+        let linked = post(1, "t-0001 결과를 이 방식으로 할까?");
+        assert_eq!(linked.thread.as_deref(), Some("t-0001"));
+        assert_eq!(h.ask_correction("demo", &linked).unwrap().note, "t-0001이 끝나기 전까지 답을 고칠 수 있다");
+        let missing = post(2, "t-0999 결과를 이 방식으로 할까?");
+        let plain = post(3, "배포 방식");
+        assert_eq!((missing.thread.as_deref(), plain.thread.as_deref()), (None, None));
+        thread(&h, ThreadStatus::Resolved);
+        assert!(!h.ask_correction("demo", &linked).unwrap().open);
+        assert_eq!(h.ask_correction("demo", &plain).unwrap().note, KEEP_NOTE);
+    }
+
+    #[test]
+    fn post_titles_name_their_first_thread_id() {
+        assert_eq!(mentioned_thread("t-2117 결과를 이 방식으로 할까?").as_deref(), Some("t-2117"));
+        assert_eq!(mentioned_thread("(t-0042)와 t-0043"), Some("t-0042".into()));
+        assert_eq!(mentioned_thread("q-4583 답"), None);
     }
 
     /// 바뀐 질문만 이전·고친 줄로 싣고, 그대로인 답은 짧게, 답 뒤 일어난 일을 끝에 단다
