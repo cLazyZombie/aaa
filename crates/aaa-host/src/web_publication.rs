@@ -325,6 +325,25 @@ mod tests {
         h.db.set_meta("publish_origin", OLD).unwrap();
         (h, Lab(path))
     }
+    #[test]
+    fn origin_reads_the_last_committed_mapping_while_a_writer_holds_the_connection() {
+        let (h, _lab) = host();
+        let mut conn = h.db.conn_for_test();
+        let tx = conn.transaction().unwrap();
+        tx.execute("UPDATE meta SET value=? WHERE key='publish_origin'", [NEW]).unwrap();
+        let (send, received) = std::sync::mpsc::channel();
+        let reader = h.clone();
+        let read = std::thread::spawn(move || send.send(reader.public_origin()).unwrap());
+        let before = received.recv_timeout(std::time::Duration::from_secs(3));
+        tx.commit().unwrap();
+        drop(conn);
+        read.join().unwrap();
+        assert_eq!(before.expect("쓰기 연결을 놓기 전에 조회를 마친다").as_deref(), Some(OLD));
+        assert_eq!(h.public_origin().as_deref(), Some(NEW));
+        h.db.observe_publication(None, Some("mac-a.example.ts.net")).unwrap();
+        assert_eq!(h.public_origin(), None);
+    }
+
     struct Fixture {
         config: Mutex<Value>,
         calls: Mutex<Vec<String>>,

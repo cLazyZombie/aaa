@@ -47,6 +47,13 @@ fn harness(kind: &str, at_ms: u64) -> aaa_proto::HarnessEvent {
 
 /// coordinator pane 하나와, 입력창이 빈 화면을 보이고 입력을 기록하는 가짜 agent. 받은 입력 글은 `typed`로 온다
 fn coordinator(h: &Arc<Host>) -> (tokio::sync::mpsc::UnboundedReceiver<String>, tokio::task::JoinHandle<()>) {
+    coordinator_observed(h, |_, _| {})
+}
+
+fn coordinator_observed(
+    h: &Arc<Host>,
+    mut observe: impl FnMut(&AgentRequest, &mut String) + Send + 'static,
+) -> (tokio::sync::mpsc::UnboundedReceiver<String>, tokio::task::JoinHandle<()>) {
     let (writer, reader) = tokio::io::duplex(65536);
     let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 2);
     h.agent_connected(
@@ -96,6 +103,7 @@ fn coordinator(h: &Arc<Host>) -> (tokio::sync::mpsc::UnboundedReceiver<String>, 
         let mut line = String::new();
         while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
             let mut entered = false;
+            observe(&body, &mut line);
             let reply = match body {
                 AgentRequest::Screen { .. } => {
                     let text = format!("› {line}");
@@ -179,6 +187,7 @@ async fn hook_tells_each_new_item_once_and_turn_end_nudge_skips_what_hook_told()
         }
         let sent = typed.recv().await.unwrap();
         assert!(sent.starts_with("[aaa inbox]") && sent.contains("t-0003"), "{sent}");
+        assert!(!sent.contains("t-0001") && !sent.contains("t-0002"), "이미 hook으로 알렸다: {sent}");
         assert_eq!(
             notice(&h, "local:aaa-agent", "coord").await.unwrap(),
             None,
@@ -205,5 +214,155 @@ async fn turn_end_nudge_wakes_the_ticker_instead_of_waiting_for_the_period() {
         .unwrap();
     assert!(sent.contains("t-0001"), "{sent}");
     assert!(ended.elapsed() >= Duration::from_secs(1), "쉼 대기를 건너뛰었다: {:?}", ended.elapsed());
+    fake.abort();
+}
+
+// 오래 걸리는 보고서 작업이 ticker를 잡은 동안에도 답 알림의 두 빈 창 관측과 제출은 진행한다.
+#[test]
+fn approval_arrives_while_ticker_waits_on_library_work() {
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(3).enable_all().build().unwrap();
+    let lab = rt.block_on(async {
+        let (h, lab) = host(0, 0, 60);
+        let (mut typed, fake) = coordinator(&h);
+        h.on_harness("m", harness("idle", aaa_common::util::now_ms()));
+        let (locked, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let holder = h.clone();
+        let library = tokio::task::spawn_blocking(move || {
+            let _guard = holder.library_ops.lock().unwrap();
+            locked.send(()).unwrap();
+            let _ = held.recv();
+        });
+        ready.await.unwrap();
+        h.start_ticker();
+        h.inbox_add("demo", "thread-state", "coordinator", "question answered", "답");
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            while h.tick_started.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            typed.recv().await.unwrap()
+        })
+        .await;
+        assert_eq!(*h.tick_done.borrow(), 0);
+        drop(release);
+        library.await.unwrap();
+        assert!(result.expect("보고서 잠금을 풀기 전에 승인 알림이 도착한다").contains("question answered"));
+        fake.abort();
+        lab
+    });
+    drop(rt);
+    drop(lab);
+}
+
+// 두 번째 빈 창 검사 뒤 사람이 입력했다. 붙여넣기 직전 화면에 남은 글과 Enter가 보존된다.
+#[tokio::test]
+async fn a_draft_after_the_quiet_check_keeps_the_answer_pending() {
+    let (h, _lab) = host(0, 0, 60);
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = reads.clone();
+    let (mut typed, fake) = coordinator_observed(&h, move |req, line| {
+        if matches!(req, AgentRequest::Screen { .. }) && seen.fetch_add(1, Ordering::SeqCst) == 2 {
+            *line = "작성 중".into();
+        }
+        assert!(!matches!(req, AgentRequest::Input { .. }), "작성 중인 창에 입력을 보냈다");
+    });
+    h.on_harness("m", harness("idle", aaa_common::util::now_ms()));
+    h.inbox_add("demo", "thread-state", "coordinator", "question answered", "답");
+    let dir = h.project_dir("demo").unwrap();
+    h.nudge("demo", &dir).await;
+    h.nudge("demo", &dir).await;
+    assert_eq!(reads.load(Ordering::SeqCst), 3);
+    assert!(typed.try_recv().is_err());
+    assert_eq!(h.screen_lines("m", "coord").await.unwrap(), ["› 작성 중"]);
+    assert!(notice(&h, "local:aaa-agent", "coord").await.unwrap().unwrap().contains("question answered"));
+    fake.abort();
+}
+
+#[tokio::test]
+async fn hook_during_pane_submission_does_not_repeat_the_answer() {
+    let (h, _lab) = host(0, 0, 60);
+    let hook_host = h.clone();
+    let (hooked, mut results) = tokio::sync::mpsc::unbounded_channel();
+    let (mut typed, fake) = coordinator_observed(&h, move |request, _| {
+        if matches!(request, AgentRequest::Input { data, .. } if data.0 != b"\r") {
+            hooked.send(hook_host.inbox_hook_notice("demo", "coord", "local:aaa-agent").unwrap()).unwrap();
+        }
+    });
+    h.on_harness("m", harness("idle", aaa_common::util::now_ms()));
+    h.inbox_add("demo", "thread-state", "coordinator", "question answered", "답");
+    let dir = h.project_dir("demo").unwrap();
+    h.nudge("demo", &dir).await;
+    h.nudge("demo", &dir).await;
+    assert_eq!(results.try_recv().unwrap(), None);
+    assert!(typed.try_recv().unwrap().contains("question answered"));
+    assert_eq!(notice(&h, "local:aaa-agent", "coord").await.unwrap(), None);
+    assert!(typed.try_recv().is_err());
+    fake.abort();
+}
+
+#[tokio::test]
+async fn other_pane_and_approval_proceed_while_a_local_cwd_is_resolved() {
+    let (h, _lab) = host(0, 0, 60);
+    let (mut typed, fake) = coordinator(&h);
+    let mut remote = h.inner.lock().unwrap().panes["coord"].info.clone();
+    remote.id = "remote".into();
+    h.on_session("another-machine", remote, false);
+    h.on_harness("m", harness("idle", aaa_common::util::now_ms()));
+    h.inbox_add("demo", "thread-state", "coordinator", "question answered", "답");
+    let (entered, mut resolving) = tokio::sync::mpsc::unbounded_channel();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let reader = h.clone();
+    let list = tokio::task::spawn_blocking(move || {
+        reader.pane_views_resolving(DeviceRole::Local, |cwd| {
+            entered.send(()).unwrap();
+            let _ = held.recv();
+            std::fs::canonicalize(cwd)
+        })
+    });
+    resolving.recv().await.unwrap();
+    assert!(h.inner.try_lock().is_ok(), "경로 정규화가 host 상태 잠금을 잡았다");
+    assert!(h.attach_pane("remote").is_some());
+    assert!(h.pane_view_of("remote", DeviceRole::Local).unwrap().coordinator_project.is_none());
+    let dir = h.project_dir("demo").unwrap();
+    h.nudge("demo", &dir).await;
+    h.nudge("demo", &dir).await;
+    assert!(typed.try_recv().unwrap().contains("question answered"));
+    drop(release);
+    let panes = list.await.unwrap();
+    assert_eq!(panes.iter().find(|p| p.id == "coord").unwrap().coordinator_project.as_deref(), Some("demo"));
+    fake.abort();
+}
+
+#[tokio::test]
+async fn user_input_after_nudge_paste_prevents_enter_and_is_preserved() {
+    let (h, _lab) = host(0, 0, 60);
+    let (pasted, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let (mut typed, fake) = coordinator_observed(&h, move |req, _| {
+        if matches!(req, AgentRequest::Input { data, .. } if data.0 != b"\r") {
+            pasted.send(()).unwrap();
+        }
+    });
+    h.on_harness("m", harness("idle", aaa_common::util::now_ms()));
+    h.inbox_add("demo", "thread-state", "coordinator", "question answered", "답");
+    let dir = h.project_dir("demo").unwrap();
+    h.nudge("demo", &dir).await;
+    let send = h.nudge("demo", &dir);
+    tokio::pin!(send);
+    tokio::select! {
+        biased;
+        Some(()) = events.recv() => {}
+        _ = &mut send => panic!("붙여넣기 사건보다 제출이 먼저 끝났다"),
+    }
+    h.live_conn("m")
+        .unwrap()
+        .request(AgentRequest::Input {
+            session: "coord".into(), data: aaa_proto::B64("내 초안".as_bytes().to_vec())
+        })
+        .await
+        .unwrap();
+    send.await;
+    assert!(typed.try_recv().is_err(), "사용자가 입력한 뒤 Enter가 갔다");
+    assert!(h.screen_lines("m", "coord").await.unwrap()[0].ends_with("내 초안"));
+    assert_eq!(notice(&h, "local:aaa-agent", "coord").await.unwrap(), None);
     fake.abort();
 }

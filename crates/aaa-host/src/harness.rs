@@ -27,6 +27,7 @@ use crate::{Host, err};
 struct Submission<'a> {
     id: &'a str,
     message: bool,
+    nudge: bool,
     previous_message: PreviousMessage,
     input: MessageInput,
     late: Option<LateReceipt>,
@@ -46,6 +47,7 @@ impl<'a> Submission<'a> {
         Self {
             id,
             message: false,
+            nudge: false,
             previous_message: PreviousMessage::None,
             input: MessageInput::NotWritten,
             late: None,
@@ -398,6 +400,7 @@ impl Host {
                 self.bump();
                 self.thread_changed(&ev.session);
                 self.close_questions_of(&ev.session);
+                self.wake_nudge();
                 self.tick_wake.notify_one();
                 return;
             }
@@ -573,6 +576,9 @@ impl Host {
             );
             (next, answered_block, p.info.state.is_running(), finished)
         };
+        if matches!(activity, Some(AgentActivity::Idle | AgentActivity::Started)) {
+            self.wake_nudge();
+        }
         self.bump();
         // harness 상태·진행 보고는 thread 묶음과 nudge를 바꿀 수 있다(transitions.rs, inbox.rs). 참고는 15초마다 보지만
         // aaa는 사건마다 다시 세어, 짧은 턴도 전이로 남는다. thread는 보고를 먼저 다시 본다(orch.rs `refresh_report`).
@@ -961,6 +967,13 @@ impl Host {
         self.submit(mid, pane, Some(text), None).await
     }
 
+    pub(crate) async fn send_nudge(self: &Arc<Self>, mid: &str, pane: &str, text: &str) -> Result<bool, SubmitErr> {
+        let id = aaa_common::util::new_id();
+        let mut submission = Submission::new(&id);
+        submission.nudge = true;
+        self.submit_traced(mid, pane, Some(text), None, &mut submission).await
+    }
+
     /// 입력창에 남은 글을 Enter로만 보낸다(다시 치지 않는다). 받았다고 알리면 true.
     pub(crate) async fn send_enter(self: &Arc<Self>, mid: &str, pane: &str) -> Result<bool, String> {
         self.submit(mid, pane, None, None).await
@@ -1030,7 +1043,16 @@ impl Host {
         // 친 글에 프로그램이 반응하고 Enter 뒤 harness가 받았다고 알리기까지 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
         let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
-        let shown = self.screen_lines(mid, pane).await;
+        let nudge_watch = submission.nudge.then(|| conn.watch_input(pane, true));
+        let screen = self.screen(mid, pane).await;
+        if submission.nudge {
+            let agent = self.pane_agent(pane);
+            let empty = screen.as_ref().is_some_and(|s| crate::inbox::nudge_prompt_empty(s, agent.as_ref()));
+            if !empty || agent.is_some_and(|a| !matches!(a.activity, AgentActivity::Idle | AgentActivity::Started)) {
+                return Err(before("알림을 보내기 전에 입력창이 바뀌었다".into()));
+            }
+        }
+        let shown = screen.map(|s| s.lines);
         if shown.as_deref().is_some_and(limit_wait_screen) {
             submission.limit_wait = true;
             return Err(before("사용량 한도 대기 화면에 입력하지 않았다".into()));
@@ -1063,7 +1085,7 @@ impl Host {
             .as_ref()
             .filter(|a| a.progress.as_deref() == Some(crate::orch::WAITING))
             .and_then(|a| a.progress_at_ms);
-        let watch = submission.message.then(|| conn.watch_input(pane));
+        let watch = nudge_watch.or_else(|| submission.message.then(|| conn.watch_input(pane, false)));
         let input_watch = watch.as_ref().map(Arc::downgrade);
         // unknown으로 끝난 대기자가 남아도 host 자체를 붙잡지 않는다.
         let me = Arc::downgrade(self);
@@ -1153,9 +1175,11 @@ impl Host {
                 AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) },
                 crate::REQUEST_TIMEOUT,
                 watch.as_ref(),
+                submission.nudge,
             )
             .await
-            .map_err(|e| after(e.message))?;
+            .map_err(|e| after(e.message))?
+            .ok_or_else(|| before("다른 입력이 와 알림을 쓰지 않았다".into()))?;
             submission.input = MessageInput::DraftWritten;
             self.input_event(
                 pane,
@@ -1208,9 +1232,11 @@ impl Host {
                 AgentRequest::Input { session: pane.to_string(), data: B64(boundary) },
                 crate::REQUEST_TIMEOUT,
                 watch.as_ref(),
+                submission.nudge,
             )
             .await
-            .map_err(|e| after(e.message))?;
+            .map_err(|e| after(e.message))?
+            .ok_or_else(|| after("알림을 쓰는 동안 다른 입력이 와 제출하지 않았다".into()))?;
             self.input_event(pane, trace, "paste_boundary", "key=right; enter_count=0");
             let shown = self.screen_lines(mid, pane).await;
             if shown.as_deref().and_then(modal_of).is_some()
@@ -1236,9 +1262,11 @@ impl Host {
             AgentRequest::Input { session: pane.to_string(), data: B64(enter) },
             crate::REQUEST_TIMEOUT,
             watch.as_ref(),
+            submission.nudge,
         )
         .await
-        .map_err(|e| after(e.message))?;
+        .map_err(|e| after(e.message))?
+        .ok_or_else(|| after("알림을 쓰는 동안 다른 입력이 와 제출하지 않았다".into()))?;
         submission.input = MessageInput::Submitted;
         self.input_event(pane, trace, "enter_written", "key=enter bytes=0d enter_count=1");
         let valid = || watch.as_ref().is_none_or(|watch| *watch.borrow());

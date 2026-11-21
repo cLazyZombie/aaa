@@ -248,15 +248,22 @@ impl AgentConn {
 
     /// 오래 걸리는 요청(routine 명령 등)
     pub async fn request_timeout(&self, body: AgentRequest, wait: Duration) -> Result<AgentResponse, ErrorBody> {
-        self.request_watched(body, wait, None).await
+        self.request_watched(body, wait, None, false)
+            .await?
+            .ok_or_else(|| err(ErrorCode::Internal, "입력 감시 없는 요청이 취소됐다"))
     }
 
     /// 같은 pane의 다른 입력이 끼면 이 전송의 대화 영수증은 판정에 쓰지 않는다.
-    fn watch_input(&self, pane: &str) -> InputWatch {
+    fn watch_input(&self, pane: &str, yield_to_pending: bool) -> InputWatch {
         let pending = self.pending.lock().unwrap();
         let mut watches = self.input_watches.lock().unwrap();
         watches.retain(|_, watch| watch.strong_count() > 0);
         let in_flight = pending.values().any(|r| r.input_pane.as_deref() == Some(pane));
+        if yield_to_pending
+            && (in_flight || watches.get(pane).and_then(std::sync::Weak::upgrade).is_some_and(|w| *w.borrow()))
+        {
+            return Arc::new(tokio::sync::watch::Sender::new(false));
+        }
         let watch = Arc::new(tokio::sync::watch::Sender::new(!in_flight && !self.closed.load(Ordering::Relaxed)));
         if let Some(old) = watches.insert(pane.into(), Arc::downgrade(&watch)).and_then(|w| w.upgrade()) {
             old.send_replace(false);
@@ -269,7 +276,8 @@ impl AgentConn {
         body: AgentRequest,
         wait: Duration,
         watch: Option<&InputWatch>,
-    ) -> Result<AgentResponse, ErrorBody> {
+        require_current: bool,
+    ) -> Result<Option<AgentResponse>, ErrorBody> {
         let id = format!("c{}", self.seq.fetch_add(1, Ordering::Relaxed));
         let input = match &body {
             AgentRequest::Input { session, data } => {
@@ -297,6 +305,10 @@ impl AgentConn {
             let input_pane = input.as_ref().map(|(pane, _, _)| pane.clone());
             if let Some(pane) = &input_pane {
                 let mut watches = self.input_watches.lock().unwrap();
+                // 같은 pending 잠금 안에서 확인하고 등록해야, 사용자의 글이 끼어든 뒤 알림 Enter가 예약되지 않는다.
+                if require_current && watch.is_none_or(|w| !*w.borrow()) {
+                    return Ok(None);
+                }
                 if let Some(active) = watches.get(pane).and_then(std::sync::Weak::upgrade)
                     && !watch.is_some_and(|watch| Arc::ptr_eq(&active, watch))
                 {
@@ -362,7 +374,7 @@ impl AgentConn {
         } else if let Some((session, bytes, _)) = &input {
             tracing::info!(request = %id, %session, bytes, ok = result.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), "pane 입력: host 확인");
         }
-        result
+        result.map(Some)
     }
 
     /// 연결이 끝났을 때 대기 중인 요청을 모두 실패로 끝낸다(다시 보내지 않는다: §8.5 a).
@@ -755,8 +767,11 @@ pub struct Host {
     nudge_screens: Mutex<HashMap<String, (String, Instant)>>,
     /// 프로젝트별로 nudge가 기다리는 coordinator pane과 그 입력창이 비어 보인 때(herdr-projects `box_pane`·`box_empty_since`)
     nudge_box: Mutex<HashMap<String, (String, Instant)>>,
-    /// nudge가 시간 조건(쉼·입력창 확인 간격)만 기다릴 때 다시 볼 때. ticker가 15초 주기를 기다리지 않고 그때 깬다(t-1627)
-    nudge_due: Mutex<Option<Instant>>,
+    /// 알림 검사를 깨운 사건 번호와 검사를 마친 번호(ticker tick의 명시적 확인 경계).
+    nudge_requested: tokio_watch::Sender<u64>,
+    nudge_checked: tokio_watch::Sender<u64>,
+    /// hook과 pane이 같은 알림을 전달하지 않도록 마지막 선택과 전송을 직렬화한다.
+    nudge_delivery: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 프로젝트별로 coordinator에게 이미 알린 처음 보는 inbox 항목 ID(hook·nudge). hook은 여기 없는 항목만 알린다(t-1627)
     nudge_told: Mutex<HashMap<String, HashSet<String>>>,
     /// task.md Follow-ups 덧붙이기는 한 번에 하나씩
@@ -1009,7 +1024,9 @@ impl Host {
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
             nudge_box: Mutex::new(HashMap::new()),
-            nudge_due: Mutex::new(None),
+            nudge_requested: tokio_watch::channel(0).0,
+            nudge_checked: tokio_watch::channel(0).0,
+            nudge_delivery: Mutex::new(HashMap::new()),
             nudge_told: Mutex::new(HashMap::new()),
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
@@ -1422,37 +1439,15 @@ impl Host {
         v
     }
 
-    fn pane_view(
-        i: &Inner,
-        id: &str,
-        p: &PaneRt,
-        role: DeviceRole,
-        projects: &[(String, std::path::PathBuf)],
-    ) -> PaneView {
+    /// 잠금 아래 실행 상태만 복사한다. 경로와 계정은 반환한 뒤 조회한다.
+    fn pane_snapshot(i: &Inner, id: &str, p: &PaneRt, role: DeviceRole) -> (PaneView, bool) {
         let m = i.machines.get(&p.machine_id);
         let connected = m.is_some_and(|m| m.conn.is_some());
-        // herdr-projects coordinator::is_coordinator + report_tokens: host 머신의 프로젝트 홈 agent만 소속을 붙인다.
-        // role 없는 기존 agent도 포함하지만, 같은 경로의 원격 pane·사람 셸은 coordinator가 아니다.
-        let coordinator_project = if m.is_some_and(|m| m.local)
+        let local_agent = m.is_some_and(|m| m.local)
             && (p.info.role == Some(aaa_proto::Role::Coordinator)
                 || p.agent.is_some()
-                || crate::adopt::harness_of(p.info.harness.as_deref(), &p.info.argv).is_some())
-        {
-            p.info
-                .cwd
-                .as_deref()
-                .and_then(|cwd| {
-                    std::fs::canonicalize(cwd)
-                        .inspect_err(|error| {
-                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                        })
-                        .ok()
-                })
-                .and_then(|cwd| projects.iter().find(|(_, dir)| *dir == cwd).map(|(name, _)| name.clone()))
-        } else {
-            None
-        };
-        PaneView {
+                || crate::adopt::harness_of(p.info.harness.as_deref(), &p.info.argv).is_some());
+        let view = PaneView {
             responsibility: p.info.responsibility.clone(),
             account: None,
             id: id.to_string(),
@@ -1468,32 +1463,52 @@ impl Host {
             rows: p.info.rows,
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
-            coordinator_project,
+            coordinator_project: None,
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
             replaced: p.replaced.clone(),
+        };
+        (view, local_agent)
+    }
+
+    fn finish_pane_view(
+        &self,
+        (mut view, local_agent): (PaneView, bool),
+        projects: &[(String, PathBuf)],
+        resolve: impl FnOnce(&str) -> std::io::Result<PathBuf>,
+    ) -> PaneView {
+        if local_agent
+            && let Some(cwd) = view.cwd.as_deref()
+            && let Ok(dir) = resolve(cwd).inspect_err(|e| aaa_common::diagnostic::observe(e, "pane 경로 정규화 실패"))
+        {
+            view.coordinator_project = projects.iter().find(|(_, path)| *path == dir).map(|(name, _)| name.clone());
         }
+        view.account = self
+            .pane_account(&view.id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .map(|a| a.account_label.unwrap_or(a.account));
+        view
     }
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
+        self.pane_views_resolving(role, |cwd| std::fs::canonicalize(cwd))
+    }
+
+    fn pane_views_resolving(
+        &self,
+        role: DeviceRole,
+        resolve: impl Fn(&str) -> std::io::Result<PathBuf>,
+    ) -> Vec<PaneView> {
         let projects = self.coordinator_projects();
-        let mut v: Vec<_> = {
+        let snapshots: Vec<_> = {
             let i = self.inner.lock().unwrap();
-            i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect()
+            i.panes.iter().map(|(id, p)| Self::pane_snapshot(&i, id, p, role)).collect()
         };
-        // 상태 잠금을 잡은 채 DB를 조회하지 않는다.
-        for pane in &mut v {
-            pane.account = self
-                .pane_account(&pane.id)
-                .inspect_err(|error| {
-                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                })
-                .ok()
-                .flatten()
-                .map(|a| a.account_label.unwrap_or(a.account));
-        }
-        // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
+        let mut v: Vec<_> = snapshots.into_iter().map(|p| self.finish_pane_view(p, &projects, &resolve)).collect();
+        // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다.
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
         v
@@ -1501,17 +1516,11 @@ impl Host {
 
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
         let projects = self.coordinator_projects();
-        let mut view = {
+        let snapshot = {
             let i = self.inner.lock().unwrap();
-            i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+            i.panes.get(id).map(|p| Self::pane_snapshot(&i, id, p, role))
         }?;
-        view.account = self
-            .pane_account(id)
-            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-            .ok()
-            .flatten()
-            .map(|a| a.account_label.unwrap_or(a.account));
-        Some(view)
+        Some(self.finish_pane_view(snapshot, &projects, |cwd| std::fs::canonicalize(cwd)))
     }
 
     fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
@@ -3994,37 +4003,10 @@ pub(crate) fn test_localhost_public() -> bool {
 /// 공개 origin. 아직 serve 상태를 한 번도 읽지 못한 옛 DB만 publish_port·이름으로 대신한다.
 /// 매핑 없음도 관측한 상태이므로 publish_observed 뒤에는 옛 포트를 되살리지 않는다.
 pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
-    if let Some(o) = db
-        .meta("publish_origin")
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    db.publication_origin()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "공개 주소 조회 실패"))
         .ok()
         .flatten()
-    {
-        return Some(o);
-    }
-    if db
-        .meta("publish_observed")
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return None;
-    }
-    let dns = db
-        .meta("publish_dns")
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-        .ok()
-        .flatten()?;
-    let port = db
-        .meta("publish_port")
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-        .ok()
-        .flatten()?
-        .parse()
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-        .ok()?;
-    Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
 }
 
 /// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.372)로 웹만 열며, 되돌리거나

@@ -7,12 +7,12 @@
 //!   (`session` 한 머신의 세션이 모두 끝남, `outage` 머신 단절·회복, `config-error` project.toml 오류).
 //! - **nudge:** coordinator(프로젝트 폴더를 cwd로 쓰는 host 머신 pane)가 입력 대기 상태로 `nudge_idle_secs`(기본 3초) 이상
 //!   머물고 입력창이 비었을 때, 처음 보는 항목 묶음을 한 줄로 알린다. 같은 묶음(hash)은 한 번만 보낸다. 시간 조건만
-//!   남으면 ticker가 그때 깬다(t-1627: 턴 끝 뒤 약 5초).
+//!   남으면 독립 알림 작업이 그때 깬다(t-1627: 턴 끝 뒤 약 5초).
 //! - **hook 알림(t-1627):** 턴 도중에는 coordinator의 PostToolUse hook이 `inbox_hook_notice`로 아직 알리지 않은 항목을
 //!   물어 다음 도구 결과에 한 줄로 붙인다. 알린 항목은 `nudge_told`와 묶음 hash에 남아 턴 끝 nudge가 다시 보내지 않는다.
 //!   전달을 모르면(unknown) 다시 보내지 않는다(§8.5 a). coordinator가 없거나 project.toml `nudge = false`면 그 묶음을
 //!   본 것으로만 적는다: 항목은 coordinator의 다음 턴 `context`가 보인다(herdr-projects steps.rs `nudge`, plan §8.136).
-//! - **ticker:** host 안의 task다. `tick_secs`마다, 그리고 사건이 오면 바로 돈다.
+//! - **ticker:** 배경 작업과 coordinator 알림 검사는 별도의 task다. ticker는 `tick_secs`마다, 그리고 사건이 오면 바로 돈다.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -25,6 +25,8 @@ use sha2::Digest;
 
 use crate::orch::ThreadRec;
 use crate::{Host, err};
+
+mod dispatch;
 
 #[cfg(test)]
 mod hook_tests;
@@ -198,6 +200,20 @@ pub(crate) fn prompt_empty(lines: &[String]) -> bool {
         .is_some_and(|rest| rest.trim().is_empty())
 }
 
+/// Claude의 여러 줄 입력은 테두리 전체를 확인한다. 테두리 없는 단순 프롬프트는 마지막 줄만 비어 있어야 한다.
+pub(crate) fn nudge_prompt_empty(screen: &aaa_proto::ScreenText, agent: Option<&aaa_proto::AgentStatus>) -> bool {
+    if !agent.is_some_and(|a| a.harness == "claude") {
+        return prompt_empty(&screen.lines);
+    }
+    match crate::prompt_box::check("claude", &screen.ansi) {
+        crate::prompt_box::Draft::Empty => true,
+        crate::prompt_box::Draft::Typed => false,
+        crate::prompt_box::Draft::Unknown => {
+            screen.lines.iter().rev().map(|l| l.trim()).find(|l| !l.is_empty()) == Some("❯")
+        }
+    }
+}
+
 fn same_dir(a: &str, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
@@ -271,6 +287,7 @@ impl Host {
         {
             tracing::warn!("inbox 파일 쓰기 실패: {e}");
         }
+        self.wake_nudge();
         self.tick_wake.notify_one();
     }
 
@@ -561,6 +578,7 @@ impl Host {
     // ───────────── ticker ─────────────
 
     pub fn start_ticker(self: &Arc<Self>) {
+        self.start_nudges();
         let me = self.clone();
         self.supervise(crate::supervisor::Task::Ticker, move || {
             let me = me.clone();
@@ -568,7 +586,7 @@ impl Host {
                 let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
                 loop {
                     // 다음 조회·배경 작업 차례가 더 이르면 그때 깨어난다
-                    let sleep = [me.ci_next_due(), me.git_next_due(), me.background_wait_due(), me.nudge_next_due()]
+                    let sleep = [me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
                         .into_iter()
                         .flatten()
                         .map(|d| d.saturating_duration_since(std::time::Instant::now()))
@@ -592,18 +610,20 @@ impl Host {
         let want = self.tick_started.load(Ordering::SeqCst) + 1;
         let mut done = self.tick_done.subscribe();
         self.tick_wake.notify_one();
-        match done.wait_for(|n| *n >= want).await {
+        let completed = match done.wait_for(|n| *n >= want).await {
             Ok(n) => *n,
             Err(source_error) => {
                 aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 *self.tick_done.borrow()
             }
-        }
+        };
+        let mut checked = self.nudge_checked.subscribe();
+        let seq = self.wake_nudge();
+        let _ = checked.wait_for(|n| *n >= seq).await;
+        completed
     }
 
     async fn tick(self: &Arc<Self>) {
-        // 이번 tick의 nudge가 아직 기다릴 것이면 다시 적는다(지난 때로 바로 다시 돌지 않게)
-        *self.nudge_due.lock().unwrap() = None;
         self.backup_pass_at(aaa_common::util::now_ms());
         self.refresh_usage();
         // Codex 인증은 만료 하루 전에 host가 미리 갱신한다(배경 작업, t-1688)
@@ -652,8 +672,6 @@ impl Host {
             if let Err(e) = self.pool_pass(&p.name).await {
                 tracing::warn!(project=%p.name,"계정 배정 대기 판정 실패: {}",e.message);
             }
-
-            self.nudge(&p.name, dir).await;
         }
         let now = aaa_common::util::now_ms();
         self.ask_prune_pass(now);
@@ -863,21 +881,26 @@ impl Host {
             .collect()
     }
 
-    /// 처음 보는 끝내지 않은 항목과 그 ID 묶음 hash. 이미 알린 ID 기억에서 본·끝낸 항목을 뺀다
+    /// 처음 보는 끝내지 않은 항목과 그 ID 묶음 hash.
     fn unseen_open(&self, project: &str) -> (Vec<InboxItem>, String) {
         let unseen: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| !i.seen).collect();
         let mut ids: Vec<&str> = unseen.iter().map(|i| i.id.as_str()).collect();
         ids.sort();
         let hash = hex::encode(sha2::Sha256::digest(ids.join("\n").as_bytes()));
-        let mut told = self.nudge_told.lock().unwrap();
-        if let Some(set) = told.get_mut(project) {
-            set.retain(|id| unseen.iter().any(|i| &i.id == id));
-            if set.is_empty() {
-                told.remove(project);
-            }
-        }
         (unseen, hash)
+    }
+
+    fn nudge_delivery_lock(&self, project: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.nudge_delivery.lock().unwrap().entry(project.into()).or_default().clone()
+    }
+
+    /// 전달 잠금 안에서 현재 묶음과 대조한다. 이미 hook이나 pane에 보낸 항목은 새 묶음에 반복하지 않는다.
+    fn fresh_nudges(&self, project: &str, unseen: Vec<InboxItem>) -> Vec<InboxItem> {
+        let mut told = self.nudge_told.lock().unwrap();
+        let Some(set) = told.get_mut(project) else { return unseen };
+        set.retain(|id| unseen.iter().any(|i| &i.id == id));
+        unseen.into_iter().filter(|i| !set.contains(&i.id)).collect()
     }
 
     fn remember_told(&self, project: &str, items: &[InboxItem]) {
@@ -887,19 +910,6 @@ impl Host {
             .entry(project.to_string())
             .or_default()
             .extend(items.iter().map(|i| i.id.clone()));
-    }
-
-    /// nudge가 시간 조건만 기다린다: ticker를 `after` 뒤에 깨운다(여러 프로젝트면 가장 이른 때)
-    fn nudge_wait(&self, after: Duration) {
-        let at = Instant::now() + after;
-        let mut due = self.nudge_due.lock().unwrap();
-        if due.is_none_or(|d| at < d) {
-            *due = Some(at);
-        }
-    }
-
-    pub(crate) fn nudge_next_due(&self) -> Option<Instant> {
-        *self.nudge_due.lock().unwrap()
     }
 
     /// coordinator PostToolUse hook: 그 pane에 아직 알리지 않은 처음 보는 항목을 nudge와 같은 한 줄로 돌려준다(t-1627).
@@ -922,22 +932,16 @@ impl Host {
         if !self.settings(project).nudge || !self.coordinator_panes(&dir).iter().any(|p| p.id == pane) {
             return Ok(None);
         }
-        let (mut unseen, hash) = self.unseen_open(project);
-        if unseen.is_empty() {
-            return Ok(None);
-        }
-        self.db.inbox_display_ids(&mut unseen).map_err(internal)?;
-        // 한 응답의 도구 여러 개가 PostToolUse hook을 동시에 띄운다: 걸러내기와 기록을 한 잠금 안에서 해 한 번만 알린다
-        let fresh: Vec<InboxItem> = {
-            let mut told = self.nudge_told.lock().unwrap();
-            let set = told.entry(project.to_string()).or_default();
-            let fresh: Vec<InboxItem> = unseen.into_iter().filter(|i| !set.contains(&i.id)).collect();
-            set.extend(fresh.iter().map(|i| i.id.clone()));
-            fresh
-        };
+        // pane이 이미 입력 중이면 그 제출의 수락 hook을 기다리게 하지 않는다.
+        let delivery = self.nudge_delivery_lock(project);
+        let Ok(_delivery) = delivery.try_lock() else { return Ok(None) };
+        let (unseen, hash) = self.unseen_open(project);
+        let mut fresh = self.fresh_nudges(project, unseen);
         if fresh.is_empty() {
             return Ok(None);
         }
+        self.db.inbox_display_ids(&mut fresh).map_err(internal)?;
+        self.remember_told(project, &fresh);
         let text = nudge_text(project, &fresh);
         aaa_common::diagnostic::ignored(
             self.db.set_meta(&format!("nudged:{project}"), &hash),
@@ -947,14 +951,14 @@ impl Host {
         Ok(Some(text))
     }
 
-    pub(crate) async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
+    pub(crate) async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) -> Option<Duration> {
         let (unseen, hash) = self.unseen_open(project);
         let forget_box = || {
             self.nudge_box.lock().unwrap().remove(project);
         };
         if unseen.is_empty() {
             forget_box();
-            return;
+            return None;
         }
         let key = format!("nudged:{project}");
         if self
@@ -967,7 +971,7 @@ impl Host {
             == Some(hash.as_str())
         {
             forget_box();
-            return;
+            return None;
         }
         // coordinator가 없거나 nudge를 껐으면 묶음 hash만 남긴다(herdr-projects steps.rs `nudge`): 사람에게는 사건마다
         // 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않는다
@@ -984,12 +988,15 @@ impl Host {
         let Some(coord) = coord else {
             aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "보조 작업 실패 뒤 기존 처리를 계속한다");
             forget_box();
-            return;
+            return None;
         };
         let idle_for = Duration::from_secs(self.cfg.projects.nudge_idle_secs);
         let question_missing = unseen.iter().any(|i| i.event == crate::question_guard::EVENT && i.subject == coord.id);
         // 입력 대기: hook 상태가 있으면 그것으로, 없으면 화면이 그만큼 그대로인지로 본다
-        let lines = self.screen_lines(&coord.machine_id, &coord.id).await.unwrap_or_default();
+        let Some(screen) = self.screen(&coord.machine_id, &coord.id).await else {
+            forget_box();
+            return None;
+        };
         let ready = match &coord.agent {
             Some(a) => {
                 let window = if question_missing { Duration::ZERO } else { idle_for };
@@ -997,20 +1004,21 @@ impl Host {
                 let ready = idle_long_enough(&a.activity, a.since_ms, now_ms, window);
                 if !ready && matches!(a.activity, AgentActivity::Idle | AgentActivity::Started) {
                     let waited = Duration::from_millis(now_ms.saturating_sub(a.since_ms));
-                    self.nudge_wait(window.saturating_sub(waited));
+                    forget_box();
+                    return Some(window.saturating_sub(waited));
                 }
                 ready
             }
             None => {
-                let h = hex::encode(sha2::Sha256::digest(lines.join("\n").as_bytes()));
+                let h = hex::encode(sha2::Sha256::digest(screen.lines.join("\n").as_bytes()));
                 let mut seen = self.nudge_screens.lock().unwrap();
                 // 화면이 바뀌는 동안은 다시 깨우지 않는다(작업 중일 수 있다): 주기 tick·사건으로 본다
                 steady_observation(&mut seen, &coord.id, &h, Instant::now(), idle_for, false)
             }
         };
-        if !ready || !prompt_empty(&lines) {
+        if !ready || !nudge_prompt_empty(&screen, coord.agent.as_deref()) {
             forget_box();
-            return;
+            return None;
         }
         // 입력창이 이번 검사와 nudge_quiet_secs 전 검사에서 모두 비어 보여야 보낸다. 사람이 치는 글과 섞이지 않게 한다
         // (herdr-projects steps.rs `box_quiet`: 마지막 키 입력 시각을 알 수 없어 입력창으로 본다).
@@ -1021,30 +1029,44 @@ impl Host {
                 // 첫 관측이면 quiet 전체, 이미 본 것이면 남은 만큼 뒤에 다시 본다
                 let left = boxes.get(project).map_or(quiet, |(_, since)| quiet.saturating_sub(since.elapsed()));
                 drop(boxes);
-                self.nudge_wait(left);
-                return;
+                return Some(left);
             }
         }
-        let mut display = unseen.clone();
+        // 화면을 기다린 사이 hook이 알렸거나 사용자가 목록을 읽었을 수 있다.
+        let delivery = self.nudge_delivery_lock(project);
+        let _delivery = delivery.lock().await;
+        let (current, current_hash) = self.unseen_open(project);
+        if current_hash != hash {
+            return Some(Duration::ZERO);
+        }
+        let mut display = self.fresh_nudges(project, current);
+        if display.is_empty() {
+            forget_box();
+            return None;
+        }
         if let Err(e) = self.db.inbox_display_ids(&mut display) {
             tracing::error!("inbox 알림 별칭 조회 실패: {e:#}");
-            return;
+            return None;
         }
         let text = nudge_text(project, &display);
-        match self.send_prompt(&coord.machine_id, &coord.id, &text).await {
-            Ok(accepted) => {
-                self.remember_told(project, &unseen);
-                // 받았는지 몰라도 같은 묶음은 다시 보내지 않는다(§8.5 a)
-                aaa_common::diagnostic::ignored(
-                    self.db.set_meta(&key, &hash),
-                    "보조 작업 실패 뒤 기존 처리를 계속한다",
-                );
-                forget_box();
-                let state = if accepted { "accepted" } else { "unknown" };
-                self.flow_project(project, "nudge_sent", None, format!("{state}: {text}"));
+        let sent = self.send_nudge(&coord.machine_id, &coord.id, &text).await;
+        forget_box();
+        let state = match sent {
+            Ok(true) => "accepted",
+            Ok(false) => "unknown",
+            Err(e) if e.typed => {
+                tracing::info!(%project, "nudge 입력 결과 미확인: {}", e.msg);
+                "unknown"
             }
-            Err(e) => tracing::info!(%project, "nudge 보류: {e}"),
-        }
+            Err(e) => {
+                tracing::info!(%project, "nudge 보류: {}", e.msg);
+                return None;
+            }
+        };
+        self.remember_told(project, &display);
+        aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "알림 묶음 저장 실패");
+        self.flow_project(project, "nudge_sent", None, format!("{state}: {text}"));
+        None
     }
 }
 
