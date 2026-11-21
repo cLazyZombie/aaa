@@ -614,6 +614,12 @@ export function TermView({
   }, [active, pane.id]);
 
   function attachTerminal() {
+    const traceAttach = new URLSearchParams(location.search).get("trace") === "attach";
+    let attachStarted = traceAttach ? performance.now() : 0;
+    let attachAttempt = 0;
+    const attachTiming = (stage: string, detail?: Record<string, unknown>) => {
+      if (traceAttach) console.debug("터미널 붙기", { pane: pane.id, attempt: attachAttempt, ms: performance.now() - attachStarted, stage, ...detail });
+    };
     // 모든 기기가 설정한 크기(기본 13px)로 연다. 좁은 화면만 11px로 줄이던 것은 없앴다(herdr-web-ui와 같다)
     const fontSize = baseFontRef.current;
     // xterm은 처음 연 글꼴로 cell 크기를 잰다. 넣은 WOFF2가 아직 안 받아졌으면 그것을 뺀 목록으로 열고,
@@ -676,6 +682,7 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
+    attachTiming("xterm-open");
     let snapshotPaintPending = false;
     // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
     // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
@@ -1342,6 +1349,7 @@ export function TermView({
       if (!el) return;
       if (snapshotPaintPending) {
         snapshotPaintPending = false;
+        attachTiming("snapshot-render");
         // RIS 뒤 첫 그리기에서 줄 높이를 동기화해 첫 픽셀 휠이 0 높이로 버려지지 않게 한다.
         viewportOf?.syncScrollArea(true);
       }
@@ -1434,12 +1442,14 @@ export function TermView({
       }
       pageWait = false;
       const epoch = ++connectEpoch;
+      if (attachAttempt++ > 0 && traceAttach) attachStarted = performance.now();
       receive?.close();
       setLink("connecting");
       // flow=ack: 이 화면은 출력 ACK를 보낸다(herdr-web-ui attach flow_control "ack"). 없으면 host는 보내기 줄로만 잰다
       // fg·bg: 이 화면의 색. host는 그 pane의 agent가 받은 뒤에 연다(그 뒤 프로그램이 묻는 색에 이 색으로 답한다)
       const colors = new URLSearchParams(termColors()).toString();
       let ws: WebSocket;
+      attachTiming("worker-start");
       const receiver = new TerminalReceiver((item) => {
         if (wsRef.current !== ws || !alive) return;
         if ("binary" in item) {
@@ -1453,6 +1463,7 @@ export function TermView({
         switch (msg.t) {
           case "snapshot": {
             trace("snapshot");
+            attachTiming("snapshot-decoded", { stream: msg.stream, bytes: item.payload!.length });
             // 새 snapshot은 버퍼를 새로 쓴다: 기다리던 앞 기록 답은 버린다(버퍼가 바뀌었다)
             historyWait = null;
             // 지우기와 크기는 흐름 순서대로(herdr-web-ui PaneTerminal 1755~1760줄 「Reset in stream order」): xterm write는
@@ -1476,13 +1487,15 @@ export function TermView({
               term.write(replay, () => {
                 ack();
                 if (!alive) return;
+                attachTiming("snapshot-ack", { stream: msg.stream });
                 snapshotPaintPending = true;
                 term.refresh(0, term.rows - 1);
               });
             });
+            if (!msg.readonly && readonlyRef.current) attachTiming("input-ready");
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
-            // WebSocket open은 전송로만 열렸다는 뜻이다. host의 첫 화면·권한을 받은 뒤 입력 준비가 된다.
+            // 첫 snapshot이 오면 화면 연결은 열렸다. 입력 준비가 늦으면 뒤의 readonly 갱신이 입력을 연다.
             connectedBefore.current = true;
             setLink("open");
             setError(null);
@@ -1516,11 +1529,13 @@ export function TermView({
             break;
           }
           case "readonly":
+            if (!msg.readonly && readonlyRef.current) attachTiming("input-ready");
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
             setReason(msg.reason);
             break;
           case "front":
+            attachTiming("front", { front: msg.id });
             setMe(msg.id);
             // 옛 host(1.44 이하)는 이 칸이 없다: 단추를 숨긴다
             setSteerKnown(msg.steer_queued === true);
@@ -1581,18 +1596,32 @@ export function TermView({
         ws?.close(4002, "terminal payload rejected");
       }, createTerminalWorker, gzipSupport === true);
       receive = receiver;
+      void receiver.ready.then((supported) => {
+        if (epoch !== connectEpoch) return;
+        gzipSupport = supported;
+        attachTiming("worker-ready", { gzip: supported });
+      });
       // online/pageshow는 기존처럼 그 사건 안에서 새 WS를 연다. 지원 확인은 같은 브라우저에서 재사용한다.
       const gzip = gzipSupport === undefined ? await receiver.ready : gzipSupport;
-      void receiver.ready.then((supported) => { if (epoch === connectEpoch) gzipSupport = supported; });
       if (!alive || epoch !== connectEpoch) { receiver.close(); return; }
-      ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack&${colors}${gzip ? "&compression=gzip.v1" : ""}`));
+      attachTiming("ws-request", { gzip });
+      const query = `flow=ack&${colors}${gzip ? "&compression=gzip.v1" : ""}${traceAttach ? "&trace=attach" : ""}`;
+      ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?${query}`));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       ws.onopen = () => {
+        attachTiming("ws-open");
         delay = 500;
       };
-      ws.onmessage = (event) => receiver.push(event.data as string | ArrayBuffer);
+      ws.onmessage = (event) => {
+        const data = event.data as string | ArrayBuffer;
+        if (traceAttach && typeof data === "string" && data.startsWith('{"t":"snapshot",')) {
+          attachTiming("snapshot-received", { wireBytes: data.length });
+        }
+        receiver.push(data);
+      };
       ws.onclose = (event) => {
+        attachTiming("ws-close", { code: event.code });
         receiver.close();
         const wasCurrent = wsRef.current === ws;
         if (wasCurrent) wsRef.current = null;

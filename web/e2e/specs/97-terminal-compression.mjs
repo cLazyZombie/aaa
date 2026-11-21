@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { performance } from "node:perf_hooks";
 import { RateLimitedWire } from "../lib/rate-limited-wire.mjs";
-import { specCleanup, aaa, root, base, step, browser, webkit, pairPage, inList, waitOutput, domIs, inTime, screenText, shot, termDiag } from "../lib/harness.mjs";
+import { specCleanup, aaa, root, base, step, browser, webkit, procs, pairPage, inList, waitOutput, domIs, inTime, screenText, shot, termDiag } from "../lib/harness.mjs";
 
 function observeWorker() {
   window.__inflateHeld = false;
@@ -287,6 +287,99 @@ async function networkSample(sample) {
   console.log(`터미널 codec/ACK 경계 ${JSON.stringify(result)}`);
 }
 
+async function colorBeforeInput(engine) {
+  const name = "color-before-input";
+  const code = String.raw`
+    process.stdin.setRawMode(true);
+    process.stdout.write("COLOR-SCREEN>\r\n");
+    let replies = "";
+    process.stdin.on("data", bytes => {
+      const text = bytes.toString();
+      if (text === "k") { process.stdout.write("\x1b]10;?\x07\x1b]11;?\x07"); return; }
+      replies += text;
+      for (const part of replies.matchAll(/\x1b\](10|11);rgb:([0-9a-f/]+)\x1b\\/g)) {
+        process.stdout.write("COLOR-" + part[1] + ":" + part[2] + "\r\n");
+      }
+      replies = replies.replace(/\x1b\](10|11);rgb:[0-9a-f/]+\x1b\\/g, "");
+    });
+  `;
+  aaa("tab", "create", "--label", name, "--machine", "labA", "--cols", "100", "--", process.execPath, "-e", code);
+  const pane = aaa("pane", "get", name);
+  const agent = procs.get("agent");
+  const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+    hash: "#tasks",
+    setup: ctx => ctx.addInitScript(id => {
+      const NativeSocket = window.WebSocket;
+      window.WebSocket = class extends NativeSocket {
+        constructor(url, ...args) {
+          const target = new URL(url);
+          const selected = target.pathname.endsWith("/" + id + "/ws");
+          if (selected) {
+            target.searchParams.set("fg", "123456");
+            target.searchParams.set("bg", "abcdef");
+          }
+          super(selected ? target : url, ...args);
+          if (selected) {
+            window.__colorSocket = this;
+            this.addEventListener("open", () => { document.documentElement.dataset.colorSocketOpen = "1"; }, { once: true });
+          }
+        }
+      };
+    }, pane.id),
+  });
+  try {
+    await waitOutput(name, "COLOR-SCREEN>");
+    process.kill(agent.pid, "SIGSTOP");
+    try {
+      await inList(page, "pane-" + name);
+      await domIs(page, "선택한 pane의 WebSocket open", () => document.documentElement.dataset.colorSocketOpen === "1", null, 4000);
+      await domIs(page, "agent가 멈춘 중 첫 화면과 입력 준비 표시", () => {
+        const term = document.querySelector('[data-testid="terminal"]');
+        return term?.dataset.paneName === "color-before-input" && term.dataset.readonly === "true"
+          && term.querySelector(".xterm-rows")?.textContent.includes("COLOR-SCREEN>")
+          && document.querySelector('[data-testid="readonly-banner"]')?.textContent === "터미널 입력 준비 중";
+      }, null, 4000);
+      const replies = await inTime(page.evaluate(() => new Promise(resolve => {
+        // 화면은 보인다. 이전 클라이언트나 전송 경합의 패킷도 agent에 먼저 가면 안 된다.
+        const ws = window.__colorSocket;
+        const replies = [];
+        ws.addEventListener("message", function reply(event) {
+          if (typeof event.data !== "string") return;
+          const msg = JSON.parse(event.data);
+          if (msg.t === "error" || (msg.t === "submitted" && msg.id === 57)) replies.push(msg);
+          if (replies.length === 2) {
+            ws.removeEventListener("message", reply);
+            resolve(replies);
+          }
+        });
+        ws.send(JSON.stringify({ t: "resize", cols: 20, rows: 10 }));
+        ws.send(JSON.stringify({ t: "submit", id: 57, data: "EARLY", steer: false }));
+      })), 4000, "일찍 온 크기·입력의 응답");
+      assert.deepEqual(replies.map(msg => [msg.t, msg.ok ?? msg.code]), [["error", "unavailable"], ["submitted", false]]);
+      assert.equal(aaa("pane", "get", name).cols, 100);
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        socket: window.__colorSocket?.readyState,
+        readonly: document.querySelector('[data-testid="terminal"]')?.dataset.readonly,
+        banner: document.querySelector('[data-testid="readonly-banner"]')?.textContent,
+        wire: window.__aaaTermLog,
+      }));
+      throw new Error(`첫 표시 상태 ${JSON.stringify(state)}`, { cause: error });
+    } finally {
+      process.kill(agent.pid, "SIGCONT");
+    }
+    await domIs(page, "색을 보낸 뒤 입력 가능", () => document.querySelector('[data-testid="terminal"]')?.dataset.readonly === "false");
+    await page.getByTestId("terminal").locator("textarea").focus();
+    await page.keyboard.press("k");
+    await waitOutput(name, "COLOR-10:1212/3434/5656", "visible", 4000);
+    await waitOutput(name, "COLOR-11:abab/cdcd/efef", "visible", 4000);
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.context().close();
+    aaa("pane", "close", name);
+  }
+}
+
 export default async function ({ page }) {
   await step("압축 실험실 준비: Worker 정책·실제 PTY corpus", async () => {
     const response = await page.request.get(base);
@@ -311,6 +404,8 @@ export default async function ({ page }) {
      keys += data.toString(); process.stdout.write("KEY:"+keys+"\\r\\n"); });`);
   }, { always: true });
   try {
+  await step("색 대기 중 첫 표시와 입력 순서: chromium", () => colorBeforeInput(browser));
+  await step("색 대기 중 첫 표시와 입력 순서: webkit", async () => colorBeforeInput(await safariBrowser()));
   await step("압축 Worker 로드: chromium 1280 access", () => workerLoad(browser, "chromium", 1280, "access"));
   await step("압축 Worker 로드: chromium 1280 constructor", () => workerLoad(browser, "chromium", 1280, "constructor"));
   await step("압축 Worker 로드: chromium 1280 runtime", () => workerLoad(browser, "chromium", 1280, "runtime"));
