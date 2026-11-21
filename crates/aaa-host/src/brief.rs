@@ -103,11 +103,18 @@ fn state_name(a: Option<AgentActivity>) -> &'static str {
 
 /// herdr-projects brief.rs `step`의 판정(부수 효과 없이). settle은 부르는 쪽이 잰다.
 pub(crate) fn step(l: &Look) -> Step {
+    if l.kind == "agy" && l.attempts > 0 {
+        return Step::GiveUp("agy의 첫 입력 접수를 확인하지 못했다".into());
+    }
     if l.activity == Some(AgentActivity::Question) {
         return wait("확인창에 답을 기다린다", true);
     }
     // 상태를 모르는 harness는 화면이 멈추기만 기다린다(모듈 설명)
-    let ready = l.activity.is_none_or(|a| matches!(a, AgentActivity::Started | AgentActivity::Idle));
+    let ready = if l.kind == "agy" {
+        l.activity == Some(AgentActivity::Idle)
+    } else {
+        l.activity.is_none_or(|a| matches!(a, AgentActivity::Started | AgentActivity::Idle))
+    };
     if l.attempts == 0 && !ready {
         return wait(format!("agent가 {}", state_name(l.activity)), true);
     }
@@ -150,7 +157,7 @@ pub(crate) fn step(l: &Look) -> Step {
                 );
             }
         }
-    } else if known && in_box.as_deref() != Some("") {
+    } else if (known || l.kind == "agy") && in_box.as_deref() != Some("") {
         let why = if in_box.is_none() {
             "입력창이 화면에 없다(메뉴나 시작 화면?)"
         } else {
@@ -178,6 +185,51 @@ enum Done {
 }
 
 impl Host {
+    /// 같은 pane의 PreInvocation이 정확한 안내 줄을 받았다는 첫 증거.
+    pub(crate) fn agy_brief_receipt(&self, mid: &str, ev: &aaa_proto::HarnessEvent) {
+        let current = self.inner.lock().unwrap().panes.get(&ev.session).is_some_and(|p| {
+            p.machine_id == mid
+                && p.info.state.is_running()
+                && ev.at_ms >= p.info.started_at_ms
+                && ev.harness_session.is_some()
+                && p.agent.as_ref().is_some_and(|a| a.harness == "agy" && a.harness_session == ev.harness_session)
+        });
+        if !current {
+            return;
+        }
+        let Some(rec) = self.thread_of_pane(&ev.session).filter(|rec| {
+            rec.status == ThreadStatus::Open
+                && rec.brief != BriefState::Delivered
+                && rec.brief_attempts > 0
+                && rec.launch.as_ref().is_some_and(|l| l.harness == "agy")
+        }) else {
+            return;
+        };
+        let line =
+            rec.brief_line.unwrap_or_else(|| format!(".aaa/{}-{}/brief.md를 읽고 그대로 하라.", rec.project, rec.id));
+        if ev.message.as_deref() != Some(&crate::prompt_receipt::receipt_hash(&line)) {
+            return;
+        }
+        let mut delivered = false;
+        if let Ok(rec) = self.update_rec(&rec.project, &rec.id, |r| {
+            if r.pane.as_deref() == Some(&ev.session)
+                && r.status == ThreadStatus::Open
+                && r.brief != BriefState::Delivered
+                && r.brief_attempts > 0
+            {
+                r.brief = BriefState::Delivered;
+                r.delivered_at_ms = Some(aaa_common::util::now_ms());
+                delivered = true;
+            }
+        }) && delivered
+        {
+            let evidence = rec.work_dir.as_ref().map(|w| format!("{w}/brief.md"));
+            self.flow(&rec, "brief_delivered", evidence, "agy PreInvocation이 안내를 받았다");
+            self.thread_changed(&ev.session);
+            self.tick_wake.notify_one();
+        }
+    }
+
     /// 배경 task: brief를 받거나, 시도가 다 되거나, 세션·thread가 끝날 때까지 본다. thread마다 하나만 돈다.
     pub(crate) fn spawn_brief(self: &Arc<Self>, project: &str, id: &str) {
         let key = format!("{project}/{id}");
@@ -243,6 +295,9 @@ impl Host {
         let rec = self.load(project, id)?;
         match &out {
             Ok(Done::Delivered(how)) => {
+                if rec.brief == BriefState::Delivered {
+                    return out;
+                }
                 // 보고가 받음 확인보다 먼저 올 수 있다. bump_brief가 보존한 전송 전 기준은 바꾸지 않는다.
                 let rec = self.update_rec(project, id, |r| {
                     r.brief = BriefState::Delivered;
@@ -252,8 +307,14 @@ impl Host {
                 self.flow(&rec, "brief_delivered", evidence, format!("{how}(시도 {}번)", rec.brief_attempts));
             }
             Ok(Done::Stuck(why)) if rec.brief == BriefState::Pending => {
-                let rec = self.update_rec(project, id, |r| r.brief = BriefState::Unknown)?;
-                self.flow(&rec, "brief_unknown", None, why.clone());
+                let rec = self.update_rec(project, id, |r| {
+                    if r.brief == BriefState::Pending {
+                        r.brief = BriefState::Unknown;
+                    }
+                })?;
+                if rec.brief == BriefState::Unknown {
+                    self.flow(&rec, "brief_unknown", None, why.clone());
+                }
             }
             _ => {}
         }
@@ -342,7 +403,24 @@ impl Host {
                 // 치기 전에 센다: 도중에 멈춰도 기록은 「입력창에 글이 있을 수 있다」를 말한다
                 self.bump_brief(project, id, 1)?;
                 *seen = None;
+                let mut agy_receipt = (kind == "agy").then(|| self.thread_events.subscribe());
+                let deadline = Instant::now() + Duration::from_millis(self.cfg.projects.accept_wait_ms);
                 match self.submit_checked(&mid, &pane, Some(&line), None).await {
+                    Ok(_) if let Some(events) = agy_receipt.as_mut() => {
+                        // Enter 뒤 작업 중 표지는 접수와 순서가 다를 수 있다. 같은 입력의 PreInvocation을 기다린다.
+                        loop {
+                            if self.load(project, id)?.brief == BriefState::Delivered {
+                                return Ok(Done::Delivered("agy PreInvocation이 안내를 받았다"));
+                            }
+                            if !matches!(
+                                tokio::time::timeout_at(deadline, events.recv()).await,
+                                Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)))
+                            ) {
+                                break;
+                            }
+                        }
+                        Ok(Done::Stuck("agy의 첫 입력 접수를 확인하지 못했다".into()))
+                    }
                     Ok(true) => Ok(Done::Delivered("안내 줄을 보냈다")),
                     Ok(false) => Ok(Done::Not("받았다는 사건·화면 변화가 없었다. 다시 보내기 전에 화면을 본다".into())),
                     Err(e) if !e.typed => {
@@ -430,6 +508,18 @@ mod tests {
 
     const IDLE: Option<AgentActivity> = Some(AgentActivity::Idle);
     const LINE: &str = ".aaa/demo-t-0001/brief.md를 읽고 그대로 하라.";
+
+    #[test]
+    fn agy_brief_keeps_an_unconfirmed_attempt_even_if_the_line_appears_on_screen() {
+        for (screen, activity) in [(LINE, IDLE), ("", IDLE), ("", Some(AgentActivity::Question))] {
+            let look = Look { kind: "agy", ..look(screen, 1, activity, Sender::Ticker) };
+            assert!(matches!(step(&look), Step::GiveUp(_)));
+        }
+        for activity in [None, Some(AgentActivity::Started), IDLE] {
+            let look = Look { kind: "agy", ..look("", 0, activity, Sender::Ticker) };
+            assert!(matches!(step(&look), Step::Wait { .. }));
+        }
+    }
 
     #[test]
     fn first_try_waits_for_a_ready_agent_and_an_empty_box() {

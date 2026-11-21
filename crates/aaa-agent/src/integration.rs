@@ -197,6 +197,30 @@ pub fn configure(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<PathBuf>
     Ok(backups)
 }
 
+/// agy의 전역 hook에 aaa가 소유한 이름 하나만 더하거나 뺀다.
+pub fn configure_agy(home: &Path, exe: &Path, remove: bool) -> Result<Vec<PathBuf>> {
+    let path = home.join(".gemini/config/hooks.json");
+    let before = read(&path)?;
+    let mut json: Value =
+        serde_json::from_str(before.as_deref().unwrap_or("{}")).context("agy hooks.json을 읽지 못했다")?;
+    let groups = json.as_object_mut().context("agy hooks.json은 object여야 한다")?;
+    let name = crate::agy::HOOK_GROUP;
+    let expected = crate::agy::hook_definition(exe);
+    if let Some(existing) = groups.get(name) {
+        ensure!(existing == &expected, "agy hooks.json에 현재 실행 파일과 다른 {name} hook이 있다");
+        if !remove {
+            return Ok(Vec::new());
+        }
+        groups.remove(name);
+    } else if remove {
+        return Ok(Vec::new());
+    } else {
+        groups.insert(name.into(), expected);
+    }
+    let json = format!("{}\n", serde_json::to_string_pretty(&json)?);
+    Ok(replace(&path, &before, &json)?.into_iter().collect())
+}
+
 fn private_new(path: &Path) -> std::io::Result<fs::File> {
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);

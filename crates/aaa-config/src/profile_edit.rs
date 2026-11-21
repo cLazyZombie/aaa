@@ -38,6 +38,7 @@ pub fn effort_values(harness: &str) -> Option<&'static [&'static str]> {
     match harness {
         "claude" => Some(&["low", "medium", "high", "xhigh", "max"]),
         "codex" => Some(&["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]),
+        "agy" => Some(&["low", "medium", "high", "xhigh", "max"]),
         _ => None,
     }
 }
@@ -50,14 +51,65 @@ pub fn is_model_name(value: &str) -> bool {
         && value.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:@+[]".contains(c))
 }
 
+/// agy는 목록의 공백과 괄호가 포함된 이름도 그대로 argv 원소로 받는다.
+pub fn agy_model_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value == value.trim()
+        && !value.starts_with('-')
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || " ._-/:@+[]()".contains(c))
+}
+
+/// 사람이 해당 머신에 설치한 공식 CLI 하나를 직접 실행한다.
+pub fn validate_agy_command(command: &[String]) -> Result<(), String> {
+    match command {
+        [exe]
+            if Path::new(exe).is_absolute()
+                && Path::new(exe)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n == "agy" || (cfg!(windows) && n.eq_ignore_ascii_case("agy.exe"))) =>
+        {
+            Ok(())
+        }
+        _ => Err("agy는 agent.toml [harnesses.agy] command에 공식 실행 파일의 절대 경로 하나가 필요하다".into()),
+    }
+}
+
+pub fn validate_agy_policy(p: &Profile, yolo: bool) -> Result<(), String> {
+    if yolo {
+        return Err("유효 yolo가 켜져 있어 agy를 시작할 수 없다".into());
+    }
+    if !p.args.is_empty() {
+        return Err("agy profile의 args는 비워야 한다. sandbox·모델·대화 인자는 aaa가 구성한다".into());
+    }
+    if !p.env.is_empty() {
+        return Err("agy의 개인 로그인 환경을 profile이나 머신 env로 덮어쓸 수 없다".into());
+    }
+    if !agy_model_name(&p.model) {
+        return Err("agy models에 나온 모델 이름을 지정해야 한다".into());
+    }
+    if !p.effort.is_empty() && !effort_values("agy").unwrap_or_default().contains(&p.effort.as_str()) {
+        return Err("agy models에 나온 effort를 지정해야 한다".into());
+    }
+    Ok(())
+}
+
 /// profile 하나가 맞는가: 이름, harness, model, effort(그 harness가 받는 값)
 pub fn validate_profile(name: &str, p: &Profile) -> Result<(), String> {
     validate_name(name)?;
     match p.harness.as_str() {
         "claude" | "codex" | "shell" => {}
+        "agy" => {
+            validate_agy_policy(p, false)?;
+            if !p.command.is_empty() {
+                return Err("agy 실행 경로는 머신의 agent.toml [harnesses.agy] command에 지정한다".into());
+            }
+            return Ok(());
+        }
         "custom" if !p.command.is_empty() => {}
         "custom" => return Err("custom harness는 command(실행할 argv)가 있어야 한다".into()),
-        other => return Err(format!("harness는 claude·codex·shell·custom 중 하나다: {other:?}")),
+        other => return Err(format!("harness는 claude·codex·agy·shell·custom 중 하나다: {other:?}")),
     }
     if !p.model.is_empty() {
         if !matches!(p.harness.as_str(), "claude" | "codex") {
@@ -83,12 +135,15 @@ pub fn validate_profile(name: &str, p: &Profile) -> Result<(), String> {
 pub fn launch_flags(p: &Profile) -> Vec<String> {
     let mut flags = Vec::new();
     match p.harness.as_str() {
-        "claude" => {
+        "claude" | "agy" => {
             if !p.model.is_empty() {
                 flags.extend(["--model".to_string(), p.model.clone()]);
             }
             if !p.effort.is_empty() {
                 flags.extend(["--effort".to_string(), p.effort.clone()]);
+            }
+            if p.harness == "agy" {
+                flags.push("--sandbox".into());
             }
         }
         "codex" => {
@@ -220,7 +275,7 @@ pub fn apply_in(text: &str, change: &ProfileChange) -> Result<(String, String), 
                     // 다른 harness: 받지 못하는 effort는 버린다
                     p.effort.clear();
                 }
-                if *h != p.harness && model.is_none() && !matches!(h.as_str(), "claude" | "codex") {
+                if *h != p.harness && model.is_none() && !matches!(h.as_str(), "claude" | "codex" | "agy") {
                     p.model.clear();
                 }
                 p.harness = h.clone();
@@ -379,6 +434,27 @@ mod tests {
         assert!(validate_profile("x", &p("shell", "", "high")).unwrap_err().contains("effort 플래그가 없다"));
         assert!(validate_profile("x", &p("claude", "--yolo", "")).unwrap_err().contains("model 이름"));
         assert!(validate_profile("x", &p("gemini", "", "")).is_err());
+    }
+
+    #[test]
+    fn agy_profile_requires_a_model_and_refuses_yolo_and_profile_overrides() {
+        let profile = Profile {
+            harness: "agy".into(),
+            model: "Gemini 4 Argon (Medium)".into(),
+            effort: "medium".into(),
+            ..Profile::default()
+        };
+        assert!(validate_profile("gemini", &profile).is_ok());
+        assert!(validate_agy_policy(&profile, true).unwrap_err().contains("yolo"));
+        for changed in [
+            Profile { model: String::new(), ..profile.clone() },
+            Profile { effort: "ultra".into(), ..profile.clone() },
+            Profile { args: vec!["--dangerously-skip-permissions".into()], ..profile.clone() },
+            Profile { env: [("MODEL_PROVIDER".into(), "other".into())].into(), ..profile.clone() },
+            Profile { command: vec!["agy".into()], ..profile.clone() },
+        ] {
+            assert!(validate_profile("gemini", &changed).is_err());
+        }
     }
 
     #[test]

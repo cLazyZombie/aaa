@@ -7,6 +7,38 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub const AGY_QUOTA_FEATURE: &str = "agy_quota.v1";
+
+/// agy 상태줄이 알린 버킷. 비율과 절대량을 서로 환산하지 않는다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct AgyQuotaBucket {
+    pub id: String,
+    pub remaining_fraction: Option<f64>,
+    pub remaining_amount: Option<f64>,
+    pub resets_at: Option<String>,
+    pub observed_at: Option<String>,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgyQuotaSample {
+    pub session: String,
+    pub at_ms: u64,
+    pub plan: Option<String>,
+    pub buckets: Vec<AgyQuotaBucket>,
+}
+
+/// 같은 구독을 쓰는 실행 머신의 마지막 표본이다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct AgySubscriptionUsage {
+    pub subscription: String,
+    pub machine: String,
+    pub plan: Option<String>,
+    pub buckets: Vec<AgyQuotaBucket>,
+    pub received_at: String,
+    pub stale: bool,
+}
+
 /// GET /api/v1/usage가 CLI 로그인으로 한도를 읽는 구독. 참고(claude·codex·cursor·copilot·grok·antigravity·opencode) 가운데
 /// Claude·Codex만 둔다(사용자 요청 10-17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
@@ -99,4 +131,7 @@ pub struct ProviderUsage {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 pub struct UsageReport {
     pub providers: Vec<ProviderUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agy: Option<Vec<AgySubscriptionUsage>>,
 }

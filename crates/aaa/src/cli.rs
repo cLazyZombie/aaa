@@ -461,7 +461,10 @@ enum Cmd {
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
     Hook {
-        #[arg(long, value_parser = ["claude", "codex", "quota"])]
+        #[arg(long, value_parser = [
+            "claude", "codex", "quota", "agy-status", "agy-session-start", "agy-pre-invocation",
+            "agy-post-tool-use", "agy-stop"
+        ])]
         agent: String,
         payload: Option<String>,
     },
@@ -1843,12 +1846,12 @@ struct DoctorArgs {
 enum IntegrationCmd {
     /// 전역 hook을 더하고 hooks 기능을 켠다
     Install {
-        #[arg(value_parser = ["codex"])]
+        #[arg(value_parser = ["codex", "agy"])]
         target: String,
     },
     /// aaa hook만 제거한다(다른 도구도 쓰는 hooks 기능은 켜 둔다)
     Uninstall {
-        #[arg(value_parser = ["codex"])]
+        #[arg(value_parser = ["codex", "agy"])]
         target: String,
     },
 }
@@ -3031,8 +3034,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             if activity.trim().is_empty() {
                 anyhow::bail!("--activity가 비었다");
             }
-            let v = serde_json::json!({ "percent": percent, "activity": activity });
-            runtime()?.block_on(aaa_agent::hooks::send("report", v))?;
+            runtime()?.block_on(aaa_agent::hooks::report(percent, &activity))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Search { query, project, kind, after, limit } => front(
@@ -3233,15 +3235,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Doctor(a) => doctor_cmd(a, json),
         Cmd::Integration { cmd } => {
             let remove = matches!(cmd, IntegrationCmd::Uninstall { .. });
-            let backups =
-                crate::integration::configure(crate::integration::codex_home(), &std::env::current_exe()?, remove)?;
+            let target = match cmd {
+                IntegrationCmd::Install { target } | IntegrationCmd::Uninstall { target } => target,
+            };
+            let exe = std::env::current_exe()?;
+            let backups = if target == "agy" {
+                crate::integration::configure_agy(&aaa_config::paths::home(), &exe, remove)?
+            } else {
+                crate::integration::configure(crate::integration::codex_home(), &exe, remove)?
+            };
             if json {
                 println!("{}", serde_json::json!({"removed":remove,"backups":backups}));
             } else {
-                println!(
-                    "Codex 전역 연동을 {}했다. 새 hook은 Codex에서 신뢰해야 한다.",
-                    if remove { "제거" } else { "설치" }
-                );
+                let action = if remove { "제거" } else { "설치" };
+                if target == "agy" {
+                    println!("agy 전역 연동을 {action}했다.");
+                } else {
+                    println!("Codex 전역 연동을 {action}했다. 새 hook은 Codex에서 신뢰해야 한다.");
+                }
                 for path in backups {
                     println!("백업: {}", path.display());
                 }
@@ -3896,6 +3907,7 @@ fn agent_controlled(
             exe: std::env::current_exe()?,
             profiles: cfg.profiles.clone(),
             harnesses: cfg.harnesses.clone(),
+            agy: cfg.agy.clone(),
             config_dir: Some(aaa_config::paths::config_dir()),
         };
         aaa_agent::threads::protect_recorded_worktrees(&threads).await?;

@@ -16,6 +16,7 @@ import {
   SAFETY_CHOICES,
   SAFETY_WORDS,
   WEB_HARNESSES,
+  AGY_LABEL,
   absolutePath,
   allowText,
   bulkToggle,
@@ -281,7 +282,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
               <li key={p.name} data-name={p.name}>
                 <span className="admin-name">{p.name}</span>
                 <span className="op-muted">
-                  {p.harness}
+                  {p.harness === "agy" ? AGY_LABEL : p.harness}
                   {p.builtin ? " · 기본" : ""}
                   {p.description ? ` — ${p.description}` : ""}
                 </span>
@@ -617,15 +618,15 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
             <select name="harness" value={d.harness} onChange={put("harness")} disabled={busy} data-testid="profile-harness">
               {WEB_HARNESSES.map((h) => (
                 <option key={h} value={h}>
-                  {h}
+                  {h === "agy" ? AGY_LABEL : h}
                 </option>
               ))}
             </select>
           </label>
           {hasModel(d.harness) && (
             <label className="op-field">
-              <span>model(비우면 harness 기본)</span>
-              <input name="model" value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" list="profile-model-choices" />
+              <span>{d.harness === "agy" ? "모델 ID" : "model(비우면 harness 기본)"}</span>
+              <input name="model" value={d.model} onChange={put("model")} disabled={busy} required={d.harness === "agy"} data-testid="profile-model" list="profile-model-choices" />
               <datalist id="profile-model-choices">
                 {choices.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -652,10 +653,10 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
             <span>설명</span>
             <input name="description" value={d.description} onChange={put("description")} disabled={busy} />
           </label>
-          <label className="op-field">
+          {d.harness !== "agy" && <label className="op-field">
             <span>인자(줄마다 하나)</span>
             <textarea name="args" rows={3} value={d.args} onChange={put("args")} disabled={busy} className="mono" data-testid="profile-args" />
-          </label>
+          </label>}
           {!nameOk && d.name !== "" && <p className="op-warn">이름은 영문·숫자·. _ -로 40자까지 쓴다(-·.로 시작하지 않는다).</p>}
           {error && (
             <p className="op-warn" role="alert">

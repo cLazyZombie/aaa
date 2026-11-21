@@ -163,6 +163,7 @@ mod tests {
                     window(W::Week, 40.0, None, Some(NOW + 9 * hour)),
                 ],
             )],
+            agy: None,
         };
         assert_eq!(limited_until("claude", "opus", &r, NOW), Some(NOW + hour));
         // 다시 차오르는 때가 지나면 오래된 숫자라도 한도가 아니다
@@ -180,6 +181,7 @@ mod tests {
                 "a",
                 vec![window(W::Session, 99.9, None, Some(NOW + 1)), window(W::Week, 100.0, None, None)],
             )],
+            agy: None,
         };
         assert_eq!(limited_until("codex", "gpt-5", &r, NOW), None);
     }
@@ -192,6 +194,7 @@ mod tests {
                 "a",
                 vec![window(W::Session, 100.0, None, Some(NOW + 10)), window(W::Week, 100.0, None, Some(NOW + 20))],
             )],
+            agy: None,
         };
         assert_eq!(limited_until("claude", "sonnet", &r, NOW), Some(NOW + 20));
     }
@@ -200,6 +203,7 @@ mod tests {
     fn scoped_window_only_for_that_model() {
         let r = UsageReport {
             providers: vec![account(P::Claude, "a", vec![window(W::Week, 100.0, Some("Sonnet"), Some(NOW + 10))])],
+            agy: None,
         };
         assert_eq!(limited_until("claude", "claude-sonnet-5-5", &r, NOW), Some(NOW + 10));
         assert_eq!(limited_until("claude", "opus", &r, NOW), None);
@@ -218,10 +222,10 @@ mod tests {
         let full = || vec![window(W::Session, 100.0, None, Some(NOW + 10))];
         let mut stale = account(P::Claude, "b", full());
         stale.problem = Some(UsageProblem::Failed);
-        let r = UsageReport { providers: vec![account(P::Claude, "a", full()), stale] };
+        let r = UsageReport { providers: vec![account(P::Claude, "a", full()), stale], agy: None };
         assert_eq!(limited_until("claude", "opus", &r, NOW), None);
         // 한 계정의 오래된(읽기 실패) 숫자는 그대로 쓴다: 다시 차오르는 때까지는 줄지 않는다
-        let r = UsageReport { providers: vec![r.providers[1].clone()] };
+        let r = UsageReport { providers: vec![r.providers[1].clone()], agy: None };
         assert_eq!(limited_until("claude", "opus", &r, NOW), Some(NOW + 10));
         assert!(any_full(&r, NOW));
         assert!(!any_full(&r, NOW + 10));

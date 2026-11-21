@@ -409,6 +409,8 @@ pub fn typescript_bindings() -> String {
         UsageWindow::decl(&cfg),
         UsageProblem::decl(&cfg),
         ProviderUsage::decl(&cfg),
+        AgyQuotaBucket::decl(&cfg),
+        AgySubscriptionUsage::decl(&cfg),
         UsageReport::decl(&cfg),
     ];
     let mut out = String::from(

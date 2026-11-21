@@ -51,6 +51,7 @@ impl std::fmt::Display for Version {
 // DesignClose)와 읽기 요청의 `branch`(t-1894 2단계). 알린 agent에만 보낸다.
 // 같은 1.11의 선택 기능 design_main.v1: 기획 쓰기를 origin 기본 branch에 바로 commit·push(DesignMainOpen·DesignMainStage·
 // DesignMainWrite·DesignMainMarkIds)와 문서 이력(DesignLog, t-2002). 알린 agent에만 보낸다.
+// 같은 1.11의 선택 기능 agy_worker.v1·agy_quota.v1: agy worker 기동과 구독 상태줄 표본(t-2116).
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -342,7 +343,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.188: 메시지의 PTY 입력 단계 `MessageView.input`(선택, t-2031).
 // 1.189: 기획 편집과 구현 맡기기는 일반 작업 branch에서 반영한다. 옛 직접 쓰기 요청은 거절한다.
 // 1.190: 카드 답의 전달 대기·보류 표지 `QuestionAnswerView.delivery`(선택, t-2111).
-pub const FRONT_API: Version = Version { major: 1, minor: 190 };
+// 1.191: Antigravity CLI profile, 구독 사용량 `UsageReport.agy`와 재설정 시각 미상인 `ThreadView.limited`(선택, t-2116).
+pub const FRONT_API: Version = Version { major: 1, minor: 191 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

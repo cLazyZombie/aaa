@@ -126,7 +126,7 @@ pub async fn run_with_state(
 }
 
 pub fn hello(agent: &Agent) -> AgentHello {
-    AgentHello {
+    let mut hello = AgentHello {
         proto: AGENT_LINK,
         machine_id: agent.machine_id.clone(),
         machine_name: agent.name.lock().unwrap().clone(),
@@ -219,7 +219,13 @@ pub fn hello(agent: &Agent) -> AgentHello {
         sessions: agent.sessions(),
         identity: Some(agent.deployments.runtime_identity()),
         harness: agent.harness_events(),
+    };
+    let cfg = agent.threads_cfg.lock().unwrap();
+    if let Some(account) = &cfg.agy {
+        hello.features.push(aaa_proto::AGY_WORKER_FEATURE.into());
+        hello.features.push(format!("{}{}", aaa_proto::AGY_SUBSCRIPTION_PREFIX, account.subscription));
     }
+    hello
 }
 
 #[cfg(test)]
@@ -271,6 +277,10 @@ async fn session_state_mode(
             agent
                 .host_compacting
                 .store(w.features.iter().any(|f| f == "compacting.v1"), std::sync::atomic::Ordering::Relaxed);
+            agent.host_agy_quota.store(
+                w.features.iter().any(|f| f == aaa_proto::AGY_QUOTA_FEATURE),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             agent
                 .host_recovery
                 .store(w.features.iter().any(|f| f == "rollout_recovery.v1"), std::sync::atomic::Ordering::Relaxed);

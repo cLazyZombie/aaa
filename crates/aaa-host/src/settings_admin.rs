@@ -24,7 +24,7 @@ use crate::{Host, err};
 /// 웹에서 바꾸는 safety key(답 2A). 나머지(`*_agent_args`·`routine_commands`)는 읽기만 한다
 pub(crate) const WEB_SAFETY_KEYS: [&str; 4] = ["yolo", "start_threads", "trust_screens", "coordinator_deploy"];
 /// 웹에서 만들고 고치는 profile harness(답 1A). custom은 실행 명령이 있어 host CLI로만 한다
-const WEB_HARNESSES: [&str; 3] = ["claude", "codex", "shell"];
+const WEB_HARNESSES: [&str; 4] = ["claude", "codex", "agy", "shell"];
 /// 작업 root 전환은 이전 root의 worktree 보호(git)까지 한다
 const WORK_ROOT_SET_WAIT: Duration = Duration::from_secs(120);
 
@@ -341,7 +341,7 @@ impl Host {
                 Ok(())
             } else {
                 Err(forbidden(format!(
-                    "웹에서는 claude·codex·shell profile만 만든다(`{h}`): custom profile은 host의 aaa 세션 밖 터미널에서 `aaa profile add`로 만든다"
+                    "웹에서는 claude·codex·agy·shell profile만 만든다(`{h}`): custom profile은 host의 aaa 세션 밖 터미널에서 `aaa profile add`로 만든다"
                 )))
             }
         };

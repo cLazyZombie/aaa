@@ -374,6 +374,7 @@ async fn serve_connection(
             "rollout_recovery.v1".into(),
             // compacting.v1: 화면 감지 사건 `compacting`(정리 중, plan §8.309)을 읽는다. 옛 host에는 agent가 `working`으로 보낸다
             "compacting.v1".into(),
+            aaa_proto::AGY_QUOTA_FEATURE.into(),
         ],
     }))
     .await?;
@@ -517,6 +518,7 @@ async fn serve_connection(
                         // 대화 감시는 harness·기록 위치를 따라간다
                         host.sync_chat_watches_if_wanted();
                     }
+                    LinkMsg::Event(AgentEvent::AgyQuota(sample)) => host.on_agy_quota(&mid, sample),
                     LinkMsg::Event(AgentEvent::DeploymentChanged { job }) => host.deployment_changed(&mid, job),
                     LinkMsg::Event(AgentEvent::DeployGuardChanged { .. }) => host.rollout_wake.notify_one(),
                     LinkMsg::Event(AgentEvent::ChatChanged { key, signature }) => {

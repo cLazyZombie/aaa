@@ -1074,6 +1074,7 @@ impl Host {
 
     pub(crate) fn thread_view(&self, r: &ThreadRec) -> ThreadView {
         let (pane_exists, agent) = self.thread_live(r);
+        let agy_limit = self.agy_limit_for(r, aaa_common::util::now_ms());
         let delivered_ms = self.cfg.projects.delivered_working_secs * 1000;
         let group = thread_group_with(
             r,
@@ -1143,7 +1144,8 @@ impl Host {
             project_status: self.project_status(&r.project),
             summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
             repo: r.repo.clone(),
-            limited_until_ms: self.usage_limit(&r.project, &r.id),
+            limited_until_ms: agy_limit.flatten().or_else(|| self.usage_limit(&r.project, &r.id)),
+            limited: agy_limit.map(|_| true),
             questions: r.report_hash.clone().filter(|_| !r.questions.is_empty() || r.question_warning.is_some()).map(
                 |report_hash| {
                     let items = self
@@ -1490,7 +1492,28 @@ impl Host {
         name: &str,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
         self.require_host_profiles(mid)?;
-        self.configured_thread_profile(project, name)
+        let profile = self.configured_thread_profile(project, name)?;
+        if profile.harness == "agy" {
+            if project.is_none() {
+                return Err(bad("agy는 자동 thread profile로 사용한다"));
+            }
+            if !self.machine_feature(mid, aaa_proto::AGY_WORKER_FEATURE) {
+                return Err(bad("그 머신 agent는 agy 자동 thread를 지원하지 않는다"));
+            }
+            self.agy_subscription(mid)?;
+        }
+        Ok(profile)
+    }
+
+    fn agy_subscription(&self, mid: &str) -> Result<String, ErrorBody> {
+        let i = self.inner.lock().unwrap();
+        let m = i.machines.get(mid).filter(|m| m.conn.is_some()).ok_or_else(|| bad("agy 실행 머신이 끊겼다"))?;
+        let mut subscriptions = m.features.iter().filter_map(|f| f.strip_prefix(aaa_proto::AGY_SUBSCRIPTION_PREFIX));
+        let alias = subscriptions.next().filter(|alias| aaa_config::profile_edit::validate_name(alias).is_ok());
+        match alias {
+            Some(alias) if subscriptions.next().is_none() => Ok(alias.into()),
+            _ => Err(bad("이 머신의 agy 개인 구독 별칭을 확인하지 못했다")),
+        }
     }
 
     /// 승인 범위는 host 설정만 본다. 연결·agent 판은 실제 시작 후보를 고를 때 확인한다.
@@ -1531,7 +1554,11 @@ impl Host {
         safety: Option<(String, Vec<String>, bool)>,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
         self.require_host_profiles(mid)?;
-        self.profile_definition(name, safety)
+        let profile = self.profile_definition(name, safety)?;
+        if profile.harness == "agy" {
+            return Err(bad("agy는 자동 thread profile로 사용한다"));
+        }
+        Ok(profile)
     }
 
     fn require_host_profiles(&self, mid: &str) -> Result<(), ErrorBody> {
@@ -1557,6 +1584,9 @@ impl Host {
                 ))
             })?;
         if let Some((default, agent_args, yolo)) = safety {
+            if p.harness == "agy" {
+                aaa_config::profile_edit::validate_agy_policy(&p, yolo).map_err(bad)?;
+            }
             let legacy = cfg
                 .profiles
                 .get(&default)
@@ -1844,6 +1874,14 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
+        let agy_subscription = if profile.harness == "agy" {
+            if a.account.is_some() || a.role != Role::Worker {
+                return Err(bad("agy는 실행 머신의 개인 로그인으로 worker를 시작한다"));
+            }
+            Some(self.agy_subscription(&mid)?)
+        } else {
+            None
+        };
         if a.reservation.is_some()
             && let Some(account) = &a.account
         {
@@ -1957,6 +1995,9 @@ impl Host {
                         rec.account = Some(account);
                         rec.account_allocation = Some(allocation);
                     }
+                    if let Some(alias) = &agy_subscription {
+                        crate::db::agy_slot::reserve(tx, alias, &mid, &format!("{}/{id}", a.project))?;
+                    }
                     guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
                         let message = error.message.clone();
                         claim_error = Some(error);
@@ -1990,6 +2031,7 @@ impl Host {
                 r.status = ThreadStatus::Failed;
                 r.error = Some(why.clone());
             })?;
+            self.db.cancel_unspawned_agy_slot(&mid, &format!("{}/{id}", a.project)).map_err(internal)?;
             return Err(err(ErrorCode::Conflict, why));
         }
         #[cfg(test)]
@@ -2018,6 +2060,7 @@ impl Host {
                 r.status = ThreadStatus::Failed;
                 r.error = Some(e.to_string());
             })?;
+            self.db.cancel_unspawned_agy_slot(&mid, &format!("{}/{id}", a.project)).map_err(internal)?;
             return Err(internal(e));
         }
         let brief = self.brief(&dir, &rec, &a.task, false);
@@ -2129,6 +2172,22 @@ impl Host {
         self.automation_prepare(rec).await?;
         self.task_attach_transfer(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
+        let run = format!("{}/{}", rec.project, rec.id);
+        if launch.harness == "agy" {
+            if self.safety(&rec.project).yolo {
+                return Err(bad("유효 yolo가 켜져 있어 agy를 시작할 수 없다"));
+            }
+            if !self.machine_feature(&rec.machine_id, aaa_proto::AGY_WORKER_FEATURE) {
+                return Err(bad("그 머신 agent는 agy 자동 thread를 지원하지 않는다"));
+            }
+            if rec.account.is_some() || rec.role != Role::Worker {
+                return Err(bad("agy는 실행 머신의 개인 로그인으로 worker를 시작한다"));
+            }
+            let alias = self.agy_subscription(&rec.machine_id)?;
+            self.db
+                .reserve_agy_slot(&alias, &rec.machine_id, &run)
+                .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
+        }
         let old_pane = rec.pane.clone();
         let mut env = launch.env.clone();
         env.retain(|(key, _)| key != aaa_proto::AUTOMATION_REENTRY_ENV);
@@ -2138,7 +2197,7 @@ impl Host {
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
         env.push(("AAA_THREAD".into(), rec.id.clone()));
         let spec = SpawnSpec {
-            name: format!("{}/{}", rec.project, rec.id),
+            name: run.clone(),
             argv: argv.to_vec(),
             cwd: rec.cwd.clone(),
             env,
@@ -2186,6 +2245,15 @@ impl Host {
             *rec = self.update_rec(&rec.project, &rec.id, |r| r.launch_sent = true)?;
             self.spawn_on(&rec.machine_id, spec, actor).await?
         };
+        if launch.harness == "agy" {
+            self.db.bind_agy_slot(&rec.machine_id, &run, &pane).map_err(internal)?;
+            let exited = self.inner.lock().unwrap().panes.get(&pane).is_some_and(|p| {
+                matches!(p.info.state, aaa_proto::SessionState::Exited { .. } | aaa_proto::SessionState::Interrupted)
+            });
+            if exited {
+                self.db.release_agy_pane(&rec.machine_id, &pane).map_err(internal)?;
+            }
+        }
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
             r.pane = Some(pane.clone());
             r.status = ThreadStatus::Open;
@@ -2460,6 +2528,9 @@ impl Host {
             };
             r.error = Some(error.message.clone());
         })?;
+        if rec.status != ThreadStatus::Starting {
+            self.db.cancel_unspawned_agy_slot(&rec.machine_id, &format!("{project}/{id}")).map_err(internal)?;
+        }
         self.tick_wake.notify_one();
         Ok(rec)
     }

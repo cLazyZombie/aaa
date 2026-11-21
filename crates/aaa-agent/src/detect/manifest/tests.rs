@@ -236,7 +236,9 @@ fn screen_regions_extract_structure_without_classifying_agent_state() {
 #[test]
 fn bundled_manifests_parse_and_validate() {
     // Claude는 herdr 0.9.5 정본, Codex는 run-state 제목을 읽는 운영 회귀 보완판이다.
-    for (h, version) in [(Harness::Claude, "2026.10.11.1"), (Harness::Codex, "2026.10.19.1")] {
+    for (h, version) in
+        [(Harness::Claude, "2026.10.11.1"), (Harness::Codex, "2026.10.19.1"), (Harness::Agy, "2026.10.05.1")]
+    {
         let loaded = bundled(h);
         assert_eq!(loaded.version(), Some(version), "{}", h.label());
     }

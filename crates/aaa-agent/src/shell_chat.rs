@@ -132,6 +132,7 @@ fn resolve(harness: Harness, pid: u32, codex: &Path, claude: &Path) -> Option<Bi
     let root = match harness {
         Harness::Codex => codex,
         Harness::Claude => claude,
+        Harness::Agy => return None,
     };
     let mut found = Vec::new();
     for path in open_files(pid) {
@@ -177,6 +178,7 @@ fn resolve(harness: Harness, pid: u32, codex: &Path, claude: &Path) -> Option<Bi
                 }
                 id.to_string()
             }
+            Harness::Agy => return None,
         };
         if aaa_common::util::harness_session_ok(&id) {
             found.push(Binding { harness, id, path });

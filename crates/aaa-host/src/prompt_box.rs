@@ -183,6 +183,33 @@ fn input_box(kind: &str, lines: &[Line]) -> Option<(usize, Vec<Line>)> {
             Some((at, rows))
         }
         "codex" => last(&|_, l| trimmed_starts(l, "›")).and_then(|at| Some((at, vec![after(&lines[at], '›')?]))),
+        // agy 1.5.13. 슬래시 목록·사용량 창은 상자 바로 아래에 별도 줄을 그린다.
+        "agy" => {
+            let footer = last(&|_, l| !text(l).trim().is_empty())?;
+            let shortcuts = trimmed_starts(&lines[footer], "? for shortcuts");
+            let hint = text(&lines[footer]);
+            // 1.5.13은 글이 입력되면 단축키 표지를 숨기고 우측 모델·effort만 그린다.
+            let model_hint = hint.starts_with("  ") && hint.contains(" · ") && !hint.contains("esc");
+            if !shortcuts && !model_hint {
+                return None;
+            }
+            let bottom = (0..footer).rev().find(|&i| !text(&lines[i]).trim().is_empty())?;
+            if !is_rule(&lines[bottom]) {
+                return None;
+            }
+            let at = (0..bottom).rev().find(|&i| is_rule(&lines[i]))? + 1;
+            if at >= bottom
+                || !matches!(text(&lines[at]).trim_start().strip_prefix('>'), Some(rest) if rest.is_empty() || rest.starts_with(' '))
+            {
+                return None;
+            }
+            let mut rows = vec![after(&lines[at], '>')?];
+            rows.extend(lines[at + 1..bottom].iter().cloned());
+            if !shortcuts && rows.iter().all(|row| typed(row).trim().is_empty()) {
+                return None;
+            }
+            Some((at, rows))
+        }
         "cursor" => last(&|_, l| trimmed_starts(l, "→")).and_then(|at| Some((at, vec![after(&lines[at], '→')?]))),
         // `│ > ` (or `!` shell mode, `*` yolo mode) in a bordered box.
         "gemini" => {
@@ -300,7 +327,7 @@ pub fn mark_dim_box(kind: &str, text: &str, ansi: &str) -> String {
 
 /// True for the kinds whose input box this module can find.
 pub fn knows(kind: &str) -> bool {
-    matches!(kind, "claude" | "codex" | "cursor" | "gemini" | "opencode" | "pi")
+    matches!(kind, "claude" | "codex" | "agy" | "cursor" | "gemini" | "opencode" | "pi")
 }
 
 /// The screen's plain text, styling dropped.
@@ -311,6 +338,25 @@ pub fn plain(screen: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_uses_the_current_shortcuts_footer_and_bordered_prompt() {
+        let rule = "─".repeat(20);
+        let screen = |input| format!("오래된 대화\n{rule}\n> {input}\n{rule}\n? for shortcuts Gemini 3.8 Flash\n");
+        assert_eq!(check("agy", &screen("")), Draft::Empty);
+        assert_eq!(box_text("agy", &screen("first\n  second")).as_deref(), Some("first second"));
+        let typing = |input| screen(input).replace("? for shortcuts Gemini 3.8 Flash", "     Gemini 3.8 Flash · low");
+        assert_eq!(box_text("agy", &typing("first")).as_deref(), Some("first"));
+        assert_eq!(check("agy", &typing("")), Draft::Unknown);
+        assert_eq!(
+            check(
+                "agy",
+                &screen("/").replace("? for shortcuts", "↑/↓ Navigate · enter Select · tab Complete\n? for shortcuts")
+            ),
+            Draft::Unknown
+        );
+        assert_eq!(check("agy", &screen("").replace("? for shortcuts", "esc to cancel")), Draft::Unknown);
+    }
 
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!("{}/tests/fixtures/prompt_box/{name}.ansi", env!("CARGO_MANIFEST_DIR")))

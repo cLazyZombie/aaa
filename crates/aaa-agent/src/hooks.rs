@@ -164,6 +164,11 @@ pub struct Progress {
     pub reminded_at: u64,
     /// 이 세션에 마지막으로 넣은 coordinator auto mode 상태. 같은 상태는 다시 넣지 않는다(SessionStart가 비운다)
     pub auto_mode: Option<String>,
+    /// agy PostToolUse 뒤 다음 PreInvocation에서 진행 안내 필요 여부를 본다.
+    pub(crate) agy_tool_pending: bool,
+    pub(crate) agy_initial_receipt: Option<Box<HarnessEvent>>,
+    #[cfg(target_os = "macos")]
+    pub(crate) agy_report_seen: Option<String>,
 }
 
 /// aaa가 입력창에 친 글(`[aaa inbox] …` 알림 등)인가. 사람 입력이 아니라 진행 알림을 넣지 않는다.
@@ -390,6 +395,26 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     })
     .await
     .context("agent 응답 시간 초과")?
+}
+
+/// macOS agy sandbox가 소켓을 거부하면 현재 pane의 진행 값만 임시 폴더에 둔다.
+pub async fn report(percent: Option<u8>, activity: &str) -> Result<()> {
+    let result = send("report", serde_json::json!({ "percent": percent, "activity": activity })).await;
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            if std::env::var_os(crate::agy::sandbox_progress::ENV).is_some()
+                && error.chain().any(|e| {
+                    e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+                })
+            {
+                let session = std::env::var(ENV_SESSION).context("AAA_SESSION_ID이 없다")?;
+                return crate::agy::sandbox_progress::write(&session, percent, activity);
+            }
+            Err(error)
+        }
+    }
 }
 
 /// hook 요청·응답. 쓰기 반쪽 닫기는 EOF를 기다리는 옛 agent와도 통신하기 위해 남긴다.
@@ -784,12 +809,13 @@ mod tests {
     /// `reminders_are_throttled_to_once_a_minute_and_stop_at_done`(초를 ms로)
     #[test]
     fn session_start_guides_and_reminders_are_throttled_to_once_a_minute() {
-        let mut rec = Progress { percent: Some(50), reported_at: 5, reminded_at: 0, auto_mode: Some("on".into()) };
+        let mut rec =
+            Progress { percent: Some(50), reported_at: 5, auto_mode: Some("on".into()), ..Progress::default() };
         let thread = Reader { thread: true, reentry: None };
         let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000, thread, false).unwrap();
         assert!(text.contains("`/p/aaa report --percent 25"), "{text}");
         assert!(!text.contains("자동화 기억"), "일반 thread에 기억 재독 안내가 섞였다: {text}");
-        assert_eq!(rec, Progress { reported_at: 0, percent: None, reminded_at: 1_000_000, auto_mode: None });
+        assert_eq!(rec, Progress { reminded_at: 1_000_000, ..Progress::default() });
 
         assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000, thread, false).is_none());
         assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000, thread, false).is_some());

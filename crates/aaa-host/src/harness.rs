@@ -89,6 +89,9 @@ const MODAL_MARKS: &[&str] = &[
     "trust this folder",
     "Allow Codex to work in this folder",
     "Yes, proceed",
+    "Navigate · f full diff",
+    "Navigate · tab Amend",
+    "Navigate · enter Confirm",
     "enter continue · esc back",
     "Press enter to continue",
 ];
@@ -251,6 +254,7 @@ fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentA
     }
     match ev.kind.as_str() {
         "session_start" | "session" => prev.is_none().then_some(AgentActivity::Started),
+        "agy_starting" if ev.harness == "agy" => Some(AgentActivity::Started),
         "turn_start" | "working" | "compacting" => Some(AgentActivity::Working),
         "turn_end" | "idle" => Some(AgentActivity::Idle),
         "question" => Some(AgentActivity::Question),
@@ -328,6 +332,10 @@ impl Host {
 
     /// agent가 harness 사건을 보냈다
     pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, mut ev: HarnessEvent) {
+        if ev.harness == "agy" && ev.kind == "agy_receipt" {
+            self.agy_brief_receipt(mid, &ev);
+            return;
+        }
         if ev.kind == "turn_reply" {
             if let Err(error) = self.check_question_card(mid, &ev) {
                 tracing::warn!(pane = %ev.session, "질문 카드 누락 검사 실패: {error:#}");
@@ -1035,6 +1043,16 @@ impl Host {
         if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
             return Err(before("확인창이 떠 있어 입력하지 않았다".into()));
         }
+        let agy = agent.as_ref().is_some_and(|a| a.harness == "agy");
+        if agy
+            && (text.is_none()
+                || !agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Idle)
+                || shown.as_ref().is_none_or(|lines| {
+                    crate::prompt_box::check("agy", &lines.join("\n")) != crate::prompt_box::Draft::Empty
+                }))
+        {
+            return Err(before("agy의 빈 입력창을 확인하지 못했다".into()));
+        }
         let hooked = agent.as_ref().is_some_and(|a| a.harness != "report");
         // 이미 작업 중이면 새 본문의 대화·큐 영수증을 우선한다. 이전 Working 상태는 수락 증거가 아니다.
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
@@ -1173,6 +1191,15 @@ impl Host {
             )
             .await;
         };
+        if agy {
+            let normalized = |s: &str| s.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+            let draft = typed.as_ref().and_then(|lines| crate::prompt_box::box_text("agy", &lines.join("\n")));
+            if draft.as_deref().map(normalized) != text.map(normalized)
+                || !self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Idle)
+            {
+                return Err(after("agy 입력창이 붙여넣은 본문과 일치하지 않아 Enter를 보내지 않았다".into()));
+            }
+        }
         if windows_codex && text.is_some() {
             // ConPTY의 실제 Codex는 긴 입력을 key burst로 읽는다. 비문자 키가 버퍼와
             // Enter 억제 상태를 확정한다. 새 입력 끝의 Right는 본문을 바꾸지 않으며 제출하지 않는다.
@@ -1990,6 +2017,57 @@ mod tests {
             provider_turn: None,
             turn_reply: None,
         }
+    }
+
+    #[test]
+    fn agy_brief_receipt_requires_current_pane_conversation_and_matching_input() {
+        let (h, _tmp) = host_with_pane();
+        let mut info = h.inner.lock().unwrap().panes["s"].info.clone();
+        info.harness = Some("agy".into());
+        info.started_at_ms = 100;
+        h.on_session("m", info, false);
+        let root = "00000000-0000-4000-8000-000000000001";
+        let start = HarnessEvent {
+            harness: "agy".into(),
+            harness_session: Some(root.into()),
+            ..codex_event("session_start", 100)
+        };
+        h.on_harness("m", start);
+        let mut rec =
+            ThreadRec::starting("demo", "agy", "m", "gemini", aaa_proto::Role::Worker, aaa_proto::ThreadKind::Dir, 100);
+        rec.id = "t-0001".into();
+        rec.pane = Some("s".into());
+        rec.launch = Some(aaa_proto::Launch {
+            profile: "gemini".into(),
+            harness: "agy".into(),
+            argv: Vec::new(),
+            env: Vec::new(),
+            resume_argv: Vec::new(),
+            session_key: None,
+        });
+        rec.status = ThreadStatus::Open;
+        rec.brief = BriefState::Unknown;
+        rec.brief_attempts = 1;
+        h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        let saved = || h.load("demo", &rec.id).unwrap();
+        let receipt = HarnessEvent {
+            harness: "agy".into(),
+            harness_session: Some(root.into()),
+            message: Some(crate::prompt_receipt::receipt_hash(".aaa/demo-t-0001/brief.md를 읽고 그대로 하라.")),
+            ..codex_event("agy_receipt", 110)
+        };
+        h.on_harness("other", receipt.clone());
+        h.on_harness("m", HarnessEvent { at_ms: 99, ..receipt.clone() });
+        h.on_harness("m", HarnessEvent { harness_session: None, ..receipt.clone() });
+        h.on_harness("m", HarnessEvent { message: Some("draft".into()), ..receipt.clone() });
+        assert_eq!(saved().brief, BriefState::Unknown);
+        h.on_harness("m", receipt.clone());
+        assert_eq!(saved().brief, BriefState::Delivered);
+        let delivery = saved().delivered_at_ms;
+        assert!(delivery.is_some());
+        h.on_harness("m", receipt);
+        assert_eq!(saved().delivered_at_ms, delivery);
+        assert_eq!(saved().brief_attempts, 1);
     }
 
     #[test]

@@ -940,6 +940,7 @@ mod tests {
         let profiles = vec![("reviewer".into(), "claude".into()), ("builder".into(), "codex".into())];
         let base = UsageReport {
             providers: vec![account(UsageProviderId::Claude, 80.0), account(UsageProviderId::Codex, 20.0)],
+            agy: None,
         };
         assert_eq!(week_profile(&profiles, &base), Some("builder"));
         let mut cases = vec![UsageReport::default()];

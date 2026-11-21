@@ -1505,6 +1505,7 @@ pub enum AgentEvent {
         request: crate::ImageRequest,
     },
     AccountRefresh(crate::AccountRefresh),
+    AgyQuota(crate::AgyQuotaSample),
     DeploymentChanged {
         job: crate::DeployJob,
     },
