@@ -10,6 +10,95 @@ use lab::{Lab, Node, read_line_containing, tree, wait_for, wait_for_diag};
 
 const T: Duration = Duration::from_secs(30);
 
+#[cfg(unix)]
+#[test]
+fn agy_config_and_profiles_use_a_person_terminal_and_the_model_catalog() {
+    use aaa_common::child_process::StdCommandExt as _;
+    use sha2::{Digest as _, Sha256};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::Path;
+
+    let lab = Lab::new();
+    let node = lab.node("gemini", Some("schema = 1\n# host profile\n"));
+    let agent_file = node.cfg.join("agent.toml");
+    let host_file = node.cfg.join("host.toml");
+    let own_agent = "schema = 1\n# 내 설정\n[health]\nmin_free_gb = 5\n";
+    fs::write(&agent_file, own_agent).unwrap();
+    let agy = lab.root.join("agy");
+    let script = lab.root.join("agy-source");
+    fs::write(
+        &script,
+        "#!/bin/sh\n[ \"$1\" = models ] || exit 2\nprintf 'sample-low\\tSample Low\\nsample-high\\tSample High\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(std::process::Command::new("cp").args([&script, &agy]).status_guarded().unwrap().success());
+    let setup = ["config", "agy", "--command", agy.to_str().unwrap(), "--subscription", "gemini-personal"];
+    let terminal = |args: &[&str], answers: &[(&str, &str)]| {
+        let mut command = lab::terminal_command(Path::new(lab::BIN));
+        command.args(args);
+        command.env("AAA_CONFIG_DIR", &node.cfg);
+        command.env("AAA_STATE_DIR", &node.state);
+        command.env("TERM", "xterm-256color");
+        command.env_remove("AAA_SESSION_ID");
+        command.env_remove("AAA_HOOK_SOCK");
+        lab::Terminal::spawn(command).read_raw(args, answers, T)
+    };
+    let denied = node.cmd(&setup).env_remove("AAA_SESSION_ID").env_remove("AAA_HOOK_SOCK").capture_output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("표준 입력이 터미널이 아니다"));
+    assert_eq!(fs::read_to_string(&agent_file).unwrap(), own_agent);
+
+    let login = " Operator@example.com ";
+    let output = terminal(&setup, &[("agy Google 로그인 주소", &format!("{login}\r"))]);
+    assert!(output.contains("agy 머신 설정을 저장했다"), "{output}");
+    let saved = fs::read_to_string(&agent_file).unwrap();
+    let cfg = aaa_config::load_agent(&node.cfg).unwrap().config;
+    let account = cfg.agy.unwrap();
+    assert_eq!(account.subscription, "gemini-personal");
+    assert_eq!(account.login_sha256, hex::encode(Sha256::digest(b"operator@example.com")));
+    assert_eq!(cfg.harnesses["agy"].command, [agy.to_str().unwrap()]);
+    assert!(saved.starts_with(own_agent));
+    assert!(!saved.contains(login.trim()));
+    assert!(!output.contains(login.trim()) && !output.contains(&account.login_sha256));
+
+    let mut overwrite = setup;
+    overwrite[5] = "gemini-next";
+    let output = terminal(&overwrite, &[("기존 agy 설정을 바꿀까요?", "\r")]);
+    assert!(output.contains("현재 구독 별칭") && output.contains("gemini-personal"), "{output}");
+    assert!(output.contains("새 구독 별칭") && output.contains("gemini-next"), "{output}");
+    assert!(!output.contains("agy Google 로그인 주소") && !output.contains(&account.login_sha256));
+    assert_eq!(fs::read_to_string(&agent_file).unwrap(), saved);
+    let output = terminal(
+        &overwrite,
+        &[("기존 agy 설정을 바꿀까요?", "y\r"), ("agy Google 로그인 주소", &format!("{login}\r"))],
+    );
+    assert!(output.contains("agy 머신 설정을 저장했다") && !output.contains(login.trim()), "{output}");
+    assert_eq!(aaa_config::load_agent(&node.cfg).unwrap().config.agy.unwrap().subscription, "gemini-next");
+
+    let mut profile = ["profile", "add", "gemini", "--agent", "agy", "--model", "sample-low", "--effort", "low"];
+    let before = fs::read_to_string(&host_file).unwrap();
+    let denied = node.cmd(&profile).env("AAA_SESSION_ID", "session-example").capture_output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("aaa 세션 안에서는"));
+    assert_eq!(fs::read_to_string(&host_file).unwrap(), before);
+    let output = terminal(&profile, &[]);
+    assert!(output.contains("profile `gemini`를 더했다"), "{output}");
+    let mut saved = fs::read_to_string(&host_file).unwrap();
+    assert!(saved.contains("agent = \"agy\"") && saved.contains("model = \"sample-low\""));
+    profile[1] = "edit";
+    profile[8] = "high";
+    let output = terminal(&profile, &[]);
+    assert!(output.contains("지정한 모델과 effort가 없다"), "{output}");
+    assert_eq!(fs::read_to_string(&host_file).unwrap(), saved);
+    profile[6] = "sample-high";
+    let output = terminal(&profile, &[]);
+    assert!(output.contains("profile `gemini`를 고쳤다"), "{output}");
+    saved = fs::read_to_string(&host_file).unwrap();
+    assert!(saved.contains("model = \"sample-high\"") && saved.contains("effort = \"high\""));
+}
+
 fn host_toml(link: bool) -> String {
     let listen = if link { "127.0.0.1:0" } else { "" };
     format!("schema = 1\n[host]\nagent_listen = \"{listen}\"\n[web]\nlisten = \"\"\n[local_agent]\nmode = \"none\"\n")

@@ -567,6 +567,13 @@ impl std::fmt::Debug for AgyAccount {
     }
 }
 
+impl AgyAccount {
+    pub fn hash_login(login: &str) -> String {
+        use sha2::{Digest as _, Sha256};
+        hex::encode(Sha256::digest(login.trim().to_ascii_lowercase().as_bytes()))
+    }
+}
+
 /// Debug는 env 값을 찍지 않는다([`EnvNames`])
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -776,6 +783,11 @@ pub fn load_agent(dir: &Path) -> Result<Loaded<AgentConfig>, ConfigErrors> {
         ));
     }
     Ok(loaded)
+}
+
+/// 디스크에 쓰기 전 agent.toml 후보와 현재 agent.local.toml을 함께 검사한다.
+pub fn check_agent_edit(dir: &Path, base: &str) -> Result<(), ConfigErrors> {
+    load_with_base(dir, "agent", validate_agent, Some(base)).map(|_| ())
 }
 
 /// 검증 실패 한 건: 문제 key 경로와 이유
@@ -1090,11 +1102,23 @@ fn load<T>(dir: &Path, stem: &str, validate: fn(&T) -> Vec<Invalid>) -> Result<L
 where
     T: DeserializeOwned + Default + Serialize,
 {
+    load_with_base(dir, stem, validate, None)
+}
+
+fn load_with_base<T>(
+    dir: &Path,
+    stem: &str,
+    validate: fn(&T) -> Vec<Invalid>,
+    base: Option<&str>,
+) -> Result<Loaded<T>, ConfigErrors>
+where
+    T: DeserializeOwned + Default + Serialize,
+{
     let mut sources = Vec::new();
     let mut diags = Vec::new();
-    for name in [format!("{stem}.toml"), format!("{stem}.local.toml")] {
-        let path = dir.join(&name);
-        match std::fs::read_to_string(&path) {
+    for (name, edited) in [(format!("{stem}.toml"), base), (format!("{stem}.local.toml"), None)] {
+        let path = dir.join(name);
+        match edited.map_or_else(|| std::fs::read_to_string(&path), |text| Ok(text.to_owned())) {
             Ok(text) => sources.push(Source { path, text }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => diags.push(diag(Severity::Error, &path, 0, 0, format!("읽을 수 없다: {e}"))),

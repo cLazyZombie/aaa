@@ -43,7 +43,7 @@ stdout·stderr는 그대로 전달하고 원장에는 종료 결과·전체 경�
 - **대화 그림을 할 일로 넘기기**: 프로젝트 대화창과 할 일 첨부는 저장한 파일 내용으로 이름을 정합니다. 메모의 `![그림](uploads/…)`는 thread 시작 때 작업 폴더로 복사됩니다. 예전 대화창이 무작위 이름으로 저장한 그림은 「이름과 내용 해시가 다르다」로 거부될 수 있습니다. 원본을 확인한 뒤 할 일에 다시 첨부하고 메모의 옛 링크를 새 링크로 바꾸세요. 원본 파일은 지우거나 이름을 바꾸지 않습니다.
 - **머신 등록**: 설정 → 머신에서 「등록 창 열기」 뒤 새 머신에서 `aaa agent enroll <host 주소> --name <이름>`을 실행합니다. 대기 목록의 「승인…」에 새 머신 화면의 6자리 코드를 넣고 이름을 맞춰 봅니다(세 번 틀리면 그 요청을 버립니다). 등록된 머신은 같은 곳에서 폐기합니다. host 머신은 폐기하지 않습니다.
 - **웹 공개**: 설정 → 폰 및 기기의 「tailnet에 공개」·「공개 끄기」(tailscale serve). 공개 주소로 연 화면에서 끄면 그 화면이 끊길 수 있어, 끈 뒤 들어올 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끕니다.
-- **안전·profile**: 설정 → 안전에서 safety 값과 출처를 보고 yolo·start_threads·trust_screens·coordinator_deploy를 바꿉니다(yolo 켜기는 한 번 더 확인). 설정 → profile에서 claude·codex·shell profile을 더하고 고치고 지우며, 허용 목록·기본 profile을 바꿉니다. 모두 「적용할까요?」 창에서 실제 실행 인자를 본 뒤 씁니다. custom profile(실행 명령)과 `thread_agent_args`·`coordinator_agent_args`·`routine_commands`는 host의 aaa 세션 밖 터미널에서만 바꿉니다. 그사이 host.toml이 바뀌었으면 쓰지 않고 다시 읽습니다.
+- **안전·profile**: 설정 → 안전에서 safety 값과 출처를 보고 yolo·start_threads·trust_screens·coordinator_deploy를 바꿉니다(yolo 켜기는 한 번 더 확인). 설정 → profile에서 claude·codex·agy·shell profile을 더하고 고치고 지우며, 허용 목록·기본 profile을 바꿉니다. 모두 「적용할까요?」 창에서 실제 실행 인자를 본 뒤 씁니다. custom profile(실행 명령)과 `thread_agent_args`·`coordinator_agent_args`·`routine_commands`는 host의 aaa 세션 밖 터미널에서만 바꿉니다. 그사이 host.toml이 바뀌었으면 쓰지 않고 다시 읽습니다.
 - **모델**: 설정 → 모델에서 provider(claude·codex)마다 모델을 켜고 끄거나 「모두 끄기」·「모두 켜기」를 합니다. Codex 목록은 연결된 머신이 자기 Codex 모델 목록 파일(`$CODEX_HOME|~/.codex/models_cache.json`의 `/model`에 보이는 모델)에서 알리고, 끊긴 머신이 전에 알린 모델·끈 모델·profile이 쓰는 model도 남습니다. Claude는 별칭 fable·opus·sonnet·haiku입니다. 설정은 host 한 곳(host.toml `[models.<harness>] disabled`)에 두어 모든 머신에 같습니다. 끈 모델은 profile을 더하거나 model을 바꿀 때만 막습니다(웹·`aaa profile` 모두). 이미 그 모델을 쓰는 profile은 그대로 실행하고 끌 때 경고합니다. 각 머신 harness 안 `/model` 선택과 이미 뜬 pane은 바뀌지 않습니다. 맞추기는 Codex는 slug 그대로, Claude는 `[1m]` 같은 꼬리를 떼고 비교하며 별칭(`opus`)을 끄면 그 계열 ID(`claude-opus-5-5`)도 막습니다. 터미널에서는 `aaa model list`·`aaa model on|off <claude|codex> <모델…>`(바꾸기는 사람만)입니다.
 - **작업 폴더·hook**: 설정 → 머신 아래 「작업 폴더·hook」에서 머신을 고르고, 절대 경로를 「점검…」(검사 파일을 쓰고 읽고 지움) 한 뒤 「전환…」합니다. 다음 agent 시작부터 쓰고 지금 도는 thread는 그대로입니다. Codex 전역 hook은 같은 곳에서 설치·제거합니다(Claude는 실행마다 넣어 설치할 것이 없습니다).
 - **질문 답 초안**: 「답할 것」 카드에서 고른 선택·직접 쓴 답은 이 브라우저에 저장합니다. 목록 갱신·다른 카드 왕복·새로고침 뒤에도 남고, 같은 thread가 질문 내용·선택지·판단 자료를 그대로 다시 게시하면 질문 번호와 서버에 보낸 일부 답을 유지합니다. 순서가 바뀌어도 서버의 일부 답은 해당 질문을 따릅니다. 그림을 같은 경로의 다른 파일로 바꾸거나 판단 자료를 회수하지 못하면 해당 질문은 새 번호로 열고 옛 답을 붙이지 않습니다. 질문 번호·질문·선택지·검수 규칙이 달라지면 이전 브라우저 초안을 옮기지 않습니다. 서버에서 새로 받은 일부 답을 반영하면서 다른 칸은 보존하며, 답 전송이 성공하면 보낸 초안을 지웁니다. 실패하면 남깁니다. 초안은 다른 브라우저·기기로 동기화하지 않고, 브라우저 저장소를 사용할 수 없으면 열린 페이지 안에서만 보존합니다.
@@ -408,23 +408,54 @@ native 표시가 없고 기존 화면 감지를 유지한다. 현재 Codex는 �
 같은 구독으로 묶을 머신에는 같은 계정으로 로그인한다. CLI의 기본 실행 모드와 request-review 또는 strict 도구 승인 모드를 쓰고
 Use AI Credits를 끈다. 계정에 AI Credit Overages가 있으면 Never로 둔다. [CLI 설치와 로그인](https://antigravity.google/docs/getting-started?tab=cli) · [AI 크레딧](https://antigravity.google/docs/cli/credits)
 
-머신의 `agent.toml`에는 설치한 공식 실행 파일의 절대 경로와 구독 별칭을 등록한다.
-`login_sha256`에는 로그인 주소에서 양쪽 공백을 제거하고 소문자로 바꾼 문자열의 SHA-256을 넣는다.
-같은 구독으로 묶을 머신의 별칭은 모두 같게 쓴다. 계정 대조는 머신 안에서 끝난다.
+각 실행 머신에서 agent를 돌리는 OS 사용자로 로그인하고, aaa 세션 밖 터미널에서 다음 순서로 실행한다.
+같은 Google 구독으로 묶을 머신에는 같은 별칭을 쓴다. 실행 파일이 다른 위치에 있으면 그 절대 경로를 준다.
 
-```toml
-[harnesses.agy]
-command = ["/opt/bin/agy"]
-
-[agy]
-subscription = "gemini-personal"
-login_sha256 = "<로그인 주소의 SHA-256>"
+```sh
+aaa config agy --command "$HOME/.local/bin/agy" --subscription gemini-personal
+aaa integration install agy
+aaa config check
+aaa service restart --role agent
 ```
 
-각 머신의 사용자 터미널에서 `aaa integration install agy`를 실행하면 aaa의 hook을 추가한다.
-이 훅은 다른 hook 그룹과 함께 쓸 수 있다. 제거할 때는 `aaa integration uninstall agy`를 실행한다.
-웹 설정의 프로필에서 **Gemini · Antigravity CLI**를 고르고, 실행 머신의 `agy models`에 있는 모델 ID와 effort를 입력한다.
+`config agy`는 로그인 주소를 숨김 입력으로 받아 양쪽 공백을 제거하고 ASCII 소문자로 바꾼 뒤 SHA-256을 계산한다.
+`agent.toml`의 `[harnesses.agy] command`와 `[agy] subscription`·`login_sha256`을 저장한다.
+기존 값이 있으면 실행 경로·구독 별칭·해시 등록 여부를 먼저 보여 주고 바꿀지 묻는다.
+`agent.local.toml`에 같은 값을 덮는 항목이 있으면 그 항목을 먼저 확인한다.
+계정 대조는 머신 안에서 끝난다. `integration install agy`는 다른 hook 그룹과 함께 쓸 수 있고,
+aaa hook을 제거할 때는 `aaa integration uninstall agy`를 실행한다. 서비스로 실행하지 않는 agent는 실행한 방식으로 다시 시작한다.
+
+프로필은 host 머신의 aaa 세션 밖 터미널에서 한 번 등록한다. 먼저 host에서도 위와 같이 agy를 설정하고
+`agy models` 출력의 첫 열에서 모델 ID를 고른다. 지정한 effort는 ID 끝과 맞아야 한다.
+effort 접미사가 없는 모델은 `--effort`를 생략한다. 편집에서 기존 effort를 비우려면 `--effort ''`를 쓴다.
+
+```sh
+"$HOME/.local/bin/agy" models
+aaa profile add gemini-flash --agent agy --model gemini-3.8-flash-low --effort low
+aaa profile edit gemini-flash --agent agy --model gemini-3.8-flash-low --effort low --description 'Gemini Flash'
+aaa profile list
+```
+
+CLI는 저장 전에 host의 agy 목록에서 새 모델·effort를 검사한다. 실행할 때는 선택된 머신의 agy 목록으로 다시 검사한다.
+머신마다 목록이 다르면 각 실행 머신에서 `agy models`를 확인한다.
+웹에서는 설정의 프로필에서 **Gemini · Antigravity CLI**를 고르고 같은 모델 ID와 effort를 입력할 수 있다.
 유효 yolo가 켜져 있거나 실행 머신에서 모델을 제공하지 않으면 시작이 보류된다. 시작한 pane의 승인창에서 필요한 도구에 답한다.
+
+목록 전체의 등록 명령을 준비하려면 host의 Bash에서 아래 명령을 실행한다. 출력에서 이름이 이미 있는 항목은 `profile edit`로
+바꾼다. 이름이 40자를 넘거나 영문·숫자·`._-` 밖의 글자가 있으면 짧은 이름을 준다.
+검토한 줄들을 같은 터미널에 붙여 넣으면 줄마다 등록된다.
+
+```bash
+models=$("$HOME/.local/bin/agy" models) &&
+while IFS=$'\t' read -r id label; do
+  [[ -n $id && -n $label ]] || continue
+  printf 'aaa profile add %q --agent agy --model %q' "agy-$id" "$id"
+  case ${id##*-} in
+    low|medium|high|xhigh|max) printf ' --effort %q' "${id##*-}" ;;
+  esac
+  printf '\n'
+done <<< "$models"
+```
 
 host는 열린 agy worker에 구독별 자리 하나를 잡는다. 승인 대기 중이나 머신 연결이 끊겼을 때도 그 자리를 보존한다.
 한도 화면에는 구독별 마지막 상태줄 관측과 리셋 시각이 나온다. 같은 구독의 잔량은 실행 머신이 바뀌어도 한 번만 표시한다.

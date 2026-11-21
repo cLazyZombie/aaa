@@ -426,7 +426,7 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         _rest: Vec<String>,
     },
-    /// thread profile: 머신마다 agent.toml과 기본 profile(claude·codex). 바꾸기·허용 목록은 사람만(herdr-projects `profile`)
+    /// thread profile: host.toml과 기본 profile(claude·codex). 바꾸기·허용 목록은 사람만
     Profile {
         #[command(subcommand)]
         cmd: crate::settings::ProfileCmd,
@@ -1844,7 +1844,7 @@ struct DoctorArgs {
 
 #[derive(Subcommand)]
 enum IntegrationCmd {
-    /// 전역 hook을 더하고 hooks 기능을 켠다
+    /// 전역 hook을 더하고 hooks 기능을 켠다(agy는 먼저 `aaa config agy`로 머신 설정)
     Install {
         #[arg(value_parser = ["codex", "agy"])]
         target: String,
@@ -2005,6 +2005,15 @@ enum UpdateCmd {
 enum ConfigCmd {
     /// host.toml·agent.toml(+ .local.toml)을 검증한다
     Check,
+    /// 이 머신에 Gemini 실행 경로와 구독을 등록한다(aaa 세션 밖 터미널에서 로그인 주소를 숨겨 입력)
+    Agy {
+        /// 설치한 공식 agy 실행 파일의 절대 경로
+        #[arg(long, value_name = "PATH")]
+        command: String,
+        /// 같은 Google 구독을 쓰는 머신끼리 공유하는 별칭
+        #[arg(long, value_name = "NAME")]
+        subscription: String,
+    },
     /// 예시 설정을 출력한다
     Example {
         #[arg(value_parser = ["host", "agent"])]
@@ -6710,6 +6719,7 @@ fn legacy_guard() -> Result<()> {
 fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
     let dir = aaa_config::paths::config_dir();
     match cmd {
+        ConfigCmd::Agy { command, subscription } => crate::agy_config::configure(&dir, command, subscription, json),
         ConfigCmd::Example { role } => {
             print!("{}", aaa_config::example(&role));
             Ok(ExitCode::SUCCESS)
