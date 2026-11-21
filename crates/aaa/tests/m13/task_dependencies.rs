@@ -61,6 +61,7 @@ fn multiple_predecessors_start_once_after_all_archives_and_capacity_across_resta
 fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() {
     let mut w = world();
     let deadline = Duration::from_secs(5);
+    let mark = |event: &str| eprintln!("지정 예약 utc_ms={} {event}", lab::now_ms());
     let value = aaa_test_support::token("queue-account-chosen");
     let auth = w.scripts.join("chosen-auth");
     std::fs::write(&auth, &value).unwrap();
@@ -85,20 +86,48 @@ fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() 
     assert_eq!(row["account"], "chosen");
     assert_eq!(row["after"], tasks[0]["id"]);
     assert!(row["thread"].is_null());
+    mark("재시작 전 예약 저장 확인");
     w.lab.kill("host");
     // 인증 금고 키를 잠시 치워 실제 재시작에서 잠긴 계정을 흉내 낸다. 다른 계정이 있어도 시작하면 안 된다.
     std::fs::rename(w.h.state.join("host/secrets.key"), w.h.state.join("host/held.key")).unwrap();
-    w.spawn_host("host-pinned-account");
-    wait_for("지정 예약 재연결", deadline, || w.h.connected("labA").then_some(()));
+    let restarted = "host-pinned-account";
+    mark("host 재시작 요청");
+    w.spawn_host(restarted);
+    w.h.wait_connected_diag("labA", "지정 예약 재연결", deadline, || reconnect_diagnostics(&w.lab, restarted));
+    mark("지정 머신 재연결 관측");
+    let restored = &w.h.ok(&["task", "queue"])["entries"][0];
+    assert_eq!(restored["task_id"], row["task_id"]);
+    assert_eq!(restored["account"], "chosen");
+    assert_eq!(restored["after"], row["after"]);
+    assert!(restored["thread"].is_null());
+    mark("재시작 뒤 같은 예약과 선행 조건 확인");
     w.h.ok(&["task", "edit", first, "--done"]);
-    wait_for("지정 계정 대기", deadline, || {
+    let waiting = wait_for("지정 계정 대기", deadline, || {
         w.h.ticks(1);
         let row = w.h.ok(&["task", "queue"])["entries"][0].clone();
-        (row["reason"].as_str()?.contains("인증 잠김") && row["state"] == "queued").then_some(())
+        (row["reason"].as_str()?.contains("인증 잠김") && row["state"] == "queued").then_some(row)
     });
+    assert_eq!(waiting["account"], "chosen");
+    assert!(waiting["thread"].is_null());
     assert!(w.h.ok(&["thread", "list"])["threads"].as_array().unwrap().is_empty());
     assert!(!proof.exists());
+    mark("지정 인증 잠김 대기와 미기동 확인");
+    // 금고 키가 없을 때는 other도 잠긴다. 지정 계정 파일만 없을 때 실제 대체 후보가 있어도 대기하는지 확인한다.
+    let chosen_record = w.h.state.join("host/accounts/chosen.json");
+    let held_record = w.h.state.join("host/chosen-held.json");
+    std::fs::rename(&chosen_record, &held_record).unwrap();
     std::fs::rename(w.h.state.join("host/held.key"), w.h.state.join("host/secrets.key")).unwrap();
+    w.h.ok(&["account", "pool", "add", "other"]);
+    w.h.ticks(1);
+    let waiting = &w.h.ok(&["task", "queue"])["entries"][0];
+    assert_eq!(waiting["account"], "chosen");
+    assert_eq!(waiting["state"], "queued");
+    assert!(waiting["reason"].as_str().unwrap().contains("인증 잠김"));
+    assert!(waiting["thread"].is_null());
+    assert!(w.h.ok(&["thread", "list"])["threads"].as_array().unwrap().is_empty());
+    assert!(!proof.exists());
+    mark("다른 계정 배정 가능 상태에서 지정 계정 대기 확인");
+    std::fs::rename(&held_record, &chosen_record).unwrap();
     let tid = wait_for("지정 계정 시작", deadline, || {
         w.h.ticks(1);
         w.h.ok(&["task", "queue"])["entries"][0]["thread"].as_str().map(str::to_string)
@@ -109,4 +138,37 @@ fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() 
         std::fs::read_to_string(&proof).ok().filter(|s| s.trim() == "chosen")
     });
     assert_eq!(w.h.ok(&["task", "queue"])["entries"][0]["account"], "chosen");
+    mark("agent의 지정 인증 수신 확인");
+}
+
+fn reconnect_diagnostics(lab: &Lab, host: &str) -> String {
+    let mut load = [0.0; 3];
+    // SAFETY: getloadavg에 쓰기 가능한 double 3개를 제공한다.
+    let count = unsafe { libc::getloadavg(load.as_mut_ptr(), load.len() as i32) }.max(0) as usize;
+    let mut diag = format!("재연결 실패 utc_ms={}, runner load={:?}", lab::now_ms(), &load[..count]);
+    // 시험 artifact에는 준비·연결 사건의 시각만 옮긴다. 원문에는 인증과 무관한 환경 정보도 섞인다.
+    for (tag, markers) in [
+        (host, &["host 시작", "Agent link(TLS) listen", "agent 연결 끊김", "agent 연결"][..]),
+        ("agentA", &["host에 연결했다", "host 연결이 닫혔다", "host 연결 끝"][..]),
+    ] {
+        let log = lab.log(tag);
+        let events: Vec<_> = log
+            .lines()
+            .rev()
+            .filter_map(|line| {
+                let (_, message) = line.split_once("  INFO ").or_else(|| line.split_once("  WARN "))?;
+                let marker = markers.iter().find(|marker| message.starts_with(**marker))?;
+                Some((line.split_whitespace().next()?, marker))
+            })
+            .take(8)
+            .collect();
+        diag.push_str(&format!("\n{tag} 준비·연결 사건:"));
+        if events.is_empty() {
+            diag.push_str(" 없음");
+        }
+        for (at, marker) in events.into_iter().rev() {
+            diag.push_str(&format!("\n{at} {marker}"));
+        }
+    }
+    diag
 }
