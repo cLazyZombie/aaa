@@ -93,6 +93,10 @@ fn reserved_account_survives_restart_waits_without_fallback_and_reaches_agent() 
     let restarted = "host-pinned-account";
     mark("host 재시작 요청");
     w.spawn_host(restarted);
+    mark("host 자식 생성 완료");
+    // front 준비 전의 프로세스 시작은 agent 재연결 시한에 포함하지 않는다.
+    w.lab.wait_host_ready(restarted, &w.h);
+    mark("재시작 host의 front status 응답 확인");
     w.h.wait_connected_diag("labA", "지정 예약 재연결", deadline, || reconnect_diagnostics(&w.lab, restarted));
     mark("지정 머신 재연결 관측");
     let restored = &w.h.ok(&["task", "queue"])["entries"][0];

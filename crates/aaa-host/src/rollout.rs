@@ -2,7 +2,6 @@
 //! 참고: herdr handoff 세 분류, web-ui autoChain/current/failed, t3code pending 복구.
 use crate::{Host, err};
 use aaa_proto::*;
-use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc, time::Duration};
 
 mod card;
@@ -11,17 +10,11 @@ mod recovery;
 mod web_tests;
 const STEP_LIMIT_MS: u64 = 120_000;
 const RECOVERY_LIMIT_MS: u64 = 3 * STEP_LIMIT_MS;
-pub(crate) fn file_sha(path: &Path) -> anyhow::Result<String> {
-    let mut f = std::fs::File::open(path)?;
-    let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h)?;
-    Ok(hex::encode(h.finalize()))
-}
 pub(crate) fn running_sha() -> anyhow::Result<String> {
     // 한 프로세스의 실행 이미지는 바뀌지 않는다. unit host 여러 개도 같은 판정을 쓴다.
     static SHA: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
     SHA.get_or_init(|| {
-        std::env::current_exe().map_err(|e| e.to_string()).and_then(|p| file_sha(&p).map_err(|e| e.to_string()))
+        std::env::current_exe().and_then(|path| aaa_common::util::sha256_file(&path)).map_err(|e| e.to_string())
     })
     .clone()
     .map_err(anyhow::Error::msg)
