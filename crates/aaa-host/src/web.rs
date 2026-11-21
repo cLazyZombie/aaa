@@ -21,7 +21,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::error::RecvError;
@@ -216,13 +216,21 @@ pub(crate) fn via_https(h: &HeaderMap) -> bool {
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
 
-async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Response {
+#[derive(Clone, Copy)]
+struct PaneIngress {
+    started: std::time::Instant,
+    origin_us: u64,
+}
+
+async fn guard(State(host): State<Arc<Host>>, mut req: Request, next: Next) -> Response {
+    let started = std::time::Instant::now();
     let h = req.headers();
     // Host는 이 host의 두 주소 중 하나(포트까지), Origin은 그 주소와 정확히 같아야 한다: 같은 이름의 다른 포트
     // (같은 머신의 다른 웹 서비스)나 포트 없는 Origin도 남이다(herdr-web-ui `sameOrigin`, t3code `EnvironmentAuth`)
     let Some(expected) = host.web_origin(&host_header(h)) else {
         return (StatusCode::MISDIRECTED_REQUEST, "알 수 없는 Host").into_response();
     };
+    let origin_us = started.elapsed().as_micros() as u64;
     let is_ws = h
         .get(header::UPGRADE)
         .and_then(|v| {
@@ -253,6 +261,9 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     // opaque 보고서는 앱 API를 읽지 못한다. 쿠키 정책에만 기대지 않는다.
     if api && h.get(header::ORIGIN).is_some_and(|v| v == "null") {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if is_ws && req.uri().path().starts_with("/api/v1/panes/") {
+        req.extensions_mut().insert(PaneIngress { started, origin_us });
     }
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
@@ -1965,9 +1976,11 @@ impl Drop for Presence {
 struct PaneWsQuery {
     compression: Option<String>,
     flow: Option<String>,
+    state: Option<String>,
     fg: Option<String>,
     bg: Option<String>,
     trace: Option<String>,
+    attach_id: Option<String>,
 }
 
 // 인증한 조작 기기가 선택한 연결의 시간·크기만 운영 로그에 남긴다.
@@ -1985,6 +1998,7 @@ macro_rules! attach_event {
 struct PaneFlow {
     acks: bool,
     gzip: bool,
+    grid: bool,
     colors: Option<aaa_proto::TermColors>,
     requested: std::time::Instant,
     trace: bool,
@@ -1994,13 +2008,23 @@ async fn pane_ws(
     State(host): State<Arc<Host>>,
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<PaneWsQuery>,
+    ingress: Option<Extension<PaneIngress>>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
     let requested = std::time::Instant::now();
     let Some((dev, role)) = device(&host, &headers) else { return unauthorized() };
     let authenticated = std::time::Instant::now();
-    if host.pane_view_of(&id, role).is_none() {
+    let trace = role.can_control() && q.trace.as_deref() == Some("attach");
+    let attach_id = q.attach_id.filter(|id| trace && crate::input_log::valid_trace(id));
+    // 업그레이드 전에는 존재만 확인한다. 구판 웹의 전체 상태는 붙은 뒤에 만든다.
+    let lookup_started = std::time::Instant::now();
+    let state = host.inner.lock().unwrap();
+    let acquired = std::time::Instant::now();
+    let exists = state.panes.contains_key(&id);
+    drop(state);
+    let checked = std::time::Instant::now();
+    if !exists {
         return (StatusCode::NOT_FOUND, "pane이 없다").into_response();
     }
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
@@ -2009,18 +2033,29 @@ async fn pane_ws(
     let flow = PaneFlow {
         acks: q.flow.as_deref() == Some("ack"),
         gzip: q.compression.as_deref() == Some("gzip.v1"),
+        grid: q.state.as_deref() == Some("grid.v1"),
         colors,
         requested,
-        trace: role.can_control() && q.trace.as_deref() == Some("attach"),
+        trace,
     };
+    let lookup_us = (checked - lookup_started).as_micros() as u64;
+    let state_wait_us = (acquired - lookup_started).as_micros() as u64;
+    let state_hold_us = (checked - acquired).as_micros() as u64;
+    let before_handler_us = ingress.as_ref().map(|i| requested.duration_since(i.started).as_micros() as u64);
     attach_event!(
         flow.trace,
         pane = %id,
+        attach_id = attach_id.as_deref(),
+        origin_us = ingress.as_ref().map(|i| i.origin_us),
+        before_handler_us,
         auth_us = authenticated.duration_since(requested).as_micros() as u64,
-        lookup_us = authenticated.elapsed().as_micros() as u64,
+        lookup_us,
+        state_wait_us,
+        state_hold_us,
+        response_wall_ms = aaa_common::util::now_ms(),
         "웹 터미널 요청"
     );
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, socket))
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, attach_id, socket))
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -2267,19 +2302,64 @@ async fn open_stream(
 /// 입력할 수 있는지와 그 이유(끊김 > 종료 > 권한 순)
 const COLOR_PENDING: &str = "터미널 입력 준비 중";
 
-fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole, preparing: bool) -> TermServerMsg {
-    let reason = if view.connection == aaa_proto::Connection::Disconnected {
-        Some("agent와 연결이 끊겼다(읽기 전용)")
-    } else if !view.state.is_running() {
-        Some("세션이 끝났다")
-    } else if !role.can_control() {
-        Some("보기 권한")
-    } else if preparing {
-        Some(COLOR_PENDING)
+#[derive(Clone, Copy)]
+struct TerminalAccess {
+    connected: bool,
+    running: bool,
+}
+
+impl TerminalAccess {
+    fn from_pane(state: &crate::Inner, pane: &crate::PaneRt) -> Self {
+        Self {
+            connected: state.machines.get(&pane.machine_id).is_some_and(|machine| machine.conn.is_some()),
+            running: pane.info.state.is_running(),
+        }
+    }
+
+    fn read(host: &Host, id: &str) -> Option<Self> {
+        let state = host.inner.lock().unwrap();
+        state.panes.get(id).map(|pane| Self::from_pane(&state, pane))
+    }
+
+    fn reason(self, role: DeviceRole, preparing: bool) -> Option<&'static str> {
+        if !self.connected {
+            Some("agent와 연결이 끊겼다(읽기 전용)")
+        } else if !self.running {
+            Some("세션이 끝났다")
+        } else if !role.can_control() {
+            Some("보기 권한")
+        } else if preparing {
+            Some(COLOR_PENDING)
+        } else {
+            None
+        }
+    }
+
+    fn readonly(self, role: DeviceRole, preparing: bool) -> bool {
+        self.reason(role, preparing).is_some()
+    }
+
+    fn message(self, role: DeviceRole, preparing: bool) -> TermServerMsg {
+        let reason = self.reason(role, preparing);
+        TermServerMsg::Readonly { readonly: reason.is_some(), reason: reason.map(str::to_string) }
+    }
+}
+
+fn terminal_state(host: &Host, id: &str, role: DeviceRole, grid: bool) -> Option<(TerminalAccess, TermServerMsg)> {
+    if grid {
+        let state = host.inner.lock().unwrap();
+        let pane = state.panes.get(id)?;
+        let lease = pane.lease.as_ref().map(|l| aaa_proto::LeaseView { front: l.id.clone(), label: l.label.clone() });
+        let grid = TermServerMsg::Grid { cols: pane.info.cols, rows: pane.info.rows, lease };
+        Some((TerminalAccess::from_pane(&state, pane), grid))
     } else {
-        None
-    };
-    TermServerMsg::Readonly { readonly: view.readonly || preparing, reason: reason.map(str::to_string) }
+        let pane = host.pane_view_of(id, role)?;
+        let access = TerminalAccess {
+            connected: pane.connection == aaa_proto::Connection::Connected,
+            running: pane.state.is_running(),
+        };
+        Some((access, TermServerMsg::State { pane: Box::new(pane) }))
+    }
 }
 
 /// 스냅샷·ACK·기록은 준비 중에도 흐른다. 일찍 온 입력은 나중에 몰아서 보내지 않고 그 요청에 답한다.
@@ -2299,12 +2379,21 @@ fn input_before_colors(msg: TermClientMsg) -> TermServerMsg {
 }
 
 /// WebSocket 하나가 대화형 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고 끝나면 풀린다.
-async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, flow: PaneFlow, socket: WebSocket) {
+async fn pane_loop(
+    host: Arc<Host>,
+    id: String,
+    dev: String,
+    role: DeviceRole,
+    flow: PaneFlow,
+    attach_id: Option<String>,
+    socket: WebSocket,
+) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
     attach_event!(
         flow.trace,
-        pane = %id, front = %front.id, elapsed_us = flow.requested.elapsed().as_micros() as u64, "웹 터미널 upgrade"
+        pane = %id, front = %front.id, attach_id = attach_id.as_deref(),
+        elapsed_us = flow.requested.elapsed().as_micros() as u64, "웹 터미널 upgrade"
     );
     // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
     host.view_term(&front.id, &dev, Some(&id));
@@ -2322,7 +2411,7 @@ async fn pane_session(
     flow: PaneFlow,
     socket: WebSocket,
 ) {
-    let PaneFlow { acks, colors, trace, .. } = flow;
+    let PaneFlow { acks, colors, grid, trace, .. } = flow;
     let id = id.to_string();
     let actor = format!("device:{dev}");
     // 취소를 듣기 시작한 뒤에 다시 본다: upgrade와 취소가 엇갈려도 놓치지 않는다(t3code SessionStore `awaitInvalidation`)
@@ -2349,7 +2438,7 @@ async fn pane_session(
     // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
     let mut upload_failed = false;
     let mut input_traces = std::collections::HashMap::<String, u8>::new();
-    let Some(view) = host.pane_view_of(&id, role) else { return };
+    let Some((access, state)) = terminal_state(host, &id, role, grid) else { return };
     let started = std::time::Instant::now();
     let now = || started.elapsed().as_millis() as u64;
     let mut streams = 0;
@@ -2360,11 +2449,12 @@ async fn pane_session(
         color_wait = None;
     }
     let preparing = color_wait.is_some();
-    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly || preparing, now()).await else {
+    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, access.readonly(role, preparing), now()).await
+    else {
         return;
     };
     let mut rx = attach.rx;
-    if !out.msg(&readonly_msg(&view, role, preparing)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
+    if !out.msg(&access.message(role, preparing)) || !out.msg(&state) {
         return;
     }
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
@@ -2407,7 +2497,7 @@ async fn pane_session(
             }, if color_wait.is_some() => {
                 // 앞과 같이 색 전송 실패·시한 뒤에는 agent 연결과 pane 권한으로 입력 가능 여부를 판단한다.
                 color_wait = None;
-                let Some(view) = host.pane_view_of(&id, role) else { break };
+                let Some(access) = TerminalAccess::read(host, &id) else { break };
                 attach_event!(
                     trace,
                     front = %front.id, elapsed_us = color_started.elapsed().as_micros() as u64,
@@ -2415,7 +2505,7 @@ async fn pane_session(
                     color_queue_us = applied.map(|receipt| receipt.queue_us),
                     color_request_us = applied.map(|receipt| receipt.request_us), "웹 터미널 입력 준비"
                 );
-                if !out.msg(&readonly_msg(&view, role, false)) { break; }
+                if !out.msg(&access.message(role, false)) { break; }
             }
             _ = tick.tick() => {}
             ev = rx.recv() => {
@@ -2441,8 +2531,8 @@ async fn pane_session(
                     }
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
-                        let Some(view) = host.pane_view_of(&id, role) else { break };
-                        if !out.msg(&readonly_msg(&view, role, color_wait.is_some())) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }
+                        let Some((access, state)) = terminal_state(host, &id, role, grid) else { break };
+                        if !out.msg(&access.message(role, color_wait.is_some())) || !out.msg(&state) { break; }
                         false
                     }
                     Err(RecvError::Closed) => break,
@@ -2450,7 +2540,7 @@ async fn pane_session(
                 if resync {
                     let Some(mut a) = host.attach_pane(&id) else { break };
                     next = a.offset;
-                    let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
+                    let readonly = TerminalAccess::read(host, &id).is_none_or(|access| access.readonly(role, false));
                     let Some(w) = open_stream(&out, &mut streams, &mut a, readonly || color_wait.is_some(), now()).await else { break };
                     rx = a.rx;
                     window = w;
@@ -3010,11 +3100,61 @@ mod guard_tests {
     fn lab(public_origin: &str) -> Lab {
         let dir = std::env::temp_dir().join(format!("aaa-guard-test-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = dir.join("projects").display().to_string();
         cfg.notify.web_push = false;
         let h = Host::open(cfg, dir.clone()).unwrap();
         h.web_port.store(7000, std::sync::atomic::Ordering::Relaxed);
         h.db.set_meta("publish_origin", public_origin).unwrap();
         Lab(h, dir)
+    }
+
+    #[tokio::test]
+    async fn terminal_grid_is_ready_while_metadata_db_is_locked() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        l.0.on_session(
+            "machine",
+            aaa_proto::SessionInfo {
+                responsibility: None,
+                id: "pane".into(),
+                name: "pane".into(),
+                argv: vec![],
+                cwd: None,
+                pid: None,
+                started_at_ms: 0,
+                boot_id: "boot".into(),
+                cols: 100,
+                rows: 30,
+                state: aaa_proto::SessionState::Running,
+                role: None,
+                label: None,
+                harness: None,
+            },
+            false,
+        );
+        let (holding, started) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let host = l.0.clone();
+        let holder = tokio::task::spawn_blocking(move || {
+            host.db.image_transaction(|_| {
+                holding.send(()).unwrap();
+                released.recv()?;
+                Ok(())
+            })
+        });
+        started.await.unwrap();
+        let host = l.0.clone();
+        let mut reader =
+            tokio::task::spawn_blocking(move || terminal_state(&host, "pane", DeviceRole::Controller, true));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), &mut reader).await;
+        release.send(()).unwrap();
+        holder.await.unwrap().unwrap();
+        let Ok(result) = result else {
+            drop(reader.await.unwrap());
+            panic!("터미널 상태가 DB 잠금에 막혔다");
+        };
+        let (access, state) = result.unwrap().unwrap();
+        assert_eq!(state, TermServerMsg::Grid { cols: 100, rows: 30, lease: None });
+        assert!(access.readonly(DeviceRole::Controller, false));
     }
 
     fn token(h: &Host) -> String {

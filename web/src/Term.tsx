@@ -1541,18 +1541,18 @@ export function TermView({
             setSteerKnown(msg.steer_queued === true);
             break;
           case "state":
-            setLease(msg.pane.lease);
-            {
-              // 크기도 흐름 순서대로: 앞서 온 출력(snapshot replay 포함)을 다 읽은 뒤 바꾼다
-              const { cols, rows } = msg.pane;
-              setSize((prev) => (prev[0] === cols && prev[1] === rows ? prev : [cols, rows]));
-              run(() =>
-                term.write("", () => {
-                  if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
-                }),
-              );
-            }
+          case "grid": {
+            const { lease, cols, rows } = msg.t === "state" ? msg.pane : msg;
+            setLease(lease);
+            // 크기도 흐름 순서대로: 앞서 온 출력(snapshot replay 포함)을 다 읽은 뒤 바꾼다
+            setSize((prev) => (prev[0] === cols && prev[1] === rows ? prev : [cols, rows]));
+            run(() =>
+              term.write("", () => {
+                if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+              }),
+            );
             break;
+          }
           case "attached":
             setAttach({
               text: msg.inserted
@@ -1604,13 +1604,15 @@ export function TermView({
       // online/pageshow는 기존처럼 그 사건 안에서 새 WS를 연다. 지원 확인은 같은 브라우저에서 재사용한다.
       const gzip = gzipSupport === undefined ? await receiver.ready : gzipSupport;
       if (!alive || epoch !== connectEpoch) { receiver.close(); return; }
-      attachTiming("ws-request", { gzip });
-      const query = `flow=ack&${colors}${gzip ? "&compression=gzip.v1" : ""}${traceAttach ? "&trace=attach" : ""}`;
+      const attachId = traceAttach ? crypto.getRandomValues(new Uint32Array(4)).join("-") : undefined;
+      const traceQuery = attachId ? `&trace=attach&attach_id=${attachId}` : "";
+      const query = `flow=ack&state=grid.v1&${colors}${gzip ? "&compression=gzip.v1" : ""}${traceQuery}`;
+      if (attachId) attachTiming("ws-request", { gzip, attachId, wallMs: Date.now() });
       ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?${query}`));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       ws.onopen = () => {
-        attachTiming("ws-open");
+        if (attachId) attachTiming("ws-open", { attachId, wallMs: Date.now() });
         delay = 500;
       };
       ws.onmessage = (event) => {

@@ -345,7 +345,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.190: 카드 답의 전달 대기·보류 표지 `QuestionAnswerView.delivery`(선택, t-2111).
 // 1.191: 답한 질문 카드 정정(t-2117): `ask_correct`, AskRecord.revisions·thread·correction(AskCorrection).
 // 1.192: Antigravity CLI profile, 구독 사용량 `UsageReport.agy`와 재설정 시각 미상인 `ThreadView.limited`(선택, t-2116).
-pub const FRONT_API: Version = Version { major: 1, minor: 192 };
+// 1.193: 터미널 WS의 `state=grid.v1` 협상과 `Grid` 상태(t-2128). 요청하지 않으면 기존 `State`를 보낸다.
+pub const FRONT_API: Version = Version { major: 1, minor: 193 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

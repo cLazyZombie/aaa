@@ -2030,7 +2030,7 @@ export type TermServerMsg = { "t": "snapshot", replay: B64, compression?: Termin
 /**
  * replay에 싣지 않은 앞 기록이 host에 더 있다: 위로 굴려 끝에 닿으면 `History`로 받아 온다(plan §8.67)
  */
-history_more: boolean, } | { "t": "history", id: number, data: B64, compression?: TerminalCompression, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string,
+history_more: boolean, } | { "t": "history", id: number, data: B64, compression?: TerminalCompression, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "grid", cols: number, rows: number, lease: LeaseView | null, } | { "t": "front", id: string,
 /**
  * 대기 메시지 「지금 보내기」(`SteerQueued`)를 안다(1.45). 옛 host는 이 칸이 없어 웹이 단추를 숨긴다
  */

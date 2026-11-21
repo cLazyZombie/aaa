@@ -139,6 +139,7 @@ async function workerLoad(engine, label, width, failure) {
     assert.equal(workerRequests.length, 0, "접근 거부·404가 가능한 외부 Worker 자산을 요청하지 않는다");
     assert.equal(sockets.length, 1, "연결을 한 번만 연다");
     assert.equal(new URL(sockets[0]).searchParams.has("compression"), failure === "access");
+    assert.equal(new URL(sockets[0]).searchParams.has("attach_id"), false, "계측을 고르지 않으면 연결 ID를 보내지 않는다");
     assert.equal(diagnostics.length, failure === "access" ? 0 : 1, "Worker 실패 원인을 진단 로그에 남긴다");
     assert.deepEqual(dev.errors, [], `${label}/${width}/${failure}: Worker 오류를 처리한다`);
     console.log("terminal-worker-load", JSON.stringify({ label, width, failure, workerRequests: workerRequests.length, sockets: sockets.length, gzip: failure === "access", diagnostics: diagnostics.length }));
@@ -306,8 +307,14 @@ async function colorBeforeInput(engine) {
   aaa("tab", "create", "--label", name, "--machine", "labA", "--cols", "100", "--", process.execPath, "-e", code);
   const pane = aaa("pane", "get", name);
   const agent = procs.get("agent");
+  const attachStages = [];
   const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+    at: `${base}?trace=attach`,
     hash: "#tasks",
+    onPage: page => page.on("console", message => {
+      if (message.type() !== "debug" || !message.text().startsWith("터미널 붙기")) return;
+      attachStages.push(message.args()[1].jsonValue());
+    }),
     setup: ctx => ctx.addInitScript(id => {
       const NativeSocket = window.WebSocket;
       window.WebSocket = class extends NativeSocket {
@@ -339,6 +346,21 @@ async function colorBeforeInput(engine) {
           && term.querySelector(".xterm-rows")?.textContent.includes("COLOR-SCREEN>")
           && document.querySelector('[data-testid="readonly-banner"]')?.textContent === "터미널 입력 준비 중";
       }, null, 4000);
+      const timings = (await Promise.all(attachStages)).filter(timing => timing.pane === pane.id);
+      const request = timings.find(timing => timing.stage === "ws-request");
+      const opened = timings.find(timing => timing.stage === "ws-open");
+      assert.match(request.attachId, /^\d+-\d+-\d+-\d+$/);
+      assert.equal(opened.attachId, request.attachId);
+      assert(opened.ms >= request.ms && Number.isSafeInteger(opened.wallMs) && Number.isSafeInteger(request.wallMs));
+      const hostTrace = fs.readFileSync(`${root}/host.log`, "utf8").split("\n").filter(line => line.includes(request.attachId));
+      assert(hostTrace.some(line => line.includes("웹 터미널 요청") && line.includes("before_handler_us")
+        && line.includes("origin_us") && line.includes("state_wait_us") && line.includes("state_hold_us")));
+      assert(hostTrace.some(line => line.includes("웹 터미널 upgrade")));
+      assert.equal(await page.evaluate(() => new URL(window.__colorSocket.url).searchParams.get("state")), "grid.v1");
+      const received = timings.find(timing => timing.stage === "snapshot-received");
+      console.log("terminal-attach", JSON.stringify({
+        engine: engine.browserType().name(), openMs: opened.ms - request.ms, snapshotMs: received.ms - opened.ms,
+      }));
       const replies = await inTime(page.evaluate(() => new Promise(resolve => {
         // 화면은 보인다. 이전 클라이언트나 전송 경합의 패킷도 agent에 먼저 가면 안 된다.
         const ws = window.__colorSocket;
