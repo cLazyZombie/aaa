@@ -403,7 +403,7 @@ struct MachineRt {
     /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
-    colors: Option<tokio::sync::mpsc::UnboundedSender<colors::ColorPush>>,
+    colors: Option<colors::ColorPushes>,
     /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.372)
     build: MachineBuild,
 }
@@ -3045,7 +3045,7 @@ impl Host {
         // 그 화면이 썼다: 그 화면이 알린 색이 지금 색이다(herdr `promote_client_to_foreground`, plan §8.187)
         let i = &mut *self.inner.lock().unwrap();
         if i.colors.touch(&f.id, None) {
-            colors::push_all(i);
+            colors::push_all(i, None);
         }
     }
 
@@ -3061,7 +3061,7 @@ impl Host {
         let freed: Vec<String> = {
             let mut i = self.inner.lock().unwrap();
             if i.colors.gone(front_id) {
-                colors::push_all(&i);
+                colors::push_all(&mut i, None);
             }
             i.panes
                 .iter()

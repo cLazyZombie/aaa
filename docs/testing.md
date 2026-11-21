@@ -1638,6 +1638,7 @@ E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했
 
 ## 터미널 기록 압축(t-0876)
 
+- 첫 화면과 agent 색상 준비의 순서는 [t-2128 검증 기록](testing-terminal-first-frame-t-2128.md)에 있다.
 - `cargo test -p aaa-common terminal_payload --locked`: 두 codec의 정확한 일반·색상·한글·binary 왕복, 4095/4096 B와 이득 경계, 768 KiB/원시 JSON frame 상한, gzip CRC·잘림·남은 데이터·압축 폭탄, zstd window/dictionary, null·알 수 없는 metadata, IPC 거부를 검사한다. 실제 frame writer의 snapshot→binary→Pong 순서와 원시 offset, blocking 작업 두 개와 취소된 작업의 permit 보유도 사건으로 확인한다.
 - `cargo test -p aaa-agent -p aaa-host terminal_compression_tests --locked`: 실제 Hello/Welcome 처리에서 원격/로컬·선택 기능 유무·identity/압축의 조합과 재연결 초기화를 검사한다. 허용하지 않은 압축은 소비 전에 링크 오류가 나야 한다. 구판 필드 부재와 생성 TypeScript도 기존 proto 시험으로 확인한다.
 - `node --test web/test/terminalCompression.test.mjs`: 실제 native gzip의 CRC·길이·폭탄·취소와 Worker gate 대역을 사용한다. 해제 전 소비 없음, snapshot/binary/history/새 stream 순서, 늦은 결과 폐기, 구 host identity, 지원 실패, 재연결의 새 Worker 준비, raw_len 위조를 포함한 wire/raw 대기 예산을 검사한다.

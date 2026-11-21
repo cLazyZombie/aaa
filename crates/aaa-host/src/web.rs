@@ -1967,12 +1967,27 @@ struct PaneWsQuery {
     flow: Option<String>,
     fg: Option<String>,
     bg: Option<String>,
+    trace: Option<String>,
+}
+
+// 인증한 조작 기기가 선택한 연결의 시간·크기만 운영 로그에 남긴다.
+macro_rules! attach_event {
+    ($trace:expr, $($args:tt)*) => {
+        if $trace {
+            tracing::info!($($args)*);
+        } else {
+            tracing::debug!($($args)*);
+        }
+    };
 }
 
 #[derive(Clone, Copy)]
 struct PaneFlow {
     acks: bool,
     gzip: bool,
+    colors: Option<aaa_proto::TermColors>,
+    requested: std::time::Instant,
+    trace: bool,
 }
 
 async fn pane_ws(
@@ -1982,15 +1997,30 @@ async fn pane_ws(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let requested = std::time::Instant::now();
     let Some((dev, role)) = device(&host, &headers) else { return unauthorized() };
+    let authenticated = std::time::Instant::now();
     if host.pane_view_of(&id, role).is_none() {
         return (StatusCode::NOT_FOUND, "pane이 없다").into_response();
     }
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
     // ACK를 하지 않는 화면(다시 띄우기 전에 받은 옛 웹)은 보내기 줄로만 잰다
-    let flow = PaneFlow { acks: q.flow.as_deref() == Some("ack"), gzip: q.compression.as_deref() == Some("gzip.v1") };
     let colors = q.fg.zip(q.bg).and_then(|(fg, bg)| aaa_proto::TermColors::from_hex(&fg, &bg));
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, colors, socket))
+    let flow = PaneFlow {
+        acks: q.flow.as_deref() == Some("ack"),
+        gzip: q.compression.as_deref() == Some("gzip.v1"),
+        colors,
+        requested,
+        trace: role.can_control() && q.trace.as_deref() == Some("attach"),
+    };
+    attach_event!(
+        flow.trace,
+        pane = %id,
+        auth_us = authenticated.duration_since(requested).as_micros() as u64,
+        lookup_us = authenticated.elapsed().as_micros() as u64,
+        "웹 터미널 요청"
+    );
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, socket))
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -2002,6 +2032,8 @@ struct Outbox {
     /// 남은 줄을 버리고 이 code로 닫는다(4008 출력 정지, 4401 기기 취소)
     stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
     payload: Arc<WebPayload>,
+    front: String,
+    trace: bool,
 }
 
 /// `Outbox`에 보내기만 하는 손잡이(앞 기록 답처럼 연결 loop 밖에서 끝나는 일)
@@ -2087,12 +2119,15 @@ fn frame_len(m: &Message) -> u64 {
 }
 
 impl Outbox {
-    fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>, gzip: bool) -> Self {
+    fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>, front: &str, flow: PaneFlow) -> Self {
+        let PaneFlow { gzip, requested, trace, .. } = flow;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(AtomicU64::new(0));
         let (stop, mut stopped) = tokio::sync::watch::channel(None);
         let left = buffered.clone();
+        let writer_front = front.to_string();
         tokio::spawn(async move {
+            let mut first = true;
             loop {
                 // 연결이 그냥 끝나 보내는 쪽이 사라진 것(Err)은 정지가 아니다: 4008 없이 끝낸다
                 let m = tokio::select! {
@@ -2111,6 +2146,10 @@ impl Outbox {
                 if !ok {
                     return;
                 }
+                if first {
+                    first = false;
+                    attach_event!(trace, front = %writer_front, elapsed_us = requested.elapsed().as_micros() as u64, "웹 터미널 첫 프레임 송신");
+                }
             }
             // 따라오지 못했거나 기기가 취소됐다: 남은 줄은 버리고 그 code로 닫는다. 그 닫기도 못 가면 연결을 버린다.
             let (code, reason) = stopped.borrow().unwrap_or((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON));
@@ -2124,6 +2163,8 @@ impl Outbox {
             tx,
             buffered,
             stop,
+            front: front.to_string(),
+            trace,
             payload: Arc::new(WebPayload {
                 gzip,
                 serial: tokio::sync::Mutex::new(()),
@@ -2189,6 +2230,7 @@ async fn open_stream(
     *streams += 1;
     let mut window = OutputWindow::new(*streams);
     let bytes = a.replay.len() as u64;
+    let started = std::time::Instant::now();
     let text = out
         .payload
         .prepare(TermServerMsg::Snapshot {
@@ -2209,8 +2251,13 @@ async fn open_stream(
         );
         return None;
     };
+    let wire = text.len() as u64;
+    attach_event!(
+        out.trace,
+        front = %out.front, stream = *streams, raw_bytes = bytes, wire_bytes = wire,
+        elapsed_us = started.elapsed().as_micros() as u64, "웹 터미널 snapshot 준비"
+    );
     if bytes > 0 {
-        let wire = text.len() as u64;
         window.join(wire, out.buffered(), now);
         window.write(bytes, wire);
     }
@@ -2218,36 +2265,47 @@ async fn open_stream(
 }
 
 /// 입력할 수 있는지와 그 이유(끊김 > 종료 > 권한 순)
-fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole) -> TermServerMsg {
+const COLOR_PENDING: &str = "터미널 입력 준비 중";
+
+fn readonly_msg(view: &aaa_proto::PaneView, role: DeviceRole, preparing: bool) -> TermServerMsg {
     let reason = if view.connection == aaa_proto::Connection::Disconnected {
         Some("agent와 연결이 끊겼다(읽기 전용)")
     } else if !view.state.is_running() {
         Some("세션이 끝났다")
     } else if !role.can_control() {
         Some("보기 권한")
+    } else if preparing {
+        Some(COLOR_PENDING)
     } else {
         None
     };
-    TermServerMsg::Readonly { readonly: view.readonly, reason: reason.map(str::to_string) }
+    TermServerMsg::Readonly { readonly: view.readonly || preparing, reason: reason.map(str::to_string) }
+}
+
+/// 스냅샷·ACK·기록은 준비 중에도 흐른다. 일찍 온 입력은 나중에 몰아서 보내지 않고 그 요청에 답한다.
+fn input_before_colors(msg: TermClientMsg) -> TermServerMsg {
+    match msg {
+        TermClientMsg::Submit { id, .. } => {
+            TermServerMsg::Submitted { id, ok: false, message: Some(COLOR_PENDING.into()) }
+        }
+        TermClientMsg::SteerQueued { id, .. } => TermServerMsg::SteerQueued {
+            id,
+            sent: false,
+            reason: Some(aaa_proto::SteerRefusal::Failed),
+            message: Some(COLOR_PENDING.into()),
+        },
+        _ => TermServerMsg::Error(ErrorBody::new(ErrorCode::Unavailable, COLOR_PENDING)),
+    }
 }
 
 /// WebSocket 하나가 대화형 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고 끝나면 풀린다.
-async fn pane_loop(
-    host: Arc<Host>,
-    id: String,
-    dev: String,
-    role: DeviceRole,
-    flow: PaneFlow,
-    colors: Option<aaa_proto::TermColors>,
-    socket: WebSocket,
-) {
+async fn pane_loop(host: Arc<Host>, id: String, dev: String, role: DeviceRole, flow: PaneFlow, socket: WebSocket) {
     let short: String = dev.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     let front = host.new_front(format!("웹({short})"));
-    // 그 pane의 agent가 이 화면의 색을 받은 뒤에 화면을 연다: 화면이 본 뒤 프로그램이 묻는 색에는 이 색으로 답한다(plan §8.187).
-    // agent가 늦으면 여는 것도 늦다(요청 시한까지). 끊긴 agent는 기다리지 않는다
-    if let Some(wait) = colors.and_then(|c| host.front_colors(&front.id, &id, c)) {
-        aaa_common::diagnostic::ignored(wait.await, "보조 작업 실패 뒤 기존 처리를 계속한다");
-    }
+    attach_event!(
+        flow.trace,
+        pane = %id, front = %front.id, elapsed_us = flow.requested.elapsed().as_micros() as u64, "웹 터미널 upgrade"
+    );
     // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
     host.view_term(&front.id, &dev, Some(&id));
     pane_session(&host, &id, &dev, role, &front, flow, socket).await;
@@ -2264,29 +2322,49 @@ async fn pane_session(
     flow: PaneFlow,
     socket: WebSocket,
 ) {
-    let PaneFlow { acks, gzip } = flow;
+    let PaneFlow { acks, colors, trace, .. } = flow;
     let id = id.to_string();
     let actor = format!("device:{dev}");
     // 취소를 듣기 시작한 뒤에 다시 본다: upgrade와 취소가 엇갈려도 놓치지 않는다(t3code SessionStore `awaitInvalidation`)
     let mut revoked = host.device_revoked.subscribe();
+    let (sink, mut stream) = socket.split();
+    let out = Outbox::new(sink, &front.id, flow);
+    if host.is_revoked(dev) {
+        out.revoked();
+        return;
+    }
+    // 보이는 화면은 host가 이미 가지고 있다. agent에는 색을 보내고, 입력·크기만 그 답 뒤에 허용한다(plan §8.187).
+    let color_started = std::time::Instant::now();
+    let mut color_wait =
+        colors.and_then(|c| host.front_colors(&front.id, &id, c)).filter(|wait| wait.borrow().is_none());
+    let started_attach = std::time::Instant::now();
     let Some(mut attach) = host.attach_pane(&id) else { return };
+    attach_event!(
+        trace,
+        front = %front.id, elapsed_us = started_attach.elapsed().as_micros() as u64,
+        preparing = color_wait.is_some(), "웹 터미널 화면 사본"
+    );
     let mut next = attach.offset;
     let mut upload: Option<crate::attach::Upload> = None;
     // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
     let mut upload_failed = false;
     let mut input_traces = std::collections::HashMap::<String, u8>::new();
     let Some(view) = host.pane_view_of(&id, role) else { return };
-    let (sink, mut stream) = socket.split();
-    let out = Outbox::new(sink, gzip);
     let started = std::time::Instant::now();
     let now = || started.elapsed().as_millis() as u64;
     let mut streams = 0;
     if !out.msg(&TermServerMsg::Front { id: front.id.clone(), steer_queued: true }) {
         return;
     }
-    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()).await else { return };
+    if color_wait.as_ref().is_some_and(|wait| wait.borrow().is_some()) {
+        color_wait = None;
+    }
+    let preparing = color_wait.is_some();
+    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly || preparing, now()).await else {
+        return;
+    };
     let mut rx = attach.rx;
-    if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
+    if !out.msg(&readonly_msg(&view, role, preparing)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
         return;
     }
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
@@ -2323,6 +2401,22 @@ async fn pane_session(
                     break;
                 }
             }
+            applied = async {
+                let r = color_wait.as_mut().unwrap().wait_for(Option::is_some).await;
+                r.ok().and_then(|status| *status)
+            }, if color_wait.is_some() => {
+                // 앞과 같이 색 전송 실패·시한 뒤에는 agent 연결과 pane 권한으로 입력 가능 여부를 판단한다.
+                color_wait = None;
+                let Some(view) = host.pane_view_of(&id, role) else { break };
+                attach_event!(
+                    trace,
+                    front = %front.id, elapsed_us = color_started.elapsed().as_micros() as u64,
+                    color_ok = applied.is_some_and(|receipt| receipt.ok),
+                    color_queue_us = applied.map(|receipt| receipt.queue_us),
+                    color_request_us = applied.map(|receipt| receipt.request_us), "웹 터미널 입력 준비"
+                );
+                if !out.msg(&readonly_msg(&view, role, false)) { break; }
+            }
             _ = tick.tick() => {}
             ev = rx.recv() => {
                 // 빈틈·지연(Lagged)·agent 재구독(Reset)은 host 안의 일이라 snapshot으로 다시 맞춘다. 브라우저가
@@ -2348,7 +2442,7 @@ async fn pane_session(
                     Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => true,
                     Ok(PaneEvent::State) => {
                         let Some(view) = host.pane_view_of(&id, role) else { break };
-                        if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }
+                        if !out.msg(&readonly_msg(&view, role, color_wait.is_some())) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) { break; }
                         false
                     }
                     Err(RecvError::Closed) => break,
@@ -2357,7 +2451,7 @@ async fn pane_session(
                     let Some(mut a) = host.attach_pane(&id) else { break };
                     next = a.offset;
                     let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
-                    let Some(w) = open_stream(&out, &mut streams, &mut a, readonly, now()).await else { break };
+                    let Some(w) = open_stream(&out, &mut streams, &mut a, readonly || color_wait.is_some(), now()).await else { break };
                     rx = a.rx;
                     window = w;
                 }
@@ -2370,6 +2464,12 @@ async fn pane_session(
                 }
                 let req = match m {
                     Some(Ok(Message::Text(t))) => match serde_json::from_str::<TermClientMsg>(&t) {
+                        Ok(msg @ (TermClientMsg::Input { .. } | TermClientMsg::CtrlEnter { .. }
+                            | TermClientMsg::Resize { .. } | TermClientMsg::Take | TermClientMsg::Attach { .. }
+                            | TermClientMsg::Submit { .. } | TermClientMsg::SteerQueued { .. })) if color_wait.is_some() => {
+                            if !out.msg(&input_before_colors(msg)) { break; }
+                            None
+                        }
                         Ok(TermClientMsg::Ack { stream, offset }) => {
                             // 앞 구독(snapshot 전)의 늦은 ACK는 그냥 버린다
                             if stream == window.id && !window.acknowledge(stream, offset) {
@@ -2497,8 +2597,12 @@ async fn pane_session(
                         // 테마를 바꿨다: 연 때처럼 agent가 받은 뒤 이 화면의 다음 메시지를 본다
                         Ok(TermClientMsg::Colors { fg, bg }) => {
                             let wait = aaa_proto::TermColors::from_hex(&fg, &bg).and_then(|c| host.front_colors(&front.id, &id, c));
-                            if let Some(wait) = wait {
-                                aaa_common::diagnostic::ignored(wait.await, "보조 작업 실패 뒤 기존 처리를 계속한다");
+                            if let Some(mut wait) = wait {
+                                if color_wait.is_some() {
+                                    color_wait = Some(wait);
+                                } else {
+                                    aaa_common::diagnostic::ignored(wait.wait_for(Option::is_some).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
+                                }
                             }
                             None
                         }
@@ -2521,6 +2625,10 @@ async fn pane_session(
                         }
                         _ => None,
                     },
+                    Some(Ok(Message::Binary(_))) if color_wait.is_some() => {
+                        if !out.msg(&TermServerMsg::Error(ErrorBody::new(ErrorCode::Unavailable, COLOR_PENDING))) { break; }
+                        None
+                    }
                     Some(Ok(Message::Binary(b))) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(b.to_vec()) }),
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => None,
