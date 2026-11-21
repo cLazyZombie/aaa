@@ -9,6 +9,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import subprocess
 from unittest.mock import patch
@@ -71,15 +72,28 @@ raise SystemExit(7)
             listener.bind(("127.0.0.1", 0))
             listener.listen()
             listener.settimeout(3)
-            common = f"""import json, os, signal, socket, sys
+            epoch = time.monotonic()
+            connection_log = root / "connection.log"
+            common = f"""import json, os, signal, socket, sys, time
 from pathlib import Path
+def note(message):
+    with Path({str(connection_log)!r}).open("a") as log:
+        print(f'{{time.monotonic() - {epoch!r}:012.6f}} child pid={{os.getpid()}} {{message}}', file=log)
+
 def gate(phase):
     if phase != {phase!r}: return
     # TERM을 받은 도구가 정상 종료해도 바깥 runner는 중단을 실패로 보존해야 한다.
     signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else lambda *_: sys.exit(0))
     Path({str(root / 'snapshot-pid')!r}).write_text(str(os.getpid()))
     print('partial-' + phase, flush=True)
-    with socket.create_connection(('127.0.0.1', {listener.getsockname()[1]}), timeout=3) as link:
+    note(f'{{phase}} 접속 시도')
+    try:
+        link = socket.create_connection(('127.0.0.1', {listener.getsockname()[1]}), timeout=3)
+    except OSError as error:
+        note(f'{{phase}} 접속 실패: {{error!r}}')
+        raise
+    with link:
+        note(f'{{phase}} 접속 성공')
         link.sendall(str(os.getpid()).encode())
         link.settimeout(None)
         link.recv(1)
@@ -123,34 +137,62 @@ else: sys.exit(9)
             # runner의 자식이 아닌 프로세스를 함께 두고 생존을 확인한다.
             outsider = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
                                         stdin=subprocess.PIPE)
+            timeline = []
+
+            def note(message):
+                timeline.append(f"{time.monotonic() - epoch:012.6f} {message}")
+
+            note("시험: runner 실행 요청")
             process = subprocess.Popen([sys.executable, str(runner), "--logs", str(logs), "--workers", "1"],
                                        cwd=root, env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                                                       "RUST_TEST_THREADS": "1"},
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            ready_job = {"prepare": "prepare", "list": "list-m13", "execute": "00-first",
+                         "doctests": "02-doctests"}[phase]
             lines = queue.Queue()
             def read():
                 for line in process.stdout:
+                    if line.strip():
+                        note(f"runner: {line.rstrip()}")
                     lines.put(line)
+                note(f"runner: stdout EOF (exit={process.poll()})")
                 lines.put(None)
             reader = threading.Thread(target=read)
             reader.start()
+            waiting_for = f"{ready_job} START"
             try:
+                # 앞 단계의 START·완료 출력을 먼저 읽는다. 접속 시한은 대상 자식이
+                # 시작되었다는 기록이 나온 뒤에만 적용한다.
+                while True:
+                    line = lines.get(timeout=3)
+                    if line is None:
+                        self.fail(f"{waiting_for} 전에 runner가 끝났다 (exit={process.wait(timeout=3)})")
+                    if line.startswith(f"START {ready_job} pid="):
+                        started_pid = int(line.split()[2].removeprefix("pid="))
+                        break
+                waiting_for = f"{ready_job} 준비 접속"
                 with listener.accept()[0] as peer:
+                    note(f"시험: {ready_job} 접속 수락")
                     peer.settimeout(3)
+                    waiting_for = f"{ready_job} 준비 PID"
                     child_pid = int(peer.recv(100))
-                    while True:
-                        line = lines.get(timeout=3)
-                        self.assertIsNotNone(line, "START 전에 runner가 끝났다")
-                        if line.startswith("START ") and f"pid={child_pid} " in line:
-                            break
+                    self.assertEqual(child_pid, started_pid)
+                    waiting_for = f"{ready_job} 시작 기록 검증"
                     before = json.loads((logs / "state.json").read_text())
                     self.assertTrue(any(child["pid"] == child_pid for child in before["active"].values()))
                     # 시작 사건과 완전한 상태가 자식 종료보다 먼저 디스크에 있어야 한다.
                     events = [json.loads(line) for line in (logs / "events.jsonl").read_text().splitlines()]
                     self.assertTrue(any(event["event"] == "child_started" and event["pid"] == child_pid for event in events))
+                    note(f"시험: signal={signum} 전송 (runner pid={process.pid})")
                     process.send_signal(signum)
-                    self.assertEqual(process.wait(timeout=3), 128 + signum)
+                    waiting_for = f"signal={signum} 뒤 runner 종료"
+                    exit_code = process.wait(timeout=3)
+                    note(f"시험: runner 종료 (exit={exit_code})")
+                    self.assertEqual(exit_code, 128 + signum)
+                    waiting_for = f"{ready_job} 소켓 EOF"
                     self.assertEqual(peer.recv(1), b"", "직접 자식이 실제로 종료되어야 한다")
+                    note(f"시험: {ready_job} 소켓 EOF (pid={child_pid})")
+                waiting_for = "중단 결과 검증"
                 state = json.loads((logs / "state.json").read_text())
                 summary = json.loads((logs / "summary.json").read_text())
                 self.assertEqual(state["status"], "interrupted")
@@ -173,9 +215,24 @@ else: sys.exit(9)
                 if phase == "doctests":
                     self.assertEqual([job["exit"] for job in summary["jobs"]], [7, 7, 128 + signum])
                 self.assertIsNone(outsider.poll(), "runner 밖 프로세스는 살아 있어야 한다")
+            except (AssertionError, ValueError, queue.Empty, TimeoutError, subprocess.TimeoutExpired) as error:
+                note(f"시험: {waiting_for} 중 실패 ({error!r})")
+                child_trace = connection_log.read_text().splitlines() if connection_log.exists() else []
+                trace = "\n".join(sorted([*timeline, *child_trace]))
+                state_path = logs / "state.json"
+                state_text = state_path.read_text() if state_path.exists() else "기록 없음"
+                events_path = logs / "events.jsonl"
+                events_text = events_path.read_text() if events_path.exists() else "기록 없음"
+                self.fail(f"{waiting_for} 중 실패 ({error!r})\n{trace}\n"
+                          f"정리 전 runner 상태:\n{state_text}\nrunner 사건:\n{events_text}")
             finally:
                 if process.poll() is None:
-                    process.kill()
+                    # 실패 경로에서도 runner가 직접 띄운 자식을 회수하게 한다.
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
                 process.wait(timeout=3)
                 reader.join(timeout=3)
                 process.stdout.close()
