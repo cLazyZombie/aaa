@@ -1589,7 +1589,7 @@ paged?: boolean, } | { "op": "ask_history", project?: string, before: string | n
 /**
  * 질문 배열 순서의 직접 답·의견. text는 옛 공통 답으로 유지한다.
  */
-comments?: Array<string | null>, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "auto_decision_forget", project: string, ids: Array<string>, all: boolean, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+comments?: Array<string | null>, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "auto_decision_forget", project: string, ids: Array<string>, all: boolean, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_correct", project?: string, id: string, base_at_ms: number, picks: Array<number | null>, text: string | null, comments?: Array<string | null>, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -2482,7 +2482,29 @@ body?: string,
 /**
  * 보존한 파일의 주소 앞부분: `<files_base>library/<경로>`가 그림, `<files_base>report.md`가 그때 보고다
  */
-files_base?: string, };
+files_base?: string,
+/**
+ * FRONT_API 1.191(t-2117). 고치기 전의 답들(처음 답부터). `answer`가 지금 답이다. 지우지 않고 덧붙이기만 한다
+ */
+revisions?: Array<QuestionAnswerView>,
+/**
+ * FRONT_API 1.191. coordinator 확인 필요 post가 중계한 thread(답할 때 정한다). 정정 기한이 이 thread를 따른다
+ */
+thread?: string,
+/**
+ * FRONT_API 1.191. 지금 답을 고칠 수 있는지. host가 읽을 때마다 정하고 저장하지 않는다. 없으면 고치는 길을 보이지 않는다
+ */
+correction?: AskCorrection, };
+
+export type AskCorrection = { open: boolean,
+/**
+ * 「t-0001이 끝나기 전까지 고칠 수 있다」·「t-0001이 끝나 고칠 수 없다…」
+ */
+note: string,
+/**
+ * 지금 답 뒤 일어난 일(새 보고·coordinator 요청). 고치기 확인 창과 정정 알림에 싣는다
+ */
+since?: Array<string>, };
 
 export type AskRecordSummary = { id: string, question_id: string | null, kind: AskKind, subject: string, title: string, done_ms: number, by: string, summary: string, question_ids: Array<string>, answer_summary: string | null, };
 

@@ -1139,13 +1139,17 @@ impl Db {
         Ok((id, true))
     }
 
-    pub fn thread_save(&self, project: &str, id: &str, status: &str, data: &str) -> Result<()> {
+    /// thread 기록을 저장하고 상태(열림·끝남 등)가 바뀌었는지 돌려준다(답 정정 가능 여부가 따라 바뀐다, t-2117)
+    pub fn thread_save(&self, project: &str, id: &str, status: &str, data: &str) -> Result<bool> {
         let c = self.conn.lock().unwrap();
+        let before: Option<String> = c
+            .query_row("SELECT status FROM threads WHERE project=?1 AND id=?2", params![project, id], |r| r.get(0))
+            .optional()?;
         c.execute(
             "UPDATE threads SET status=?3, data=?4, updated_at=?5 WHERE project=?1 AND id=?2",
             params![project, id, status, data, aaa_common::util::now_ms() as i64],
         )?;
-        Ok(())
+        Ok(before.is_some_and(|b| b != status))
     }
 
     /// 옮겨 온 기록을 정해진 ID로 넣는다(`aaa migrate import`). 같은 ID가 있으면 넣지 않고 false.
@@ -2148,6 +2152,28 @@ impl Db {
             params![project, r.id, kind, r.subject, r.done_ms as i64, serde_json::to_string(r)?],
         )?;
         Ok(())
+    }
+
+    /// 답 정정(t-2117): 기록의 지금 답 시각이 `base_at_ms`일 때만 바꾼다. 다른 기기가 먼저 바꿨으면 false다
+    pub(crate) fn ask_swap(&self, project: &str, r: &aaa_proto::AskRecord, base_at_ms: u64) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let data: Option<String> = tx
+            .query_row("SELECT data FROM asks WHERE project=?1 AND id=?2", params![project, r.id], |row| row.get(0))
+            .optional()?;
+        let Some(data) = data else { return Ok(false) };
+        let now: aaa_proto::AskRecord = serde_json::from_str(&data)?;
+        if now.answer.as_ref().map(|a| a.at_ms) != Some(base_at_ms) {
+            return Ok(false);
+        }
+        let mut save = r.clone();
+        save.correction = None;
+        tx.execute(
+            "UPDATE asks SET data=?3 WHERE project=?1 AND id=?2",
+            params![project, r.id, serde_json::to_string(&save)?],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// 요청 종료·답 보존·coordinator 전달을 한 번에 기록한다. 다른 기기에서 끝냈으면 false다.

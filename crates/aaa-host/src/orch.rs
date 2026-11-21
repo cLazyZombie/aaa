@@ -1024,8 +1024,11 @@ impl Host {
             Ok(json) => json,
             Err(_) => return, // 원문 저장·발행 없이 거부한다. 이유는 가림 경계가 기록한다.
         };
-        if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
-            tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}");
+        match self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
+            // 답한 것 카드의 고치기 가능 여부가 thread 상태를 따른다: 열린 화면이 다시 읽게 한다(t-2117)
+            Ok(true) => self.asks_bump(),
+            Ok(false) => {}
+            Err(e) => tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}"),
         }
         aaa_common::diagnostic::ignored(
             self.thread_events.send(self.thread_view(rec)),
@@ -1050,7 +1053,9 @@ impl Host {
         let clean = aaa_common::redact::json(r.clone()).map_err(|_| internal("thread 기록 가림 거부"))?;
         let json = serde_json::to_string(&clean)
             .map_err(|e| aaa_common::diagnostic::context(e, internal("thread 기록 직렬화 거부")))?;
-        self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
+        if self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)? {
+            self.asks_bump();
+        }
         aaa_common::diagnostic::ignored(
             self.thread_events.send(self.thread_view(&r)),
             "수신자가 끝난 뒤에도 현재 작업은 마친다",

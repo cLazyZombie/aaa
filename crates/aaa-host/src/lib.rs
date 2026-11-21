@@ -8,6 +8,7 @@ mod adopt;
 mod answer;
 mod answer_delivery;
 mod app_badge;
+mod ask_correct;
 mod asks;
 mod attach;
 mod auto_merge;
@@ -1994,6 +1995,9 @@ impl Host {
                 self.ask_answer(&project, &item, &body_hash, picks, text, comments, actor)
             }
             FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
+            FrontRequest::AskCorrect { project, id, base_at_ms, picks, text, comments } => {
+                self.ask_correct(&project, &id, base_at_ms, picks, text, comments, actor).await
+            }
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
                 software: util::software(),

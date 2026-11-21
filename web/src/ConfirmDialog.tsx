@@ -18,7 +18,10 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
   children,
+  tone = "danger",
 }: {
+  /** 확인 단추 색: 되돌릴 수 없는 일은 danger(기본), 보내기처럼 일반 진행은 primary */
+  tone?: "danger" | "primary";
   title: string;
   body: string;
   confirmLabel: string;
@@ -90,7 +93,7 @@ export function ConfirmDialog({
           <button ref={cancel} type="button" className="btn" disabled={pending} onClick={onClose}>
             취소
           </button>
-          <button type="button" className="btn btn-danger" disabled={pending} onClick={() => void confirm()}>
+          <button type="button" className={`btn btn-${tone}`} disabled={pending} data-testid="confirm-ok" onClick={() => void confirm()}>
             {confirmLabel}
           </button>
         </footer>

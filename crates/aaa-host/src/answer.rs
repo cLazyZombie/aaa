@@ -261,7 +261,7 @@ impl Host {
 
     /// 답 그림(프로젝트 `uploads/<이름>`)을 thread 머신 작업 폴더 `attachments/`에 쓰고 그 폴더 경로(그 머신의 것)를 돌려준다.
     /// 원본은 task 첨부처럼 이름(내용 hash)과 내용이 같은 일반 파일이어야 한다
-    async fn answer_images_to_thread(
+    pub(crate) async fn answer_images_to_thread(
         self: &Arc<Self>,
         rec: &crate::orch::ThreadRec,
         names: &[String],

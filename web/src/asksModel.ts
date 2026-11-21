@@ -2,7 +2,7 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 「답할 것」 패널의 목록(plan §8.345, 사용자 결정 10-21 1B 2A 3A 4A 5A): thread 질문·coordinator 확인 필요 post·할 일 확인 필요를
 // 한 목록에 모으고, 답한 것은 host 기록(답할 때의 원문)이다. 주소 `#ask=<열쇠>`가 고른 것 하나를 본문 카드로 연다. 열쇠는 종류 글자와
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
-import type { AutoMode, AutoDecision, AskRecord, AskRecordSummary, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import type { AutoMode, AutoDecision, AskRecord, AskRecordSummary, TaskView, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { normalizeAppTarget } from "./appIds.ts";
 import { appRefOf } from "./appRef.ts";
 import type { AppRefLook } from "./AppRefChip";
@@ -210,4 +210,33 @@ export function doneMeta(r: AskBrief, now: number): string {
 
 export function doneTitle(r: AskBrief): string {
   return r.kind === "question" ? `${r.subject} · ${r.title || r.subject}` : r.title;
+}
+
+// ───── 답 고치기(t-2117) ─────
+
+/** 질문 하나의 짧은 답 꼴(host answer.rs `compose`와 같다): 「1A」·「1A+의견」·「1직접」 */
+export function shortAnswer(item: ThreadQuestion, n: number, pick: number | null | undefined, comment: string | null | undefined): string {
+  const number = item.source_number ?? n + 1;
+  const c = pick == null ? undefined : item.choices[pick];
+  if (c) return `${number}${choiceLetter(c, pick!)}${comment?.trim() ? "+의견" : ""}`;
+  return comment?.trim() ? `${number}직접` : `${number}?`;
+}
+
+export type CorrectDraft = { picks: (number | null)[]; comments: string[]; text: string };
+
+/** 고친 답과 지금 답의 차이: 바뀐 질문은 「1A→1B」, 그대로인 질문은 짧은 꼴(host ask_correct.rs `diff`와 같은 판정) */
+export function correctionDiff(items: ThreadQuestion[], now: NonNullable<AskRecord["answer"]>, d: CorrectDraft) {
+  const arrows: string[] = [];
+  const same: string[] = [];
+  items.forEach((item, n) => {
+    const op = now.picks[n] ?? null;
+    const oc = now.comments?.[n]?.trim() || null;
+    const np = d.picks[n] ?? null;
+    const nc = d.comments[n]?.trim() || null;
+    const after = shortAnswer(item, n, np, nc);
+    if (op === np && oc === nc) same.push(after);
+    else arrows.push(`${shortAnswer(item, n, op, oc)}→${after}`);
+  });
+  if ((now.text?.trim() || null) !== (d.text.trim() || null)) arrows.push("직접 쓴 답 고침");
+  return { arrows, same };
 }

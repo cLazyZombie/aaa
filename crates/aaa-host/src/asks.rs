@@ -320,6 +320,9 @@ impl Host {
                 answer: None,
                 body: None,
                 files_base: None,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
     }
@@ -393,6 +396,7 @@ impl Host {
         } else {
             (self.db.ask_list(project).map_err(internal)?, None)
         };
+        let done = self.with_corrections(project, done);
         Ok(FrontResponse::Asks {
             auto_mode: self.auto_mode(project)?,
             auto_decisions,
@@ -429,7 +433,7 @@ impl Host {
             .transpose()
             .map_err(|()| err(ErrorCode::BadRequest, "답변 이력 커서가 올바르지 않다"))?;
         let (done, next) = self.db.ask_page(project, cursor, id).map_err(internal)?;
-        Ok(FrontResponse::AskHistory { done, next })
+        Ok(FrontResponse::AskHistory { done: self.with_corrections(project, done), next })
     }
 
     /// 웹 「답함으로 표시」: 그 확인 필요 post를 끝낸다(기록은 `inbox_finish`가 남긴다). coordinator inbox에 한 줄 남긴다
@@ -559,6 +563,9 @@ impl Host {
             }),
             body: Some(post.input.body),
             files_base: Some(record_files_base(project, &id)),
+            revisions: Vec::new(),
+            thread: self.request_link(i, &post.input.title),
+            correction: None,
         };
         if let Some(answer) = &record.answer
             && let Err(e) = snapshot_answer_images(&dir, &root, answer)
@@ -731,6 +738,9 @@ impl Host {
                 answer: Some(answer.clone()),
                 body: None,
                 files_base: Some(record_files_base(project, &id)),
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
         if let Err(e) =
@@ -848,6 +858,9 @@ impl Host {
                 answer: None,
                 body: Some(body),
                 files_base,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
         if let Some(p) = post.as_ref()
@@ -877,6 +890,9 @@ impl Host {
                 answer: None,
                 body: Some(attention.to_string()),
                 files_base: None,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
     }

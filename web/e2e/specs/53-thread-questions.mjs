@@ -220,6 +220,61 @@ export default async function ({ page }) {
     }
   });
 
+  await step("답 고치기(t-2117): 휴대폰에서 1A를 1B로 고치면 thread·coordinator에 정정이 가고 이력이 남으며, thread가 끝나면 잠긴다", async () => {
+    if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task-correct.md`, "답 고치기 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "답 고치기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-correct.md`);
+    await until("첫 보고와 brief 전달", () => { const v = aaa("thread", "show", t.id); return v.report_hash && v.brief === "delivered"; });
+    const body = "[결정 필요] 질문 2개: 나누기\n\n## Questions\n### 1. 일을 어떻게 맡길까\n- A 세 할 일 (추천)\n- B 한 번에\n### 2. 눈 아이콘\n- A 넣는다\n- B 뺀다\n";
+    fs.writeFileSync(`${t.work_dir}/report.md`, body);
+    const hash = createHash("sha256").update(body).digest("hex");
+    await until("질문 카드", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions; });
+    const { page: phone, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { hash: `#question=${t.id}`, serviceWorkers: "block" });
+    try {
+      const card = phone.getByTestId(`thread-ask-${t.id}`);
+      await card.getByTestId("thread-ask-pick-1A").click();
+      await card.getByTestId("thread-ask-pick-2A").click();
+      await card.getByTestId("thread-ask-send").click();
+      await waitOutput(t.pane, "보고의 질문에 대한 사용자 답(1A 2A)");
+      // thread가 처음 답으로 진행한 새 보고: 고칠 때 「답한 뒤 일어난 일」로 보인다
+      fs.writeFileSync(`${t.work_dir}/report.md`, "[진행 중] 1A대로 세 할 일로 나눴다\n\n## Next\n");
+      await until("진행 보고", () => !aaa("thread", "show", t.id).questions);
+      const done = phone.getByTestId("ask-done-card");
+      const fix = done.getByTestId("ask-correct");
+      await domIs(phone, "고칠 수 있는 host 기록", () => {
+        const b = document.querySelector('[data-testid="ask-done-card"] [data-testid="ask-correct"]');
+        return !!b && !b.disabled;
+      });
+      assert.match(await done.getByTestId("ask-correct-state").innerText(), new RegExp(`${t.id}이 끝나기 전까지`));
+      await fix.click();
+      await until("답한 뒤 일어난 일", async () => (await done.getByTestId("ask-correct-since").count()) === 1);
+      assert.match(await done.getByTestId("ask-correct-since").innerText(), /새 보고 r-\d+: \[진행 중\] 1A대로 세 할 일로 나눴다/);
+      assert.equal(await done.getByTestId("ask-correct-send").isDisabled(), true, "바뀐 것이 없으면 보내지 않는다");
+      await done.getByTestId("ask-correct-pick-1B").click();
+      assert.equal((await done.getByTestId("ask-correct-diff").innerText()).replace(/\s+/g, " "), "1A→1B · 2A 그대로");
+      await done.getByTestId("ask-correct-send").click();
+      assert.match(await phone.locator(".confirm-dialog .modal-title").innerText(), /답 고치기: 1A→1B/);
+      await shot(phone, "53-correct-confirm-phone");
+      await phone.getByTestId("confirm-ok").click();
+      await waitOutput(t.pane, "보고의 질문에 대한 사용자 답 정정(1A→1B)");
+      await waitOutput(t.pane, "새 보고 r-");
+      await done.getByTestId("ask-history").waitFor();
+      assert.match(await done.getByTestId("ask-history").innerText(), /1B 2A · 고침 · 지금[\s\S]*1A 2A · 처음 답/);
+      assert.match(await done.locator(".ask-kind").innerText(), /답함 1B 2A · 고침/);
+      const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.event === "question corrected" && i.subject === t.id);
+      if (!notice?.summary.includes("답 정정(") || !notice.summary.endsWith("1A→1B") || !notice.body.includes("고친 답(1B 2A):\n1B. ")) throw new Error(`정정 inbox: ${JSON.stringify(notice)}`);
+      await shot(phone, "53-correct-history-phone");
+      // thread가 끝나면 열린 화면도 바로 잠긴다(host가 답할 것을 다시 읽게 한다)
+      finishFixtureFollowups(t.id);
+      aaa("thread", "resolve", t.id);
+      await domIs(phone, "잠긴 답 고치기", () => document.querySelector('[data-testid="ask-done-card"] [data-testid="ask-correct"]')?.disabled === true);
+      assert.match(await done.getByTestId("ask-correct-state").innerText(), new RegExp(`${t.id}이 끝나 답을 고칠 수 없다`));
+      assert.deepEqual(errors, []);
+    } finally {
+      await phone.context().close();
+    }
+  });
+
   await step("근거가 Questions 위에만: thread 카드는 근거 경고·보고서 열기 r-ID(PC·휴대폰 폭), thread pane에 고칠 방법, post는 거절", async () => {
     fs.writeFileSync(`${root}/task-evidence.md`, "근거 위치 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "근거 위치", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-evidence.md`);
