@@ -1399,6 +1399,31 @@ pub struct AskRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub files_base: Option<String>,
+    /// FRONT_API 1.191(t-2117). 고치기 전의 답들(처음 답부터). `answer`가 지금 답이다. 지우지 않고 덧붙이기만 한다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<QuestionAnswerView>>")]
+    pub revisions: Vec<QuestionAnswerView>,
+    /// FRONT_API 1.191. coordinator 확인 필요 post가 중계한 thread(답할 때 정한다). 정정 기한이 이 thread를 따른다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thread: Option<String>,
+    /// FRONT_API 1.191. 지금 답을 고칠 수 있는지. host가 읽을 때마다 정하고 저장하지 않는다. 없으면 고치는 길을 보이지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub correction: Option<AskCorrection>,
+}
+
+/// 답 정정 상태(FRONT_API 1.191, t-2117). thread 카드는 그 thread가 끝나기 전까지, coordinator 카드는 중계한 thread가
+/// 끝나기 전까지(없으면 기록이 남아 있는 동안) 고칠 수 있다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AskCorrection {
+    pub open: bool,
+    /// 「t-0001이 끝나기 전까지 고칠 수 있다」·「t-0001이 끝나 고칠 수 없다…」
+    pub note: String,
+    /// 지금 답 뒤 일어난 일(새 보고·coordinator 요청). 고치기 확인 창과 정정 알림에 싣는다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub since: Vec<String>,
 }
 
 /// 답한 것의 가벼운 색인(FRONT_API 1.161). 배지·직접 링크·목록에는 원문이 필요 없다.

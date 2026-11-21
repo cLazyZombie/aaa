@@ -68,6 +68,9 @@ impl Lab {
             }),
             body: None,
             files_base: None,
+            revisions: Vec::new(),
+            thread: None,
+            correction: None,
         }
     }
 }

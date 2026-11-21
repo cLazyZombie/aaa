@@ -124,3 +124,24 @@
 .ask-answer-remove svg { width: 14px; height: 14px; }
 .ask-answer-remove:hover { background: var(--danger-tint); color: var(--danger-text); }
 @media (pointer: coarse) { .ask-answer-remove { width: 32px; height: 32px; } }
+
+/* 답 고치기(t-2117): 고치는 중 안내·답한 뒤 일어난 일·바뀐 것 요약·답 이력·잠김 */
+.ask-correct-note { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--accent-tint); font-size: var(--fs-sm); line-height: var(--lh-base); }
+.ask-correct-note p { margin: 0; }
+.ask-correct-note strong { color: var(--accent); }
+.ask-correct-note.is-warn { background: var(--status-blocked-tint); }
+.ask-correct-since { margin: var(--space-1) 0 0; padding-inline-start: 1.2em; color: var(--text); }
+.ask-correct-since li { overflow-wrap: anywhere; }
+.ask-correct-keep { margin: var(--space-2) 0 0; font-size: var(--fs-xs); }
+.ask-correct-diff { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--accent); }
+.ask-correct-diff .muted { font-weight: normal; }
+.ask-was { display: inline-block; padding: 0 6px; border-radius: var(--radius-pill); border: var(--hairline) solid var(--border); color: var(--text-dim); font-size: var(--fs-2xs); }
+.btn.ask-correct svg, .ask-lock { width: 14px; height: 14px; vertical-align: -2px; }
+.ask-history { padding-top: var(--space-3); border-top: var(--hairline) solid var(--border); }
+.ask-history h4 { margin: 0 0 var(--space-2); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim); }
+.ask-history ol { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.ask-history li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--space-2); font-size: var(--fs-sm); }
+.ask-history-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--text-dim); }
+.ask-history li.is-now .ask-history-dot { background: var(--status-done); }
+.ask-history li.is-old .ask-history-main { color: var(--text-dim); }
+.ask-history-sub { grid-column: 2; font-size: var(--fs-xs); color: var(--text-dim); }

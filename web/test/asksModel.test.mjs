@@ -2,7 +2,7 @@
 // 질문·답할 것 열쇠는 답한 뒤에도 그때 남긴 기록으로 이어진다(새 보고 뒤의 칩·「답함으로 표시」 뒤의 카드).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { answeredNow, askFileUrl, choicePicture, doneCardKey, doneOf, freshAuto, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
+import { answeredNow, askFileUrl, choicePicture, correctionDiff, doneCardKey, doneOf, freshAuto, openAsks, questionKey, questionRefLook, shortAnswer } from "../src/asksModel.ts";
 
 const BASE = "/api/v1/projects/demo/questions/t-1/abc/";
 const thread = (id, questions) => ({ id, title: id, updated_at_ms: 1, questions });
@@ -141,4 +141,24 @@ it("자동 결정 첫 쪽은 다른 기기에서 지운 결정을 남기지 않�
   // 이전 쪽이 없으면(모두 지움 포함) 첫 쪽만 남는다
   assert.deepEqual(freshAuto([d("a5", 5)], null, loaded).map(x => x.id), ["a5"]);
   assert.deepEqual(freshAuto([], null, loaded), []);
+});
+
+// 답 고치기(t-2117): 바뀐 질문만 「1A→1B」로, 그대로인 답은 짧은 꼴로 보인다. 의견·공통 답 변화도 바뀐 것이다(host ask_correct.rs와 같은 판정)
+describe("답 고치기 차이", () => {
+  const items = [
+    { text: "나누기", choices: [{ label: "세 할 일" }, { label: "한 번에" }] },
+    { source_number: 7, text: "눈 아이콘", choices: [{ label: "넣는다" }, { letter: "C", label: "뺀다" }] },
+  ];
+  const now = { picks: [0, 0], comments: [], text: null, summary: "1A 7A", by: "iPhone", at_ms: 1 };
+  it("바뀐 질문은 화살표, 그대로인 질문은 짧은 꼴", () => {
+    assert.deepEqual(correctionDiff(items, now, { picks: [1, 0], comments: ["", ""], text: "" }), { arrows: ["1A→1B"], same: ["7A"] });
+    assert.deepEqual(correctionDiff(items, now, { picks: [0, 0], comments: ["", ""], text: "" }), { arrows: [], same: ["1A", "7A"] });
+    assert.deepEqual(correctionDiff(items, now, { picks: [0, 1], comments: ["", "  "], text: "" }).arrows, ["7A→7C"]);
+  });
+  it("의견·직접 답·공통 답의 변화도 바뀐 것이다", () => {
+    assert.deepEqual(correctionDiff(items, now, { picks: [0, 0], comments: ["크게", ""], text: "" }).arrows, ["1A→1A+의견"]);
+    assert.deepEqual(correctionDiff(items, now, { picks: [null, 0], comments: ["둘 다", ""], text: "" }).arrows, ["1A→1직접"]);
+    assert.deepEqual(correctionDiff(items, now, { picks: [0, 0], comments: ["", ""], text: "메모" }).arrows, ["직접 쓴 답 고침"]);
+    assert.equal(shortAnswer(items[0], 0, null, null), "1직접", "공통 직접 답이 대신한 질문");
+  });
 });

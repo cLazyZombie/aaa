@@ -283,7 +283,10 @@ impl Host {
                     // 이미 닫힌 카드에 늦게 온 알림도 새 판단 요청으로 만들지 않는다.
                     rec.report_changed_ms.is_some_and(|at| at >= i.created_at_ms) || history.next().is_some()
                 } else if let Some(answer) = rec.question_answer.as_ref() {
-                    history.any(|r| r.answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by))
+                    // 고친 기록(t-2117)도 처음 답이 이력에 남아 같은 답으로 본다
+                    history.any(|r| {
+                        r.answer.iter().chain(&r.revisions).any(|a| a.at_ms == answer.at_ms && a.by == answer.by)
+                    })
                 } else {
                     // 같은 thread의 다음 질문이 열렸으면 옛 답으로 닫지 않는다.
                     false
@@ -320,6 +323,9 @@ impl Host {
                 answer: None,
                 body: None,
                 files_base: None,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
     }
@@ -393,6 +399,7 @@ impl Host {
         } else {
             (self.db.ask_list(project).map_err(internal)?, None)
         };
+        let done = self.with_corrections(project, done);
         Ok(FrontResponse::Asks {
             auto_mode: self.auto_mode(project)?,
             auto_decisions,
@@ -429,7 +436,7 @@ impl Host {
             .transpose()
             .map_err(|()| err(ErrorCode::BadRequest, "답변 이력 커서가 올바르지 않다"))?;
         let (done, next) = self.db.ask_page(project, cursor, id).map_err(internal)?;
-        Ok(FrontResponse::AskHistory { done, next })
+        Ok(FrontResponse::AskHistory { done: self.with_corrections(project, done), next })
     }
 
     /// 웹 「답함으로 표시」: 그 확인 필요 post를 끝낸다(기록은 `inbox_finish`가 남긴다). coordinator inbox에 한 줄 남긴다
@@ -559,6 +566,9 @@ impl Host {
             }),
             body: Some(post.input.body),
             files_base: Some(record_files_base(project, &id)),
+            revisions: Vec::new(),
+            thread: self.request_link(i, &post.input.title),
+            correction: None,
         };
         if let Some(answer) = &record.answer
             && let Err(e) = snapshot_answer_images(&dir, &root, answer)
@@ -731,6 +741,9 @@ impl Host {
                 answer: Some(answer.clone()),
                 body: None,
                 files_base: Some(record_files_base(project, &id)),
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
         if let Err(e) =
@@ -742,7 +755,13 @@ impl Host {
 
     pub(crate) fn snapshot_question(&self, dir: &Path, rec: &ThreadRec, root: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(root)?;
-        let report = dir.join("threads").join(format!("{}.md", rec.id));
+        // 답한 보고 판(r-ID)의 불변 사본을 먼저 쓴다: 답을 보내는 사이 새 보고가 와도 그때 보고·그림을 남긴다(t-2117)
+        let version = self.thread_report_id(&rec.project, &rec.id, rec.report_hash.as_deref());
+        let report = version
+            .as_ref()
+            .map(|v| dir.join("threads").join(format!("{v}.md")))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| dir.join("threads").join(format!("{}.md", rec.id)));
         if report.is_file() {
             std::fs::copy(&report, root.join("report.md"))?;
         }
@@ -758,7 +777,11 @@ impl Host {
         }
         let mut total = 0u64;
         for rel in refs {
-            let Ok((from, size)) = crate::library::local_file(dir, &rec.id, &rel).inspect_err(|error| {
+            let found = version
+                .as_deref()
+                .and_then(|v| crate::library::local_file(dir, v, &rel).ok())
+                .map_or_else(|| crate::library::local_file(dir, &rec.id, &rel), Ok);
+            let Ok((from, size)) = found.inspect_err(|error| {
                 aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
             }) else {
                 continue;
@@ -848,6 +871,9 @@ impl Host {
                 answer: None,
                 body: Some(body),
                 files_base,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
         if let Some(p) = post.as_ref()
@@ -877,6 +903,9 @@ impl Host {
                 answer: None,
                 body: Some(attention.to_string()),
                 files_base: None,
+                revisions: Vec::new(),
+                thread: None,
+                correction: None,
             },
         );
     }

@@ -296,6 +296,7 @@ pub fn typescript_bindings() -> String {
         QuestionChoice::decl(&cfg),
         AskKind::decl(&cfg),
         AskRecord::decl(&cfg),
+        AskCorrection::decl(&cfg),
         AskRecordSummary::decl(&cfg),
         UserRequestView::decl(&cfg),
         AnswerDelivery::decl(&cfg),

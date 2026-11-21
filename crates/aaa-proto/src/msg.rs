@@ -2493,6 +2493,21 @@ pub enum FrontRequest {
         choice: Option<String>,
         text: Option<String>,
     },
+    /// 답한 것 기록의 답을 고친다(FRONT_API 1.191, t-2117). `base_at_ms`는 고치기 시작할 때 본 지금 답의 시각이다:
+    /// 그사이 다른 기기가 고쳤으면 거절한다. 같은 thread·coordinator에 정정을 알리고 처음 답은 이력에 남긴다
+    AskCorrect {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+        #[ts(type = "number")]
+        base_at_ms: u64,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<Option<String>>>")]
+        comments: Vec<Option<String>>,
+    },
     /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
     AskForget {
         #[serde(default)]
@@ -4099,6 +4114,7 @@ impl FrontRequest {
             | FrontRequest::AutoDecisionReview { project, .. }
             | FrontRequest::AutoDecisionForget { project, .. }
             | FrontRequest::AskForget { project, .. }
+            | FrontRequest::AskCorrect { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
             | FrontRequest::ThreadDiff { project, .. }

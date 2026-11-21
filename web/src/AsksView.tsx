@@ -9,7 +9,7 @@ import { ListId } from "./ListId";
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { QuestionReports } from "./QuestionReports";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X, Zap } from "lucide-react";
+import { Check, ChevronRight, CircleQuestionMark, ListChecks, Lock, Maximize2, MessageSquareReply, PenLine, Send, Trash2, Bot, X, Zap } from "lucide-react";
 import type { TaskAttentionAction, TaskView, AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
@@ -18,7 +18,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { answerStatus, answeredNow, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { answerStatus, answeredNow, correctionDiff, type CorrectDraft, askFileUrl, choicePicture, doneCardKey, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
@@ -165,6 +165,7 @@ export function AsksView({
   onRequestAnswer,
   onReply,
   onForget,
+  onCorrect,
   onOpenTask,
   onTaskAnswer,
   onThread,
@@ -183,6 +184,8 @@ export function AsksView({
   /** 「대화에서 답하기」: coordinator 입력칸에 머리글을 채우고 그 pane을 연다 */
   onReply: (title: string) => Promise<void>;
   onForget: (id: string) => Promise<void>;
+  /** 답한 것의 답 고치기(t-2117). `base`는 고치기 시작할 때 본 지금 답의 시각 */
+  onCorrect: (id: string, base: number, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
   onOpenTask: (title: string) => void;
   onTaskAnswer: (task: TaskView, action: TaskAttentionAction) => Promise<void>;
   onThread: (id: string) => void;
@@ -249,7 +252,8 @@ export function AsksView({
           {selection.kind === "auto" && <AutoDecisionCard key={selection.decision.id} decision={selection.decision} />}
           {selection.kind === "done" && (
             <DoneCard key={doneCardKey(selection.record)} r={selection.record} canControl={canControl && !selection.now} uploads={selection.now && uploadsBase(selection.now.project)}
-              onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread} />
+              project={project} onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread}
+              onCorrect={(base, picks, text, comments) => onCorrect(selection.record.id, base, picks, text, comments)} />
           )}
         </div>
       </div>
@@ -620,11 +624,32 @@ function DoneAnswer({ text, uploads, testId, onZoom }: { text: string; uploads: 
   );
 }
 
-function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThread }: {
-  r: AskRecord; canControl: boolean; uploads?: string | false; onForget: () => Promise<void>; onZoom: (z: { src: string; alt: string }) => void; onThread: (id: string) => void;
+function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCorrect, onZoom, onThread }: {
+  r: AskRecord; canControl: boolean; uploads?: string | false; project: string | null; onForget: () => Promise<void>;
+  onCorrect: (base: number, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onZoom: (z: { src: string; alt: string }) => void; onThread: (id: string) => void;
 }) {
   const [report, setReport] = useState<string | null | "loading" | "missing">(null);
   const [confirm, setConfirm] = useState(false);
+  // 답 고치기(t-2117): 지금 답으로 채운 초안. null이면 보기
+  // 고치기 시작할 때 본 답(`base`)을 기준으로 차이를 보이고 보낸다: 그사이 다른 기기가 고쳤으면 host가 거절한다
+  const [edit, setEdit] = useState<(CorrectDraft & { base: NonNullable<AskRecord["answer"]> }) | null>(null);
+  const [sending, setSending] = useState(false);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, number>>({});
+  const onUploading = useCallback((field: string) => (count: number) => setUploadingFields((u) => (u[field] === count ? u : { ...u, [field]: count })), []);
+  const multiple = r.items.length > 1;
+  const now = r.answer;
+  const correction = r.correction;
+  const canCorrect = canControl && !!now && correction?.open === true && r.kind !== "task";
+  const startEdit = () => now && setEdit({ base: now, picks: r.items.map((_, n) => now.picks[n] ?? null), comments: r.items.map((_, n) => now.comments?.[n] ?? ""), text: now.text ?? "" });
+  const diff = edit ? correctionDiff(r.items, edit.base, edit) : null;
+  const stale = !!edit && !!now && now.at_ms !== edit.base.at_ms;
+  const complete = !!edit && (r.items.every((_, n) => edit.picks[n] !== null || (multiple && !!edit.comments[n]?.trim())) || !!edit.text.trim());
+  const uploadingNow = Object.values(uploadingFields).some((c) => c > 0);
+  const ready = !!diff && diff.arrows.length > 0 && complete && !uploadingNow && !stale;
+  const where = r.kind === "question" ? r.subject : "coordinator";
+  const first = r.revisions?.[0];
+  const previous = r.revisions?.at(-1);
   const base = r.files_base;
   const uploads = uploadsNow || (base ? `${base}uploads/` : null);
   const toggleReport = () => {
@@ -638,7 +663,7 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
   return (
     <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind} data-delivery={r.answer?.delivery}>
       <header className="prompt-card-header">
-        <KindChip kind={r.kind} done={r.answer ? `${answerStatus(r.answer.delivery)} ${r.summary}` : r.summary} />
+        <KindChip kind={r.kind} done={r.answer ? `${answerStatus(r.answer.delivery)} ${r.summary}${r.revisions?.length ? " · 고침" : ""}` : r.summary} />
         {r.kind === "question" ? (
           <button type="button" className="linkish prompt-card-where" onClick={() => onThread(r.subject)} title="thread 열기">{r.subject} · {r.title || r.subject}</button>
         ) : (
@@ -647,10 +672,63 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
       </header>
       <QuestionReports items={r.items} body={r.body} reportId={r.report_id} base={base} />
       {r.kind !== "question" && <h2 className="ask-card-title">{r.items.length === 0 && r.question_id && <code>{r.question_id} </code>}{r.title}</h2>}
-      <p className="ask-done-when" data-testid="ask-done-when">{r.asked_ms > 0 && <>물은 때 {when(r.asked_ms)} · </>}{r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
+      <p className="ask-done-when" data-testid="ask-done-when">{r.asked_ms > 0 && <>물은 때 {when(r.asked_ms)} · </>}{first && now
+        ? <>처음 답 {when(first.at_ms)} · {first.by} · <strong>고친 때 {when(now.at_ms)} · {now.by}</strong></>
+        : <>{r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</>}</p>
+      {edit && (
+        <div className={`ask-correct-note${stale ? " is-warn" : ""}`} data-testid="ask-correct-note">
+          {stale && now
+            ? <p role="alert" data-testid="ask-correct-stale"><strong>다른 곳에서 먼저 고쳤다</strong> · {now.summary}({when(now.at_ms)} · {now.by}). 취소하고 다시 고친다.</p>
+            : <p><strong>답 고치는 중</strong> · 지금 답 {edit.base.summary}({when(edit.base.at_ms)} · {edit.base.by}). 바꿀 질문만 다시 고른다.</p>}
+          {correction?.since?.length ? <ul className="ask-correct-since" data-testid="ask-correct-since">{correction.since.map((line, i) => <li key={i}>{line}</li>)}</ul> : null}
+        </div>
+      )}
       {r.items.map((item, n) => {
         const pick = r.answer?.picks[n];
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
+        if (edit) {
+          const number = item.source_number ?? n + 1;
+          return (
+            <div className="thread-ask-q" key={n}>
+              <QuestionText n={n} item={item} base={base} />
+              <div role="radiogroup" aria-label={`${number}. ${item.text}`} className={`prompt-card-options ask-choices${pictures ? " has-pictures" : ""}`}>
+                {item.choices.map((c, i) => {
+                  const checked = edit.picks[n] === i;
+                  const rest = choiceRest(c.body);
+                  return (
+                    <button key={i} type="button" role="radio" aria-checked={checked} disabled={sending} data-testid={`ask-correct-pick-${number}${letter(c, i)}`}
+                      className={`prompt-card-option ask-choice${c.description || rest ? " has-description" : ""}${checked ? " is-checked" : ""}`}
+                      onClick={() => setEdit((d) => d && { ...d, picks: d.picks.map((p, k) => (k === n ? (p === i ? null : i) : p)) })}>
+                      {pictures && <ChoicePicture base={base} body={c.body ?? ""} onZoom={onZoom} />}
+                      <span className="ask-choice-line">
+                        <span className="prompt-card-number"><span aria-hidden="true">{letter(c, i)}</span><span className="visually-hidden">{letter(c, i)}.</span></span>{" "}
+                        <span className="prompt-card-option-text">
+                          <span className="prompt-card-option-label">
+                            {c.label}
+                            {c.recommended && <>{" "}<span className="prompt-card-tag">추천</span></>}
+                            {pick === i && <>{" "}<span className="ask-was">지금 답</span></>}
+                          </span>
+                          {c.description && <span className="prompt-card-option-description">{c.description}</span>}
+                        </span>
+                      </span>
+                      {rest && <span className="ask-choice-rest"><AskMarkdown base={base}>{rest}</AskMarkdown></span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {multiple && <div className="prompt-card-custom ask-question-comment">
+                <span className="prompt-card-custom-label">직접 쓴 답</span>
+                <AnswerField value={edit.comments[n] ?? ""} project={project} disabled={sending} label={`${number}번 직접 쓴 답`} testId={`ask-correct-text-${number}`}
+                  onBody={(body) => setEdit((d) => d && { ...d, comments: d.comments.map((old, k) => (k === n ? withAnswerBody(old, body) : old)) })}
+                  onImages={(targets) => setEdit((d) => d && { ...d, comments: d.comments.map((old, k) => (k === n ? targets.reduce(addAnswerImage, old) : old)) })}
+                  onRemoveImage={(target) => setEdit((d) => d && { ...d, comments: d.comments.map((old, k) => (k === n ? removeAnswerImage(old, target) : old)) })}
+                  onSubmit={() => ready && setConfirm(true)} onUploading={onUploading(`c${n}`)} onZoom={onZoom} />
+              </div>}
+              {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
+            </div>
+          );
+        }
+        const was = previous?.picks[n];
         return (
           <div className="thread-ask-q" key={n}>
             <QuestionText n={n} item={item} base={base} />
@@ -668,6 +746,7 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
                           {c.label}
                           {c.recommended && <>{" "}<span className="prompt-card-tag">추천</span></>}
                           {picked && <>{" "}<span className="ask-picked">고름</span></>}
+                          {!picked && was === i && <>{" "}<span className="ask-was">앞 답</span></>}
                         </span>
                         {c.description && <span className="prompt-card-option-description">{c.description}</span>}
                       </span>
@@ -683,16 +762,56 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
           </div>
         );
       })}
-      {r.answer?.text && <DoneAnswer text={r.answer.text} uploads={uploads} testId="ask-done-text" onZoom={onZoom} />}
+      {edit && (!multiple || edit.text) && <div className="prompt-card-custom">
+        <span className="prompt-card-custom-label">또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
+        <AnswerField value={edit.text} project={project} disabled={sending} label="직접 쓴 답" testId="ask-correct-text"
+          onBody={(body) => setEdit((d) => d && { ...d, text: withAnswerBody(d.text, body) })}
+          onImages={(targets) => setEdit((d) => d && { ...d, text: targets.reduce(addAnswerImage, d.text) })}
+          onRemoveImage={(target) => setEdit((d) => d && { ...d, text: removeAnswerImage(d.text, target) })}
+          onSubmit={() => ready && setConfirm(true)} onUploading={onUploading("text")} onZoom={onZoom} />
+      </div>}
+      {!edit && r.answer?.text && <DoneAnswer text={r.answer.text} uploads={uploads} testId="ask-done-text" onZoom={onZoom} />}
+      {!edit && now && r.revisions?.length ? (
+        <section className="ask-history" data-testid="ask-history" aria-label="답 이력">
+          <h4>답 이력</h4>
+          <ol>
+            {[now, ...[...r.revisions].reverse()].map((a, i, all) => (
+              <li key={`${a.at_ms}-${i}`} className={i === 0 ? "is-now" : "is-old"}>
+                <span className="ask-history-dot" aria-hidden="true" />
+                <span className="ask-history-main"><strong>{a.summary}</strong> · {i === all.length - 1 ? "처음 답" : "고침"}{i === 0 ? " · 지금" : ""}</span>
+                <span className="ask-history-sub">{when(a.at_ms)} · {a.by}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       {r.kind !== "question" && r.items.length === 0 && r.body && <AskMarkdown base={base}>{r.body}</AskMarkdown>}
       {report !== null && (
         <div className="ask-report" data-testid="ask-report">
           {report === "loading" ? <p className="muted">불러오는 중</p> : report === "missing" ? <p className="muted">그때 보고 사본이 없다</p> : <AskMarkdown base={base}>{report}</AskMarkdown>}
         </div>
       )}
-      <div className="thread-ask-foot">
-        <span className="muted">{r.kind === "question" ? r.answer ? "답할 때의 사본이다. 그 뒤 새 보고가 와도 남는다" : "새 보고로 질문이 닫혔다. 선택한 답은 없다" : "처리한 때의 사본이다"}</span>
+      {edit ? (
+        <div className="thread-ask-foot">
+          <span className="ask-correct-diff" data-testid="ask-correct-diff">{diff && diff.arrows.length > 0
+            ? <>{diff.arrows.join(" · ")}{diff.same.length > 0 && <span className="muted"> · {diff.same.join(" ")} 그대로</span>}</>
+            : <span className="muted">바뀐 것 없음</span>}</span>
+          <span className="ask-buttons">
+            <button type="button" className="btn" disabled={sending} data-testid="ask-correct-cancel" onClick={() => setEdit(null)}>취소</button>
+            <button type="button" className={`btn${ready ? " btn-primary" : ""}`} disabled={!ready || sending} data-testid="ask-correct-send" onClick={() => setConfirm(true)}>
+              <Send aria-hidden="true" /> 고친 답 보내기{ready && diff ? ` (${diff.arrows.join(" ")})` : ""}
+            </button>
+          </span>
+        </div>
+      ) : <div className="thread-ask-foot">
+        <span className="muted" data-testid="ask-correct-state">{correction && now ? <>{!correction.open && <Lock aria-hidden="true" className="ask-lock" />} {correction.note}</>
+          : r.kind === "question" ? r.answer ? "답할 때의 사본이다. 그 뒤 새 보고가 와도 남는다" : "새 보고로 질문이 닫혔다. 선택한 답은 없다" : "처리한 때의 사본이다"}</span>
         <span className="ask-buttons">
+          {now && correction && canControl && r.kind !== "task" && (
+            <button type="button" className="btn ask-correct" data-testid="ask-correct" disabled={!canCorrect} onClick={startEdit}>
+              {canCorrect ? <PenLine aria-hidden="true" /> : <Lock aria-hidden="true" />} 답 고치기
+            </button>
+          )}
           {r.items.length > 0 && base && (
             <button type="button" className="ghost small" aria-expanded={report !== null} data-testid="ask-report-toggle" onClick={toggleReport}>
               {report !== null ? "그때 보고 접기" : "그때 보고 보기"}
@@ -704,8 +823,32 @@ function DoneCard({ r, canControl, uploads: uploadsNow, onForget, onZoom, onThre
             </button>
           )}
         </span>
-      </div>
-      {confirm && (
+      </div>}
+      {confirm && edit && diff && (
+        <ConfirmDialog title={`답 고치기: ${diff.arrows.join(" ")}`} confirmLabel="고친 답 보내기" tone="primary"
+          body={r.kind === "question"
+            ? `${where}에 「답 정정: ${diff.arrows.join(" ")}」를 보낸다. 앞 답으로 한 일은 고친 답에 맞추라고 함께 알리고 coordinator에도 알린다.`
+            : `coordinator에 「답 정정: ${diff.arrows.join(" ")}」를 알린다. 앞 답으로 한 일은 고친 답에 맞추라고 함께 알린다.`}
+          onConfirm={async () => {
+            setSending(true);
+            try {
+              await onCorrect(edit.base.at_ms, edit.picks, edit.text.trim() || null, multiple ? edit.comments.map((c) => c.trim() || null) : []);
+              setEdit(null);
+            } finally {
+              setSending(false);
+            }
+          }}
+          onClose={() => setConfirm(false)}>
+          {correction?.since?.length ? (
+            <div className="ask-correct-note is-warn">
+              <p>{where === "coordinator" ? "앞 답 뒤 일어난 일" : `${where}는 앞 답으로 이미 진행했다`}:</p>
+              <ul className="ask-correct-since">{correction.since.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            </div>
+          ) : null}
+          <p className="muted ask-correct-keep">처음 답은 지우지 않고 답 이력에 남는다.</p>
+        </ConfirmDialog>
+      )}
+      {confirm && !edit && (
         <ConfirmDialog title="답한 것 지우기" body={`「${doneTitle(r)}」 기록과 보존한 원문·그림을 모든 기기에서 지운다.`} confirmLabel="지우기"
           onConfirm={onForget} onClose={() => setConfirm(false)} />
       )}
