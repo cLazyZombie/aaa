@@ -321,15 +321,6 @@ pub fn apply_in(text: &str, change: &ProfileChange) -> Result<(String, String), 
     Ok((out, message))
 }
 
-/// 설정 폴더의 host.toml에 적용하고 바꿔 쓴다(임시 파일 뒤 rename). 사람이 시켰는지는 부르는 쪽이 본다.
-pub fn apply(config_dir: &Path, change: &ProfileChange) -> Result<String, String> {
-    let file = config_dir.join("host.toml");
-    let text = std::fs::read_to_string(&file).unwrap_or_default();
-    let (edited, message) = apply_in(&text, change)?;
-    write_atomic(&file, edited.as_bytes()).map_err(|e| format!("{}에 쓰지 못했다: {e}", file.display()))?;
-    Ok(message)
-}
-
 /// 임시 파일에 쓰고 rename한다(반쯤 쓴 설정을 읽지 않게)
 pub fn write_atomic(file: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {

@@ -8,6 +8,7 @@
 use aaa_common::child_process::StdCommandExt as _;
 mod account_spawn;
 mod agy;
+pub use agy::check_agy_model;
 mod attach;
 mod chat;
 mod ci;

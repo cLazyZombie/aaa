@@ -201,9 +201,7 @@ pub(crate) fn hooks_ready(home: &Path, cwd: Option<&Path>, exe: &Path) -> bool {
 
 pub(crate) fn matches_account(account: Option<&aaa_config::AgyAccount>, payload: &Value) -> bool {
     let Some(email) = payload.get("email").and_then(Value::as_str).filter(|s| !s.is_empty()) else { return false };
-    account.is_some_and(|a| {
-        hex::encode(Sha256::digest(email.trim().to_ascii_lowercase().as_bytes())).eq_ignore_ascii_case(&a.login_sha256)
-    })
+    account.is_some_and(|a| aaa_config::AgyAccount::hash_login(email).eq_ignore_ascii_case(&a.login_sha256))
 }
 
 pub(crate) fn quota_sample(session: &str, payload: &Value, at_ms: u64) -> Option<AgyQuotaSample> {
@@ -240,12 +238,16 @@ fn has_model(list: &str, model: &str, effort: &str) -> bool {
     })
 }
 
-/// 1.5.13의 모델 목록은 인가된 계정의 ID와 보이는 이름을 탭으로 구분한다.
 pub(crate) async fn check_model(argv: &[String]) -> Result<()> {
     let exe = argv.first().context("agy 실행 경로가 없다")?;
     let argument = |name| argv.windows(2).find(|a| a[0] == name).map(|a| a[1].as_str());
     let model = argument("--model").context("agy 실행에 모델 ID가 없다")?;
     let effort = argument("--effort").unwrap_or_default();
+    check_agy_model(exe, model, effort).await
+}
+
+/// 1.5.13의 모델 목록은 인가된 계정의 ID와 보이는 이름을 탭으로 구분한다.
+pub async fn check_agy_model(exe: &str, model: &str, effort: &str) -> Result<()> {
     let output = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new(exe)

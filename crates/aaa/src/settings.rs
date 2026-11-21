@@ -11,15 +11,15 @@ use std::process::ExitCode;
 use aaa_config::safety::{self, Layers, SafetyLayer};
 use aaa_config::{Profile, profile_edit};
 use aaa_proto::{FrontRequest, FrontResponse};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 
 #[derive(Args)]
 pub struct ProfileFields {
-    /// model 이름(`--model`·codex `-m`로 간다. 비우면 harness 기본)
+    /// 모델 이름(agy는 `agy models`의 ID를 지정. claude·codex는 생략하면 harness 기본)
     #[arg(long, value_name = "NAME")]
     model: Option<String>,
-    /// effort: claude low·medium·high·xhigh·max, codex none·minimal·low·medium·high·xhigh·max·ultra
+    /// agy는 모델 ID의 effort 접미사. claude는 low·medium·high·xhigh·max, codex는 none·minimal·low·medium·high·xhigh·max·ultra
     #[arg(long, value_name = "LEVEL")]
     effort: Option<String>,
     /// 언제 쓰는지 한 줄(coordinator가 고를 때 읽는다)
@@ -108,15 +108,16 @@ pub enum ProfileCmd {
     /// host 머신의 host.toml에 profile을 더한다(사람이 aaa 세션 밖 터미널에서만)
     Add {
         name: String,
-        /// claude·codex·shell·custom
+        /// claude·codex·agy·shell·custom
         #[arg(long = "agent", alias = "harness", value_name = "KIND")]
         harness: String,
         #[command(flatten)]
         fields: ProfileFields,
     },
-    /// host 머신의 host.toml profile을 고친다. --arg는 인자를 모두 바꾼다(사람이 터미널에서만)
+    /// host 머신의 host.toml profile을 고친다. --arg는 인자를 모두 바꾼다(사람이 aaa 세션 밖 터미널에서만)
     Edit {
         name: String,
+        /// claude·codex·agy·shell·custom
         #[arg(long = "agent", alias = "harness", value_name = "KIND")]
         harness: Option<String>,
         #[command(flatten)]
@@ -571,21 +572,20 @@ fn edit_profiles(json: bool, change: profile_edit::ProfileChange) -> Result<Exit
         profile_edit::ProfileChange::Remove { name } => format!("`aaa profile remove {name}`"),
     };
     // 값이 틀렸으면 사람인지 묻기 전에 알린다
-    let file = config_dir().join("host.toml");
+    let dir = config_dir();
+    let file = dir.join("host.toml");
     if !file.is_file() && !aaa_config::paths::state_dir().join("host/host.db").is_file() {
         bail!(
             "profile 바꾸기는 host 머신 터미널에서 한다(host.toml 없음). 확인은 `aaa profile list`·`aaa profile resolve`로 한다"
         );
     }
-    profile_edit::apply_in(
-        &std::fs::read_to_string(&file)
-            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
-            .unwrap_or_default(),
-        &change,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    let before = read_config_text(&file)?;
+    let (edited, message) =
+        profile_edit::apply_in(before.as_deref().unwrap_or_default(), &change).map_err(anyhow::Error::msg)?;
     crate::person::require(&format!("{what}(profile 바꾸기)"))?;
-    let message = profile_edit::apply(&config_dir(), &change).map_err(|e| anyhow::anyhow!(e))?;
+    check_agy_profile_edit(&dir, &edited, &change)?;
+    ensure!(read_config_text(&file)? == before, "host.toml이 바뀌었다. 현재 profile을 확인하고 다시 실행한다");
+    profile_edit::write_atomic(&file, edited.as_bytes()).with_context(|| format!("{} 쓰기 실패", file.display()))?;
     let note = "host가 다음에 profile을 쓸 때 읽는다(다시 띄우지 않아도 된다). 이미 도는 thread는 다시 띄울 때까지 옛 설정이다";
     if json {
         println!("{}", serde_json::json!({ "message": message, "file": file.display().to_string() }));
@@ -593,6 +593,44 @@ fn edit_profiles(json: bool, change: profile_edit::ProfileChange) -> Result<Exit
         println!("{message}\n{note}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) fn read_config_text(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("{} 읽기 실패", path.display())),
+    }
+}
+
+fn check_agy_profile_edit(dir: &Path, edited: &str, change: &profile_edit::ProfileChange) -> Result<()> {
+    let (name, check_model) = match change {
+        profile_edit::ProfileChange::Add { name, .. } => (name, true),
+        profile_edit::ProfileChange::Edit { name, harness, model, effort, .. } => {
+            (name, harness.is_some() || model.is_some() || effort.is_some())
+        }
+        profile_edit::ProfileChange::Remove { .. } => return Ok(()),
+    };
+    let config: aaa_config::HostConfig = toml_edit::de::from_str(edited)?;
+    let Some(profile) = config.profiles.get(name).filter(|p| p.harness == "agy") else { return Ok(()) };
+    if let Some(local) = read_config_text(&dir.join("host.local.toml"))? {
+        let local = local.parse::<toml_edit::DocumentMut>().context("host.local.toml 읽기 실패")?;
+        ensure!(
+            local.get("profiles").and_then(|p| p.get(name)).is_none(),
+            "host.local.toml의 profile `{name}`가 host.toml을 덮는다"
+        );
+    }
+    if check_model {
+        let machine = aaa_config::load_agent(dir).map_err(|e| anyhow::anyhow!("{}", e.render()))?.config;
+        let command = machine.harnesses.get("agy").context("host 머신에서 먼저 `aaa config agy`를 실행한다")?;
+        profile_edit::validate_agy_command(&command.command).map_err(anyhow::Error::msg)?;
+        tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(aaa_agent::check_agy_model(
+            &command.command[0],
+            &profile.model,
+            &profile.effort,
+        ))?;
+    }
+    Ok(())
 }
 
 /// 허용 목록과 기본값은 host 정본에 있는 이름만 참조한다(기본 profile은 설치와 무관하게 존재한다).
