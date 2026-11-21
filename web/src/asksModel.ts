@@ -219,7 +219,8 @@ export function shortAnswer(item: ThreadQuestion, n: number, pick: number | null
   const number = item.source_number ?? n + 1;
   const c = pick == null ? undefined : item.choices[pick];
   if (c) return `${number}${choiceLetter(c, pick!)}${comment?.trim() ? "+의견" : ""}`;
-  return comment?.trim() ? `${number}직접` : `${number}?`;
+  // 의견만 쓴 질문과 공통 직접 답이 대신한 질문(host ask_correct.rs와 같다)
+  return `${number}직접`;
 }
 
 export type CorrectDraft = { picks: (number | null)[]; comments: string[]; text: string };

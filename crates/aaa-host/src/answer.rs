@@ -148,6 +148,7 @@ impl Host {
         if rec.questions.is_empty() {
             return Err(err(ErrorCode::BadRequest, format!("{id}에는 답할 질문이 없다")));
         }
+        let asked = rec.clone();
         if rec.report_hash.as_deref() != Some(report_hash) {
             return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다(새 보고가 왔다). 다시 읽고 답한다"));
         }
@@ -240,9 +241,13 @@ impl Host {
         if delivery.state == DeliveryState::Queued {
             return Ok(self.thread_view(&rec));
         }
-        // 답할 때의 원문을 남긴다(plan §8.345): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다
-        if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
-            self.record_answer(&rec, a);
+        // 답할 때의 원문을 남긴다(plan §8.345): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다.
+        // 입력을 마치는 사이 thread가 이미 새 보고를 써 질문이 비었으면 답할 때의 기록(`asked`)으로 남긴다(t-2117:
+        // 그러지 않으면 전달된 답의 기록이 사라져 「답한 것」에도 없고 고칠 수도 없다)
+        match rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
+            Some(a) => self.record_answer(&rec, a),
+            None if !target.same_report(&rec) => self.record_answer(&asked, &answer),
+            None => {}
         }
         self.handle_question_requests(project, requests, &by, "질문 카드로 답해")?;
         self.flow(&rec, "question_answered", Some(format!("threads/{id}.md")), format!("{summary} · {by}"));

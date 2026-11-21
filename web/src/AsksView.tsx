@@ -632,7 +632,8 @@ function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCor
   const [report, setReport] = useState<string | null | "loading" | "missing">(null);
   const [confirm, setConfirm] = useState(false);
   // 답 고치기(t-2117): 지금 답으로 채운 초안. null이면 보기
-  const [edit, setEdit] = useState<CorrectDraft | null>(null);
+  // 고치기 시작할 때 본 답(`base`)을 기준으로 차이를 보이고 보낸다: 그사이 다른 기기가 고쳤으면 host가 거절한다
+  const [edit, setEdit] = useState<(CorrectDraft & { base: NonNullable<AskRecord["answer"]> }) | null>(null);
   const [sending, setSending] = useState(false);
   const [uploadingFields, setUploadingFields] = useState<Record<string, number>>({});
   const onUploading = useCallback((field: string) => (count: number) => setUploadingFields((u) => (u[field] === count ? u : { ...u, [field]: count })), []);
@@ -640,11 +641,12 @@ function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCor
   const now = r.answer;
   const correction = r.correction;
   const canCorrect = canControl && !!now && correction?.open === true && r.kind !== "task";
-  const startEdit = () => now && setEdit({ picks: r.items.map((_, n) => now.picks[n] ?? null), comments: r.items.map((_, n) => now.comments?.[n] ?? ""), text: now.text ?? "" });
-  const diff = edit && now ? correctionDiff(r.items, now, edit) : null;
+  const startEdit = () => now && setEdit({ base: now, picks: r.items.map((_, n) => now.picks[n] ?? null), comments: r.items.map((_, n) => now.comments?.[n] ?? ""), text: now.text ?? "" });
+  const diff = edit ? correctionDiff(r.items, edit.base, edit) : null;
+  const stale = !!edit && !!now && now.at_ms !== edit.base.at_ms;
   const complete = !!edit && (r.items.every((_, n) => edit.picks[n] !== null || (multiple && !!edit.comments[n]?.trim())) || !!edit.text.trim());
   const uploadingNow = Object.values(uploadingFields).some((c) => c > 0);
-  const ready = !!diff && diff.arrows.length > 0 && complete && !uploadingNow;
+  const ready = !!diff && diff.arrows.length > 0 && complete && !uploadingNow && !stale;
   const where = r.kind === "question" ? r.subject : "coordinator";
   const first = r.revisions?.[0];
   const previous = r.revisions?.at(-1);
@@ -673,9 +675,11 @@ function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCor
       <p className="ask-done-when" data-testid="ask-done-when">{r.asked_ms > 0 && <>물은 때 {when(r.asked_ms)} · </>}{first && now
         ? <>처음 답 {when(first.at_ms)} · {first.by} · <strong>고친 때 {when(now.at_ms)} · {now.by}</strong></>
         : <>{r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</>}</p>
-      {edit && now && (
-        <div className="ask-correct-note" data-testid="ask-correct-note">
-          <p><strong>답 고치는 중</strong> · 지금 답 {now.summary}({when(now.at_ms)} · {now.by}). 바꿀 질문만 다시 고른다.</p>
+      {edit && (
+        <div className={`ask-correct-note${stale ? " is-warn" : ""}`} data-testid="ask-correct-note">
+          {stale && now
+            ? <p role="alert" data-testid="ask-correct-stale"><strong>다른 곳에서 먼저 고쳤다</strong> · {now.summary}({when(now.at_ms)} · {now.by}). 취소하고 다시 고친다.</p>
+            : <p><strong>답 고치는 중</strong> · 지금 답 {edit.base.summary}({when(edit.base.at_ms)} · {edit.base.by}). 바꿀 질문만 다시 고른다.</p>}
           {correction?.since?.length ? <ul className="ask-correct-since" data-testid="ask-correct-since">{correction.since.map((line, i) => <li key={i}>{line}</li>)}</ul> : null}
         </div>
       )}
@@ -828,7 +832,7 @@ function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCor
           onConfirm={async () => {
             setSending(true);
             try {
-              await onCorrect(now!.at_ms, edit.picks, edit.text.trim() || null, multiple ? edit.comments.map((c) => c.trim() || null) : []);
+              await onCorrect(edit.base.at_ms, edit.picks, edit.text.trim() || null, multiple ? edit.comments.map((c) => c.trim() || null) : []);
               setEdit(null);
             } finally {
               setSending(false);

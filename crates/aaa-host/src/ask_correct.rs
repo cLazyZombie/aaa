@@ -59,10 +59,13 @@ fn diff(items: &[ThreadQuestion], old: &QuestionAnswerView, new: &QuestionAnswer
             }
             (_, Some((_, ns))) if (op, &oc) == (np, &nc) => d.same.push(ns),
             (o, x) => {
-                // 한쪽이 공통 답(text)으로만 대신한 질문: 줄 없이 짧은 꼴만
-                let short = |v: Option<(String, String)>| v.map(|v| v.1).unwrap_or_else(|| "직접".into());
+                // 한쪽이 공통 답(text)으로만 대신한 질문: 줄 없이 짧은 꼴(「1직접」, 웹 asksModel `shortAnswer`와 같다)만
+                let number = item.source_number.unwrap_or(n as u32 + 1);
+                let short = |v: Option<(String, String)>| v.map(|v| v.1).unwrap_or_else(|| format!("{number}직접"));
                 if (op, &oc) != (np, &nc) {
                     d.arrows.push(format!("{}→{}", short(o), short(x)));
+                } else {
+                    d.same.push(short(x));
                 }
             }
         }
@@ -107,19 +110,11 @@ pub(crate) fn correction_message(
     Some((lines.join("\n"), arrows))
 }
 
-/// post 제목·본문에서 처음 나온 thread ID(`t-NNNN`)
-fn mentioned_thread(text: &str) -> Option<String> {
-    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
-        .find(|w| aaa_proto::short_id_number(w, 't').is_some())
-        .map(str::to_string)
-}
-
 impl Host {
-    /// coordinator 확인 필요 post가 이어지는 thread: 중계한 thread 질문, 아니면 제목에 처음 나온 이 프로젝트의 thread
-    pub(crate) fn request_link(&self, item: &aaa_proto::InboxItem, title: &str) -> Option<String> {
+    /// coordinator 확인 필요 post가 이어지는 thread: 그 post가 중계한 thread 질문. 제목에 나온 t-ID로 짐작하지 않는다
+    /// (구조화 질문 post는 제 질문이라 thread 기한을 따르지 않는다)
+    pub(crate) fn request_link(&self, item: &aaa_proto::InboxItem) -> Option<String> {
         self.request_question_thread(item)
-            .or_else(|| mentioned_thread(title))
-            .filter(|t| self.load(&item.project, t).is_ok())
     }
 
     /// 지금 답 뒤 일어난 일: 그 thread의 새 보고 판(첫 줄)과 그 thread가 보낸 coordinator 요청
@@ -129,9 +124,14 @@ impl Host {
             && let Some(answered) = r.report_id.as_deref()
             && let Ok(dir) = self.project_dir(project)
         {
-            // 판은 최신부터 온다. 답한 판까지의 더 새 판이 답 뒤 보고다
-            let mut newer: Vec<String> =
-                self.report_version_names(project, thread).into_iter().take_while(|id| id != answered).collect();
+            // 판은 최신부터 온다. 답한 판까지의 더 새 판이 답 뒤 보고다. 답한 판이 목록에 없으면(지운 판) 어느 판이 뒤인지
+            // 모르므로 싣지 않는다
+            let versions = self.report_version_names(project, thread);
+            let mut newer: Vec<String> = if versions.iter().any(|id| id == answered) {
+                versions.into_iter().take_while(|id| id != answered).collect()
+            } else {
+                Vec::new()
+            };
             newer.reverse();
             for id in newer.into_iter().take(5) {
                 let first = std::fs::read_to_string(dir.join("threads").join(format!("{id}.md")))
@@ -466,12 +466,16 @@ mod tests {
         let (message, arrows) = correction_message(&items, &old, &commented, &[]).unwrap();
         assert_eq!(arrows, "2A→2A+의견");
         assert!(message.contains("2번 직접 쓴 답(의견): 크게"), "{message}");
-    }
-
-    #[test]
-    fn post_titles_link_their_first_thread_id() {
-        assert_eq!(mentioned_thread("t-2117 결과를 이 방식으로 할까?").as_deref(), Some("t-2117"));
-        assert_eq!(mentioned_thread("(t-0042)와 t-0043"), Some("t-0042".into()));
-        assert_eq!(mentioned_thread("q-4583 답"), None);
+        // 공통 직접 답이 대신한 질문은 웹(asksModel `shortAnswer`)과 같은 「2직접」으로 적고, 그대로면 그대로에 둔다
+        let typed =
+            QuestionAnswerView { text: Some("둘 다".into()), ..answer(vec![Some(0), None], vec![], "1A 직접") };
+        let picked = answer(vec![Some(0), Some(1)], vec![], "1A 2B");
+        let (message, arrows) = correction_message(&items, &typed, &picked, &[]).unwrap();
+        assert_eq!(arrows, "2직접→2B 직접 쓴 답 고침");
+        assert!(message.contains("그대로: 1A\n"), "{message}");
+        let retyped = QuestionAnswerView { text: Some("셋 다".into()), ..typed.clone() };
+        let (message, arrows) = correction_message(&items, &typed, &retyped, &[]).unwrap();
+        assert_eq!(arrows, "직접 쓴 답 고침");
+        assert!(message.contains("그대로: 1A 2직접"), "{message}");
     }
 }

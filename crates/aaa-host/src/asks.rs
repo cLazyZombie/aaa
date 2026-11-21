@@ -283,7 +283,10 @@ impl Host {
                     // 이미 닫힌 카드에 늦게 온 알림도 새 판단 요청으로 만들지 않는다.
                     rec.report_changed_ms.is_some_and(|at| at >= i.created_at_ms) || history.next().is_some()
                 } else if let Some(answer) = rec.question_answer.as_ref() {
-                    history.any(|r| r.answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by))
+                    // 고친 기록(t-2117)도 처음 답이 이력에 남아 같은 답으로 본다
+                    history.any(|r| {
+                        r.answer.iter().chain(&r.revisions).any(|a| a.at_ms == answer.at_ms && a.by == answer.by)
+                    })
                 } else {
                     // 같은 thread의 다음 질문이 열렸으면 옛 답으로 닫지 않는다.
                     false
@@ -564,7 +567,7 @@ impl Host {
             body: Some(post.input.body),
             files_base: Some(record_files_base(project, &id)),
             revisions: Vec::new(),
-            thread: self.request_link(i, &post.input.title),
+            thread: self.request_link(i),
             correction: None,
         };
         if let Some(answer) = &record.answer

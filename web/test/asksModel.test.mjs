@@ -159,6 +159,6 @@ describe("답 고치기 차이", () => {
     assert.deepEqual(correctionDiff(items, now, { picks: [0, 0], comments: ["크게", ""], text: "" }).arrows, ["1A→1A+의견"]);
     assert.deepEqual(correctionDiff(items, now, { picks: [null, 0], comments: ["둘 다", ""], text: "" }).arrows, ["1A→1직접"]);
     assert.deepEqual(correctionDiff(items, now, { picks: [0, 0], comments: ["", ""], text: "메모" }).arrows, ["직접 쓴 답 고침"]);
-    assert.equal(shortAnswer(items[0], 0, null, null), "1?");
+    assert.equal(shortAnswer(items[0], 0, null, null), "1직접", "공통 직접 답이 대신한 질문");
   });
 });
