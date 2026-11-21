@@ -610,7 +610,8 @@ async function pairPageBody(browser, code, viewport, { userAgent, platform, colo
         this.addEventListener("message", (m) => {
           if (typeof m.data !== "string") return push(`bin ${m.data.byteLength ?? m.data.size}`);
           const j = JSON.parse(m.data);
-          push(j.t === "snapshot" ? `snapshot ${j.cols}x${j.rows} ${j.replay.length}` : j.t === "state" ? `state ${j.pane.cols}x${j.pane.rows}` : `msg ${j.t}`);
+          const grid = j.t === "grid" ? j : j.t === "state" ? j.pane : null;
+          push(j.t === "snapshot" ? `snapshot ${j.cols}x${j.rows} ${j.replay.length}` : grid ? `state ${grid.cols}x${grid.rows}` : `msg ${j.t}`);
         });
         this.addEventListener("close", (e) => push(`ws close ${e.code}`));
       }

@@ -153,9 +153,10 @@ process.stdin.resume();`;
       server.onMessage((m) => {
         const msg = typeof m === "string" ? JSON.parse(m) : null;
         if (msg?.t === "snapshot") snapshotCols = msg.cols;
-        if (holding && msg?.t === "state" && msg.pane.cols !== snapshotCols) {
+        const gridCols = msg?.t === "grid" ? msg.cols : msg?.t === "state" ? msg.pane.cols : undefined;
+        if (holding && gridCols !== undefined && gridCols !== snapshotCols) {
           held.push(() => ws.send(m));
-          resized.resolve(msg.pane.cols);
+          resized.resolve(gridCols);
         } else ws.send(m);
       });
       server.onClose((code, reason) => ws.close({ code, reason }));

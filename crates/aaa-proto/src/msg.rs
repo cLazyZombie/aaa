@@ -5011,6 +5011,12 @@ pub enum TermServerMsg {
         // box: PaneView가 커서 다른 variant까지 크게 만든다(clippy large_enum_variant). wire 모양은 같다
         pane: Box<PaneView>,
     },
+    /// `state=grid.v1`로 붙은 웹에는 터미널에 필요한 크기와 조작권만 보낸다.
+    Grid {
+        cols: u16,
+        rows: u16,
+        lease: Option<LeaseView>,
+    },
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {
         id: String,
