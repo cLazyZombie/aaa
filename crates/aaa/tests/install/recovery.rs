@@ -23,30 +23,35 @@ impl Drop for RecoveryDiagnostic {
             return;
         }
         eprintln!("closed-window failed phase={} elapsed={:?}", self.phase, self.started.elapsed());
-        let Some(path) = &self.events else { return };
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) => {
-                eprintln!("closed-window public events unavailable: {error}");
-                return;
+        if let Some(path) = &self.events {
+            record_public_events("closed-window", path);
+        }
+    }
+}
+
+pub(super) fn record_public_events(label: &str, path: &Path) {
+    let raw = match aaa_common::private_file::read(path, 256 * 1024) {
+        Ok(raw) => raw,
+        Err(error) => {
+            eprintln!("{label} public events unavailable: kind={:?} os_code={:?}", error.kind(), error.raw_os_error());
+            return;
+        }
+    };
+    for line in raw.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).take(64) {
+        match serde_json::from_slice::<aaa_proto::install::InstallStreamItem>(line) {
+            Ok(aaa_proto::install::InstallStreamItem::Event { seq, phase, state, .. }) => {
+                eprintln!("{label} public event seq={seq} phase={phase:?} state={state:?}");
             }
-        };
-        for line in text.lines() {
-            match serde_json::from_str::<aaa_proto::install::InstallStreamItem>(line) {
-                Ok(aaa_proto::install::InstallStreamItem::Event { seq, phase, state, .. }) => {
-                    eprintln!("closed-window public event seq={seq} phase={phase:?} state={state:?}");
-                }
-                Ok(aaa_proto::install::InstallStreamItem::Result { seq, result, .. }) => {
-                    eprintln!("closed-window public result seq={seq} exit={}", result.exit_code);
-                }
-                // 파싱 오류도 원문 줄·payload를 출력하지 않는다.
-                Err(error) => eprintln!(
-                    "closed-window public event parse failed: category={:?} line={} column={}",
-                    error.classify(),
-                    error.line(),
-                    error.column()
-                ),
+            Ok(aaa_proto::install::InstallStreamItem::Result { seq, result, .. }) => {
+                eprintln!("{label} public result seq={seq} exit={}", result.exit_code);
             }
+            // 파싱 오류도 원문 줄·payload를 출력하지 않는다.
+            Err(error) => eprintln!(
+                "{label} public event parse failed: category={:?} line={} column={}",
+                error.classify(),
+                error.line(),
+                error.column()
+            ),
         }
     }
 }

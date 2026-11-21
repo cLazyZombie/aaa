@@ -121,6 +121,8 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
     if answer != "yes" {
         return Err(error("installation_review_cancelled", 3));
     }
+    #[cfg(target_os = "macos")]
+    tracing::debug!(target: "aaa::install::pty", "install_approval_accepted");
     require_outside(state)?;
     if resume.is_none() {
         let check = InstallInvocation {

@@ -128,6 +128,13 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
             args[at + 1] = value.into();
         }
         args.extend(["--prompt".into(), "plain".into()]);
+        #[cfg(target_os = "macos")]
+        if super::authorization::macos_snapshot::enabled() {
+            args.extend([
+                "--events-file".into(),
+                lab.0.join("worker-lifetime-events.ndjson").to_string_lossy().into_owned(),
+            ]);
+        }
         let steps = [
             ("설치 방식", "fresh\r"),
             ("남겨 둘 여유 GB", "0\r"),
@@ -181,6 +188,10 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
                 ended = true;
             }
         });
+        #[cfg(target_os = "macos")]
+        if super::authorization::macos_snapshot::enabled() {
+            assert!(text.contains("install_plain_read_returned") && text.contains("install_approval_accepted"));
+        }
         assert!(assigned, "worker 생성 전에 실제 부모 Job/종료 경계를 준비한다");
         if allowed {
             assert!(ended, "{}", redact_private(&text));

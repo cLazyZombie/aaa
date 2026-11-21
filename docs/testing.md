@@ -1,3 +1,4 @@
+- t-2114: [macOS Intel 설치 PTY 상한 진단](testing-macos-intel-install-pty-t-2114.md)
 - t-2111: [한도 대기 카드 답 재전달](testing-card-answer-delivery-t-2111.md)
 - t-2080: [Windows bulk-fixture 단위 시험의 준비 사건](testing-bulk-fixture-windows-t-2080.md)
 - t-2070: [질문 감시의 확정 이름 의견 요청](testing-question-guard-t2070.md)
