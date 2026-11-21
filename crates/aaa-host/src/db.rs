@@ -78,6 +78,8 @@ impl StartAdmission {
 
 pub struct Db {
     conn: Mutex<Connection>,
+    /// HTTP 공개 주소 판정은 긴 쓰기·이력 조회와 독립된 WAL 읽기 연결을 쓴다.
+    origin_reader: Option<Mutex<Connection>>,
 }
 
 #[derive(Debug, Clone)]
@@ -368,7 +370,13 @@ impl Db {
         Self::initialize_inbox_ids(&tx)?;
         tx.commit()?;
         scrub_audit_env(&mut conn)?;
-        Ok(Db { conn: Mutex::new(conn) })
+        // 이름 없는 메모리 DB는 두 연결이 데이터를 공유하지 않는다.
+        let origin_reader = if conn.path().is_some_and(|name| !name.is_empty()) {
+            Some(Mutex::new(crate::backup::readonly(path)?))
+        } else {
+            None
+        };
+        Ok(Db { conn: Mutex::new(conn), origin_reader })
     }
 
     fn initialize_schema(conn: &Connection) -> Result<()> {
@@ -1651,6 +1659,19 @@ impl Db {
         )
         .optional()?
         .is_some())
+    }
+
+    /// 끝낸 항목까지 포함해 옛 임무 알림이 이미 있었는지 확인한다.
+    pub(crate) fn legacy_notice_exists(&self, project: &str, subject: &str, event: &str) -> Result<bool> {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM inbox WHERE project=?1 AND subject=?2 AND event=?3)",
+                params![project, subject, event],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
     }
 
     /// 그 종류·대상의 마지막 항목(사건, 끝냈는가). 끊김이 회복 없이 아직 이어지는지 본다(inbox.rs `outage_open`)

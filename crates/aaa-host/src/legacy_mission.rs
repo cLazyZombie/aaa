@@ -1,6 +1,6 @@
 //! 한 판 동안만 남기는 옛 임무 파일·요청의 변환 경계. 실행 경로는 없다.
 use crate::{Host, err};
-use aaa_proto::{ErrorBody, ErrorCode, Role, ThreadStatus};
+use aaa_proto::{ErrorBody, ErrorCode};
 use std::path::Path;
 
 pub(crate) const REMOVED: &str = "없어짐: 자동화로 바꿨다(aaa automation convert)";
@@ -27,21 +27,28 @@ impl Host {
         else {
             return;
         };
-        let notices = self.db.inbox_list(Some(project), true).unwrap_or_default();
-        if !files(&root).is_empty() && !notices.iter().any(|i| i.subject == "missions" && i.event == "removed") {
+        let already_noticed = |subject: &str, event: &str| {
+            self.db
+                .legacy_notice_exists(project, subject, event)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "옛 임무 알림 이력 조회 실패"))
+                .unwrap_or(false)
+        };
+        if !files(&root).is_empty() && !already_noticed("missions", "removed") {
             self.inbox_once(project, "config-error", "missions", "removed", REMOVED);
         }
-        for rec in self.db.threads(Some(project)).unwrap_or_default().iter().filter_map(|s| {
-            serde_json::from_str::<crate::orch::ThreadRec>(s)
-                .inspect_err(|error| {
-                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                })
-                .ok()
-        }) {
-            if rec.role == Role::Evaluator
-                && rec.status != ThreadStatus::Resolved
-                && !notices.iter().any(|i| i.subject == rec.id && i.event == "removed role")
-            {
+        let query = aaa_proto::ThreadListQuery { open: true, ..Default::default() };
+        for rec in self
+            .db
+            .thread_page(Some(project), Some("evaluator"), &query, None, u32::MAX)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|s| {
+                serde_json::from_str::<crate::orch::ThreadRec>(s)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "옛 평가자 기록 읽기 실패"))
+                    .ok()
+            })
+        {
+            if !already_noticed(&rec.id, "removed role") {
                 self.inbox_once(
                     project,
                     "config-error",

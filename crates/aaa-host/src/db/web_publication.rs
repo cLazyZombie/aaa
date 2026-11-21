@@ -62,6 +62,31 @@ fn rewrite(value: &mut Value, links: &UrlMove<'_>, bodies: &HashMap<String, Stri
 }
 
 impl Db {
+    /// 한 SQL 문장의 스냅샷으로 최근 관측과 옛 DNS·포트 대체값을 함께 읽는다.
+    pub(crate) fn publication_origin(&self) -> Result<Option<String>> {
+        let reader = self.origin_reader.as_ref().unwrap_or(&self.conn).lock().unwrap();
+        let mut query = reader.prepare_cached(
+            "SELECT (SELECT value FROM meta WHERE key='publish_origin'),
+                    EXISTS(SELECT 1 FROM meta WHERE key='publish_observed'),
+                    (SELECT value FROM meta WHERE key='publish_dns'),
+                    (SELECT value FROM meta WHERE key='publish_port')",
+        )?;
+        let (origin, observed, dns, port) = query.query_row([], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, bool>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        if origin.is_some() || observed {
+            return Ok(origin);
+        }
+        Ok(dns.zip(port).and_then(|(dns, port)| {
+            port.parse().ok().map(|port| crate::tailscale::https_url(&dns, port).to_ascii_lowercase())
+        }))
+    }
+
     pub(crate) fn observe_publication(&self, origin: Option<&str>, dns: Option<&str>) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
