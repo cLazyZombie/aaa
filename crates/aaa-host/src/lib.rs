@@ -297,6 +297,7 @@ impl AgentConn {
             AgentRequest::WorkFileRead { .. } | AgentRequest::MissionStateRead { .. } => Some(WorkFileReply::Read),
             _ => None,
         };
+        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         {
             let mut pending = self.pending.lock().unwrap();
             if self.closed.load(Ordering::Relaxed) {
@@ -306,8 +307,15 @@ impl AgentConn {
             if let Some(pane) = &input_pane {
                 let mut watches = self.input_watches.lock().unwrap();
                 // 같은 pending 잠금 안에서 확인하고 등록해야, 사용자의 글이 끼어든 뒤 알림 Enter가 예약되지 않는다.
-                if require_current && watch.is_none_or(|w| !*w.borrow()) {
-                    return Ok(None);
+                if require_current {
+                    if watch.is_none_or(|w| !*w.borrow()) {
+                        return Ok(None);
+                    }
+                    // 사용자 입력의 등록과 wire 큐의 순서가 뒤집히지 않게 여기서 바로 넣는다.
+                    // 대기열이 찼으면 잠금을 놓고 나중의 사용자 글 위에 입력하는 대신 보류한다.
+                    if !self.tx.try_json(&msg).map_err(|_| disconnected())? {
+                        return Ok(None);
+                    }
                 }
                 if let Some(active) = watches.get(pane).and_then(std::sync::Weak::upgrade)
                     && !watch.is_some_and(|watch| Arc::ptr_eq(&active, watch))
@@ -319,16 +327,17 @@ impl AgentConn {
             pending.insert(id.clone(), PendingResponse { tx: otx, work_file, input_pane });
         }
         let _pending = PendingRequest { pending: self.pending.clone(), id: id.clone() };
-        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         let mut timed_out = false;
         let mut responded = false;
         let receive = async {
             // 전송 대기열이 찬 동안에도 연결 종료가 pending을 풀면 즉시 끝낸다.
             // 시한은 대기열에 넣는 시간까지 포함한다.
-            tokio::select! {
-                biased;
-                result = &mut orx => return result.map_err(|_| disconnected()),
-                sent = self.tx.json(&msg) => sent.map_err(|_| disconnected())?,
+            if !require_current {
+                tokio::select! {
+                    biased;
+                    result = &mut orx => return result.map_err(|_| disconnected()),
+                    sent = self.tx.json(&msg) => sent.map_err(|_| disconnected())?,
+                }
             }
             orx.await.map_err(|_| disconnected())
         };

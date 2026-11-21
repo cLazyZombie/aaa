@@ -126,6 +126,11 @@ impl FrameTx {
         self.control(serde_json::to_vec(v).expect("JSON 직렬화")).await
     }
 
+    /// 입력 감시와 같은 임계 구역에서 바로 넣는다. 대기열이 가득 차면 false.
+    pub fn try_json<T: Serialize>(&self, value: &T) -> Result<bool, SendError> {
+        self.try_frame(FrameKind::Control, serde_json::to_vec(value).expect("JSON 직렬화"))
+    }
+
     /// 이미 JSON으로 만든 제어 메시지(크기를 먼저 본 응답 등)
     pub async fn control(&self, bytes: Vec<u8>) -> Result<(), SendError> {
         self.check_size(bytes.len())?;
@@ -140,9 +145,12 @@ impl FrameTx {
 
     /// 기다리지 않는다. 쓰기 대기열이 차 있으면 false(느린 상대: 재동기화가 필요하다).
     pub fn try_terminal(&self, c: &TerminalChunk) -> Result<bool, SendError> {
-        let bytes = c.encode();
+        self.try_frame(FrameKind::Terminal, c.encode())
+    }
+
+    fn try_frame(&self, kind: FrameKind, bytes: Vec<u8>) -> Result<bool, SendError> {
         self.check_size(bytes.len())?;
-        match self.tx.try_send(Out::Frame(FrameKind::Terminal, bytes)) {
+        match self.tx.try_send(Out::Frame(kind, bytes)) {
             Ok(()) => Ok(true),
             Err(mpsc::error::TrySendError::Full(_)) => Ok(false),
             Err(mpsc::error::TrySendError::Closed(_)) => Err(SendError::Closed),

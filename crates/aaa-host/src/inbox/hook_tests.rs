@@ -366,3 +366,14 @@ async fn user_input_after_nudge_paste_prevents_enter_and_is_preserved() {
     assert_eq!(notice(&h, "local:aaa-agent", "coord").await.unwrap(), None);
     fake.abort();
 }
+
+#[tokio::test]
+async fn a_full_agent_queue_does_not_defer_a_guarded_enter_past_user_input() {
+    let (tx, _reader) = aaa_common::conn::frame_channel();
+    while tx.try_json(&"채운 frame").unwrap() {}
+    let conn = crate::AgentConn::new(tx, 1);
+    let watch = conn.watch_input("coord", true);
+    let enter = AgentRequest::Input { session: "coord".into(), data: aaa_proto::B64(vec![13]) };
+    assert!(conn.request_watched(enter, Duration::from_secs(1), Some(&watch), true).await.unwrap().is_none());
+    assert!(conn.pending.lock().unwrap().is_empty());
+}
