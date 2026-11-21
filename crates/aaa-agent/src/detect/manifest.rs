@@ -122,6 +122,7 @@ impl Loaded {
 
 const CLAUDE: &str = include_str!("manifests/claude.toml");
 const CODEX: &str = include_str!("manifests/codex.toml");
+const AGY: &str = include_str!("manifests/agy.toml");
 
 /// herdr `MANIFEST_ENGINE_VERSION`(manifest_update.rs). 규칙 파일이 요구하는 엔진 판을 이 판까지 받는다.
 pub(crate) const ENGINE_VERSION: u32 = 3;
@@ -138,9 +139,11 @@ const MAX_TOP_REGION_LINE_COUNT: usize = u16::MAX as usize;
 pub(crate) fn bundled(harness: Harness) -> &'static Loaded {
     static CLAUDE_RULES: OnceLock<Loaded> = OnceLock::new();
     static CODEX_RULES: OnceLock<Loaded> = OnceLock::new();
+    static AGY_RULES: OnceLock<Loaded> = OnceLock::new();
     let (cell, text) = match harness {
         Harness::Claude => (&CLAUDE_RULES, CLAUDE),
         Harness::Codex => (&CODEX_RULES, CODEX),
+        Harness::Agy => (&AGY_RULES, AGY),
     };
     // 저장소에 넣은 규칙이라 읽히지 않으면 build가 잘못된 것이다(시험 `bundled_manifests_parse_and_validate`)
     cell.get_or_init(|| load(text, harness).unwrap_or_else(|e| panic!("{} 감지 규칙: {e}", harness.label())))

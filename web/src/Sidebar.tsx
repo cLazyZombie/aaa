@@ -1024,8 +1024,9 @@ export function useMinute(): number {
 }
 
 /** 사용량 한도 표지(참고 Sidebar.tsx:1691 「Limited」 경고 색, UsageLimitRecoveryBanner 「Resets …」): 다시 차오르기까지 남은 때 */
-function UsageLimited({ untilMs, now }: { untilMs: number; now: number }) {
-  const left = formatResetIn(new Date(untilMs).toISOString(), now);
+function UsageLimited({ untilMs, now }: { untilMs?: number; now: number }) {
+  const left = untilMs == null ? null : formatResetIn(new Date(untilMs).toISOString(), now);
+  if (untilMs == null) return <span className="usage-limited" data-testid="usage-limited">한도 · 재개 시각 미상</span>;
   return <span className="usage-limited" data-testid="usage-limited">{left ? `한도 · ${left} 뒤 리셋` : "한도"}</span>;
 }
 
@@ -1075,7 +1076,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const line = stateLine(t, paneOpen, now);
   const tone = stateTone(t, paneOpen ? pane : undefined, now);
   // 사용량 한도(plan §8.267): 상태 말 뒤에 다시 차오르기까지 남은 때
-  const limited = tone === "limited" && t.limited_until_ms != null ? <UsageLimited untilMs={t.limited_until_ms} now={now} /> : null;
+  const limited = tone === "limited" ? <UsageLimited untilMs={t.limited_until_ms} now={now} /> : null;
   // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
   const machineName = machine?.name ?? t.machine;
   const tooltip = [`${t.project}/${t.id}`, t.title, line, t.auto_merge ? "자동 병합 on" : "", `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
@@ -1178,7 +1179,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
               </span>
             </span>
           )}
-          <span className="visually-hidden">{agent ?? "agent"}{question ? " · 질문 대기" : ""}</span>
+          <span className="visually-hidden">{agent === "agy" ? "Gemini · Antigravity CLI" : agent ?? "agent"}{question ? " · 질문 대기" : ""}</span>
           <PaneState pane={paneOpen ? pane : undefined} online={online} testid={`thread-agent-${t.project}-${t.id}`} />
         </div>
         <RowMenuButton title={title} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />

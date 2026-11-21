@@ -958,7 +958,7 @@ impl UsageService {
             usage.session_limit =
                 crate::account_plan::resolve(harness, None, usage.plan.as_deref()).and_then(|p| p.session_limit);
         }
-        let report = UsageReport { providers: by_key };
+        let report = UsageReport { providers: by_key, agy: None };
         *self.snapshot.lock().unwrap() = report.clone();
         report
     }
@@ -1208,15 +1208,17 @@ impl crate::Host {
     /// 등록 계정은 그 계정에 결속된 관측을 쓴다. 기본 홈의 로그인과는 별도 인증이다.
     /// 로컬 사용량 캐시는 자동화의 기존 의미를 유지하고, 웹 응답에서만 자료원을 고른다.
     pub(crate) async fn sidebar_usage(self: &Arc<Self>, refresh: bool) -> UsageReport {
+        let usage = self.agy_usage();
+        let agy = (!usage.is_empty()).then_some(usage);
         let accounts = match self.account_views(true) {
             Ok(accounts) => accounts,
             Err(error) => {
                 tracing::warn!(?error, "하단 사용량의 등록 계정 목록을 읽지 못했다");
-                return self.usage.report(refresh).await;
+                return UsageReport { agy, ..self.usage.report(refresh).await };
             }
         };
         if accounts.is_empty() {
-            return self.usage.report(refresh).await;
+            return UsageReport { agy, ..self.usage.report(refresh).await };
         }
         let (mut report, quotas) = tokio::join!(self.usage.report(refresh), self.quota_report(refresh));
         if let Err(error) = &quotas {
@@ -1238,7 +1240,7 @@ impl crate::Host {
             })
             .collect::<Vec<_>>();
         registered.extend(report.providers);
-        UsageReport { providers: registered }
+        UsageReport { providers: registered, agy }
     }
 
     /// 웹이 없어도 캐시를 갱신한다. 서비스 자체의 TTL·429 backoff를 그대로 쓴다.

@@ -229,6 +229,7 @@ mod tests {
                 account(UsageProviderId::Claude, "claude", 100.0),
                 account(UsageProviderId::Codex, "codex", 50.0),
             ],
+            agy: None,
         };
         assert_eq!(local(&limits(), &report, "codex"), Check::Allowed);
         report.providers.pop();

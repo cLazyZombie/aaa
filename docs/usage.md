@@ -402,6 +402,34 @@ Claude·Codex가 완료된 turn의 native 기록에 오류를 남기면 대화·
 native 표시가 없고 기존 화면 감지를 유지한다. 현재 Codex는 완료/중단 사건의 `error`, Claude는 메인 응답의
 `isApiErrorMessage`·`error`와 turn 경계를 읽는다. native 기록에 완료 오류가 없으면 화면만으로 분류하지 않는다.
 
+## Gemini worker
+
+각 실행 머신에서 agent를 돌리는 OS 사용자가 Google의 공식 Antigravity CLI를 설치하고 Google 계정으로 로그인한다.
+같은 구독으로 묶을 머신에는 같은 계정으로 로그인한다. CLI의 기본 실행 모드와 request-review 또는 strict 도구 승인 모드를 쓰고
+Use AI Credits를 끈다. 계정에 AI Credit Overages가 있으면 Never로 둔다. [CLI 설치와 로그인](https://antigravity.google/docs/getting-started?tab=cli) · [AI 크레딧](https://antigravity.google/docs/cli/credits)
+
+머신의 `agent.toml`에는 설치한 공식 실행 파일의 절대 경로와 구독 별칭을 등록한다.
+`login_sha256`에는 로그인 주소에서 양쪽 공백을 제거하고 소문자로 바꾼 문자열의 SHA-256을 넣는다.
+같은 구독으로 묶을 머신의 별칭은 모두 같게 쓴다. 계정 대조는 머신 안에서 끝난다.
+
+```toml
+[harnesses.agy]
+command = ["/opt/bin/agy"]
+
+[agy]
+subscription = "gemini-personal"
+login_sha256 = "<로그인 주소의 SHA-256>"
+```
+
+각 머신의 사용자 터미널에서 `aaa integration install agy`를 실행하면 aaa의 hook을 추가한다.
+이 훅은 다른 hook 그룹과 함께 쓸 수 있다. 제거할 때는 `aaa integration uninstall agy`를 실행한다.
+웹 설정의 프로필에서 **Gemini · Antigravity CLI**를 고르고, 실행 머신의 `agy models`에 있는 모델 ID와 effort를 입력한다.
+유효 yolo가 켜져 있거나 실행 머신에서 모델을 제공하지 않으면 시작이 보류된다. 시작한 pane의 승인창에서 필요한 도구에 답한다.
+
+host는 열린 agy worker에 구독별 자리 하나를 잡는다. 승인 대기 중이나 머신 연결이 끊겼을 때도 그 자리를 보존한다.
+한도 화면에는 구독별 마지막 상태줄 관측과 리셋 시각이 나온다. 같은 구독의 잔량은 실행 머신이 바뀌어도 한 번만 표시한다.
+공급자가 리셋 시각을 주지 않은 소진 창은 시각 미상으로 표시한다.
+
 ## 구독 사용량 관측
 
 구독 사용량의 세션·주간은 각각 숫자를 마지막으로 관측한 때를 표시한다. 주간만 갱신되면

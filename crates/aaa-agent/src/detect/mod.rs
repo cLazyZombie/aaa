@@ -1,6 +1,6 @@
 //! harness 상태의 화면 감지(결정 20 D8, plan §8.110). herdr 0.9.5처럼 화면 끝과 OSC 제목·진행으로 Claude·Codex 상태를 정한다.
 //!
-//! - 규칙 엔진은 herdr `src/detect/manifest.rs`, 규칙은 herdr `src/detect/manifests/{claude,codex}.toml`(Apache-2.0,
+//! - 규칙 엔진은 herdr `src/detect/manifest.rs`, 규칙은 herdr `src/detect/manifests/{claude,codex,antigravity}.toml`(Apache-2.0,
 //!   `LICENSE-herdr.txt`)을 옮겼다(Codex run-state 제목 보완은 plan §8.230). 상태 전이(언제 알리나)는 herdr
 //!   `src/pane/agent_detection.rs`(`state.rs`)다.
 //! - hook은 herdr처럼 harness 세션 ID(SessionStart)를 잇는 데만 쓴다. 상태는 이 모듈만 낸다.
@@ -13,11 +13,12 @@ mod watch;
 pub use state::{Detector, POLL, POLL_PENDING_IDLE, Published, STARTUP_GRACE, Tick};
 pub use watch::{Report, Watch};
 
-/// 화면으로 상태를 아는 harness(aaa가 띄우는 것). herdr는 24개 agent 규칙을 갖지만 aaa profile은 Claude·Codex뿐이다.
+/// 화면으로 상태를 아는 harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Harness {
     Claude,
     Codex,
+    Agy,
 }
 
 impl Harness {
@@ -25,10 +26,11 @@ impl Harness {
         match self {
             Harness::Claude => "claude",
             Harness::Codex => "codex",
+            Harness::Agy => "agy",
         }
     }
 
-    /// herdr `lookup_agent`의 Claude·Codex 이름(경로는 끝 이름만, `.exe` 등 확장자는 뗀다: `normalized_agent_lookup_name`)
+    /// herdr `lookup_agent`의 이름(경로는 끝 이름만, `.exe` 등 확장자는 뗀다: `normalized_agent_lookup_name`)
     pub fn from_label(name: &str) -> Option<Harness> {
         let mut name = name.trim().to_lowercase();
         for suffix in [".exe", ".cmd", ".bat", ".ps1", ".js"] {
@@ -41,6 +43,7 @@ impl Harness {
         match base {
             "claude" | "claude-code" => Some(Harness::Claude),
             "codex" => Some(Harness::Codex),
+            "agy" | "antigravity" | "antigravity-cli" => Some(Harness::Agy),
             _ => None,
         }
     }
@@ -90,7 +93,12 @@ pub struct Detection {
 
 /// 한 번 평가한다(herdr `detect_with_osc`)
 pub fn detect(harness: Harness, input: DetectionInput<'_>) -> Detection {
-    manifest::evaluate(manifest::bundled(harness), input)
+    let mut result = manifest::evaluate(manifest::bundled(harness), input);
+    // agy 화면 규칙은 승인·동작 중의 근거를 준다. 메뉴와 로그인 화면도 일치하는 규칙이 없을 수 있다.
+    if harness == Harness::Agy && result.rule.is_none() {
+        result.state = State::Unknown;
+    }
+    result
 }
 
 /// 화면 줄(보이는 화면, `ScreenText.lines`)로 감지 글을 만든다. herdr `ghostty_recent_read_range`처럼 마지막 내용 줄과
@@ -130,6 +138,7 @@ pub fn compacting(harness: Harness, screen: &str) -> bool {
     let marker = match harness {
         Harness::Claude => &*CLAUDE,
         Harness::Codex => &*CODEX,
+        Harness::Agy => return false,
     };
     screen.lines().any(|l| marker.is_match(l))
 }
@@ -145,7 +154,13 @@ pub fn question_of(rule: Option<&str>, screen: &str) -> (&'static str, String) {
     let rows: Vec<&str> = screen.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let dialog = &rows[rows.len().saturating_sub(QUESTION_ROWS)..];
     let all = dialog.join(" ");
-    let kind = if rule == Some("trust_directory") || all.contains("trust") || all.contains("Trust") {
+    let kind = if matches!(rule, Some("trust_directory" | "trust_prompt")) {
+        "trust"
+    } else if matches!(rule, Some("permission_prompt" | "legacy_permission_prompt" | "permission_diff_prompt")) {
+        "permission"
+    } else if rule == Some("question_prompt") {
+        "confirm"
+    } else if all.contains("trust") || all.contains("Trust") {
         "trust"
     } else if matches!(
         rule,
@@ -162,6 +177,21 @@ pub fn question_of(rule: Option<&str>, screen: &str) -> (&'static str, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_footer_distinguishes_dialogs_from_a_running_turn_and_slash_menu() {
+        let sample = |screen| detect(Harness::Agy, DetectionInput { screen, osc_title: "", osc_progress: "" });
+        let permission = "Run the edit command?\n↑/↓ Navigate · tab Amend · f full diff\n─── esc to cancel";
+        assert_eq!(sample(permission).state, State::Blocked);
+        assert_eq!(question_of(sample(permission).rule.as_deref(), permission).0, "permission");
+        let question = "Which option?\n↑/↓ Navigate · enter Select · esc Skip\n─── esc to cancel";
+        assert_eq!(question_of(sample(question).rule.as_deref(), question).0, "confirm");
+        let trust =
+            "Do you trust the contents of this project?\nYes, I trust this folder\n↑/↓ Navigate · enter Confirm";
+        assert_eq!(question_of(sample(trust).rule.as_deref(), trust).0, "trust");
+        assert_eq!(sample("─── esc to cancel").state, State::Working);
+        assert_eq!(sample("“Allow”\n↑/↓ Navigate · enter Select · tab Complete").state, State::Unknown);
+    }
 
     /// 실제 화면 fixture가 herdr 원본 엔진과 같은 상태·규칙·보이는 표지로 판정된다(`fixtures/expected.txt`)
     #[test]

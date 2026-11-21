@@ -7,6 +7,7 @@
 
 use aaa_common::child_process::StdCommandExt as _;
 mod account_spawn;
+mod agy;
 mod attach;
 mod chat;
 mod ci;
@@ -226,6 +227,8 @@ pub struct Agent {
     host_recovery: std::sync::atomic::AtomicBool,
     /// 지금 host가 정리 사건(`compacting.v1`, plan §8.309)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
     host_compacting: std::sync::atomic::AtomicBool,
+    host_agy_quota: std::sync::atomic::AtomicBool,
+    agy_quota: Mutex<HashMap<String, aaa_proto::AgyQuotaSample>>,
     host_post: Mutex<Option<bool>>,
     host_automation_results: Mutex<bool>,
     host_thread_read: std::sync::atomic::AtomicBool,
@@ -296,6 +299,8 @@ impl Agent {
             host_health: std::sync::atomic::AtomicBool::new(false),
             host_recovery: std::sync::atomic::AtomicBool::new(false),
             host_compacting: std::sync::atomic::AtomicBool::new(false),
+            host_agy_quota: std::sync::atomic::AtomicBool::new(false),
+            agy_quota: Mutex::new(HashMap::new()),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
             host_automation_results: Mutex::new(false),
@@ -394,10 +399,19 @@ impl Agent {
             }
             return result.map(hooks::Reply::Text).map(Some);
         }
-        if matches!(msg.harness.as_str(), "codex" | "quota") {
+        let agy_hook = matches!(
+            msg.harness.as_str(),
+            "agy-status" | "agy-session-start" | "agy-post-tool-use" | "agy-pre-invocation" | "agy-stop"
+        );
+        if matches!(msg.harness.as_str(), "codex" | "quota") || agy_hook {
             // 옛 notify는 harness를 선언하지 않은 aaa 셸에서도 왔다. token·peer 검사는 계속 적용한다.
             if msg.harness == "quota" {
                 anyhow::ensure!(spec.spec.harness.as_deref() == Some("claude"), "Claude 상태줄이 아니다");
+            } else if agy_hook {
+                anyhow::ensure!(
+                    spec.spec.harness.as_deref() == Some("agy") && spec.spec.role == Some(aaa_proto::Role::Worker),
+                    "agy로 띄운 aaa worker가 아니다"
+                );
             } else if msg.payload.get("type").and_then(|v| v.as_str()) != Some("agent-turn-complete") {
                 anyhow::ensure!(
                     detect::Harness::of_session(spec.spec.harness.as_deref(), &spec.spec.argv)
@@ -431,6 +445,52 @@ impl Agent {
                     == aaa_common::caller::Caller::Pane(msg.session.clone())),
                 "hook peer가 이 세션 안에 없다"
             );
+        }
+        if agy_hook {
+            let now = util::now_ms();
+            if msg.harness == "agy-status" {
+                self.on_agy_status(&msg.session, &spec.spec.argv, &msg.payload, now).await;
+                return Ok(None);
+            }
+            let root = {
+                let started = self.harness_started.lock().unwrap();
+                let root = started.get(&msg.session).cloned();
+                if root.is_none()
+                    && msg.harness == "agy-pre-invocation"
+                    && let Some(ev) = agy::initial_receipt(&msg.session, &msg.payload, now)
+                {
+                    self.progress
+                        .lock()
+                        .unwrap()
+                        .entry(msg.session.clone())
+                        .or_default()
+                        .agy_initial_receipt
+                        .get_or_insert_with(|| Box::new(ev));
+                }
+                root
+            };
+            if msg.harness == "agy-pre-invocation"
+                && let Some(ev) = agy::pre_invocation(&msg.session, root.as_deref(), &msg.payload, now)
+            {
+                self.harness_event(ev).await;
+            }
+            #[cfg(target_os = "macos")]
+            if msg.harness == "agy-post-tool-use"
+                && agy::root_hook(root.as_deref(), &msg.payload).is_some()
+                && agy::sandbox_progress::report_tool_succeeded(&msg.payload, &self.exe)
+            {
+                self.accept_agy_sandbox_report(&msg.session, now).await;
+            }
+            let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
+            let reply = agy::hook_reply(
+                &msg.harness,
+                root.as_deref(),
+                &msg.payload,
+                self.progress.lock().unwrap().entry(msg.session).or_default(),
+                &prefix,
+                now,
+            );
+            return Ok(Some(hooks::Reply::Text(reply)));
         }
         if msg.harness == "quota" {
             self.observe_claude_effort(&msg.session, &msg.payload, util::now_ms());
@@ -499,6 +559,87 @@ impl Agent {
         } else {
             None
         })
+    }
+
+    /// 상태줄은 대화 ID와 부팅·대기 상태를 확인한다. 승인창의 종류와 내용은 화면 감지가 확인한다.
+    async fn on_agy_status(self: &Arc<Self>, session: &str, argv: &[String], payload: &serde_json::Value, now: u64) {
+        let matches_account = agy::matches_account(self.threads_cfg.lock().unwrap().agy.as_ref(), payload);
+        if matches_account
+            && self.host_agy_quota.load(std::sync::atomic::Ordering::Relaxed)
+            && let Some(sample) = agy::quota_sample(session, payload, now)
+        {
+            let changed = {
+                let mut samples = self.agy_quota.lock().unwrap();
+                let changed = !samples.get(session).is_some_and(|old| {
+                    old.buckets == sample.buckets && old.plan == sample.plan && now.saturating_sub(old.at_ms) < 60_000
+                });
+                if changed {
+                    samples.insert(session.into(), sample.clone());
+                }
+                changed
+            };
+            if changed {
+                self.send_host(&LinkMsg::Event(AgentEvent::AgyQuota(sample))).await;
+            }
+        }
+        let Some((mut kind, mut message)) = agy::status_activity(payload) else { return };
+        let has_identity = payload.get("email").and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty());
+        if has_identity && !matches_account {
+            kind = "error";
+            message = Some("agy 로그인이 등록한 개인 구독과 다르다");
+        }
+        let id = agy::status_conversation(payload);
+        let resume = argv.windows(2).find_map(|pair| (pair[0] == "--conversation").then_some(pair[1].as_str()));
+        let root = self.harness_started.lock().unwrap().get(session).cloned();
+        if has_identity && !matches_account {
+            // 등록한 계정이 아니면 대화 ID와 입력 접수도 넘기지 않는다.
+            self.harness_started.lock().unwrap().remove(session);
+            self.progress.lock().unwrap().entry(session.into()).or_default().agy_initial_receipt = None;
+        } else if matches_account
+            && let Some(expected) = root.as_deref().or(resume)
+            && id != Some(expected)
+        {
+            kind = "agy_starting";
+            message = Some("agy 대화 ID 확인 중");
+        } else if matches_account
+            && root.is_none()
+            && let Some(id) = id
+        {
+            self.harness_event(agy::event(session, "session_start", Some(id), None, now)).await;
+            let pending = self.progress.lock().unwrap().get_mut(session).and_then(|p| p.agy_initial_receipt.take());
+            if let Some(ev) = pending.filter(|e| e.harness_session.as_deref() == Some(id)) {
+                self.harness_event(*ev).await;
+            }
+        }
+        let already = self.harness_last.lock().unwrap().get(session).is_some_and(|list| {
+            list.iter().any(|e| {
+                Slot::of(e) == Some(Slot::State)
+                    && e.harness == "agy"
+                    && e.kind == kind
+                    && e.message.as_deref() == message
+            })
+        });
+        if !already {
+            self.harness_event(agy::event(session, kind, None, message.map(str::to_owned), now)).await;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn accept_agy_sandbox_report(self: &Arc<Self>, session: &str, now: u64) {
+        let ev = {
+            let mut map = self.progress.lock().unwrap();
+            let state = map.entry(session.into()).or_default();
+            let Some(report) = agy::sandbox_progress::read(session) else { return };
+            if state.agy_report_seen.as_ref() == Some(&report.nonce) {
+                return;
+            }
+            let payload = serde_json::json!({"percent": report.percent, "activity": report.activity});
+            let Some(ev) = hooks::normalize(session, "report", &payload, now) else { return };
+            state.agy_report_seen = Some(report.nonce);
+            (state.reported_at, state.percent) = (now, ev.percent);
+            ev
+        };
+        self.harness_event(ev).await;
     }
 
     /// Claude·Codex hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
@@ -609,6 +750,9 @@ impl Agent {
         if ev.harness != "report" {
             let mut started = self.harness_started.lock().unwrap();
             if ev.kind == "session_start" {
+                if ev.harness == "agy" && started.contains_key(&ev.session) {
+                    return;
+                }
                 if let Some(id) = &ev.harness_session {
                     started.insert(ev.session.clone(), id.clone());
                 }
@@ -1415,6 +1559,10 @@ impl Agent {
                                 // session host가 늦은 연결에 더 응답하는 동안에도 harness는
                                 // 끝난 상태다. 감시는 멈추되 pump는 마지막 화면 요청을 잇는다.
                                 if !info.state.is_running() {
+                                    #[cfg(target_os = "macos")]
+                                    if spec.spec.harness.as_deref() == Some("agy") {
+                                        agy::sandbox_progress::clean(&id);
+                                    }
                                     if let Some(ended) = watch.take() {
                                         self.detected(&id, ended.harness(), detect::Report {
                                             kind: "exited", message: None, question_kind: None, rule: None,
@@ -1617,6 +1765,22 @@ impl Agent {
                     }
                 }
             }
+        }
+        if spec.harness.as_deref() == Some("agy") && spec.role.is_some() {
+            anyhow::ensure!(
+                spec.role == Some(aaa_proto::Role::Worker) && credential.is_none(),
+                "agy는 실행 머신의 개인 로그인으로 worker를 시작한다"
+            );
+            let home = aaa_config::paths::home();
+            agy::check_local_settings(&home)?;
+            anyhow::ensure!(
+                self.threads_cfg.lock().unwrap().agy.is_some()
+                    && agy::hooks_ready(&home, spec.cwd.as_deref().map(Path::new), &self.exe),
+                "agy의 구독 신원이나 aaa hook 구성이 없다"
+            );
+            agy::check_model(&spec.argv).await?;
+            #[cfg(target_os = "macos")]
+            spec.env.push((agy::sandbox_progress::ENV.into(), "1".into()));
         }
         for (key, value) in &spec.env {
             aaa_common::redact::remember_env(key, value);
@@ -2347,6 +2511,7 @@ impl Agent {
         self.harness_last.lock().unwrap().remove(session);
         self.labels.lock().unwrap().remove(session);
         self.progress.lock().unwrap().remove(session);
+        self.agy_quota.lock().unwrap().remove(session);
         let paths = SessionPaths::new(&self.state, session);
         if let Err(e) = std::fs::remove_dir_all(&paths.dir) {
             tracing::warn!(%session, "세션 폴더 삭제 실패: {e}");
@@ -2449,7 +2614,7 @@ impl Slot {
             "codex_speed" => Some(Slot::CodexSpeed),
             "turn_reply" => Some(Slot::Reply),
             "provider_turn" => Some(Slot::ProviderTurn),
-            "prompt_submit" => None,
+            "prompt_submit" | "agy_receipt" => None,
             _ => Some(Slot::State),
         }
     }

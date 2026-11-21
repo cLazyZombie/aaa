@@ -673,20 +673,26 @@ impl Host {
         if self.restoring.lock().unwrap().contains(&rec.machine_id) {
             return Ok(rec.clone());
         }
+        let agy = rec.launch.as_ref().is_some_and(|l| l.harness == "agy");
+        let run = format!("{}/{}", rec.project, rec.id);
         let matches: Vec<_> = {
             let i = self.inner.lock().unwrap();
             i.panes
                 .iter()
                 .filter(|(_, p)| {
                     p.machine_id == rec.machine_id
-                        && p.info.name == format!("{}/{}", rec.project, rec.id)
+                        && p.info.name == run
                         && p.info.cwd == rec.cwd
                         && p.info.state.is_running()
+                        && (!agy || p.info.harness.as_deref() == Some("agy"))
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
         };
         if matches.len() == 1 {
+            if agy {
+                self.db.bind_agy_slot(&rec.machine_id, &run, &matches[0]).map_err(internal)?;
+            }
             return self.update_rec(&rec.project, &rec.id, |r| {
                 r.pane = matches.first().cloned();
                 r.status = ThreadStatus::Open;
@@ -694,6 +700,7 @@ impl Host {
             });
         }
         if !rec.launch_sent {
+            self.db.cancel_unspawned_agy_slot(&rec.machine_id, &run).map_err(internal)?;
             return self.update_rec(&rec.project, &rec.id, |r| {
                 r.status = if r.launch_existing_slot { ThreadStatus::Open } else { ThreadStatus::Failed };
                 r.error = Some("host가 기동 전에 중단됨 · 원래 자리 보존 · 명시 재예약/재시작 필요".into());

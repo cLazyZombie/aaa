@@ -253,7 +253,7 @@ export function stateTone(t: ThreadView, pane: PaneView | undefined, now = Date.
   if (status === "working") return "working";
   if (status === "waiting") return "background";
   if (t.status === "failed") return "failed";
-  if (t.limited_until_ms != null && t.limited_until_ms > now) return "limited";
+  if (t.limited_until_ms != null ? t.limited_until_ms > now : t.limited === true) return "limited";
   if (t.group === "waiting_on_you") return "attention";
   if (t.group === "ready_for_review") return "review";
   if (status === "done") return "unseen";

@@ -221,6 +221,13 @@ impl Host {
             // brief를 받기 전이었으면 이을 대화가 없다: 새로 띄우고 brief를 다시 보낸다(`thread restart`와 같다).
             // 받은 뒤라면 대화를 잇는다. 대화 ID로 잇지 못하는 harness(custom 등)는 같은 명령을 다시 돌리면 일하던 것을
             // 잃은 채 기다리므로 사람에게 넘긴다.
+            if rec.launch.as_ref().is_some_and(|l| l.harness == "agy")
+                && rec.brief != BriefState::Delivered
+                && rec.brief_attempts > 0
+            {
+                self.leave_stopped(id, "agy의 앞 brief 접수 결과를 확인할 수 없어 복원을 보류했다");
+                return false;
+            }
             let resume = rec.brief == BriefState::Delivered;
             let resumable = rec.launch.as_ref().is_some_and(|l| l.resume_argv.iter().any(|a| a.contains("{session}")));
             let restarted = if resume && !resumable {

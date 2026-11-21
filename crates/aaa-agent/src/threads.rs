@@ -35,6 +35,7 @@ pub struct ThreadsConfig {
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
     pub harnesses: BTreeMap<String, aaa_config::HarnessOverride>,
+    pub agy: Option<aaa_config::AgyAccount>,
     /// 머신별 harness 덮어쓰기·옛 host 호환 profile을 쓸 때마다 다시 읽는다.
     pub config_dir: Option<PathBuf>,
 }
@@ -225,6 +226,16 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
             resume.extend(flags);
             (argv, resume, None)
         }
+        "agy" => {
+            use aaa_config::profile_edit as edit;
+            edit::validate_agy_policy(p, false).map_err(anyhow::Error::msg)?;
+            edit::validate_agy_command(&p.command).map_err(anyhow::Error::msg)?;
+            let mut argv = p.command.clone();
+            argv.extend(edit::launch_flags(p));
+            let mut resume = argv.clone();
+            resume.extend(["--conversation".into(), "{session}".into()]);
+            (argv, resume, None)
+        }
         "shell" | "custom" => {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
             let mut argv = base(&shell);
@@ -362,6 +373,7 @@ pub(crate) fn local_env(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) 
 
 /// host 정의에 머신 실행 경로·환경만 덮어쓴다. 없는 harness로 조용히 바꾸지 않는다.
 pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
+    anyhow::ensure!(spec.harness != "agy" || spec.command.is_empty(), "agy 실행 경로는 실행 머신에서 지정한다");
     let mut p = Profile {
         harness: spec.harness.clone(),
         model: spec.model.clone(),
@@ -375,6 +387,9 @@ pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfi
         && !local.command.is_empty()
     {
         p.command = local.command.clone();
+    }
+    if p.harness == "agy" {
+        aaa_config::profile_edit::validate_agy_command(&p.command).map_err(anyhow::Error::msg)?;
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let exe =
@@ -443,6 +458,12 @@ pub(crate) fn with_hooks(
         // 전역 hook도 pane의 env·peer 계보에서 돌아야 한다. 사용자 notify는 그대로 둔다.
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
             ensure_codex_local(argv, command_len);
+        }
+    }
+    if launch.harness == "agy" {
+        let settings = crate::agy::status_settings(&cfg.exe);
+        for argv in [&mut launch.argv, &mut launch.resume_argv] {
+            argv.extend(["--settings".into(), settings.clone()]);
         }
     }
     Ok(launch)
@@ -1205,4 +1226,27 @@ mod work_file_tests {
         assert_eq!(std::fs::read_to_string(Path::new(to).join("state.md")).unwrap(), "이어 갈 판단");
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+#[test]
+fn agy_argv_keeps_model_as_one_arg_and_resumes_only_by_id() {
+    let exe = if cfg!(windows) { r"C:\tools\agy.exe" } else { "/opt/bin/agy" };
+    let mut p = Profile {
+        harness: "agy".into(),
+        model: "Gemini 4 Argon (Medium)".into(),
+        effort: "medium".into(),
+        command: vec![exe.into()],
+        ..Default::default()
+    };
+    let run = resolve("gemini-argon", &p).unwrap();
+    assert_eq!(run.argv, [exe, "--model", "Gemini 4 Argon (Medium)", "--effort", "medium", "--sandbox"]);
+    assert_eq!(&run.resume_argv[..run.argv.len()], run.argv.as_slice());
+    assert_eq!(&run.resume_argv[run.argv.len()..], ["--conversation", "{session}"]);
+    assert!(run.session_key.is_none());
+    for arg in ["--conversation=another", "-c", "-i", "--dangerously-skip-permissions"] {
+        p.args = vec![arg.into()];
+        assert!(resolve("gemini-argon", &p).is_err());
+    }
+    p.args.clear();
+    p.command = vec!["agy".into()];
+    assert!(resolve("gemini-argon", &p).is_err());
 }

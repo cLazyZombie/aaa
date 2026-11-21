@@ -1,7 +1,7 @@
 // 목록 아래 설정 옆의 구독 사용량 막대. herdr-web-ui `src/components/UsageMeters.tsx`(aa624cb)를 옮겼다(문구 한국어).
 // 구독 표시는 참고와 같은 AgentMark(herdr/AgentMark.tsx)와 PROVIDER_MARK다.
 import { useEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
-import type { ProviderUsage, UsageWindow } from "./gen/proto";
+import type { AgySubscriptionUsage, ProviderUsage, UsageWindow } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
@@ -9,6 +9,7 @@ import { quotaQueryStatus } from "./quotaQueryStatus";
 import { quotaAge } from "./accountQuotaModel";
 import { usagePlanName } from "./usagePlan";
 import { usageProblemLabel, usageProblemText } from "./usageProblem";
+import { AGY_LABEL } from "./settingsModel";
 import {
   formatPercent,
   formatResetIn,
@@ -109,6 +110,44 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
   );
 }
 
+function AgyQuota({ usage, now, count }: { usage: AgySubscriptionUsage; now: number; count: UsageCount }) {
+  return (
+    <section className="usage-provider" aria-label={`${AGY_LABEL} · ${usage.subscription}`}>
+      <header className="usage-provider-head">
+        <AgentMark agent="agy" size={16} />
+        <span className="usage-provider-name">{AGY_LABEL}</span>
+        <span className="usage-account">{usage.subscription}</span>
+      </header>
+      <p className="usage-note">{[usage.plan, usage.machine, usage.stale ? "최근 표본" : null].filter(Boolean).join(" · ")}</p>
+      {usage.buckets.map(bucket => {
+        const reset = formatResetIn(bucket.resets_at, now);
+        const remaining = bucket.remaining_fraction === null ? null : bucket.remaining_fraction * 100;
+        const value = remaining === null ? null : count === "used" ? 100 - remaining : remaining;
+        const state = bucket.disabled ? "사용 안 함" : value !== null ? `${count === "used" ? "사용" : "잔량"} ${formatPercent(value)}`
+          : bucket.remaining_amount !== null ? `잔량 ${bucket.remaining_amount.toLocaleString()}` : "미관측";
+        const label = bucket.id
+          .replace(/^gemini-argon(?=-)/, "Gemini Argon").replace(/^gemini-carbon(?=-)/, "Gemini Carbon")
+          .replace(/^gemini(?=-)/, "Gemini").replace(/^3p(?=-)/, "Claude·GPT")
+          .replace(/-weekly$/, " · 주간").replace(/-5h$/, " · 5시간");
+        return (
+          <div className="usage-row" key={bucket.id} data-window={bucket.id}>
+            <span className="usage-row-label">{label}</span>
+            {!bucket.disabled && reset && <span className="usage-row-reset">{reset} 뒤 초기화</span>}
+            <span className="usage-row-value">{state}</span>
+            {!bucket.disabled && value !== null && (
+              <span className="usage-bar" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
+                <span style={{ width: value > 0 ? `max(4px, ${value}%)` : 0 }} />
+              </span>
+            )}
+            <span className="usage-row-observation">{bucket.observed_at ? quotaAge(Date.parse(bucket.observed_at), now) : "관측 시각 미상"}</span>
+          </div>
+        );
+      })}
+      {!usage.buckets.some(bucket => bucket.id.endsWith("-5h")) && <p className="usage-note">5시간 · 미관측</p>}
+    </section>
+  );
+}
+
 /**
  * host 머신에 로그인한 구독의 plan 한도를 설정 옆에: 구독마다 표시와 설정에서 고른 한도(주간·세션).
  * 누르면 모든 한도와 다시 시작하는 때를 연다.
@@ -157,15 +196,23 @@ export function UsageMeters() {
   const shown = report
     ? orderProviders(report.providers, settings.usageOrder).filter((usage) => !settings.usageHidden.includes(usage.key))
     : [];
-  if (!settings.showUsage || shown.length === 0) return null;
-  const folded = shown.length > MAX_CHIPS ? shown.length - (MAX_CHIPS - 1) : 0;
-  const chips = folded > 0 ? shown.slice(0, MAX_CHIPS - 1) : shown;
-  const summary = shown
-    .map((usage) => {
+  const agy = report?.agy ?? [];
+  const length = shown.length + agy.length;
+  if (!settings.showUsage || length === 0) return null;
+  const folded = length > MAX_CHIPS ? length - (MAX_CHIPS - 1) : 0;
+  const chips = [
+    ...shown.map(usage => <Chip key={usage.key} usage={usage} now={now} count={count} glance={settings.usageGlance} />),
+    ...agy.map(usage => <span key={`agy:${usage.subscription}`} className="usage-chip" data-provider="agy" title={usage.subscription}>
+      <AgentMark agent="agy" size={14} /><span className="usage-chip-value">{usage.subscription}</span>
+    </span>),
+  ].slice(0, folded > 0 ? MAX_CHIPS - 1 : MAX_CHIPS);
+  const summary = [
+    ...shown.map((usage) => {
       const window = glanceWindow(usage, settings.usageGlance);
       return `${usageName(usage)} ${window ? meterText(window, count) : usageProblemLabel(usage)}${usage.problem ? ` (${usageProblemText(usage)})` : ""}`;
-    })
-    .join(", ");
+    }),
+    ...agy.map(usage => `${AGY_LABEL} ${usage.subscription}`),
+  ].join(", ");
 
   return (
     <div className="usage" ref={rootRef} onKeyDown={onKeyDown} onBlur={onBlur}>
@@ -179,9 +226,7 @@ export function UsageMeters() {
         title={summary}
         onClick={() => setOpen(!open)}
       >
-        {chips.map((usage) => (
-          <Chip key={usage.key} usage={usage} now={now} count={count} glance={settings.usageGlance} />
-        ))}
+        {chips}
         {folded > 0 && <span className="usage-more">+{folded}</span>}
       </button>
       {open && (
@@ -207,6 +252,7 @@ export function UsageMeters() {
           {shown.map((usage) => (
             <Provider key={usage.key} usage={usage} now={now} count={count} />
           ))}
+          {agy.map(usage => <AgyQuota key={usage.subscription} usage={usage} now={now} count={count} />)}
         </div>
       )}
     </div>

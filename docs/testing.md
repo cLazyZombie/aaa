@@ -1,4 +1,5 @@
 - t-2119: [macOS Intel 지정 계정 예약 재연결 진단](testing-macos-intel-reserved-account-t-2119.md)
+- t-2116: [Gemini worker와 Antigravity CLI 검증](testing-agy-t-2116.md)
 - t-2114: [macOS Intel 설치 PTY 상한 진단](testing-macos-intel-install-pty-t-2114.md)
 - t-2111: [한도 대기 카드 답 재전달](testing-card-answer-delivery-t-2111.md)
 - t-2080: [Windows bulk-fixture 단위 시험의 준비 사건](testing-bulk-fixture-windows-t-2080.md)

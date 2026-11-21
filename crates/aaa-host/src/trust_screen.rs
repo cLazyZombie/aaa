@@ -27,6 +27,8 @@ const PHRASES: &[&str] = &[
     "Your trust decision will be saved",
     // Gemini CLI and Qwen Code
     "Do you trust this folder?",
+    // Antigravity CLI
+    "Do you trust the contents of this project?",
     // Cursor
     "Workspace Trust Required",
     // Copilot CLI

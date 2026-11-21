@@ -7,6 +7,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod account_rename;
+pub(crate) mod agy_slot;
 mod auto_merge;
 mod automation_ids;
 pub(crate) mod automation_runs;
@@ -405,6 +406,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS threads(
                project TEXT NOT NULL, id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL,
                updated_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS agy_slots(
+               subscription TEXT PRIMARY KEY, machine TEXT NOT NULL, run TEXT NOT NULL UNIQUE, pane TEXT UNIQUE);
              CREATE TABLE IF NOT EXISTS flow_events(
                project TEXT NOT NULL, seq INTEGER NOT NULL, at_ms INTEGER NOT NULL, boot_id TEXT NOT NULL,
                kind TEXT NOT NULL, thread TEXT, role TEXT, profile TEXT, machine TEXT, evidence TEXT,

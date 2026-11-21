@@ -8,6 +8,9 @@ use ts_rs::TS;
 
 use crate::msg::B64;
 
+pub const AGY_WORKER_FEATURE: &str = "agy_worker.v1";
+pub const AGY_SUBSCRIPTION_PREFIX: &str = "agy_subscription.v1:";
+
 /// agent 세션의 역할(§8.13). 새 역할을 더해도 이전 기록이 깨지지 않게 문자열로 저장한다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1230,6 +1233,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub limited_until_ms: Option<u64>,
+    /// agy는 소진이 확인돼도 리셋 시각이 없을 수 있다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub limited: Option<bool>,
     /// 보고 `## Questions`의 질문과 답(FRONT_API 1.72, plan §8.329): 웹 보고서 패널 「답할 것」 카드와 대화창 칩이 쓴다.
     /// 질문이 없는 보고와 옛 host는 생략한다
     // 사건(`FrontEvent::Thread`) 크기를 늘리지 않게 Box에 둔다(clippy large_enum_variant)

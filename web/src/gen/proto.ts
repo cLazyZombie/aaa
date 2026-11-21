@@ -2302,6 +2302,10 @@ repo?: string,
  */
 limited_until_ms?: number,
 /**
+ * agy는 소진이 확인돼도 리셋 시각이 없을 수 있다.
+ */
+limited?: boolean,
+/**
  * 보고 `## Questions`의 질문과 답(FRONT_API 1.72, plan §8.329): 웹 보고서 패널 「답할 것」 카드와 대화창 칩이 쓴다.
  * 질문이 없는 보고와 옛 host는 생략한다
  */
@@ -3566,7 +3570,11 @@ windows: Array<UsageWindow>, problem: UsageProblem | null,
  */
 checked_at: string | null, };
 
-export type UsageReport = { providers: Array<ProviderUsage>, };
+export type AgyQuotaBucket = { id: string, remaining_fraction: number | null, remaining_amount: number | null, resets_at: string | null, observed_at: string | null, disabled: boolean, };
+
+export type AgySubscriptionUsage = { subscription: string, machine: string, plan: string | null, buckets: Array<AgyQuotaBucket>, received_at: string, stale: boolean, };
+
+export type UsageReport = { providers: Array<ProviderUsage>, agy?: Array<AgySubscriptionUsage>, };
 
 export type InstallRole = "host" | "agent";
 

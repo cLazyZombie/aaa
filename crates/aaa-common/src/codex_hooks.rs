@@ -6,18 +6,22 @@ pub const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"
 
 /// Unix는 sh 인용, Windows는 herdr의 PowerShell EncodedCommand 방식이다.
 pub fn command(exe: &Path) -> String {
+    hook_command(exe, "codex")
+}
+
+pub fn hook_command(exe: &Path, harness: &'static str) -> String {
     #[cfg(not(windows))]
     {
-        format!("'{}' hook --agent codex", exe.to_string_lossy().replace('\'', "'\\''"))
+        format!("'{}' hook --agent {harness}", exe.to_string_lossy().replace('\'', "'\\''"))
     }
     #[cfg(windows)]
     {
-        windows_command(exe)
+        windows_command(exe, harness)
     }
 }
 
 #[cfg(any(windows, test))]
-fn windows_command(exe: &Path) -> String {
+fn windows_command(exe: &Path, harness: &'static str) -> String {
     use base64::Engine;
     // EncodedCommand는 stderr를 CLIXML로 내보낸다. 모듈 첫 검색의 진행 출력도 hook 출력이 되므로 억제한다.
     // 기본 code page와 native stdin 전달 차이를 피한다.
@@ -29,7 +33,7 @@ fn windows_command(exe: &Path) -> String {
          [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); \
          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
          $OutputEncoding = [Console]::OutputEncoding; \
-         [Console]::In.ReadToEnd() | & '{}' hook --agent codex; exit 0",
+         [Console]::In.ReadToEnd() | & '{}' hook --agent {harness}; exit 0",
         exe.to_string_lossy().replace('\'', "''")
     );
     let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -87,7 +91,7 @@ mod tests {
     #[test]
     fn windows_command_preserves_special_path_and_utf8_stdin_stdout() {
         use base64::Engine;
-        let cmd = super::windows_command(std::path::Path::new(r"C:\A b\한글 ' $ &\aaa.exe"));
+        let cmd = super::windows_command(std::path::Path::new(r"C:\A b\한글 ' $ &\aaa.exe"), "codex");
         let encoded = cmd
             .strip_prefix(concat!(
                 "cmd.exe /d /s /c \"if defined AAA_SESSION_ID if defined AAA_HOOK_SOCK if defined AAA_HOOK_TOKEN ",

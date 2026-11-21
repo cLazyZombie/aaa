@@ -51,17 +51,19 @@ export function needsYoloConfirm(key: string, value: string | null, row: { value
 }
 
 /** 웹에서 만드는 harness(답 1A: custom은 host CLI) */
-export const WEB_HARNESSES = ["claude", "codex", "shell"] as const;
+export const AGY_LABEL = "Gemini · Antigravity CLI";
+export const WEB_HARNESSES = ["claude", "codex", "agy", "shell"] as const;
 
 /** harness가 받는 effort(aaa-config `effort_values`). shell은 없다 */
 export function effortValues(harness: string): readonly string[] {
   if (harness === "claude") return ["low", "medium", "high", "xhigh", "max"];
   if (harness === "codex") return ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  if (harness === "agy") return ["low", "medium", "high", "xhigh", "max"];
   return [];
 }
 
 /** model 칸이 있는 harness */
-export const hasModel = (harness: string): boolean => harness === "claude" || harness === "codex";
+export const hasModel = (harness: string): boolean => harness === "claude" || harness === "codex" || harness === "agy";
 
 /** 인자 글: 줄마다 인자 하나(빈칸이 든 인자도 그대로). 빈 줄은 뺀다 */
 export function argsFromText(text: string): string[] {
@@ -107,7 +109,7 @@ export function draftOf(p: ProfileAdminRow | null): ProfileDraft {
 export function profileChange(before: ProfileAdminRow | null, d: ProfileDraft): ProfileChangeReq {
   const model = hasModel(d.harness) ? d.model.trim() : "";
   const effort = effortValues(d.harness).includes(d.effort) ? d.effort : "";
-  const args = argsFromText(d.args);
+  const args = d.harness === "agy" ? [] : argsFromText(d.args);
   if (!before || before.builtin) {
     return {
       change: "add",

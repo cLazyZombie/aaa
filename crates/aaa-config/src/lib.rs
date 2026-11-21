@@ -549,6 +549,22 @@ pub struct AgentConfig {
     pub update: UpdateSection,
     /// 머신별 실행 파일·환경만 덮어쓴다. model·effort·args는 host 정본을 따른다.
     pub harnesses: std::collections::BTreeMap<String, HarnessOverride>,
+    /// 로컬 agy 로그인과 여러 머신에서 함께 쓰는 구독 별칭.
+    pub agy: Option<AgyAccount>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgyAccount {
+    pub subscription: String,
+    /// 소문자로 접은 로그인 주소의 SHA-256. agent 밖으로 보내지 않는다.
+    pub login_sha256: String,
+}
+
+impl std::fmt::Debug for AgyAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgyAccount").field("subscription", &self.subscription).finish_non_exhaustive()
+    }
 }
 
 /// Debug는 env 값을 찍지 않는다([`EnvNames`])
@@ -587,6 +603,7 @@ impl Default for AgentConfig {
             profiles: Default::default(),
             update: UpdateSection::default(),
             harnesses: Default::default(),
+            agy: None,
         }
     }
 }
@@ -595,7 +612,7 @@ impl Default for AgentConfig {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Profile {
-    /// claude·codex·shell·custom
+    /// claude·codex·agy·shell·custom
     #[serde(rename = "agent", alias = "harness")]
     pub harness: String,
     pub model: String,
@@ -969,6 +986,22 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
 
 fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    if let Some(account) = &c.agy {
+        if let Err(message) = profile_edit::validate_name(&account.subscription) {
+            out.push(Invalid { path: key(&["agy", "subscription"]), message });
+        }
+        if account.login_sha256.len() != 64 || !account.login_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            out.push(Invalid {
+                path: key(&["agy", "login_sha256"]),
+                message: "로그인 주소의 SHA-256은 64자리 16진수여야 한다".into(),
+            });
+        }
+        if !c.harnesses.contains_key("agy") {
+            out.push(Invalid {
+                path: key(&["agy"]), message: "[harnesses.agy]의 공식 실행 경로가 필요하다".into()
+            });
+        }
+    }
     for (name, value, allow_root) in
         [("work_root", &c.agent.work_root, false), ("work_mount", &c.agent.work_mount, true)]
     {
@@ -1004,8 +1037,19 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
         }
     }
     for (name, h) in &c.harnesses {
-        if !matches!(name.as_str(), "claude" | "codex" | "shell" | "custom") {
+        if !matches!(name.as_str(), "claude" | "codex" | "agy" | "shell" | "custom") {
             out.push(Invalid { path: key(&["harnesses", name]), message: "모르는 harness다".into() });
+        }
+        if name == "agy" {
+            if let Err(message) = profile_edit::validate_agy_command(&h.command) {
+                out.push(Invalid { path: key(&["harnesses", name, "command"]), message });
+            }
+            if !h.env.is_empty() {
+                out.push(Invalid {
+                    path: key(&["harnesses", name, "env"]),
+                    message: "agy의 개인 로그인 환경을 덮어쓸 수 없다".into(),
+                });
+            }
         }
         if h.command.first().is_some_and(|v| v.is_empty()) {
             out.push(Invalid {
@@ -1027,7 +1071,9 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
             }),
             other => out.push(Invalid {
                 path: key(&["profiles", leak, "harness"]),
-                message: format!("claude·codex·shell·custom 중 하나여야 한다: {other:?}"),
+                message: format!(
+                    "claude·codex·shell·custom 중 하나여야 한다. agy profile은 host에 지정한다: {other:?}"
+                ),
             }),
         }
     }

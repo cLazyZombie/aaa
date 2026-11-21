@@ -25,6 +25,7 @@ mod account_policy;
 mod account_pool;
 mod account_rename;
 mod accounts;
+mod agy_quota;
 mod auto_start;
 mod automation;
 mod automation_thread;
@@ -764,6 +765,7 @@ pub struct Host {
     summary_marks: summary::MarkMap,
     /// thread의 사용량 한도가 풀리는 때(usage_limit.rs): ticker가 채우고 thread 보기가 읽는다
     usage_limits: usage_limit::LimitMap,
+    agy_quota: agy_quota::AgyQuota,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     automation_sources: tokio::sync::Mutex<()>,
     automation_dispatch: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -1012,6 +1014,7 @@ impl Host {
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
             usage_limits: Mutex::new(HashMap::new()),
+            agy_quota: agy_quota::AgyQuota::default(),
             automation_sources: tokio::sync::Mutex::new(()),
             automation_dispatch: Mutex::new(HashMap::new()),
             watch: Mutex::new(watch::Memory::default()),
@@ -1337,6 +1340,12 @@ impl Host {
             aaa_common::diagnostic::ignored(p.events.send(PaneEvent::State), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             exited
         };
+        if info.harness.as_deref() == Some("agy")
+            && matches!(info.state, SessionState::Exited { .. } | SessionState::Interrupted)
+            && let Err(error) = self.db.release_agy_pane(machine_id, &info.id)
+        {
+            tracing::warn!("종료된 agy의 구독 자리 반환 실패: {error:#}");
+        }
         if closing {
             self.spawn_close_exited(info.id.clone(), machine_id.to_string());
         }
