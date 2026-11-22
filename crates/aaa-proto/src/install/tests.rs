@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn install_schema_and_typescript_are_current() {
+fn install_schema_is_current() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/install.schema.json");
     if std::env::var_os("AAA_UPDATE_INSTALL").is_some() {
         std::fs::write(&path, schema()).unwrap();
@@ -17,6 +17,7 @@ fn install_schema_and_typescript_are_current() {
 fn public_and_private_fixtures_roundtrip_with_versioned_shapes() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("../../../../docs/install/fixtures.json")).unwrap();
+    let mut approved = fixtures.iter().find(|f| f["kind"] == "authorization").expect("승인 견본")["value"].clone();
     for fixture in fixtures {
         let typed: InstallContract = serde_json::from_value(fixture).unwrap();
         let bytes = serde_json::to_vec(&typed).unwrap();
@@ -31,8 +32,10 @@ fn public_and_private_fixtures_roundtrip_with_versioned_shapes() {
     let mut result = serde_json::to_value(InstallResult::invalid()).unwrap();
     result["schema"] = serde_json::json!("aaa.install.v2");
     assert!(serde_json::from_value::<InstallResult>(result).is_err());
-    let mut claims = serde_json::json!({"approved":true});
-    assert!(serde_json::from_value::<InstallAuthorization>(claims.take()).is_err());
+    // 유효한 승인 견본에 자기 신고 승인 칸 하나만 더한다. 필수 칸이 없어서 거절되는 것이 아니다.
+    assert!(serde_json::from_value::<InstallAuthorization>(approved.clone()).is_ok());
+    approved["approved"] = true.into();
+    assert!(serde_json::from_value::<InstallAuthorization>(approved).is_err());
 }
 
 #[test]
