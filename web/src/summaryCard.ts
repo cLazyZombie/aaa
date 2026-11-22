@@ -56,7 +56,7 @@ export function summaryUpdates(t: ThreadView, v: ThreadSummaryView, now: number)
 }
 
 /** hover 카드가 보이는 「지금 할 것」 줄 수. 카드는 훑어보는 것이라 6줄 안팎이다(10-19 사용자) */
-export const CARD_NOW = 3;
+const CARD_NOW = 3;
 
 export interface CardLines {
   /** 목표(요약이 없으면 할 일 첫 줄, 그것도 없으면 제목) */

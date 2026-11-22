@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { ancestors, blockDiff, calloutOf, idLineOf, withoutIdLines, chatImageDir, designFileUrl, designMarks, designTree, docLabel, docsUnder, headingOf, ideaLinkId, markCounts, marksOf, mdBlocks, modelChoices, parseRepoFilter, pickRepo, resolveDocPath, savesOf, sectionsOf, shownRepos, SLUG, slugSuggest, splitContext, splitTarget, takeImages, taskState } from "../src/designModel.ts";
+import { ancestors, blockDiff, calloutOf, idLineOf, withoutIdLines, designFileUrl, designTree, docLabel, docsUnder, headingOf, ideaLinkId, markCounts, marksOf, mdBlocks, modelChoices, parseRepoFilter, pickRepo, resolveDocPath, sectionsOf, shownRepos, splitTarget, taskState } from "../src/designModel.ts";
 
 const doc = (path, title = "") => ({ path, title, bytes: 1 });
 const names = (nodes) => nodes.map((n) => (n.kind === "dir" ? `${n.name}/` : n.name));
@@ -53,79 +53,19 @@ describe("기획 트리", () => {
   });
 });
 
-// 2-3 기획 화면(t-1894): 트리의 branch 표시, branch 판의 main과 다른 덩어리, branch 이름 짓기, 대화 사이 사건 줄
-describe("기획 branch 화면", () => {
-  const branch = (slug, changed, extra = {}) => ({ slug, changed, events: [], state: "open", ...extra });
-  const repo = {
-    tree: { docs: [doc("docs/a.md"), doc("docs/b.md")] },
-    branches: [
-      branch("one", [{ path: "docs/a.md", status: "M" }, { path: "docs/new.md", status: "A" }, { path: "docs/pic.png", status: "A" }]),
-      branch("two", [{ path: "docs/a.md", status: "M" }, { path: "docs/new.md", status: "A" }]),
-    ],
-  };
-  it("branch 이름: 영문·숫자만 남기고, 꼴은 소문자·숫자·-(끝은 -가 아님)", () => {
-    assert.equal(slugSuggest("Boss Dex 2!"), "boss-dex-2");
-    assert.equal(slugSuggest("보스 도감"), "");
-    for (const ok of ["a", "boss-dex", "floors-100"]) assert.ok(SLUG.test(ok), ok);
-    for (const bad of ["", "-a", "a-", "A", "a_b", "a--b", "main", "x".repeat(49)]) assert.ok(!SLUG.test(bad), bad);
-    assert.equal(slugSuggest("Main"), "main-1", "판 고르기의 main과 겹치지 않게");
-  });
+// 기획 화면(t-1894·t-2002): 문서 덩어리 나누기와 이력 차이
+describe("기획 문서 덩어리", () => {
   it("덩어리는 빈 줄로 나누고 제목 줄은 홀로, 코드 울타리 안 빈 줄은 나누지 않는다. main에 없는 덩어리만 표시", () => {
     const text = "# 제목\n본문 하나\n\n```\n코드\n\n끝\n```\n\n## 절\n새 글\n";
     const blocks = mdBlocks(text);
     assert.deepEqual(blocks, ["# 제목", "본문 하나", "```\n코드\n\n끝\n```", "## 절", "새 글"]);
     assert.deepEqual(mdBlocks("````\n```\n안\n```\n````\n\n끝\n"), ["````\n```\n안\n```\n````", "끝"], "긴 울타리 안의 짧은 울타리는 글이다");
   });
-  it("대화 사건: 같은 말 뒤 thread 저장은 한 줄로 묶고, 새 대화·올림·사람 고침은 따로", () => {
-    const ev = (kind, text, after, commit = "abcdef1234") => ({ kind, text, after, commit, at_ms: 0 });
-    const marks = designMarks([
-      ev("open", "", null, "8ebc07ffff"),
-      ev("save", "docs/a.md", "보스 도감에"),
-      ev("create", "docs/new.md", "보스 도감에", "4e1a2bffff"),
-      ev("push", "", "보스 도감에"),
-      ev("edit", "docs/a.md", "보스 도감에", "7c9d01ffff"),
-      ev("save", "docs/b.md", "다음 말"),
-    ]);
-    assert.deepEqual(marks.map((m) => [m.kind, m.after]), [["open", null], ["save", "보스 도감에"], ["push", "보스 도감에"], ["edit", "보스 도감에"], ["save", "다음 말"]]);
-    assert.equal(marks[0].text, "새 대화 · main 8ebc07f");
-    assert.match(marks[1].text, /^main에 올림 · 문서 1 고침 · 1 새로 · 4e1a2bf · \d{2}:\d{2}$/);
-    assert.match(marks[3].text, /^사람이 a\.md 고침 · main 7c9d01f · \d{2}:\d{2}$/);
-    // 구현 맡기기(표지를 main에, t-2002)·넘긴 블록 고침 알림·되돌리기
-    const more = designMarks([ev("handoff", "d-0005 · 블록 2", "x", "f068151fff"), ev("relay", "d-0005 → t-0007", "x", "35678e3fff"), ev("edit", "docs/a.md 되돌림 ← 1a2b3c4", "x", "99aa")]);
-    assert.deepEqual(more.map((m) => m.text), ["구현 맡기기 d-0005 · 블록 2 · main에 표지 f068151", "넘긴 블록 고침 d-0005 → t-0007 · 35678e3", "docs/a.md 되돌림 ← 1a2b3c4 · 99aa"]);
-    assert.equal(savesOf([ev("open", ""), ev("save", "a"), ev("edit", "b"), ev("handoff", "d-1"), ev("relay", "d-1")]), 3);
-    // 「main에 반영」 예약(t-1955): 예약·취소·시작 못 함(까닭은 host 글)
-    // 옛 기록(t-2002 전)의 「main에 반영」 예약 사건도 그대로 그린다
-    const waits = designMarks([ev("apply_wait", "", "x"), ev("apply_cancel", "", "x"), ev("apply_fail", "이미 반영 중이다: t-0009", "x")]);
-    assert.match(waits[0].text, /^main에 반영 예약 · 자리 나면 시작 · \d{2}:\d{2}$/);
-    assert.match(waits[1].text, /^반영 예약 취소 · \d{2}:\d{2}$/);
-    assert.equal(waits[2].text, "예약한 반영을 시작하지 못함 · 이미 반영 중이다: t-0009");
-    // 그림·영상 붙임(고치기의 「그림」·대화 입력창, t-1950)은 고침이 아니라 붙임이다
-    const pics = designMarks([ev("edit", "docs/design/89ea9511ae150ab2.png", "x", "a60733efff"), ev("edit", "docs/a/clip.MP4", "x", "b1")]);
-    assert.deepEqual(pics.map((m) => m.text), ["그림 89ea9511ae150ab2.png 붙임 · a60733e", "그림 clip.MP4 붙임 · b1"]);
-  });
-  it("대화 입력창 그림(t-1950): 초안의 @경로를 떼어 「(그림: …)」 줄로, 폴더는 보는 문서 폴더(기획 폴더 밖이면 기획 폴더)", () => {
-    assert.deepEqual(takeImages("@docs/design/a1.png @docs/design/b2.webp 이 그림으로 넣어 줘"), { paths: ["docs/design/a1.png", "docs/design/b2.webp"], text: "이 그림으로 넣어 줘" });
-    assert.deepEqual(takeImages("그림 없음 가@나.png"), { paths: [], text: "그림 없음 가@나.png" }, "낱말 가운데 @는 그림이 아니다");
-    assert.deepEqual(takeImages("a  b\n    code"), { paths: [], text: "a  b\n    code" }, "그림이 없으면 빈칸·들여쓰기를 건드리지 않는다");
-    assert.deepEqual(takeImages("@docs/a.png 표\n| x  |  y |\n    들여 쓴 줄"), { paths: ["docs/a.png"], text: "표\n| x  |  y |\n    들여 쓴 줄" }, "멘션만 뗀다");
-    assert.equal(chatImageDir("docs/design", "docs/design/loop/game-loop.md"), "docs/design/loop");
-    assert.equal(chatImageDir("docs/design", "docs/design/game-loop.md"), "docs/design");
-    assert.equal(chatImageDir("docs/design", "docs/attack-two.md"), "docs/design", "기획 폴더 밖 문서(폴더 재편 전 branch)");
-    assert.equal(chatImageDir("docs/design", "docs/designer/x.md"), "docs/design", "이름만 앞이 같은 폴더");
-    assert.equal(chatImageDir("docs/design", null), "docs/design");
-    const chips = splitContext("(보는 문서: docs/design/game-loop.md)\n(그림: docs/design/a1.png)\n넣어 줘").chips;
-    assert.deepEqual(chips[1], { label: "그림", value: "a1.png", path: true });
-  });
   it("이력 차이(t-2002): 옛 판과 지금 판의 덩어리를 차례대로 맞춰 생김·사라짐을 가른다", () => {
     const d = blockDiff(["# 보스", "옛 문단", "같은 끝"], ["# 보스", "새 문단", "더한 문단", "같은 끝"]);
     assert.deepEqual(d.map((x) => [x.kind, x.text]), [["same", "# 보스"], ["back", "옛 문단"], ["gone", "새 문단"], ["gone", "더한 문단"], ["same", "같은 끝"]]);
     assert.deepEqual(blockDiff([], ["a"]), [{ text: "a", kind: "gone" }]);
     assert.deepEqual(blockDiff(["a"], ["a"]), [{ text: "a", kind: "same" }]);
-  });
-  it("그림 주소: branch 판이면 slug를 싣는다", () => {
-    assert.equal(designFileUrl("p", "r", "docs/x y.png", "abc", "boss-dex"), "/api/v1/projects/p/design/r/docs/x%20y.png?c=abc&b=boss-dex");
-    assert.equal(designFileUrl("p", "r", "docs/x.png", "abc"), "/api/v1/projects/p/design/r/docs/x.png?c=abc");
   });
 });
 
@@ -194,20 +134,6 @@ describe("블록 표지(3-1)", () => {
     const loop = designTree("docs", docs).find((n) => n.kind === "dir");
     assert.deepEqual(docsUnder(loop).map((d) => d.path), ["docs/loop/b.md", "docs/loop/c.md"]);
     assert.deepEqual(markCounts(docsUnder(loop)), { work: 1, plan: 1, open: 2 });
-  });
-
-  it("보낸 말 앞의 맥락 줄은 칩으로 떼고 말만 남긴다", () => {
-    const sent = "(보는 문서: docs/bosses/README.md)\n(문서 고침: docs/bosses/README.md, docs/a/b.md)\n(고른 블록: 쓰러지면과 가호 칸 · 확률)\n이 블록 같이 정하자";
-    assert.deepEqual(splitContext(sent), {
-      chips: [
-        { label: "보는 문서", value: "bosses/README.md", path: true },
-        { label: "사람 고침", value: "README.md, b.md", path: true },
-        { label: "고른 블록", value: "쓰러지면과 가호 칸 · 확률", path: false },
-      ],
-      text: "이 블록 같이 정하자",
-    });
-    assert.deepEqual(splitContext("(보는 문서: README.md)"), { chips: [], text: "(보는 문서: README.md)" }, "말이 없으면 그대로");
-    assert.deepEqual(splitContext("그냥 말\n(보는 문서: a.md)").chips, [], "맨 앞 줄만 맥락이다");
   });
 
   it("agent와 같은 공용 견본으로 센다(LF·CRLF)", () => {

@@ -320,9 +320,6 @@ impl State {
     }
 }
 
-pub fn main(dir: PathBuf) -> Result<()> {
-    main_with_startup(dir, false)
-}
 pub fn main_with_startup(dir: PathBuf, startup_stdin: bool) -> Result<()> {
     let startup = if startup_stdin {
         let mut b = Vec::new();

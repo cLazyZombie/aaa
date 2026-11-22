@@ -198,7 +198,8 @@ fn public_schema_artifacts_match_rust_types_and_exclusive_tables() {
 }
 
 fn convert(root: &std::path::Path) -> Result<Vec<String>, String> {
-    super::convert::apply(root, super::convert::prepare(root, "mac-a")?)
+    let plan = super::convert::prepare(root, "mac-a")?;
+    super::convert::resume(root, &plan)
 }
 
 #[test]
@@ -218,7 +219,7 @@ fn converter_reuses_identical_backups_and_numbers_different_followup_sources() {
         assert!(plan.listing().contains(&backup.to_string()), "{:?}", plan.listing());
         assert_eq!(snapshot(&p.0), before, "미리보기가 썼다");
         assert_eq!(
-            super::convert::apply(&p.0, plan)
+            super::convert::resume(&p.0, &plan)
                 .unwrap()
                 .iter()
                 .filter(|f| f.starts_with("routines/.converted/"))
@@ -245,7 +246,7 @@ fn converter_reuses_identical_backups_and_numbers_different_followup_sources() {
 }
 
 #[test]
-fn converter_rollback_preserves_reused_backup_and_restores_source() {
+fn converter_refuses_an_edit_after_the_plan_and_keeps_reused_backup_and_source() {
     let p = Project::new();
     let source = "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n";
     p.write("routines/check-followup.md", source);
@@ -254,8 +255,8 @@ fn converter_rollback_preserves_reused_backup_and_restores_source() {
     // 계획 뒤 출력 자리가 차면 기존 파일과 재사용한 보존 사본을 모두 지킨다.
     p.write("automations/check-followup.toml", "occupied\n");
     let before = snapshot(&p.0);
-    let error = super::convert::apply(&p.0, plan).unwrap_err();
-    assert!(error.contains("원본 복구 완료"), "{error}");
+    let error = super::convert::resume(&p.0, &plan).unwrap_err();
+    assert!(error.contains("이관 도중 다른 편집 발견"), "{error}");
     assert_eq!(snapshot(&p.0), before);
 }
 
@@ -274,8 +275,8 @@ fn converter_revalidates_archive_choices_and_keeps_toml_collisions_read_only() {
         let before = snapshot(&p.0);
         let next = super::convert::prepare(&p.0, "mac-a").unwrap();
         assert_ne!(hash, next.sha256(), "보존 위치 변경도 본 계획에 포함한다");
-        let error = super::convert::apply(&p.0, plan).unwrap_err();
-        assert!(error.contains("계획 뒤 사본"), "{error}");
+        let error = super::convert::resume(&p.0, &plan).unwrap_err();
+        assert!(error.contains("보존 사본 충돌"), "{error}");
         assert_eq!(snapshot(&p.0), before);
         p.write("automations/check-followup.toml", "existing rule\n");
         let before = snapshot(&p.0);

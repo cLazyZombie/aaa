@@ -2,7 +2,7 @@
 // `scrollAnchor.ts` resolveWorkGroupScrollAnchor, `timelineScrollAnchoring.ts` rememberTimelinePosition을 aaa 기록으로.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
 
 const msg = (role, text) => ({ role, text });
 
@@ -28,13 +28,13 @@ describe("기준 줄(참고 resolveWorkGroupScrollAnchor)", () => {
   const ids = ["a", "b", "c"];
   const tops = [10, 110, 400];
   it("굴림 위치에 걸친 줄과 그 줄 안 거리", () => {
-    assert.deepEqual(chatScrollAnchor(ids, tops, 150), { rowId: "b", offsetWithinRow: 40, scrollOffset: 150 });
-    assert.deepEqual(chatScrollAnchor(ids, tops, 0), { rowId: "a", offsetWithinRow: 0, scrollOffset: 0 });
-    assert.deepEqual(chatScrollAnchor(ids, tops, 900), { rowId: "c", offsetWithinRow: 500, scrollOffset: 900 });
+    const topAt = (index) => tops[index];
+    assert.deepEqual(chatScrollAnchorAt(ids, topAt, 150), { rowId: "b", offsetWithinRow: 40, scrollOffset: 150 });
+    assert.deepEqual(chatScrollAnchorAt(ids, topAt, 0), { rowId: "a", offsetWithinRow: 0, scrollOffset: 0 });
+    assert.deepEqual(chatScrollAnchorAt(ids, topAt, 900), { rowId: "c", offsetWithinRow: 500, scrollOffset: 900 });
   });
-  it("줄이 없거나 잰 수가 다르면 없다", () => {
-    assert.equal(chatScrollAnchor([], [], 0), undefined);
-    assert.equal(chatScrollAnchor(ids, [0, 1], 0), undefined);
+  it("줄이 없으면 없다", () => {
+    assert.equal(chatScrollAnchorAt([], () => 0, 0), undefined);
   });
 });
 

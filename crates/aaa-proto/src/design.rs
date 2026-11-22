@@ -571,11 +571,6 @@ pub const DESIGN_ID_PREFIX: char = 'k';
 /// ID 표지를 찾는 문서 앞부분(바이트). agent 트리는 문서마다 이만큼만 읽으므로 전문을 읽는 쪽도 같은 범위만 본다
 pub const DESIGN_ID_BYTES: usize = 8 * 1024;
 
-/// 표지를 넣지 않는 문서인가: `vendor` 폴더 아래(남의 원문, 사용자 결정 t-1957 q-4090 1A). 번호는 받지만 글은 고치지 않는다
-pub fn design_id_unmarked_path(path: &str) -> bool {
-    path.split('/').rev().skip(1).any(|s| s == "vendor")
-}
-
 /// 줄이 ID 표지(`<!-- aaa-id: k-0012 -->`, 앞뒤 빈칸·CR 무시)면 정규형 ID. 번호가 아니면(`k-0`) 표지가 아니다
 pub fn design_id_line(line: &str) -> Option<String> {
     let inner = design_trim(line).strip_prefix("<!--")?.strip_suffix("-->")?;
@@ -618,73 +613,6 @@ pub fn design_text_id(text: &str) -> Option<String> {
     design_doc_id(text.as_bytes(), text.len() as u64)
 }
 
-/// 문서에 ID 표지가 없으면 넣는다. 이미 있으면(번호가 달라도) 글 그대로다: 기존 표지는 고쳐 쓰지 않는다.
-/// 자리는 앞 [`DESIGN_ID_BYTES`] 안 첫 `# ` 제목(코드 울타리 밖) 바로 아래, 없으면 맨 앞(닫힌 YAML 머리 뒤)이다. 표지 다음 줄이
-/// 빈 줄이 아니면 빈 줄을 넣어 아래 덩어리와 붙지 않게 한다. 줄바꿈은 문서의 것(CRLF)을 따른다
-pub fn design_put_id(text: &str, id: &str) -> String {
-    if design_text_id(text).is_some() {
-        return text.to_string();
-    }
-    // 맨 앞 BOM은 맨 앞에 남긴다(제목 줄 판정과 넣는 자리는 BOM 뒤 글로)
-    if let Some(rest) = text.strip_prefix('\u{feff}') {
-        let out = format!("\u{feff}{}", design_put_id(rest, id));
-        return if design_text_id(&out).as_deref() == Some(id) { out } else { text.to_string() };
-    }
-    let cr = if text.contains("\r\n") { "\r" } else { "" };
-    let marker = format!("<!-- aaa-id: {id} -->");
-    let lines: Vec<&str> = text.split('\n').collect();
-    let bare = |l: &str| l.strip_suffix('\r').unwrap_or(l).to_string();
-    // 닫힌 YAML 머리 뒤부터
-    let mut start = 0;
-    if lines.first().map(|l| bare(l)) == Some("---".into())
-        && let Some(end) = lines.iter().skip(1).position(|l| matches!(bare(l).as_str(), "---" | "..."))
-    {
-        start = end + 2;
-    }
-    let mut at = start;
-    let mut used: usize = lines[..start].iter().map(|l| l.len() + 1).sum();
-    let mut fence = None;
-    for (n, line) in lines.iter().enumerate().skip(start) {
-        used += line.len() + 1;
-        // 표지 줄까지 앞부분 안에 들어가야 읽힌다
-        if used + marker.len() + 2 > DESIGN_ID_BYTES {
-            break;
-        }
-        if let Some(open) = fence {
-            if fence_closes(line, open) {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(open) = fence_of(line) {
-            fence = Some(open);
-            continue;
-        }
-        if bare(line).starts_with("# ") {
-            at = n + 1;
-            break;
-        }
-    }
-    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-    let blank_next = out.get(at).is_some_and(|l| design_trim(l).is_empty());
-    let mut add = vec![format!("{marker}{cr}")];
-    if !blank_next {
-        add.push(cr.to_string());
-    }
-    out.splice(at..at, add);
-    let joined = out.join("\n");
-    // 맨 끝에 넣었으면(마지막 줄이 줄바꿈 없이 끝난 제목) 빈 줄 대신 끝 줄바꿈 하나
-    let joined = if at == lines.len() { joined.trim_end_matches(['\r', '\n']).to_string() + cr + "\n" } else { joined };
-    if design_text_id(&joined).as_deref() == Some(id) {
-        joined
-    } else if start > 0 {
-        // YAML 머리가 앞 8KiB를 넘는다: 머리 앞에 넣으면 머리가 깨진다. 넣지 않는다(번호는 원장의 경로 번호로 남는다)
-        text.to_string()
-    } else {
-        format!("{marker}{cr}\n{cr}\n{text}")
-    }
-}
-
 /// 첫 `# ` 제목. 앞 YAML front matter(`---`)는 건너뛴다
 pub fn design_title(text: &str) -> String {
     let mut lines = text.lines();
@@ -722,27 +650,6 @@ pub fn design_clean_path(path: &str) -> Option<String> {
         return None;
     }
     Some(p.to_string())
-}
-
-/// 기획 branch에 써도 되는 경로인가(`design_clean_path`를 거친 값): 모든 조각이 어느 OS에서도 같은 파일 하나를 가리킨다. 읽기는
-/// 이 규칙을 걸지 않는다(저장소에 이미 있는 이름도 보인다)
-pub fn design_write_path_ok(path: &str) -> bool {
-    path.split('/').all(portable_segment)
-}
-
-/// 어느 OS에서도 같은 파일 하나를 가리키는 경로 조각인가: `.git`(대소문자 무시), 끝의 `.`·빈칸, Windows가 못 쓰는 글자·예약
-/// 이름(`CON`·`NUL`·`COM1` 등)은 아니다(Windows·macOS에서 다른 파일과 겹치거나 저장소 안 git 자료를 가리키지 않게)
-fn portable_segment(s: &str) -> bool {
-    let stem = s.split('.').next().unwrap_or_default().to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.as_bytes()[3].is_ascii_digit());
-    !s.eq_ignore_ascii_case(".git")
-        && !s.ends_with('.')
-        && !s.ends_with(' ')
-        && !s.chars().any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
-        && !reserved
 }
 
 /// `path`가 기획 폴더 `folder` 안인가(둘 다 `design_clean_path`를 거친 값)
@@ -848,54 +755,6 @@ mod tests {
         assert!(design_text_id(&fits).is_some());
         let over = format!("{}\n{marker}\nx", "a".repeat(DESIGN_ID_BYTES));
         assert_eq!(design_text_id(&over), None, "앞부분 밖");
-        assert!(design_id_unmarked_path("docs/vendor/marked.LICENSE.md"));
-        assert!(!design_id_unmarked_path("docs/vendor.md"));
-        assert!(!design_id_unmarked_path("docs/vendors/a.md"));
-    }
-
-    /// 표지 넣기: 첫 제목 아래, 다음 줄과 띄우고, CRLF를 따르며, 있는 표지는 고쳐 쓰지 않는다. 계획 블록 수·차례는 그대로다
-    #[test]
-    fn id_marker_goes_under_the_title_without_eating_blocks() {
-        let id = "k-0012";
-        assert_eq!(
-            design_put_id("# 루프\n> [!계획]\n> 보스\n", id),
-            "# 루프\n<!-- aaa-id: k-0012 -->\n\n> [!계획]\n> 보스\n"
-        );
-        assert_eq!(design_put_id("# 루프\n\n본문\n", id), "# 루프\n<!-- aaa-id: k-0012 -->\n\n본문\n");
-        assert_eq!(design_put_id("# 루프", id), "# 루프\n<!-- aaa-id: k-0012 -->\n");
-        assert_eq!(design_put_id("# 루프\r\n본문\r\n", id), "# 루프\r\n<!-- aaa-id: k-0012 -->\r\n\r\n본문\r\n");
-        assert_eq!(design_put_id("본문만\n", id), "<!-- aaa-id: k-0012 -->\n\n본문만\n", "제목이 없으면 맨 앞");
-        assert_eq!(design_put_id("", id), "<!-- aaa-id: k-0012 -->\n");
-        assert_eq!(
-            design_put_id("---\ntitle: x\n---\n# 루프\n", id),
-            "---\ntitle: x\n---\n# 루프\n<!-- aaa-id: k-0012 -->\n",
-            "YAML 머리 뒤 제목"
-        );
-        assert_eq!(
-            design_put_id("```\n# 예시\n```\n# 진짜\n", id),
-            "```\n# 예시\n```\n# 진짜\n<!-- aaa-id: k-0012 -->\n",
-            "울타리 안 제목은 건너뛴다"
-        );
-        assert_eq!(
-            design_put_id("\u{feff}# 루프\n", id),
-            "\u{feff}# 루프\n<!-- aaa-id: k-0012 -->\n",
-            "BOM은 맨 앞에 둔다"
-        );
-        let yaml = format!("---\nx: {}\n---\n# 루프\n", "a".repeat(DESIGN_ID_BYTES));
-        assert_eq!(design_put_id(&yaml, id), yaml, "앞 8KiB를 넘는 YAML 머리는 깨지 않게 그대로");
-        let has = "# 루프\n<!-- aaa-id: k-0003 -->\n";
-        assert_eq!(design_put_id(has, id), has, "있는 표지(번호가 달라도)는 그대로");
-        // 제목이 앞 8KiB 밖이면 맨 앞에 넣어 트리가 읽게 한다
-        let late = format!("{}\n# 늦은 제목\n", "a".repeat(DESIGN_ID_BYTES));
-        assert_eq!(design_text_id(&design_put_id(&late, id)).as_deref(), Some(id));
-        let raw = include_str!("../../../web/test/fixtures/design-marks.md");
-        // 견본 끝의 표지 줄을 뺀 글: 첫 제목 아래에 넣는다
-        let body = raw.split_once('\n').unwrap().1.replace("<!-- aaa-id: k-0003 -->\n", "");
-        let body = body.as_str();
-        let out = design_put_id(body, id);
-        let heads = |t: &str| design_marks(t).iter().map(|m| design_mark_text(t, m)).collect::<Vec<_>>();
-        assert_eq!(heads(&out), heads(body), "표지 블록 글·차례 그대로");
-        assert_eq!(design_text_id(&out).as_deref(), Some(id));
     }
 
     #[test]
@@ -923,23 +782,6 @@ mod tests {
         assert_eq!(design_clean_path("docs/game-loop/README.md"), Some("docs/game-loop/README.md".into()));
         for bad in ["", "/etc", "docs/../x", "docs//x", "docs/./x", "a\\b", ".."] {
             assert_eq!(design_clean_path(bad), None, "{bad}");
-        }
-        // 쓰기만: 다른 OS에서 다른 파일과 겹치거나 git 자료를 가리키는 조각(읽기는 저장소에 있는 이름도 받는다)
-        for bad in [
-            "docs/.git/config",
-            "docs/.GIT/x",
-            "docs/a.md.",
-            "docs/a /b.md",
-            "docs/a:b.md",
-            "docs/a?.md",
-            "docs/CON",
-            "docs/nul.md",
-            "docs/com1.txt",
-        ] {
-            assert!(!design_write_path_ok(bad), "{bad}");
-        }
-        for ok in ["docs/.github/x.md", "docs/console.md", "docs/com10.md", "docs/a b.md"] {
-            assert!(design_write_path_ok(ok), "{ok}");
         }
         assert_eq!(design_clean_path("docs/aux.md").as_deref(), Some("docs/aux.md"), "읽기는 받는다");
         assert!(design_inside("docs", "docs/a.md"));

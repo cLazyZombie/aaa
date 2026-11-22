@@ -164,26 +164,18 @@ def partitions(names):
     """각 독립 integration owner를 슬롯에 넣는다. 긴 고정 shard가 뒤 시험을 붙잡지 않는다."""
     if len(set(names)) != len(names):
         raise ValueError("시험 목록에 중복 이름이 있다")
-    slow = [name for name in names if name.startswith("rollout::")]
-    rest = [name for name in names if not name.startswith("rollout::")]
-    groups = [[name] for name in [*slow, *rest]]
-    if sorted(name for group in groups for name in group) != sorted(names):
-        raise ValueError("시험 분할이 원래 목록과 다르다")
-    return groups
+    return [[name] for name in names]
 
 
-def prepare(logs, record=None):
+def prepare(logs, record):
     command = ["cargo", "test", "--profile", "verify", "--workspace", "--locked", "--no-fail-fast", "--no-run", "--message-format=json-render-diagnostics"]
     artifacts = []
     malformed = False
     # pipe EOF를 기다리지 않고 직접 소유한 Cargo의 종료를 기다린다. 중단돼도 원문은 파일에 남는다.
     with (logs / "build.jsonl").open("w") as output, (logs / "build.stderr.log").open("w") as errors:
-        if record is None:
-            code = subprocess.run(command, stdout=output, stderr=errors).returncode
-        else:
-            code = record.run("prepare", command, Path.cwd(), output, stderr=errors)
+        code = record.run("prepare", command, Path.cwd(), output, stderr=errors)
     print((logs / "build.stderr.log").read_text(errors="replace"), end="", flush=True)
-    if record is not None and record.stopping:
+    if record.stopping:
         raise Interrupted("Cargo 시험 준비 중단")
     with (logs / "build.jsonl").open() as output:
         for line in output:
@@ -244,8 +236,6 @@ def plan(artifacts, workers, durations=None, record=None):
             for index, group in enumerate(groups):
                 weight = durations.get(f"{name}::{group[0]}",
                                        durations.get(name, 6 * workers) * len(group) / len(names))
-                if name == "m13" and group[0].startswith("rollout::"):
-                    weight = durations.get(f"{name}::{group[0]}", 60)
                 jobs.append(Job(f"{name}-{index + 1}", [executable, "--exact", *group], cwd, group, weight))
         else:
             jobs.append(Job(name, [executable], cwd, weight=durations.get(name, float("inf"))))
@@ -254,8 +244,7 @@ def plan(artifacts, workers, durations=None, record=None):
     return jobs
 
 
-def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False, record=None, release_budget=None):
-    cpu_budget = max(1, os.cpu_count() or 1) if cpu_budget is None else cpu_budget
+def execute(jobs, logs, workers, threads, cpu_budget, report_time=False, record=None, release_budget=None):
     if cpu_budget < 1:
         raise ValueError("CPU 예산은 1 이상이어야 한다")
     threads = min(threads, cpu_budget)

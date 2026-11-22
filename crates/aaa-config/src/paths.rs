@@ -167,10 +167,4 @@ mod tests {
             assert!(super::check_instance(bad).is_err(), "{bad}");
         }
     }
-
-    #[test]
-    fn legacy_names() {
-        let (old, new) = (super::default_state_dir("aa"), super::default_state_dir("aaa"));
-        assert_ne!(old, new);
-    }
 }

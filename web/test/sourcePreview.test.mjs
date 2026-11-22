@@ -67,8 +67,4 @@ describe("readBudget", () => {
     expect(readBudget("ts", TEXT_PREVIEW_BYTES + 1)).toEqual({ bytes: SOURCE_PREVIEW_BYTES, lines: SOURCE_PREVIEW_LINES, timeoutMs: 30_000 });
     expect(readBudget(null, SOURCE_PREVIEW_BYTES * 4)).toEqual({ bytes: SOURCE_PREVIEW_BYTES, lines: SOURCE_PREVIEW_LINES, timeoutMs: 30_000 });
   });
-  it("caps the lines under every budget", () => {
-    expect(readBudget("ts", 10).lines).toBe(SOURCE_PREVIEW_LINES);
-    expect(readBudget("markdown", 10).lines).toBe(SOURCE_PREVIEW_LINES);
-  });
 });

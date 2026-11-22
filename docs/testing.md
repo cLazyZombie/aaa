@@ -5177,3 +5177,4 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 
 - [자동화 모델 선택지 로캘 검증](testing-automation-choice-locale.md)
 - [승인 알림과 host 공용 잠금 검증](testing-approval-nudge-t-2131.md)
+- [구조 단순화와 시험 정리 검증(t-2142)](testing-structure-t-2142.md)

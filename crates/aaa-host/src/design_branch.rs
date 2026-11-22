@@ -86,14 +86,6 @@ impl Host {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn design_branch_store(&self, project: &str, rec: &Rec) -> Result<(), ErrorBody> {
-        let dir = self.design_branch_dir(project, &rec.repo)?;
-        std::fs::create_dir_all(&dir).map_err(|e| internal(format!("{}: {e}", dir.display())))?;
-        let bytes = serde_json::to_vec_pretty(rec).map_err(internal)?;
-        crate::orch::write_atomic(&dir.join(format!("{}.json", rec.slug)), &bytes).map_err(internal)
-    }
-
     /// 그 저장소의 기획 대화 기록(만든 차례)
     pub(crate) fn design_branch_list(&self, project: &str, repo: &str) -> Vec<Rec> {
         let Ok(dir) = self.design_branch_dir(project, repo) else { return Vec::new() };

@@ -187,8 +187,3 @@ pub struct EvaluationView {
     pub file: String,
     pub doc: EvaluationDoc,
 }
-
-/// 평가 기록 이름(파일 이름): 영문·숫자·`-`·`_`, 64자까지
-pub fn valid_evaluation_id(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}

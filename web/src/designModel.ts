@@ -1,7 +1,6 @@
 // 기획 트리(t-1894): 저장소 기획 폴더의 Markdown 문서 목록을 폴더 트리로 묶고, 문서 안 상대 경로(그림·다른 문서)를 저장소 기준 경로로 푼다.
 import { canonicalShortId } from "./appIds.ts";
-import { imageMention, imagePaths } from "./herdr/composerImages.ts";
-import type { DesignDocEntry, DesignEvent, TaskView, ThreadView } from "./gen/proto";
+import type { DesignDocEntry, TaskView, ThreadView } from "./gen/proto";
 
 export type DesignDir = { kind: "dir"; name: string; path: string; title: string; children: DesignNode[] };
 export type DesignFile = { kind: "doc"; name: string; doc: DesignDocEntry };
@@ -81,11 +80,10 @@ export function resolveDocPath(docPath: string, href: string): string | null {
   return parts.length > 0 ? parts.join("/") : null;
 }
 
-/** 그림·영상 주소(host가 그 저장소 머신 agent에서 읽는다). commit을 실어 같은 판의 파일을 받는다. 기획 branch 판이면 그 slug도 싣는다 */
-export function designFileUrl(project: string, repo: string, path: string, commit: string, branch?: string | null): string {
+/** 그림·영상 주소(host가 그 저장소 머신 agent에서 읽는다). commit을 실어 같은 판의 파일을 받는다 */
+export function designFileUrl(project: string, repo: string, path: string, commit: string): string {
   const segs = path.split("/").map(encodeURIComponent).join("/");
-  const q = [commit ? `c=${commit}` : null, branch ? `b=${encodeURIComponent(branch)}` : null].filter(Boolean).join("&");
-  return `/api/v1/projects/${encodeURIComponent(project)}/design/${encodeURIComponent(repo)}/${segs}${q ? `?${q}` : ""}`;
+  return `/api/v1/projects/${encodeURIComponent(project)}/design/${encodeURIComponent(repo)}/${segs}${commit ? `?c=${commit}` : ""}`;
 }
 
 /** 앱 주소의 기획 문서(`design=<저장소>/<경로>`) */
@@ -103,16 +101,6 @@ export function isMarkdown(path: string): boolean {
   return /\.md$/i.test(path);
 }
 
-
-
-/** branch 이름(주제)의 꼴(host `design_slug_ok`와 같다): 영문 소문자·숫자·`-`, 1~48자, `-`로 시작·끝나지 않고 `--`가 없다. `main`은 판 고르기와 겹쳐 쓰지 않는다 */
-export const SLUG = /^(?!main$)(?!.*--)[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
-
-/** 주제에서 branch 이름을 짓는다(영문·숫자만 남긴다. 한글뿐이면 빈 글) */
-export function slugSuggest(title: string): string {
-  const s = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/, "");
-  return s === "main" ? "main-1" : s;
-}
 
 /** 기획서 ID 표지 줄(`<!-- aaa-id: k-0012 -->`, t-1957)이면 정규형 ID. Rust `design_id_line`과 같은 규칙이다 */
 export function idLineOf(line: string): string | null {
@@ -161,50 +149,6 @@ export function mdBlocks(text: string): string[] {
   return out;
 }
 
-
-
-const short = (commit: string | null | undefined) => (commit ?? "").slice(0, 7);
-const clock = (ms: number) => new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
-const fileOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-
-/** 대화에 끼우는 한 줄. 같은 자리의 thread 저장은 하나로 묶는다(「문서 2 고침 · 1 새로」) */
-export type DesignMark = { key: string; after: string | null; kind: string; text: string };
-
-export function designMarks(events: readonly DesignEvent[]): DesignMark[] {
-  const out: DesignMark[] = [];
-  let saves: { after: string | null; changed: Set<string>; created: Set<string>; commit: string; at: number } | null = null;
-  const flush = () => {
-    if (!saves) return;
-    const parts = [saves.changed.size > 0 ? `문서 ${saves.changed.size} 고침` : null, saves.created.size > 0 ? `${saves.created.size} 새로` : null].filter(Boolean);
-    out.push({ key: `save-${saves.at}`, after: saves.after, kind: "save", text: `main에 올림 · ${parts.join(" · ")} · ${short(saves.commit)} · ${clock(saves.at)}` });
-    saves = null;
-  };
-  for (const e of events) {
-    if (e.kind === "save" || e.kind === "create") {
-      if (saves && saves.after !== (e.after ?? null)) flush();
-      saves ??= { after: e.after ?? null, changed: new Set(), created: new Set(), commit: "", at: e.at_ms };
-      (e.kind === "create" ? saves.created : saves.changed).add(e.text);
-      saves.commit = e.commit ?? saves.commit;
-      continue;
-    }
-    flush();
-    // 옛 기록(t-2002 전 기획 branch)의 사건 글도 그대로 그린다
-    const text = e.kind === "open" ? `새 대화 · main ${short(e.commit)}`
-      : e.kind === "push" ? `origin에 올림 · ${clock(e.at_ms)}`
-        : e.kind === "edit" ? (/\.(png|jpe?g|gif|webp|mp4|webm)$/i.test(e.text) ? `그림 ${fileOf(e.text)} 붙임 · ${short(e.commit)}`
-          : / 되돌림 ← /.test(e.text) ? `${e.text} · ${short(e.commit)}` : `사람이 ${fileOf(e.text)} 고침 · main ${short(e.commit)} · ${clock(e.at_ms)}`)
-          : e.kind === "apply" ? `main에 반영 · 착지 창 요청함 · ${clock(e.at_ms)}`
-          : e.kind === "apply_wait" ? `main에 반영 예약 · 자리 나면 시작 · ${clock(e.at_ms)}`
-          : e.kind === "apply_cancel" ? `반영 예약 취소 · ${clock(e.at_ms)}`
-          : e.kind === "apply_fail" ? `예약한 반영을 시작하지 못함 · ${e.text}`
-            : e.kind === "handoff" ? `구현 맡기기 ${e.text} · main에 표지 ${short(e.commit)}`
-            : e.kind === "relay" ? `넘긴 블록 고침 ${e.text} · ${short(e.commit)}`
-            : e.text;
-    out.push({ key: `${e.kind}-${e.at_ms}`, after: e.after ?? null, kind: e.kind, text });
-  }
-  flush();
-  return out;
-}
 
 // 3단계 블록 표지(t-1894, 확정 계획 §3): `> [!계획]`·`> [!계획] d-NNNN`·`> [!미정]` 블록과 그 상태
 
@@ -325,24 +269,6 @@ export function docsUnder(node: DesignNode): DesignDocEntry[] {
   return node.kind === "doc" ? [node.doc] : node.children.flatMap(docsUnder);
 }
 
-/** 보낸 말 앞의 맥락 줄(「(보는 문서: …)」·「(문서 고침: …)」·「(고른 블록: …)」)을 떼어 칩 글로. 말풍선에는 남은 글만 보인다 */
-export type ContextChip = { label: string; value: string; path: boolean };
-
-export function splitContext(text: string): { chips: ContextChip[]; text: string } {
-  const lines = text.split("\n");
-  const chips: ContextChip[] = [];
-  while (lines.length > 1) {
-    const m = /^\((보는 문서|문서 고침|고른 블록|그림): (.+)\)$/.exec(lines[0]!.trim());
-    if (!m) break;
-    if (m[1] === "고른 블록") chips.push({ label: "고른 블록", value: m[2]!, path: false });
-    else if (m[1] === "그림") chips.push({ label: "그림", value: m[2]!.slice(m[2]!.lastIndexOf("/") + 1), path: true });
-    else if (m[1] === "문서 고침") chips.push({ label: "사람 고침", value: m[2]!.split(", ").map((p) => p.slice(p.lastIndexOf("/") + 1)).join(", "), path: true });
-    else chips.push({ label: "보는 문서", value: m[2]!.split("/").slice(1).join("/") || m[2]!, path: true });
-    lines.shift();
-  }
-  return { chips, text: lines.join("\n") };
-}
-
 /** 트리 저장소 필터(t-1946): 이 브라우저에만 남기는 열쇠. 값은 고른 저장소 이름의 JSON 배열이고 없으면 전부 */
 export const REPO_FILTER_KEY = "herdr-web-ui:design-repos";
 
@@ -374,23 +300,6 @@ export function pickRepo(names: readonly string[], picked: readonly string[] | n
   return on.length === 0 || on.length === names.length ? null : next;
 }
 
-/** 기획 대화 입력창이 올린 그림(t-1950): 초안의 `@<저장소 경로>`를 빼고 그 경로들을 돌려준다. 보낼 말 앞에 「(그림: …)」으로 붙인다 */
-export function takeImages(text: string): { paths: string[]; text: string } {
-  const paths = imagePaths(text);
-  if (paths.length === 0) return { paths, text };
-  let rest = text;
-  // 입력창이 넣은 꼴(`@경로 `) 그대로만 뗀다: 말의 빈칸·들여쓰기는 건드리지 않는다
-  for (const p of paths) rest = rest.split(imageMention(p)).join("").split(`@${p}`).join("");
-  return { paths, text: rest };
-}
-
-/** 기획 대화 그림을 둘 폴더(저장소 기준): 보는 문서의 폴더가 기획 폴더 안이면 거기, 아니면 기획 폴더 */
-export function chatImageDir(folder: string, viewing: string | null): string {
-  const dir = viewing && viewing.includes("/") ? viewing.slice(0, viewing.lastIndexOf("/")) : "";
-  return dir === folder || dir.startsWith(`${folder}/`) ? dir : folder;
-}
-
-
 /** 고를 수 있는 진행 모델: 그 머신이 맡을 수 있는 profile(`assignable`). 지금 값이 목록에 없으면 앞에 둔다 */
 export function modelChoices(owners: readonly { machine: string; profiles: string[] }[], hostMachine: string | null, chosen: string): string[] {
   const usable = owners.find((o) => o.machine === hostMachine)?.profiles ?? [];
@@ -401,11 +310,6 @@ export function modelChoices(owners: readonly { machine: string; profiles: strin
 export function ideaLinkId(path: string): string | null {
   const m = /^ideas\/(n-\d+)$/.exec(path.trim());
   return m ? m[1]! : null;
-}
-
-/** 대화의 저장 수(그 대화가 main에 올린 저장·사람 고침·맡김, t-2002) */
-export function savesOf(events: readonly DesignEvent[]): number {
-  return events.filter((e) => e.kind === "save" || e.kind === "create" || e.kind === "edit" || e.kind === "handoff" || e.kind === "remove").length;
 }
 
 /** 이력 보기(t-2002): 옛 판 덩어리와 지금 덩어리를 차례대로 맞춘다(LCS). `back`은 되돌리면 생기는 덩어리(옛 판에만),

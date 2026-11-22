@@ -8,7 +8,6 @@ import { createRequire } from "node:module";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,9 +53,6 @@ const failureObservers = new Set();
 let diagnosticPage = 0;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// t-0578 동시 검증(load 28.96)의 후보 점검 결과 대기만 30초→60초로 둔다(docs/testing.md).
-// 실패 상한이며 표지가 오면 바로 끝난다. 기본 locator·단계 전체 시한은 그대로다.
-const LOAD_TIMEOUT_MS = 60_000;
 
 function aaa(...args) {
   // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
@@ -179,26 +175,6 @@ const hashIs = (p, hash, ms = 20_000) =>
     [hash, ms],
   ), ms, `주소 ${hash}`);
 
-// focus 기다림: focusin 사건으로 끝낸다(focus는 DOM을 바꾸지 않아 MutationObserver로는 못 본다)
-const focusIs = (p, what, sel, ms = 20_000) =>
-  inTime(p.evaluate(`new Promise((done, fail) => {
-    const ok = () => document.activeElement?.matches(${JSON.stringify(sel)}) === true;
-    if (ok()) return done();
-    const on = () => { if (ok()) { clearTimeout(stuck); removeEventListener("focusin", on, true); done(); } };
-    const stuck = setTimeout(() => { removeEventListener("focusin", on, true); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}에 focus가 오지 않았다`)} + ": " + (document.activeElement?.outerHTML ?? "").slice(0, 160))); }, ${ms});
-    addEventListener("focusin", on, true);
-  })`), ms, `${what} focus`);
-
-function freePort() {
-  return new Promise((resolve) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
-}
-
 /** session host와 파일을 쓰는 자손이 모두 끝난 뒤 돌아온다. */
 const killSessionHosts = () => terminateSessionHosts(`${root}/s/agent/sessions`);
 
@@ -254,22 +230,6 @@ async function termDiag(page) {
   return { ...before, afterNudge: after };
 }
 
-/** 터미널에 그림 파일 붙여 넣기(브라우저 붙여 넣기 사건과 같은 모양) */
-async function pasteFile(page, bytes, type, name = "shot.png") {
-  await page.evaluate(
-    ({ b64, type, name }) => {
-      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const dt = new DataTransfer();
-      dt.items.add(new File([bin], name, { type }));
-      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
-      document.querySelector('[data-testid="terminal"] textarea').dispatchEvent(ev);
-    },
-    { b64: Buffer.from(bytes).toString("base64"), type, name },
-  );
-}
-
-/** 배너의 「…: <절대 경로>」에서 경로 */
-const bannerPath = (text) => /(\/\S+\.(png|jpg|gif|webp))/.exec(text)?.[1];
 // 움직이는 중(창 크기를 바꾼 뒤 drawer·sheet가 미끄러지는 중)을 찍지 않는다: 끝나는 움직임은 끝까지 감고 끝없는 것은 처음 모습으로
 const shot = async (page, name) => shots && measured("observe", "screenshot", () => page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" }));
 
@@ -811,21 +771,6 @@ async function stepBody(name, fn, diagnose) {
 fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(`${root}/c`, { recursive: true });
 if (shots) fs.mkdirSync(shots, { recursive: true });
-// 실행 파일 이름이 claude인 셸: agent가 그 pane 화면을 Claude 규칙(herdr claude.toml)으로 보고 상태를 정한다(plan §8.110)
-const claudeSh = `${root}/bin/claude`;
-fs.mkdirSync(`${root}/bin`, { recursive: true });
-fs.writeFileSync(claudeSh, '#!/bin/sh\nexec /bin/sh "$@"\n', { mode: 0o755 });
-// Claude Code 화면 조각(sh 명령, 화면을 지우고 그린다). 판정은 herdr 원본 엔진으로 확인했다: 권한 확인창
-// `bash_permission_prompt`(질문), spinner `live_turn_working`(작업 중), 입력 상자 `live_prompt_box`(idle)
-const clearScreen = "printf '\\033[2J\\033[H'";
-const claudeAsk = (cmd) =>
-  `${clearScreen}; printf '%s\\n' ' Bash command' '' '   ${cmd}' '' ' Do you want to proceed?' ' ❯ 1. Yes' '   2. No' '' ' Esc to cancel · Tab to amend'`;
-const claudeWorking = `${clearScreen}; printf '%s\\n' '✻ Working… (1s · esc to interrupt)'`;
-const claudeIdle = `${clearScreen}; printf '%s\\n' '────────────────' '❯ ' '────────────────' '  ? for shortcuts'`;
-// 가짜 Claude 질문 창(lib/fake-claude-ask.mjs): 이름이 claude라 화면 감지가 Claude 규칙으로 본다. `askClaude one|tabs`
-const askClaude = `${root}/askbin/claude`;
-fs.mkdirSync(`${root}/askbin`, { recursive: true });
-fs.writeFileSync(askClaude, `#!${process.execPath}\n${fs.readFileSync(new URL("./fake-claude-ask.mjs", import.meta.url), "utf8")}`, { mode: 0o755 });
 // 웹 port는 host가 고른다(listen 0, 「host·agent 시작」이 status로 받는다): 같이 도는 실험실끼리 겹치지 않는다
 let webPort = 0;
 
@@ -857,7 +802,6 @@ fs.writeFileSync(
   }),
 );
 fs.writeFileSync(`${usageHome}/.local/share/opencode/auth.json`, JSON.stringify({ "opencode-go": { type: "api", key: fixtureToken("usage-opencode") } }));
-const usageHits = new Map();
 const usageRoutes = {
   "/api/oauth/usage": () => [200, {}, { five_hour: { utilization: 20, resets_at: inHours(3) }, seven_day: { utilization: 95, resets_at: inHours(50) }, seven_day_sonnet: { utilization: 40, resets_at: inHours(50) } }],
   "/backend-api/wham/usage": () => [200, {}, { plan_type: "pro", rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000, reset_after_seconds: 7200 }, secondary_window: { used_percent: 73, limit_window_seconds: 604800, reset_after_seconds: 300000 } } }],
@@ -865,7 +809,6 @@ const usageRoutes = {
   "/zen/go/v1/usage": () => [429, { "retry-after": "600" }, {}],
 };
 const usageServer = http.createServer((req, res) => {
-  usageHits.set(req.url, (usageHits.get(req.url) ?? 0) + 1);
   const [status, headers, body] = usageRoutes[req.url]?.() ?? [404, {}, {}];
   res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(JSON.stringify(body));
@@ -1123,7 +1066,7 @@ process.stdin.on("data", (d) => {
 const browser = await launchChromium(chromium);
 const specCleanup = cleanupScope();
 
-/** push 서명 키(「Web Push: 구독 검사」 단계·pushLab이 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
+/** push 서명 키(「Web Push: 구독 검사」 단계가 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
 const setPushKey = (key) => {
   pushKey = key;
 };
@@ -1138,33 +1081,6 @@ const setInUse = (p, on) =>
   }, on);
 /** host가 세는 쓰는 화면 수(그 화면으로 묻는다) */
 const pushInUse = (p) => p.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok.in_use);
-/** 그 화면 기기가 본 쓰는 기기(plan §8.105): `user`(앞 7자)·`you` */
-const pushWho = (p) => p.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok);
-
-/**
- * push 판정 단계의 준비(17-push-in-use·18-push-stalled): 서명 키, 첫 화면 기기의 구독 하나(push/dev1), demo 프로젝트.
- * 쓰는 화면이 없을 때 보낸 push가 이 구독으로 가므로 「push 0건」·「push 보냄」 단언이 빈말이 아니다. 12에서는 앞 단계(구독 검사·
- * 보고서)가 남기던 것이라, 단계를 하나만 골라(--grep) 돌아도 늘 한다
- */
-async function pushLab(page) {
-  await step(
-    "push 판정 준비",
-    async () => {
-      const info = await pushWho(page);
-      if (!info.enabled) throw new Error(`push가 꺼져 있다: ${JSON.stringify(info)}`);
-      setPushKey(info.key);
-      const dev = pushDevice("push/dev1");
-      const status = await page.evaluate(
-        async (body) => (await fetch("/api/v1/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status,
-        dev.json,
-      );
-      if (status !== 200) throw new Error(`구독 ${status}`);
-      aaa("project", "create", "demo");
-    },
-    { always: true },
-  );
-}
-
 /** 실제 coordinator pane 자식 CLI로 사용자 post를 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. 기본은 전체 완료,
  * `request`면 확인 필요(제목은 질문 요약·추천) */
 async function coordinatorPost({ request = false, title = "전체 완료", body } = {}) {
@@ -1255,7 +1171,7 @@ async function runSpec(spec, labEnv = {}) {
 
 export {
   failureObservers, diagnosticPage,
-  LOAD_TIMEOUT_MS,
+
   inList,
   showPanel,
   drawerSettled,
@@ -1263,11 +1179,10 @@ export {
   STEP_LIMIT_MS,
   paneHash,
   require, chromium, webkit, repo, AA, shots, root, env, procs, sleep, aaa, finishFixtureFollowups, waitOutput, start, stop, until, domIs,
-  hashIs, freePort, killSessionHosts, screenText, termDiag, pasteFile, bannerPath, shot, termFont, fontOk, imeType,
+  hashIs, killSessionHosts, screenText, termDiag, shot, termFont, fontOk, imeType,
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, specCleanup, setPushKey, setInUse, pushInUse, pushWho, pushLab, coordinatorPost, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
-  claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
+  usageRoutes, usageServer, browser, specCleanup, setPushKey, setInUse, pushInUse, coordinatorPost, runSpec, openSettings, sentFrames, sentCount, sentText,
   pairPageBody, stepBody,
 };

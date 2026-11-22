@@ -753,7 +753,6 @@ draw();
     const pending = [...document.querySelectorAll(".chat-turn-user")].filter((t) => t.querySelector(".chat-msg.user.is-pending"));
     return { count: buttons.length, onLast: buttons.length === 1 && pending.at(-1)?.contains(buttons[0]), label: buttons[0]?.textContent ?? null, phase: buttons[0]?.dataset.phase ?? null, pending: pending.length };
   });
-  const noteText = (p) => p.evaluate(() => document.querySelector('[data-testid="chat-pending-note"]')?.textContent ?? null);
 
   await step("대기 메시지 「지금 보내기」(Claude): 대기 말 맨 끝에 단추 하나(N개), 터미널에 쓰던 글이 있으면 보내지 않고 까닭, 누르면 글을 다시 보내지 않고 sendNow 키만 보내 대기 말이 보통 말이 된다, 옛 host는 단추 없음, 입력 진단에 판정·보냄", async () => {
     const record = `${root}/claude/projects/-lab-steer/steer.jsonl`;

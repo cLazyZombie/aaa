@@ -1382,7 +1382,7 @@ async fn durable_start_receipt_recovers_success_without_restarting_or_spending_b
 }
 
 #[tokio::test]
-async fn toggle_waits_for_dispatch_and_preserves_new_definition() {
+async fn toggle_waits_for_dispatch() {
     let l = auto_lab();
     let r = rule(&l, "");
     let gate = l.h.automation_dispatch_lock("demo");

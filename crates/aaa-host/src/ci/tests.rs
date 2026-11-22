@@ -73,7 +73,7 @@ async fn query_machine_defaults_to_host_and_can_be_overridden_independently_of_r
     }
 }
 #[tokio::test]
-async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
+async fn durable_outbox_replay_deduplicates_inbox_flow_and_run_history() {
     let lab = Lab::new(None);
     let h = &lab.h;
     let n = Notice {

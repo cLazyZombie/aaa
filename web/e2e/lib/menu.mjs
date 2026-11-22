@@ -13,8 +13,5 @@ async function clickAfterMotion(item, selector, description) {
   await item.click({ timeout: Math.max(1, deadline - performance.now()) });
 }
 
-/** popover도 같은 선택 경로를 쓴다. */
-export const clickMenuItem = item => clickAfterMotion(item, ".row-sheet", "메뉴 시트의 원래 애니메이션 종료");
-
 /** 확인창도 휴대폰에서는 같은 원래 시트 애니메이션으로 움직인다. */
 export const clickDialogButton = item => clickAfterMotion(item, ".confirm-dialog", "확인창의 원래 애니메이션 종료");

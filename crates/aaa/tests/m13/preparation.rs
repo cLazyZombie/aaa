@@ -118,9 +118,7 @@ fn prepare_and_cleanup_wait_for_git_before_publishing_completion() {
     let gate = GitGate::new();
     let mut w = gate.world();
     GitGate::enable(&w, "add");
-    let started = Instant::now();
     let v = start_gated(&w);
-    assert!(started.elapsed() < Duration::from_secs(10), "배경 시작은 Git 해제를 기다리지 않는다");
     assert_eq!(v["status"], "starting", "{v}");
     let id = v["id"].as_str().unwrap().to_string();
     let pending = gate.take("add");

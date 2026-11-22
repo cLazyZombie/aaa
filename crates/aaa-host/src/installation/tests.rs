@@ -14,14 +14,14 @@ impl Lab {
         Host::open(cfg, self.0.join("host")).unwrap()
     }
     fn request(&self) -> InstallApprovalRequest {
-        let path = |p: &str| self.0.join(p).to_string_lossy().into_owned();
+        // Windows 경로 검증은 대상 OS 규칙을 쓰므로 이 host fixture도 Windows 절대 경로를 사용한다.
         let choices = InstallChoices {
             role: Some(InstallRole::Agent),
             name: Some("agent-a".into()),
             instance: Some("lab".into()),
-            config_dir: Some(path("config")),
-            state_dir: Some(path("state")),
-            work_root: Some(path("work")),
+            config_dir: Some("C:/InstallLab/config".into()),
+            state_dir: Some("C:/InstallLab/state".into()),
+            work_root: Some("C:/InstallLab/work".into()),
             work_storage: Some(InstallStorage::Internal),
             min_free_gb: Some(1),
             host: Some("example.ts.net:7430".into()),
@@ -37,25 +37,13 @@ impl Lab {
             platform: InstallPlatform { os: InstallOs::Windows, arch: InstallArch::X86_64 },
             version: "0.1.2".into(),
             binary_sha256: digest(b"binary"),
-            bin_path: path("bin/aaa.exe"),
-            config_dir: path("config"),
-            state_dir: path("state"),
-            projects_root: path("projects"),
-            default_shell: "cmd.exe".into(),
-            effective_config_sha256: digest(b"config"),
-            target_account: "S-1-5-21-1000".into(),
-        };
-        // Windows 경로 검증은 대상 OS 규칙을 쓰므로 이 host fixture도 Windows 절대 경로를 사용한다.
-        let mut choices = choices;
-        choices.config_dir = Some("C:/InstallLab/config".into());
-        choices.state_dir = Some("C:/InstallLab/state".into());
-        choices.work_root = Some("C:/InstallLab/work".into());
-        let context = InstallPlanContext {
             bin_path: "C:/InstallLab/bin/aaa.exe".into(),
             config_dir: "C:/InstallLab/config".into(),
             state_dir: "C:/InstallLab/state".into(),
             projects_root: "C:/InstallLab/projects".into(),
-            ..context
+            default_shell: "cmd.exe".into(),
+            effective_config_sha256: digest(b"config"),
+            target_account: "S-1-5-21-1000".into(),
         };
         let plan = aaa_config::install::plan(choices, context).unwrap();
         let permissions = vec![InstallPermission {

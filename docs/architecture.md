@@ -35,9 +35,9 @@ session은 터미널을 묶는 단위이고, 그 안의 workspace·tab·pane은 
 
 | 큰 덩어리 | 역할과 코드 위치 |
 |---|---|
-| CLI·실행 진입점 | [`crates/aaa/src/`](../crates/aaa/src/): `main.rs`가 역할을 나누고 `cli.rs`가 명령을 처리한다. |
+| CLI·실행 진입점 | [`crates/aaa/src/`](../crates/aaa/src/): `main.rs`가 역할을 나누고 `cli.rs`가 명령을 분배한다. 명령군마다 문법과 처리는 `cli/`의 파일 하나에 있고(`cli/thread.rs`·`cli/task.rs` 등), 응답을 글로 그리는 곳은 `cli/render.rs`다. |
 | 웹 | [`web/src/`](../web/src/): `App.tsx`가 화면을 묶고 `api.ts`·`apiRequest.ts`가 host와 통신한다. `Term.tsx`는 터미널, `Chat.tsx`는 대화, `TasksView.tsx`·`ReportsView.tsx`는 할 일·보고서 화면이다. |
-| host | [`crates/aaa-host/src/`](../crates/aaa-host/src/): `front.rs`·`http.rs`가 요청을 받고 `link.rs`가 agent와 연결한다. `orch.rs`·`coord.rs`·`task_queue/`는 thread·coordinator·할 일을 관리한다. |
+| host | [`crates/aaa-host/src/`](../crates/aaa-host/src/): `front.rs`·`http.rs`가 요청을 받고 `dispatch.rs`가 Front 요청을 각 기능으로 가르며 `link.rs`가 agent와 연결한다. `orch.rs`·`coord.rs`·`task_queue/`는 thread·coordinator·할 일을 관리한다. |
 | 머신 실행·터미널 | [`aaa-agent`](../crates/aaa-agent/src/)의 `threads.rs`·`command.rs`·`files.rs`가 작업 폴더·명령·파일을 다룬다. [`aaa-session`](../crates/aaa-session/src/)은 프로세스와 터미널 수명, [`aaa-vt`](../crates/aaa-vt/src/)는 터미널 화면 해석을 맡는다. |
 | 사건·자동화·결과물 | host의 `inbox.rs`·`post.rs`는 전달과 기록, `automation/`·`routine.rs`·`git_watch.rs`·`ci.rs`는 조건 감시와 실행, `library*.rs`·`report_sandbox.rs`는 보고서 제공을 맡는다. |
 | 설정·계정·진단 | [`aaa-config`](../crates/aaa-config/src/)는 TOML 설정과 경로, host의 `accounts.rs`·`account_pool/`·`usage/`는 AI 계정 배정과 사용량을 다룬다. profile은 실행할 도구·모델·인자를 정한다. [`aaa-doctor`](../crates/aaa-doctor/src/)는 환경을 점검한다. |
@@ -50,8 +50,8 @@ session은 터미널을 묶는 단위이고, 그 안의 workspace·tab·pane은 
 
 | 경계 | 연결과 계약 |
 |---|---|
-| CLI·웹 ↔ host | **Front API**. CLI는 로컬 IPC, 웹은 HTTP·WebSocket을 쓴다. 원격 머신의 CLI 요청도 host로 전달된다. 정본은 `aaa-proto/src/msg.rs`의 `FrontRequest`와 관련 타입이다. |
-| host ↔ agent | **Agent link**. 원격 agent가 host로 TCP+TLS 연결을 열고, 같은 머신에서는 로컬 IPC를 쓴다. `aaa-proto/src/msg.rs`의 `AgentRequest`와 사건 타입을 양쪽 `link.rs`가 주고받는다. |
+| CLI·웹 ↔ host | **Front API**. CLI는 로컬 IPC, 웹은 HTTP·WebSocket을 쓴다. 원격 머신의 CLI 요청도 host로 전달된다. 정본은 `aaa-proto/src/msg/front.rs`의 `FrontRequest`와 관련 타입이다. |
+| host ↔ agent | **Agent link**. 원격 agent가 host로 TCP+TLS 연결을 열고, 같은 머신에서는 로컬 IPC를 쓴다. `aaa-proto/src/msg/link.rs`의 `AgentRequest`와 사건 타입을 양쪽 `link.rs`가 주고받는다. |
 | agent ↔ session-host | **Session IPC**로 터미널을 제어한다. AI 도구의 hook은 로컬 agent에 상태 사건을 전달한다. 실제 실행 상태는 여기서 host로 올라간다. |
 
 계약을 바꾸면 `aaa-proto`의 타입과 [`version.rs`](../crates/aaa-proto/src/version.rs)의 호환성·기능 협상을 함께 검토한다. 웹용 [`web/src/gen/proto.ts`](../web/src/gen/proto.ts)는 생성물이다. 타입·스키마를 다시 생성하고 양쪽 처리 코드, 계약 시험, 설계·시험 문서를 함께 맞춘다. 단순 화면 변경까지 API 판을 올리는 것은 아니다. 역할 사이의 금지 의존은 [`deps.rs`](../crates/aaa/tests/deps.rs)가 검사한다.
@@ -95,9 +95,11 @@ flowchart LR
 | 하고 싶은 일 | 따라갈 길 |
 |---|---|
 | 웹 화면 추가 | `web/src/` 화면 → 기존 API 확인 → 필요하면 proto·host 요청 처리 추가. `web/test/`의 로직 시험과 `web/e2e/`의 실제 화면 흐름, [사용법](usage.md)을 맞춘다. |
-| CLI 명령 추가 | `aaa/src/cli.rs` → Front API → host 처리. 머신 실행이 필요하면 Agent link까지 잇고 `crates/aaa/tests/`에서 명령부터 결과까지 확인한다. |
+| CLI 명령 추가 | `aaa/src/cli/`의 그 명령군 파일(문법·처리)과 `cli.rs`의 분배 → Front API(`msg/front.rs`) → host `dispatch.rs` → 기능 모듈. 머신 실행이 필요하면 Agent link까지 잇고 `crates/aaa/tests/`에서 명령부터 결과까지 확인한다. |
 | host 저장 항목 추가 | host의 해당 기능 → `db.rs`·`db/` 또는 프로젝트 파일 저장 코드. 기존 데이터 읽기·재시작 뒤 보존을 시험하고 외부에 보이면 proto도 바꾼다. |
 | 머신 동작·터미널 변경 | `aaa-agent` → 필요하면 `aaa-session`·`aaa-vt`. 연결 계약과 OS 차이를 확인하고 해당 crate 시험 및 `crates/aaa/tests/`의 재접속·프로세스 시험을 고른다. |
 | 자동화 종류 추가 | host의 `automation/`·`routine.rs` → 조건 감시·실행·승인·기록. 설정 스키마와 웹 편집기를 맞추고 중복 실행·재시작 시험, [자동화 문서](automations.md)를 고친다. |
+
+host·agent·DB는 큰 struct 하나(`Host`·`Agent`·`Db`)에 기능마다 `impl` 블록을 덧붙이는 구조다. 새 기능은 중심 파일(`lib.rs`·`db.rs`)을 키우지 않고 기능 이름의 새 파일에 `impl` 블록을 둔다(`db/<기능>.rs`, host `<기능>.rs`). 300줄을 넘는 시험 모듈은 `<모듈>/tests.rs`로 뗀다.
 
 설계 근거는 [plan.md](plan.md), 시험 작성 규칙은 [testing-rules.md](testing-rules.md), 검증 기록은 [testing.md](testing.md)를 본다. 로컬·CI의 공통 검사 입구는 `scripts/ci-local.sh`이며 공개 전에는 `scripts/check-public.sh`로 내부 정보가 섞이지 않았는지 확인한다.
