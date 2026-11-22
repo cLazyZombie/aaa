@@ -153,6 +153,7 @@ async fn bind_reclaims_stale_socket_transports_bytes_and_cleans_own_path() {
     let stale_error = std::os::unix::net::UnixStream::connect(&path).unwrap_err();
     assert_eq!(stale_error.raw_os_error(), Some(libc::ECONNREFUSED));
     let listener = LocalListener::bind(&path).unwrap();
+    assert_eq!(listener.path(), path);
     assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         let mut client = connect(&path).await.unwrap();
