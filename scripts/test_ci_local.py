@@ -116,6 +116,48 @@ class CiFailureExcerpt(unittest.TestCase):
         self.assertIn("panicked at build.rs:1:1:", excerpt(["thread 'main' panicked at build.rs:1:1:"], {}))
 
 
+class CiArtifactDiagnostics(unittest.TestCase):
+    def test_observes_original_dns_error_without_exposing_request_data(self):
+        secret = token("ci-artifact")
+        host = "results-fixture.actions.githubusercontent.com"
+        diagnostics = ROOT / "scripts/ci-artifact-diagnostics.cjs"
+        script = r'''
+const https = require("node:https");
+const { DNS_HOST, REQUEST_DATA } = process.env;
+const req = https.request({
+  hostname: "results-fixture.actions.githubusercontent.com",
+  method: "POST",
+  path: "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact?sig=" + REQUEST_DATA,
+  headers: { authorization: "Bearer " + REQUEST_DATA },
+  lookup: (_hostname, _options, callback) => {
+    const error = Object.assign(new Error("request data " + REQUEST_DATA), {
+      code: "ENOTFOUND", syscall: "getaddrinfo", errno: -3008, hostname: DNS_HOST,
+    });
+    queueMicrotask(() => callback(error));
+  },
+});
+req.once("error", (error) => { process.exitCode = error.code === "ENOTFOUND" ? 23 : 24; });
+req.end();
+'''
+        for dns_host, shown in [(host, host), ("proxy.example.com", "비공개")]:
+            with self.subTest(dns_host=dns_host), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                env = dict(os.environ, NODE_OPTIONS=f'--require="{diagnostics}"',
+                           ACTIONS_RESULTS_URL=f"https://{host}/runtime?sig={secret}",
+                           ACTIONS_RUNTIME_TOKEN=secret, REQUEST_DATA=secret,
+                           DNS_HOST=dns_host, GITHUB_OUTPUT=str(output))
+                result = subprocess.run(["node", "-e", script], env=env, capture_output=True,
+                                        text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 23, result.stderr)
+                self.assertEqual(
+                    result.stdout,
+                    f"[업로드 요청 오류] operation=CreateArtifact target={host} dnsHost={shown} "
+                    "code=ENOTFOUND syscall=getaddrinfo errno=-3008\n",
+                )
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(output.read_text(), f"results-host={host}\n")
+
+
 @unittest.skipUnless(os.name == "posix", "Unix shebang 도구와 Unix CI 단계 분기를 검사한다")
 class CiLocal(unittest.TestCase):
     def setUp(self):
