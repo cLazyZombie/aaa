@@ -1,3 +1,4 @@
+- t-2141 [질문 감시의 이전 카드에서 새 카드로 바뀐 안내](testing-question-guard-t2141.md)
 - t-2129: [macOS Intel 지정 계정 예약 재연결 수리](testing-macos-intel-reserved-account-t-2129.md)
 - t-2126: [Gemini 터미널 설정 검증](testing-agy-cli-t-2126.md)
 - t-2119: [macOS Intel 지정 계정 예약 재연결 진단](testing-macos-intel-reserved-account-t-2119.md)
