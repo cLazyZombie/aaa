@@ -30,6 +30,7 @@ import { ApiError, call, me, onAsksChanged, onSignedOut, pushedSince, pushInfo, 
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
+import { rememberedSignIn, rememberSignIn } from "./signedIn";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedChat } from "./retainedChats";
@@ -95,12 +96,20 @@ import type { QuoteRef } from "./selectionQuote.ts";
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
 export function App() {
-  const [auth, setAuth] = useState<Auth>({ state: "loading" });
   // QR 코드가 연 주소의 `?pair=CODE`: 읽자마자 주소에서 지운다(기록·referrer에 남지 않게, herdr-web-ui takePairCode)
   const [pairCode] = useState(() => takePairCode());
+  // 다시 연 앱(t-2150): 마지막으로 확인한 기기면 확인 응답 전에 본 화면을 띄워 상태 연결과 조회를 같은 왕복에 시작한다.
+  // 확인은 아래 check가 그대로 하고, 응답이 같으면 Main의 key가 같아 다시 그리지 않는다. 페어링 코드를 가져온 주소는 기다린다
+  const [auth, setAuth] = useState<Auth>(() => {
+    const known = pairCode === "" ? rememberedSignIn() : null;
+    return known ? { state: "in", ...known } : { state: "loading" };
+  });
   const check = useCallback(() => {
     me()
-      .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
+      .then((m) => {
+        rememberSignIn(m && { role: m.role, device: m.device });
+        setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" });
+      })
       // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed).
       // host의 답(안전 모드의 unavailable 등)은 그 말을 그대로 보인다
       .catch((e: unknown) =>
@@ -1169,7 +1178,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
   const firstPick = useRef(sel?.startsWith("pane:") ? false : sel !== null || location.hash !== "");
   useEffect(() => {
-    if (settingsOpen || firstPick.current || !loaded || !threadsReady) return;
+    if (settingsOpen || firstPick.current || !loaded) return;
+    if (!threadsReady) {
+      // 기억한 pane이 지금 돈다(다시 연 앱의 coordinator 등, t-2150): pane 목록만으로 고를 수 있어 thread 목록 왕복을 기다리지 않는다.
+      // 주소가 무엇을 가리키면 아래 갈래가 목록을 받은 뒤 정한다
+      const stored = selectedFromHash() === null ? storedSelection() : null;
+      if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) {
+        firstPick.current = true;
+        choose(stored.slice(5), false, true, { keepDrawer: true });
+      }
+      return;
+    }
     if (threadsSync === 0 && ![...threads.values()].some(inSidebar) && !storedSelection() && !selectedFromHash()) return;
     firstPick.current = true;
     // 주소는 지금 것을 읽는다: 연 뒤에 주소가 thread·프로젝트를 가리키게 됐는데(알림·링크·주소 바꿈) 그 hashchange를 앱이 아직

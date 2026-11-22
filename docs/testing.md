@@ -5183,3 +5183,4 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [macOS Intel 웹 E2E 업로드 실패와 DNS 관측](testing-ci-artifact-dns-t-2145.md)
 - [남은 시험 감사 후보 적용 검증(t-2146)](testing-audit-t-2146.md)
 - [망 복귀와 잠자기 뒤 웹 재연결 검증(t-2148)](testing-web-wake-t-2148.md)
+- [다시 연 앱의 첫 화면 왕복 줄이기(t-2150)](testing-cold-start-t-2150.md)

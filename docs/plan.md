@@ -2921,7 +2921,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 연다: 화면 머리 맨 앞 단추(「목록 열기」, `aria-expanded`·`aria-controls`), 오른쪽으로 쓸기(`web/src/herdr/edgeSwipe.ts`, 참고 `src/lib/edgeSwipe.ts`). 참고는 왼쪽 가장자리 24px 안에서 시작한 쓸기로 열었으나 §8.408부터 aaa는 그 자리를 브라우저 뒤로에 두고 안쪽에서 시작한 쓸기로 연다.
   - 닫는다: 같은 단추(「목록 닫기」), 바깥(scrim) 누름, 왼쪽으로 쓸기, Esc(capture 단계라 focus를 쥔 터미널은 받지 않는다), 줄 고르기(pane·thread·프로젝트).
   - Esc는 위에 뜬 창(`aria-modal`·`<dialog open>`)과 열린 메뉴(`role=menu`)가 먼저 쓴다. 한 번은 메뉴, 다음은 drawer다.
-- **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다.
+- **첫 화면(참고 App.tsx 97~118줄 `SELECTION_KEY`·`fallback`).** 주소가 아무것도 가리키지 않으면 이 기기가 마지막으로 연 pane(돌고 있을 때)이나 thread(끝나지 않았을 때)를 연다. 기억은 sessionStorage 다음 localStorage(`aaa:selection`)다. 없거나 끝났으면 붙은 머신의 목록 첫 줄을 연다. pane·thread 목록을 다 받은 뒤 한 번만 고른다. 기억한 pane이 돌고 있으면 pane 목록만 받고 바로 연다(t-2150: 다시 연 앱이 thread 목록 왕복을 기다리지 않는다).
+  - 마지막으로 확인한 기기(역할·ID, localStorage `aaa:signed-in`)가 있으면 기기 확인(`GET /api/v1/me`) 응답 전에 본 화면을 띄워 상태 연결·조회를 함께 시작한다(t-2150). 확인 응답이 같으면 그대로, 401이면 기억을 지우고 연결 화면, 닿지 못하면 「host에 연결할 수 없다」로 바꾼다. 페어링 코드를 가져온 주소는 기다린다.
   - 휴대폰(터치)은 키보드를 올리지 않는다. 데스크톱은 터미널이 바로 키보드를 받는다(참고 PaneTerminal 2072줄: 고른 것이 없던 첫 화면은 `autoSelected`가 아니다).
   - 주소가 가리킨 pane이 없으면 첫 줄을 열고 머리에 말한다(§8.165, 전에는 빈 화면).
 - **다르게 둔 것.**
