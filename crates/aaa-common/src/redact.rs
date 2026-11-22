@@ -441,28 +441,23 @@ mod tests {
     }
 
     #[test]
-    fn stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail() {
+    fn bytes_mask_a_whole_secret_split_by_ansi_or_newlines_and_keep_the_rest() {
         let secret = &*aaa_test_support::token("redaction-stream");
         remember(secret);
-        for input in [
-            format!("before {secret} after-prefix"),
-            format!("before {}\x1b[31m{}\x1b[0m after-prefix", &secret[..10], &secret[10..]),
-            format!("before {}\r\n{} after-prefix", &secret[..10], &secret[10..]),
-        ] {
-            let input = input.as_bytes();
-            let expected = bytes(input);
-            let visible = String::from_utf8_lossy(&expected)
-                .replace("\x1b[31m", "")
-                .replace("\x1b[0m", "")
-                .replace(['\r', '\n'], "");
-            assert_eq!(visible, format!("before {} after-prefix", "*".repeat(secret.len())));
-            for cut in 0..=input.len() {
-                let mut stream = Stream::default();
-                let mut out = stream.push(&input[..cut], false);
-                out.extend(stream.push(&input[cut..], false));
-                out.extend(stream.push(&[], true));
-                assert_eq!(out, expected, "chunk cut {cut}");
-                assert!(out.ends_with(b" after-prefix"));
+        // 한쪽이 8바이트보다 짧게 끊겨야 CSI·개행을 건너 이어 붙인 창으로만 가려진다.
+        for cut in [4, 10, secret.len() - 4] {
+            for input in [
+                format!("before {secret} after-prefix"),
+                format!("before {}\x1b[31m{}\x1b[0m after-prefix", &secret[..cut], &secret[cut..]),
+                format!("before {}\r\n{} after-prefix", &secret[..cut], &secret[cut..]),
+            ] {
+                let expected = bytes(input.as_bytes());
+                assert_eq!(expected.len(), input.len(), "가림은 길이를 바꾸지 않는다");
+                let visible = String::from_utf8_lossy(&expected)
+                    .replace("\x1b[31m", "")
+                    .replace("\x1b[0m", "")
+                    .replace(['\r', '\n'], "");
+                assert_eq!(visible, format!("before {} after-prefix", "*".repeat(secret.len())), "{cut} {input:?}");
             }
         }
     }

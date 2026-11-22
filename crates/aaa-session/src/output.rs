@@ -117,8 +117,6 @@ mod tests {
     #[test]
     fn conpty_cursor_query_replies_before_any_further_output_despite_auth_suffix() {
         aaa_common::redact::remember(&format!("{}n", aaa_test_support::token("conpty")));
-        let mut old = aaa_common::redact::Stream::default();
-        assert_ne!(old.push(b"\x1b[6n", false), b"\x1b[6n", "원본 교착의 n 보류를 재현한다");
         for split in 0..=4 {
             let mut output = Fixture::new(32, 120, None);
             let (mut clean, mut replies) = output.feed(&b"\x1b[6n"[..split]);

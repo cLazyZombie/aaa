@@ -211,11 +211,10 @@ async fn codec_slots_and_cancelled_jobs_keep_their_byte_permits_until_finished()
     // spawn_blocking을 이미 시작한 future를 버려도 native 작업의 permit을 먼저 돌려주지 않는다.
     jobs[0].abort();
     assert_eq!(JOBS.available_permits(), 0);
+    // 취소하지 않은 작업을 먼저 끝낸다. 남은 16바이트는 취소된 작업의 것뿐이다.
+    releases[1].send(()).unwrap();
+    assert_eq!(jobs.pop().unwrap().await.unwrap().unwrap(), 1);
     assert!(blocking(PENDING_BYTES, || Ok(())).await.is_err());
-    for release in releases {
-        release.send(()).unwrap();
-    }
-    for job in jobs {
-        let _ = job.await;
-    }
+    releases[0].send(()).unwrap();
+    assert!(jobs.pop().unwrap().await.unwrap_err().is_cancelled());
 }
