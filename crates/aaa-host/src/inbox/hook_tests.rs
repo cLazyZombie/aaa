@@ -213,7 +213,8 @@ async fn turn_end_nudge_wakes_the_ticker_instead_of_waiting_for_the_period() {
         .expect("턴 끝 알림이 주기 tick(60초) 전에 가야 한다")
         .unwrap();
     assert!(sent.contains("t-0001"), "{sent}");
-    assert!(ended.elapsed() >= Duration::from_secs(1), "쉼 대기를 건너뛰었다: {:?}", ended.elapsed());
+    // 쉼 1초 뒤 입력창 확인 1초를 차례로 지난다. 어느 한 창이 빠지면 2초가 되지 않는다(ms 절사 여유 0.1초).
+    assert!(ended.elapsed() >= Duration::from_millis(1_900), "쉼·입력창 확인을 건너뛰었다: {:?}", ended.elapsed());
     fake.abort();
 }
 

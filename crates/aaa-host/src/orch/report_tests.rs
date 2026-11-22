@@ -778,7 +778,7 @@ async fn report_version_failure_keeps_the_new_body_stage_and_ack_until_history_r
     assert!(error.message.contains("보고 판 보존 실패"));
     let rec = lab.h.load("p", "t-0001").unwrap();
     assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[병합 준비됨] 최신 보고\n"));
-    assert_eq!(rec.report_stage, crate::report_mark::stage("[병합 준비됨] 최신 보고\n"));
+    assert_eq!(rec.report_stage, Some(aaa_proto::ThreadStage::MergeReady));
     assert_eq!(rec.copy.as_deref(), Some("failed"));
     assert_eq!(std::fs::read(dir.join("library/t-0001/good.txt")).unwrap(), b"old");
     assert!(lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).is_none());
@@ -1139,19 +1139,17 @@ async fn backfill_moves_automatically_listed_progress_to_work_reports_and_preser
 /// 자동화 thread의 끝난 보고는 `[알림]`일 때만 내 보고서에 오고, 아니면 회수·resolve 뒤에도 작업 보고에 남는다.
 #[tokio::test]
 async fn automation_reports_reach_my_reports_only_with_an_alert() {
-    for (report, to_user) in [
-        ("[완료] 새 결함 없음\n", false),
-        ("[알림] 새 결함 있음\nrc 도구 빌드 실패\n", true),
-        ("[검수 대기] 결과 확인\n", true),
-        ("[진행 중] 분류 중\n## Questions\n", false),
+    for (report, to_user, acked) in [
+        ("[완료] 새 결함 없음\n", false, true),
+        ("[알림] 새 결함 있음\nrc 도구 빌드 실패\n", true, true),
+        ("[검수 대기] 결과 확인\n", true, false),
+        ("[진행 중] 분류 중\n## Questions\n", false, false),
     ] {
         let lab = Lab::with_report(0, b"old", "test.log", b"old", report);
         lab.h.update_rec("p", "t-0001", |r| r.automation = Some("rc-verify".into())).unwrap();
         lab.h.collect("p", "t-0001", true).await.unwrap();
         let rec = lab.h.load("p", "t-0001").unwrap();
-        if crate::report_mark::done(crate::report_mark::marker(report)) {
-            assert_eq!(rec.acked_hash, rec.report_hash, "{report}: 자동화의 끝난 보고는 바로 ack한다");
-        }
+        assert_eq!(rec.acked_hash == rec.report_hash, acked, "{report}: 자동화의 끝난 보고만 바로 ack한다");
         lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Resolved).unwrap();
         lab.h.backfill_completed_reports().unwrap();
         let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();

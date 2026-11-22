@@ -667,9 +667,9 @@ mod tests {
         Facts { status: "open".into(), created_s: NOW - 3600, pane_exists: true, ..Facts::default() }
     }
 
-    /// 0.2 규칙과 aaa 규칙이 같아야 하는 경우와 의도해서 다른 경우
+    /// 0.2 규칙과 aaa 규칙이 같아야 하는 경우
     #[test]
-    fn rules_agree_and_differ_where_intended() {
+    fn rules_agree_on_the_shared_cases() {
         let both = |f: &Facts| (hp_group(f, NOW), token(aaa_group(f, NOW)));
         let mut f = open();
         f.agent_state = Some("working".into());

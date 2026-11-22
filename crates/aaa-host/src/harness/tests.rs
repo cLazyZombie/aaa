@@ -1446,7 +1446,11 @@ async fn codex_message_and_next_do_not_revive_previous_waiting_report() {
             h.thread_pass("demo");
             assert_eq!(h.load("demo", &r.id).unwrap().last_group, Some(ThreadGroup::Idle));
             assert!(
-                !h.db.inbox_list(Some("demo"), false).unwrap().iter().any(|i| i.summary.contains("waiting on you"))
+                !h.db
+                    .inbox_list(Some("demo"), false)
+                    .unwrap()
+                    .iter()
+                    .any(|i| i.item_kind == "thread-state" && i.event == "waiting on you")
             );
             h.on_harness("m", codex_event("working", 6));
             assert_eq!(h.thread_view(&r).group, ThreadGroup::Working);

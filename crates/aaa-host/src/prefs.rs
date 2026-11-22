@@ -171,7 +171,7 @@ mod tests {
         let second = store
             .set(
                 change(json!({
-                    "settings": { "theme": "light", "terminalFontSize": 22, "alertsOn": false, "nonsense": 1 },
+                    "settings": { "theme": "light", "terminalFontSize": 22, "alertsOn": false, "nonsense": 1, "sidebarWidth": 360 },
                     "pins": ["local:w1:p1", "local:w1:p1", "pc:w2:p3"]
                 })),
                 ok,
@@ -179,13 +179,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             doc(&second),
-            json!({ "revision": 2, "settings": { "showThinking": false, "theme": "light" }, "pins": ["local:w1:p1", "pc:w2:p3"] })
+            json!({ "revision": 2, "settings": { "showThinking": false, "theme": "light", "sidebarWidth": 360 }, "pins": ["local:w1:p1", "pc:w2:p3"] })
         );
-        // 변경은 설정을 가진 것 위에 놓고, 고정을 말하지 않으면 고정을 둔다
-        store.set(change(json!({ "settings": { "agentOrder": "activity" } })), ok).unwrap();
+        // 변경은 설정을 가진 것 위에 놓고, 고정을 말하지 않으면 고정을 둔다. 웹 사이드바 폭(plan §8.257)의 되돌림(null)도 그대로 든다
+        store.set(change(json!({ "settings": { "agentOrder": "activity", "sidebarWidth": null } })), ok).unwrap();
         assert_eq!(
             doc(&store.get()),
-            json!({ "revision": 3, "settings": { "showThinking": false, "theme": "light", "agentOrder": "activity" }, "pins": ["local:w1:p1", "pc:w2:p3"] })
+            json!({ "revision": 3, "settings": { "showThinking": false, "theme": "light", "agentOrder": "activity", "sidebarWidth": null }, "pins": ["local:w1:p1", "pc:w2:p3"] })
         );
         store
             .set(change(json!({ "settings": { "theme": "dark" }, "pins": [] })), |t| {
@@ -194,20 +194,10 @@ mod tests {
             })
             .unwrap();
         assert!(heard.has_changed().unwrap());
-        let want = json!({ "revision": 4, "settings": { "showThinking": false, "theme": "dark", "agentOrder": "activity" }, "pins": [] });
+        let want = json!({ "revision": 4, "settings": { "showThinking": false, "theme": "dark", "agentOrder": "activity", "sidebarWidth": null }, "pins": [] });
         assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap(), want);
         // 다시 띄우면 저장된 문서에서 시작한다
         assert_eq!(doc(&parse(Some(&saved))), want);
-    }
-
-    /// 웹 사이드바 폭(plan §8.257)이 공유 이름으로 남고, 되돌림(null)도 그대로 든다
-    #[test]
-    fn keeps_the_web_sidebar_width() {
-        let store = Store::new(parse(None));
-        store.set(change(json!({ "settings": { "sidebarWidth": 360 } })), ok).unwrap();
-        assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(360)));
-        store.set(change(json!({ "settings": { "sidebarWidth": null } })), ok).unwrap();
-        assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(null)));
     }
 
     #[test]

@@ -187,14 +187,21 @@ fn ids_are_project_local_persistent_and_not_reused_after_history_deletion() {
     }
     assert_eq!(h.db.question_id("demo", "thread", "t-0001", "next", 0).unwrap(), "q-1001");
     assert_eq!(h.db.question_id("other", "post", "post", "", 0).unwrap(), "q-1000");
+    // 답한 기록을 실제로 남긴 뒤 지운다. 그 기록의 번호도 다시 쓰지 않는다.
+    let (_, request) = lab.post(1, "## Questions\n### 1. 자리\n- A 오른쪽\n- B 왼쪽\n");
+    let asked = request.questions.as_ref().unwrap();
+    assert_eq!(asked.items[0].id.as_deref(), Some("q-1002"));
+    h.ask_answer("demo", &request.id, &asked.report_hash, vec![Some(0)], None, Vec::new(), "device:phone").unwrap();
+    assert_eq!(h.db.ask_list("demo").unwrap().len(), 1);
     h.ask_forget("demo", &[], true, "local:cli").unwrap();
+    assert!(h.db.ask_list("demo").unwrap().is_empty());
     let db = crate::db::Db::open(&lab.path.join("reopen.sqlite")).unwrap();
     assert_eq!(db.question_id("demo", "post", "p1", "", 0).unwrap(), "q-1000");
     drop(db);
     let db = crate::db::Db::open(&lab.path.join("reopen.sqlite")).unwrap();
     assert_eq!(db.question_id("demo", "post", "p1", "", 0).unwrap(), "q-1000");
     assert_eq!(db.question_id("demo", "post", "p2", "", 0).unwrap(), "q-1001");
-    assert_eq!(h.db.question_id("demo", "post", "p2", "", 0).unwrap(), "q-1002");
+    assert_eq!(h.db.question_id("demo", "post", "p2", "", 0).unwrap(), "q-1003");
 }
 
 #[tokio::test]
