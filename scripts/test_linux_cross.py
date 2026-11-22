@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -33,6 +34,13 @@ class LinuxCross(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "Unix PATH·컴파일러 경로와 shebang 도구를 검사한다")
     def test_existing_compiler_and_linker_are_preserved(self):
         with tempfile.TemporaryDirectory(prefix="aaa-cross-") as directory:
+            # Git 저장소가 아닌 사본에서 돈다. 실제 저장소에서 돌면 작업 기록 보관소에 가짜 실행이 남는다.
+            root = Path(directory) / "root"
+            (root / "scripts").mkdir(parents=True)
+            for name in ("ci-local.sh", "ci-linux-clippy.sh", "workspace_metrics.py"):
+                shutil.copyfile(ROOT / "scripts" / name, root / "scripts" / name)
+            # PATH의 컴파일러가 먼저인지 보려면 뒤에 붙는 repo wrapper도 실행 파일로 있어야 한다.
+            shutil.copytree(ROOT / "scripts/cross", root / "scripts/cross")
             cargo = Path(directory) / "cargo"
             cargo.write_text(
                 '#!/bin/bash\ncommand -v x86_64-linux-gnu-gcc\n'
@@ -48,7 +56,7 @@ class LinuxCross(unittest.TestCase):
                        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="/custom/linker")
             result = subprocess.run(["bash", "scripts/ci-local.sh", "--only", "linux-clippy",
                                      "--logs", str(Path(directory) / "logs"), "--tee"],
-                                    cwd=ROOT, env=env, capture_output=True, text=True)
+                                    cwd=root, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             output = (Path(directory) / "logs/linux-clippy.log").read_text().splitlines()
             self.assertEqual(output[:3], [str(compiler), "/custom/old-zig-cc", "/custom/linker"])
