@@ -568,6 +568,64 @@ fn card_or_chat_reply_instructions_link_only_to_the_existing_topic() {
     }
 }
 
+const RECORDING_CARD: &str =
+    "- [q-4689 녹화 카드](#question=q-4689)에서 cold start 화면 녹화를 받을 수 있는지 답해 주세요.";
+const RECORDING_DETAILS: &str = "Wi-Fi였는지 셀룰러였는지, 홈 화면 앱인지 Safari 탭인지도 함께 알려 주세요.";
+
+#[test]
+fn observed_recording_details_link_to_the_open_card_in_the_same_item() {
+    let cards = HashMap::from([("q-4689".into(), CardState::Open), ("q-4690".into(), CardState::Open)]);
+    let other = "- [q-4690 질문](#question=q-4690)에서 답해 주세요.";
+    for text in [
+        format!("{other}\n{RECORDING_CARD}\n  {RECORDING_DETAILS}"),
+        format!("{RECORDING_CARD}\n  {RECORDING_DETAILS}\n{other}"),
+        format!("{RECORDING_CARD}\n\n  {RECORDING_DETAILS}"),
+        format!("10. {}\n    {RECORDING_DETAILS}", &RECORDING_CARD[2..]),
+        format!("-\t{}\n\t{RECORDING_DETAILS}", &RECORDING_CARD[2..]),
+        format!("{RECORDING_CARD}\n  기기 모델도 말씀해 주세요."),
+    ] {
+        let result = inspect(&text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+    }
+}
+
+#[test]
+fn recording_card_keeps_separate_requests_and_questions_visible() {
+    let cards = HashMap::from([("q-4689".into(), CardState::Open)]);
+    for (text, line) in [
+        (format!("{RECORDING_CARD}\n\n{RECORDING_DETAILS}"), 3),
+        (format!("{RECORDING_CARD}\n{RECORDING_DETAILS}"), 2),
+        (format!("{RECORDING_CARD}\n {RECORDING_DETAILS}"), 2),
+        (format!("{RECORDING_CARD}\n- {RECORDING_DETAILS}"), 2),
+        (format!("{RECORDING_CARD}\n  - {RECORDING_DETAILS}"), 2),
+        (format!("{RECORDING_CARD}\n- 녹화 파일입니다.\n  {RECORDING_DETAILS}"), 3),
+        (format!("{RECORDING_CARD}\n  {RECORDING_DETAILS}\n  배포 승인 여부를 알려 주세요."), 3),
+        (format!("{RECORDING_CARD}\n  배포할지도 함께 알려 주세요."), 2),
+        (format!("{RECORDING_CARD}\n  배포해도 되는지도 함께 알려 주세요."), 2),
+        (format!("{RECORDING_CARD}\n  승인 여부도 함께 알려 주세요."), 2),
+        (format!("{RECORDING_CARD}\n  배포할까요?"), 2),
+        (format!("10. {}\n    배포할까요?", &RECORDING_CARD[2..]), 2),
+        (format!("{RECORDING_CARD}\n  {RECORDING_DETAILS} 배포 승인 여부를 알려 주세요."), 2),
+        (format!("{RECORDING_CARD}\n  별도로 {RECORDING_DETAILS}"), 2),
+    ] {
+        assert_eq!(inspect(&text, &cards).missing.map(|e| e.line), Some(line), "{text}");
+    }
+}
+
+#[test]
+fn recording_details_require_a_single_open_card() {
+    for state in [None, Some(CardState::Answered), Some(CardState::Closed)] {
+        let cards = state.into_iter().map(|state| ("q-4689".into(), state)).collect();
+        let text = format!("- [q-4689 녹화 카드](#question=q-4689)를 안내합니다.\n  {RECORDING_DETAILS}");
+        assert_eq!(inspect(&text, &cards).missing.map(|e| e.line), Some(2), "{state:?}");
+    }
+    let cards = HashMap::from([("q-4689".into(), CardState::Open), ("q-4690".into(), CardState::Open)]);
+    let text = format!(
+        "- [q-4689 녹화 카드](#question=q-4689)와 [q-4690 질문](#question=q-4690)을 안내합니다.\n  {RECORDING_DETAILS}"
+    );
+    assert_eq!(inspect(&text, &cards).missing.map(|e| e.line), Some(2));
+}
+
 /// 기록의 오탐 형태와 실제 승인·정보 요청을 함께 고정한다. 원문 개인정보는 넣지 않는다.
 #[test]
 fn decisions_are_distinct_from_instructions_optional_offers_and_completed_lists() {
