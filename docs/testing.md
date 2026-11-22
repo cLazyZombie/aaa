@@ -2974,6 +2974,8 @@ Hello를 읽는 host에는 바뀐 사건만, 옛 host에는 최신 기억 전체
 - `cargo test --locked -p aaa --bin aaa update::`는 임시 HTTP 서버와 실제 curl로 manifest 선택·SHA-256 거부·없는 OS/arch·전송 중단·같은 판 무동작·보관/rollback을 본다. 서버는 응답/연결 종료 사건으로 끝나며 운영 설정·키체인·신호·고정 sleep을 쓰지 않는다. 같은 시각에 version이 내려가는 보관 순서는 고정 `now`로 검사한다.
 - `cargo test --locked -p aaa --bin aaa cli::tests::update_accepts_release_version_and_keeps_local_and_subcommand_modes`는 공개 CLI의 release 판·로컬 파일·rollback 선택과 충돌을 본다.
 
+- [배포 후보의 전송 진척과 120초 무응답 한도(t-2149)](testing-rollout-transfer-progress-t-2149.md)
+
 ### 배포 후보의 바이트 보존(t-0525)
 
 `cargo test -p aaa-host --lib link::post_tests::deployment_bytes_survive_auth_redaction_and_a_partial_tail -- --exact`

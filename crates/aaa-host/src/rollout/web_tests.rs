@@ -84,7 +84,7 @@ fn mixed_platform_candidates_are_pinned_before_transfer_and_guard_uses_target_sh
 /// 시험 몸을 따로 만든 runtime에서 돌리고, runtime을 끝낸 뒤 상태 폴더를 지운다. `agent_connected`가 띄운 task(`rewatch` 등)는
 /// 이 시험에서 한 번도 돌지 않은 채 Host를 쥐고 있어, runtime을 끝내야 Host와 host DB가 닫힌다. Windows는 열린 DB가 든 폴더를
 /// 지우지 못한다(os error 32, `deploy` 시험과 같다). Host가 정말 닫혔는지는 모든 OS에서 본다
-fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F) {
+pub(super) fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F) {
     in_lab_with(None, body)
 }
 /// 붙어 있는 가짜 agent: hello에 알린 실행 신원, 감시를 세우라는 요청에 「설치 파일이 지금 실행 판과 다르다」로 답하는가,
