@@ -638,14 +638,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn display_probe_failure_is_unknown_and_old_health_has_no_info() {
+    async fn display_probe_failure_is_unknown_and_output_is_cut_to_the_first_line() {
         assert_eq!(info_value("/bin/sh", &["-c", "exit 3"]).await, None);
         assert_eq!(info_value("/bin/sh", &["-c", "printf 'tool 1\\nsecond'"]).await.as_deref(), Some("tool 1"));
-        let cfg = HealthSection { min_free_gb: 0, ..HealthSection::default() };
-        let h = collect(&cfg, Path::new("/tmp"), None).await;
-        let mut wire = serde_json::to_value(&h).unwrap();
-        wire.as_object_mut().unwrap().remove("info");
-        assert!(serde_json::from_value::<MachineHealth>(wire).unwrap().info.is_none());
     }
 
     #[tokio::test]

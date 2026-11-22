@@ -754,23 +754,6 @@ pub(crate) mod tests {
         assert_eq!((data.0.as_slice(), total), (&b"012"[..], 14));
     }
 
-    /// 표지는 웹과 같은 덩어리 규칙으로 센다: 덩어리 첫 줄의 인용 표지만, 코드 울타리 안 예시와 인용 중간 줄은 뺀다
-    #[test]
-    fn marks_count_only_callout_blocks_like_the_web() {
-        let text = "# 게임 루프\n\n본문 d-0007은 칩일 뿐 표지가 아니다.\n\n> [!계획]\n> 100층까지 늘린다.\n\n\
-                    > [!계획] d-0012\n> 처음 1칸.\n## 절\n>[!계획]d-0013 붙여 써도 같다\n\n> [!미정]\n> 확률\n\n\
-                    > 앞 인용\n> [!계획] 중간 줄은 표지가 아니다\n\n> [!계획]\n섞인 덩어리는 표지가 아니다\n\n\
-                    ````md\n> [!계획] d-0099\n```\n> [!미정] 짧은 울타리는 닫지 않는다\n````\n\n\
-                    ~~~\n> [!미정]\n~~~\n> [!계획] d-0014x\n";
-        assert_eq!(
-            count_marks(text),
-            Marks { plans: 4, open: 1, tasks: vec!["d-0012".into(), "d-0013".into(), "d-0014".into()] }
-        );
-        assert_eq!(count_marks("> [!계획]"), Marks { plans: 1, open: 0, tasks: vec![] }, "끝 줄바꿈 없음");
-        assert_eq!(count_marks("> [!계획] d-\n> 번호 없는 d-"), Marks { plans: 1, open: 0, tasks: vec![] });
-        assert_eq!(count_marks("####### [!계획]\n> [!미정]\n"), Marks::default(), "제목이 아닌 줄과 이어진 덩어리");
-    }
-
     /// 웹과 같은 공용 견본(`web/test/fixtures/design-marks.md`)으로 센다. CRLF로 바꾼 판도 같다
     #[test]
     fn marks_match_the_shared_web_fixture() {
@@ -784,6 +767,9 @@ pub(crate) mod tests {
         };
         assert_eq!(count_marks(&raw), want);
         assert_eq!(count_marks(&raw.replace('\n', "\r\n")), want, "CRLF");
+        // 견본에 없는 두 꼴: 끝 줄바꿈 없는 한 줄, `d-` 뒤에 번호가 없는 표지
+        assert_eq!(count_marks("> [!계획]"), Marks { plans: 1, open: 0, tasks: vec![] });
+        assert_eq!(count_marks("> [!계획] d-\n> 번호 없는 d-"), Marks { plans: 1, open: 0, tasks: vec![] });
         assert_eq!(aaa_proto::design_task_id("00012x"), Some("d-0012".into()));
         assert_eq!(aaa_proto::design_task_id("12345"), Some("d-12345".into()));
         assert_eq!(aaa_proto::design_task_id("0"), None);

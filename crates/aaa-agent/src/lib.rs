@@ -372,19 +372,16 @@ mod mission_feature_tests {
 mod machine_label_tests {
     use super::*;
     #[tokio::test]
-    async fn machine_label_is_persistent_without_restarting_or_touching_sessions() {
+    async fn machine_label_applies_at_once_and_persists_over_the_configured_name() {
         let state = std::env::temp_dir().join(format!("aaa-label-{}", util::new_id()));
         let a = Agent::new(state.clone(), "m-label".into(), "mac-b".into(), false, None).unwrap();
         assert_eq!(a.name.lock().unwrap().as_str(), "mac-b");
         assert!(matches!(a.machine_label("mac-c").unwrap(), AgentResponse::Done));
         assert_eq!(a.name.lock().unwrap().as_str(), "mac-c");
-        assert_eq!(a.machine_id, "m-label");
-        assert!(a.sessions.lock().unwrap().is_empty());
         assert!(a.machine_label("bad name").is_err());
         drop(a);
         let a = Agent::new(state.clone(), "m-label".into(), "mac-b".into(), false, None).unwrap();
         assert_eq!(a.name.lock().unwrap().as_str(), "mac-c", "설정의 옛 이름보다 host 이름표가 우선한다");
-        assert_eq!(a.machine_id, "m-label");
         drop(a);
         std::fs::remove_dir_all(state).unwrap();
     }

@@ -1011,9 +1011,19 @@ subprocess.run(config['notify'] + [payload], check=True)
 
     #[test]
     fn work_dir_must_be_thread_folder() {
-        assert!(check_work_dir("relative/.aaa/p-t-0001").is_err());
-        assert!(check_work_dir("/tmp/x/../.aaa/p-t-0001").is_err());
-        assert!(check_work_dir("/etc").is_err());
+        let root = std::env::temp_dir().join(format!("aaa-work-dir-{}", aaa_common::util::new_id()));
+        let work = root.join(".aaa").join("p-t-0001");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir(root.join("x")).unwrap();
+        assert_eq!(check_work_dir(work.to_str().unwrap()).unwrap(), work);
+        // 실제로 있는 폴더라도 형식(절대 경로·부모 `.aaa`·`..` 없음)이 아니면 받지 않는다. 없는 경로라서 거절된 것이 아니다.
+        for bad in
+            [root.join("x").join("..").join(".aaa").join("p-t-0001"), root.join("x"), "relative/.aaa/p-t-0001".into()]
+        {
+            let error = check_work_dir(bad.to_str().unwrap()).unwrap_err().to_string();
+            assert!(error.contains("형식이 아니다"), "{error}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 

@@ -433,9 +433,22 @@ mod tests {
         assert!(inspect(&exe, never, root.join("other").to_str().unwrap()).is_err(), "aaa가 아닌 이름을 읽었다");
         std::fs::remove_dir_all(root).unwrap();
     }
+    thread_local! {
+        /// 점검 실행기가 부를 시험 Manager
+        static INSPECTED: std::cell::RefCell<Option<std::sync::Arc<Manager>>> = const { std::cell::RefCell::new(None) };
+        /// 점검 실행기가 도는 동안 같은 Manager에 넣어 본 새 작업의 결과(거절 글)
+        static DURING: std::cell::RefCell<Vec<Result<(), String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn job_during_inspection(exe: &Path, action: DeployAction) -> Result<String, String> {
+        let manager = INSPECTED.with(|m| m.borrow().clone()).expect("시험 Manager");
+        let restart = DeployAction::Restart { service: aaa_proto::DeployService::Agent };
+        let tried =
+            manager.prepare(exe, aaa_common::util::new_id(), "demo".into(), restart).map(|_| ()).map_err(|e| e.message);
+        DURING.with(|d| d.borrow_mut().push(tried));
+        dry_run_ok(exe, action)
+    }
     #[test]
     fn candidate_inspection_waits_for_no_running_job() {
-        // 실행기 staging 이름은 agent PID 하나다: 도는 배포 작업이 있으면 점검이 그 작업과 겹치지 않게 거부한다
         let root = std::env::temp_dir().join(format!("aaa-candidate-busy-{}", aaa_common::util::new_id()));
         std::fs::create_dir_all(&root).unwrap();
         let exe = root.join("installed");
@@ -443,18 +456,24 @@ mod tests {
         std::fs::write(root.join("aaa"), b"candidate").unwrap();
         let hash = hex::encode(Sha256::digest(b"candidate"));
         std::fs::write(root.join("provenance.json"), serde_json::json!({"sha256":hash}).to_string()).unwrap();
-        let manager = Manager::new(&root, &exe).unwrap();
-        manager.configure(&exe, never).unwrap();
+        let manager = std::sync::Arc::new(Manager::new(&root, &exe).unwrap());
+        manager.configure(&exe, job_during_inspection).unwrap();
+        INSPECTED.with(|m| *m.borrow_mut() = Some(manager.clone()));
         let restart = DeployAction::Restart { service: aaa_proto::DeployService::Agent };
-        let job = aaa_common::util::new_id();
-        manager.prepare(&exe, job.clone(), "demo".into(), restart.clone()).unwrap();
-        let ask = AgentRequest::DeployCandidate { path: root.join("aaa").to_string_lossy().into() };
-        let refused = manager.transport(&exe, ask).unwrap_err().message;
-        assert!(refused.contains("진행 중") && !refused.contains(&job), "{refused}");
+        let ask = || AgentRequest::DeployCandidate { path: root.join("aaa").to_string_lossy().into() };
         // 점검하는 동안 들어온 작업은 바로 거부한다(실행기를 lock 밖에서 돌린다)
-        manager.inspecting.store(true, std::sync::atomic::Ordering::SeqCst);
-        let next = manager.prepare(&exe, aaa_common::util::new_id(), "demo".into(), restart.clone());
-        assert!(next.unwrap_err().message.contains("점검"));
+        assert!(matches!(manager.transport(&exe, ask()).unwrap(), AgentResponse::DeployCandidate { .. }));
+        let during = DURING.with(|d| std::mem::take(&mut *d.borrow_mut()));
+        assert_eq!(during.len(), 1, "점검 실행기는 한 번 돈다");
+        assert!(during[0].as_ref().unwrap_err().contains("점검"), "{during:?}");
+        // 점검이 끝나면 작업을 받는다
+        let job = aaa_common::util::new_id();
+        manager.prepare(&exe, job.clone(), "demo".into(), restart).unwrap();
+        // 실행기 staging 이름은 agent PID 하나다: 도는 배포 작업이 있으면 점검이 그 작업과 겹치지 않게 거부한다
+        let refused = manager.transport(&exe, ask()).unwrap_err().message;
+        assert!(refused.contains("진행 중") && !refused.contains(&job), "{refused}");
+        assert!(DURING.with(|d| d.borrow().is_empty()), "진행 중인 작업이 있는데 점검 실행기를 돌렸다");
+        INSPECTED.with(|m| *m.borrow_mut() = None);
         drop(manager);
         std::fs::remove_dir_all(root).unwrap();
     }

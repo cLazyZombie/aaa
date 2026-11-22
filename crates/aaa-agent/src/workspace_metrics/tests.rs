@@ -191,16 +191,20 @@ fn malformed_or_oversized_inputs_remain_pending_without_a_successful_zero() {
     let r = collect(&state.0, &l.0, "ws", &[]).unwrap();
     assert!(r.runs.is_empty());
     assert!(!r.notes.is_empty());
-    l.put("target/ci-local/large/workspace-summary.tsv", "");
-    fs::OpenOptions::new()
-        .write(true)
-        .open(l.0.join("target/ci-local/large/workspace-summary.tsv"))
-        .unwrap()
-        .set_len(MAX_INPUT + 1)
-        .unwrap();
+    // 상한을 넘는 파일 하나는 그 입력만 거부한다. 회수 예산을 쓰지 않으므로 같은 회수의 정상 실행은 그대로 읽는다.
+    // 내용은 유효한 요약 줄이다: 크기 상한이 없으면 형식 오류가 아니라 예산 소진으로 드러난다.
+    let l = Lab::new();
+    fixture(&l);
+    main_repo(&l);
+    let state = Lab::new();
+    let stage = "web|ok|10:00|10:01|2|ignored\n";
+    let big = format!("v1|1000000000|164|succeeded\n{}", stage.repeat(MAX_INPUT as usize / stage.len() + 1));
+    assert!(big.len() as u64 > MAX_INPUT);
+    l.put("target/ci-local/large/workspace-summary.tsv", &big);
     let large = collect(&state.0, &l.0, "ws", &[]).unwrap();
-    assert!(large.runs.is_empty());
-    assert!(!large.notes.is_empty());
+    assert_eq!(large.runs.len(), 1, "{:?}", large.notes);
+    assert!(large.notes.iter().any(|n| n.contains("크기")), "{:?}", large.notes);
+    assert!(!large.notes.iter().any(|n| n.contains("비용 상한")), "{:?}", large.notes);
     assert_eq!(millis(f64::NAN), None);
     assert_eq!(millis(-1.0), None);
     assert_eq!(millis(0.125), Some(125));

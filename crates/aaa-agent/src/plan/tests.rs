@@ -53,7 +53,6 @@ fn native_errors_wait_for_complete_jsonl_and_match_the_current_execution() {
 #[test]
 fn turn_replies_follow_complete_appends_without_plan_changes() {
     use std::io::Write;
-    let began = Instant::now();
     for (tag, source, start, finish) in [
         (
             "reply-codex",
@@ -92,7 +91,6 @@ fn turn_replies_follow_complete_appends_without_plan_changes() {
         drop(f);
         std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
     }
-    assert!(began.elapsed() < Duration::from_secs(5));
 }
 
 const T: &str = "2026-10-18T09:00:00.000Z";

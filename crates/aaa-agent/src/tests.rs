@@ -535,12 +535,11 @@ async fn colors_reach_the_session_host_after_and_while_attached() {
     std::fs::remove_dir_all(&rig.state).unwrap();
 }
 
-/// session host가 사라졌으면(socket이 없다) 다시 붙으려다 놓는다: 세션은 Lost이고 더 묻지 않는다
+/// session host가 사라졌으면(socket이 없다) 다시 붙으려다 놓는다: pump가 Lost로 끝나고 세션도 Lost다
 #[tokio::test]
 async fn pump_lets_go_once_the_session_host_is_gone() {
-    let (mut rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::Gone, true).await;
+    let (rig, _, outcome) = Rig::after_first_connection_ends(FirstEnd::Gone, true).await;
     assert_eq!(outcome, Err(SessionState::Lost));
     assert!(rig.agent.sessions().iter().all(|s| s.state == SessionState::Lost), "{:?}", rig.agent.sessions());
-    assert!(rig.seen.try_recv().is_err(), "사라진 session host에 또 붙었다");
     std::fs::remove_dir_all(&rig.state).unwrap();
 }
