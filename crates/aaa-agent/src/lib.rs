@@ -1917,12 +1917,14 @@ impl Agent {
         }
     }
 
-    /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
-    pub async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
+    /// 시험용: host 연결의 응답 길로 요청 하나를 처리한다. production은 `handle_deadline`을 부른다.
+    #[cfg(test)]
+    pub(crate) async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
         let reply = self.host_tx();
         self.handle_deadline(id, body, None, reply).await;
     }
 
+    /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
     /// 연결이 끊겨도 이 task는 끝까지 수행한다. 자리·정리 결과는 agent journal에 남긴다.
     pub async fn handle_deadline(
         self: Arc<Self>,

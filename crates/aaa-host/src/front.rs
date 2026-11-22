@@ -563,8 +563,6 @@ impl OrderedInput {
     }
 }
 
-/// herdr headless `note_interactive_input`·`can_render_interactive`와 같은 입력 직후 렌더 창/예산.
-/// 보통 출력은 계속 묶지만, 방금 입력한 화면의 응답에는 묶기 간격을 무조건 더하지 않는다.
 #[cfg(test)]
 mod tests {
     use super::*;

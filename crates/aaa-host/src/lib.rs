@@ -3710,15 +3710,6 @@ impl Host {
     }
 
     /// 등록 요청을 대기열에 넣는다. 승인되면 receiver가 끝난다.
-    pub fn enroll_request(
-        &self,
-        name: &str,
-        machine_id: &str,
-        fingerprint: &str,
-        sas: &str,
-    ) -> Result<oneshot::Receiver<()>, ErrorBody> {
-        self.enroll_request_bound(name, machine_id, fingerprint, sas, None)
-    }
     pub(crate) fn enroll_request_bound(
         &self,
         name: &str,
@@ -3967,10 +3958,6 @@ impl Host {
 
     pub(crate) fn public_origin(&self) -> Option<String> {
         public_origin_in(&self.db)
-    }
-
-    pub fn host_allowed(&self, host_header: &str) -> bool {
-        self.web_origin(host_header).is_some()
     }
 
     /// 공개 주소를 tailscale에서 다시 읽는다(host 시작 때: 지난 실행 뒤 serve 포트가 바뀌었을 수 있다)
@@ -4510,7 +4497,7 @@ mod pairing_tests {
             device: id.clone(),
             alerts: None,
         };
-        h.db.push_put(&sub).unwrap();
+        h.db.push_put_at(&sub, None).unwrap();
         let mut heard = h.device_revoked.subscribe();
         assert!(!h.is_revoked(&id));
         h.call(DeviceRole::Controller, "test", FrontRequest::DeviceRevoke { id: id.clone() }).await.unwrap();
@@ -4540,22 +4527,22 @@ mod pairing_tests {
             device: device.into(),
             alerts: None,
         };
-        assert!(h.db.push_put(&sub(&ids[0], "a")).unwrap());
+        assert!(h.db.push_put_at(&sub(&ids[0], "a"), None).unwrap());
         // 같은 기기는 키를 바꿀 수 있다
-        assert!(h.db.push_put(&sub(&ids[0], "a2")).unwrap());
-        assert!(!h.db.push_put(&sub(&ids[1], "x")).unwrap());
+        assert!(h.db.push_put_at(&sub(&ids[0], "a2"), None).unwrap());
+        assert!(!h.db.push_put_at(&sub(&ids[1], "x"), None).unwrap());
         assert_eq!(h.db.push_list(Some(&ids[0])).unwrap().len(), 1);
         assert!(h.db.push_list(Some(&ids[1])).unwrap().is_empty());
-        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_put_at(&sub(&ids[1], "a2"), None).unwrap());
         assert!(h.db.push_list(Some(&ids[0])).unwrap().is_empty());
         assert_eq!(h.db.push_list(Some(&ids[1])).unwrap().len(), 1);
         // 기기가 고른 알림 종류(N3): 주면 바꾸고, 없이 다시 넣으면(불러올 때마다 다시 구독) 둔다
         let alerts = |h: &Host| h.db.push_list(Some(&ids[1])).unwrap()[0].alerts.unwrap();
         assert_eq!(alerts(&h), db::Alerts::default());
         let quiet = db::Alerts { input: false, done: true };
-        assert!(h.db.push_put(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }).unwrap());
+        assert!(h.db.push_put_at(&db::PushSub { alerts: Some(quiet), ..sub(&ids[1], "a2") }, None).unwrap());
         assert_eq!(alerts(&h), quiet);
-        assert!(h.db.push_put(&sub(&ids[1], "a2")).unwrap());
+        assert!(h.db.push_put_at(&sub(&ids[1], "a2"), None).unwrap());
         assert_eq!(alerts(&h), quiet);
     }
 
@@ -4565,12 +4552,12 @@ mod pairing_tests {
         let (h, _t) = host();
         h.enroll.lock().unwrap().open_until = Some(Instant::now() + Duration::from_secs(60));
         for bad in ["mac\x1b[2Ja", "mac a", "a\u{202e}b", ""] {
-            let e = h.enroll_request(bad, "01M", "fp", "sas").unwrap_err();
+            let e = h.enroll_request_bound(bad, "01M", "fp", "sas", None).unwrap_err();
             assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
         }
         assert!(h.enroll.lock().unwrap().pending.is_empty());
         assert!(
-            h.enroll_request("mac-b", "01M", "fp", "sas")
+            h.enroll_request_bound("mac-b", "01M", "fp", "sas", None)
                 .as_ref()
                 .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                 .is_ok()

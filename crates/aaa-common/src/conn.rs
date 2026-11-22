@@ -254,10 +254,6 @@ impl<R: AsyncRead + Unpin> FrameRx<R> {
         FrameRx { r, max, buf: Vec::new() }
     }
 
-    pub fn set_max(&mut self, max: usize) {
-        self.max = max;
-    }
-
     /// 다음 frame. 연결이 frame 경계에서 닫히면 `Ok(None)`. 취소에 안전하다: 기다리는 곳은 `read_buf`(취소되면 읽은 것이
     /// 없다)뿐이고 읽은 바이트는 `buf`에 남아, 다음 `next`가 이어 모은다
     pub async fn next(&mut self) -> Result<Option<Incoming>, FrameError> {

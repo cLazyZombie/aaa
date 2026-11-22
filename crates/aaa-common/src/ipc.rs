@@ -147,10 +147,6 @@ impl LocalListener {
         }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     /// 같은 사용자 연결만 돌려준다(Unix peer UID). 다른 사용자는 끊고 다음을 기다린다.
     pub async fn accept(&self) -> io::Result<LocalStream> {
         self.accept_peer().await.map(|(s, _)| s)

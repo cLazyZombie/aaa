@@ -21,8 +21,6 @@ ring.workspace = true
 tracing.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
-webpki-roots.workspace = true
-futures-util.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
 backtrace = "0.3"
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }

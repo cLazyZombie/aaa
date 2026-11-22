@@ -390,11 +390,6 @@ pub fn legacy_project_layer(project_toml: &str) -> SafetyLayer {
     }
 }
 
-/// project.toml의 `thread_profile`(없으면 빈 값)
-pub fn project_thread_profile(project_toml: &str) -> String {
-    project_profile(project_toml, "thread_profile")
-}
-
 /// project.toml의 `thread_profile`·`coordinator_profile`(없으면 빈 값)
 pub fn project_profile(project_toml: &str, key: &str) -> String {
     let doc = project_toml.parse::<DocumentMut>().unwrap_or_default();

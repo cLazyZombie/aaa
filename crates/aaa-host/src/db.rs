@@ -1006,10 +1006,6 @@ impl Db {
     /// 다른 장치의 endpoint는 키까지 같을 때만 옮긴다: 같은 브라우저가 다시 pairing한 경우다. endpoint만 아는 요청이
     /// 남의 구독을 가져가지 못한다(보안 감사 t-0340 B10. 참고 herdr-web-ui server/push.ts는 늘 옮긴다). 옮기지 않았으면 false.
     /// 알림 종류(`alerts`)를 주면 바꾸고, None이면 전에 고른 것을 둔다(참고 `subscribe`: 「alerts absent keeps what the device chose before」).
-    pub fn push_put(&self, s: &PushSub) -> Result<bool> {
-        self.push_put_at(s, None)
-    }
-
     pub(crate) fn push_put_at(&self, s: &PushSub, origin: Option<&str>) -> Result<bool> {
         let given = s.alerts.is_some();
         let a = s.alerts.unwrap_or_default();
@@ -1059,32 +1055,6 @@ impl Db {
     // ───────────── thread·흐름 사건(M1-3) ─────────────
 
     /// 프로젝트의 다음 thread 번호(`t-0001`부터)를 잡고 기록을 넣는다. `make`는 ID를 받아 저장할 JSON을 만든다.
-    pub fn thread_insert_next(&self, project: &str, make: impl FnOnce(&str) -> String) -> Result<String> {
-        self.thread_insert_marked(project, None, None, make).map(|(id, _)| id)
-    }
-    pub(crate) fn thread_insert_marked(
-        &self,
-        project: &str,
-        key: Option<&str>,
-        admission: Option<&StartAdmission>,
-        make: impl FnOnce(&str) -> String,
-    ) -> Result<(String, bool)> {
-        self.thread_insert_admitted(project, key, admission, None, None, make)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn thread_insert_admitted(
-        &self,
-        project: &str,
-        key: Option<&str>,
-        admission: Option<&StartAdmission>,
-        limit: Option<u32>,
-        reservation: Option<(&str, &str)>,
-        make: impl FnOnce(&str) -> String,
-    ) -> Result<(String, bool)> {
-        self.try_thread_insert_admitted(project, key, admission, limit, reservation, |id| Ok(make(id)))
-    }
-
     /// 새 행이 보이기 전에 호출자가 기동 소유권을 얻는다. 실패하면 행·예약·영수증을 모두 롤백한다.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn try_thread_insert_admitted(
@@ -1334,17 +1304,6 @@ impl Db {
             repo: r.get(11)?,
             actor: r.get(12)?,
         })
-    }
-
-    /// thread 하나의 사건 전체(순서대로)
-    pub fn flow_of_thread(&self, project: &str, thread: &str) -> Result<Vec<aaa_proto::FlowEvent>> {
-        let c = self.conn.lock().unwrap();
-        let mut st = c.prepare(
-            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor FROM flow_events
-             WHERE project=?1 AND thread=?2 ORDER BY seq",
-        )?;
-        let rows = st.query_map(params![project, thread], Self::flow_from)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     /// 프로젝트의 마지막 사건 seq(없으면 0)
@@ -2344,7 +2303,37 @@ impl Db {
     }
 }
 
-impl Db {}
+/// 시험 도우미: 실패하지 않는 `make`로 thread 기록을 넣는다. production은 `try_thread_insert_admitted`·
+/// `thread_insert_transaction`만 부른다.
+#[cfg(test)]
+impl Db {
+    pub fn thread_insert_next(&self, project: &str, make: impl FnOnce(&str) -> String) -> Result<String> {
+        self.thread_insert_marked(project, None, None, make).map(|(id, _)| id)
+    }
+
+    pub(crate) fn thread_insert_marked(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        make: impl FnOnce(&str) -> String,
+    ) -> Result<(String, bool)> {
+        self.thread_insert_admitted(project, key, admission, None, None, make)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> String,
+    ) -> Result<(String, bool)> {
+        self.try_thread_insert_admitted(project, key, admission, limit, reservation, |id| Ok(make(id)))
+    }
+}
 
 #[cfg(test)]
 mod schema_tests {

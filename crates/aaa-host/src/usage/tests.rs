@@ -311,14 +311,15 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
         generation: host.accounts.generation("work").unwrap(),
         source: QuotaSource::ClaudeStatusline,
         sampled_at_ms: now,
-        windows: aaa_common::quota::claude(
+        windows: aaa_common::quota::claude::read(
             &serde_json::json!({"rate_limits": {
                 "five_hour": {"used_percentage": 2, "resets_at": now / 1000 + 3600},
                 "seven_day": {"used_percentage": 94, "resets_at": now / 1000 + 86400}
             }}),
             now,
             &[],
-        ),
+        )
+        .windows,
         problem: None,
         retry_at_ms: None,
     };

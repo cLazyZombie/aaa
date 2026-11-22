@@ -78,7 +78,6 @@ dependencies = [
  "backtrace",
  "base64 0.22.1",
  "flate2",
- "futures-util",
  "hex",
  "libc",
  "portable-pty",
@@ -93,7 +92,6 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "ulid",
- "webpki-roots",
  "windows-sys 0.60.2",
  "zstd",
 ]

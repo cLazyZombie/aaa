@@ -97,30 +97,29 @@ pub fn codex(v: &Value, now: u64) -> Vec<QuotaWindow> {
     out
 }
 
-/// Claude 상태줄 stdin. 없는 창은 덮어쓰지 않으며 이전 창의 관측 시각도 갱신하지 않는다.
-pub fn claude(v: &Value, now: u64, previous: &[QuotaWindow]) -> Vec<QuotaWindow> {
-    claude::read(v, now, previous).windows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     #[test]
     fn missing_windows_keep_their_own_time_and_reset_never_invents_quota() {
-        let old = claude(
+        let old = claude::read(
             &json!({"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":9999},"seven_day":{"used_percentage":20,"resets_at":19999}}}),
             1000,
             &[],
-        );
-        let new = claude(&json!({"rate_limits":{"five_hour":{"used_percentage":60,"resets_at":9999}}}), 2000, &old);
+        ).windows;
+        let new =
+            claude::read(&json!({"rate_limits":{"five_hour":{"used_percentage":60,"resets_at":9999}}}), 2000, &old)
+                .windows;
         assert_eq!(new.iter().find(|w| w.duration_mins == Some(10080)).unwrap().observed_at_ms, 1000);
         let w = &old[0];
         assert_eq!(freshness(w, 121000), QuotaFreshness::Fresh);
         assert_eq!(freshness(w, 121001), QuotaFreshness::Stale);
         assert_eq!(freshness(w, 601001), QuotaFreshness::Stale);
         assert_eq!(freshness(w, 9_999_000), QuotaFreshness::Unknown);
-        assert!(claude(&json!({"rate_limits":{"five_hour":{"used_percentage":"NaN"}}}), 3000, &[]).is_empty());
+        assert!(
+            claude::read(&json!({"rate_limits":{"five_hour":{"used_percentage":"NaN"}}}), 3000, &[]).windows.is_empty()
+        );
         let mut w = w.clone();
         w.used_percent = f64::NAN;
         assert_eq!(freshness(&w, 1000), QuotaFreshness::Unknown);
@@ -134,7 +133,8 @@ mod tests {
         for (key, duration) in [("five_hour", 300_u64), ("seven_day", 10080)] {
             let reset = 1000 + duration * 60_000;
             let mut w =
-                claude(&json!({"rate_limits":{key:{"used_percentage":100,"resets_at":reset / 1000}}}), 1000, &[])
+                claude::read(&json!({"rate_limits":{key:{"used_percentage":100,"resets_at":reset / 1000}}}), 1000, &[])
+                    .windows
                     .remove(0);
             for now in [121_001, 601_001, reset - 1] {
                 assert_eq!(freshness(&w, now), QuotaFreshness::Stale);

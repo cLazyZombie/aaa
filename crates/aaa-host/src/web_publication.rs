@@ -403,13 +403,16 @@ mod tests {
     }
     fn subscription(h: &Host) {
         h.db.add_device("device", "controller", "fixture-token", "기기").unwrap();
-        h.db.push_put(&PushSub {
-            endpoint: "https://push.example.com/fixture".into(),
-            p256dh: "fixture".into(),
-            auth: "fixture".into(),
-            device: "device".into(),
-            alerts: None,
-        })
+        h.db.push_put_at(
+            &PushSub {
+                endpoint: "https://push.example.com/fixture".into(),
+                p256dh: "fixture".into(),
+                auth: "fixture".into(),
+                device: "device".into(),
+                alerts: None,
+            },
+            None,
+        )
         .unwrap();
     }
     async fn request(h: &Arc<Host>, authority: &str, path: &str) -> axum::response::Response {
@@ -479,8 +482,8 @@ mod tests {
             request(&h, "mac-a.example.ts.net:7443", "/api/v1/me").await.status(),
             axum::http::StatusCode::UNAUTHORIZED
         );
-        assert!(h.host_allowed("mac-a.example.ts.net:7443"));
-        assert!(!h.host_allowed("mac-a.example.ts.net:443"));
+        assert!(h.web_origin("mac-a.example.ts.net:7443").is_some());
+        assert!(h.web_origin("mac-a.example.ts.net:443").is_none());
         assert!(h.pending_publication().unwrap().is_none());
         let status = h.change_port(&io, 7443, "local:person").await.unwrap();
         assert_eq!(status.url.as_deref(), Some(NEW));
