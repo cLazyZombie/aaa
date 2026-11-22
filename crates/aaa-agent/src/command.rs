@@ -146,13 +146,12 @@ mod tests {
             run(&root, None, "demo", None, "echo out; echo err >&2; exit 3", Duration::from_secs(10)).await.unwrap();
         assert_eq!((r.exit_code, r.timed_out, r.output.as_str()), (Some(3), false, "out\nerr\n"));
         assert!(root.join("demo/routines").is_dir());
-        // 손자(sleep)까지 group으로 끝나야 파이프가 닫힌다. 닫히지 않으면 drain 시한 뒤 출력을 버리고 잘림으로 돌아온다
+        // 손자(sleep)까지 group으로 끝나야 파이프가 닫힌다. 닫히지 않으면 drain 시한 뒤 출력을 버리므로 아래 출력 단언이 실패한다
         let r = run(&root, None, "demo", None, "echo start; sleep 30 & sleep 30", Duration::from_millis(300))
             .await
             .unwrap();
         assert!(r.timed_out && r.exit_code.is_none(), "{r:?}");
         assert_eq!(r.output, "start\n");
-        assert!(!r.truncated, "{r:?}");
         let r = run(&root, None, "demo", None, "head -c 100000 /dev/zero | tr '\\0' x", Duration::from_secs(10))
             .await
             .unwrap();

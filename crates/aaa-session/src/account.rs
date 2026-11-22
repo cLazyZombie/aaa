@@ -603,7 +603,8 @@ mod tests {
         assert!(!lab.0.join("settings.json").exists());
         for bytes in ["fake-secret-invalid-json", "[]"] {
             std::fs::write(lab.0.join("settings.json"), bytes).unwrap();
-            assert!(prepare_claude_bypass(&lab.0, &argv).is_err());
+            let error = prepare_claude_bypass(&lab.0, &argv).unwrap_err().to_string();
+            assert!(!error.contains("fake-secret"));
             assert_eq!(std::fs::read_to_string(lab.0.join("settings.json")).unwrap(), bytes);
         }
     }
