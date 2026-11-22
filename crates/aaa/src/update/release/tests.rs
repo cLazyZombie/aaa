@@ -105,6 +105,8 @@ fn manifest_selects_platform_from_http() {
     assert!(
         m.select("macos", "aarch64", "0.1.0", Some("0.3.0")).err().unwrap().to_string().contains("요청한 release 판")
     );
+    let error = m.select("windows", "aarch64", "0.1.0", None).err().expect("없는 OS/arch 거부");
+    assert!(error.to_string().contains("windows-aarch64 실행 파일이 없다"), "{error:#}");
 }
 
 #[test]
@@ -115,15 +117,6 @@ fn checksum_mismatch_leaves_installation_untouched() {
     assert!(error.to_string().contains("SHA-256 불일치"), "{error:#}");
     server.join().unwrap();
     lab.untouched();
-}
-
-#[test]
-fn unsupported_platform_is_rejected_from_http_manifest() {
-    let (url, server) = serve(manifest("0.2.0"), None);
-    let m = fetch_manifest(&url).unwrap();
-    let error = m.select("windows", "aarch64", "0.1.0", None).err().expect("없는 OS/arch 거부");
-    assert!(error.to_string().contains("windows-aarch64 실행 파일이 없다"), "{error:#}");
-    server.join().unwrap();
 }
 
 #[test]

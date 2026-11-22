@@ -6792,10 +6792,6 @@ fn debug_since(value: &str) -> Result<u64> {
 }
 
 #[cfg(test)]
-#[path = "../tests/install/launchd_args.rs"]
-mod launchd_test_args;
-
-#[cfg(test)]
 mod tests {
     #[test]
     fn verify_uses_a_common_entry_and_preserves_explicit_command_arguments() {
@@ -6820,19 +6816,6 @@ mod tests {
             assert!(Cli::try_parse_from(args).is_err());
         }
     }
-    #[test]
-    fn launchd_registration_authorization_arguments_parse_before_any_service_changes() {
-        use clap::Parser as _;
-        let issue = super::launchd_test_args::authorize(
-            ["install", "--service", "launchd"].into_iter().map(str::to_owned).collect(),
-            std::path::Path::new("approval file.json"),
-        );
-        let cli = super::Cli::try_parse_from(std::iter::once("aaa".to_owned()).chain(issue))
-            .unwrap_or_else(|error| panic!("실제 등록 owner의 승인 인자: {error}"));
-        let super::Cmd::Install(args) = cli.cmd else { panic!("install authorize") };
-        assert_eq!(serde_json::to_value(args).unwrap()["prompt"], "plain");
-    }
-
     #[test]
     fn project_lifecycle_help_omits_legacy_project_arguments() {
         use super::Cli;

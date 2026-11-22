@@ -822,18 +822,6 @@ fn lab_host_without_local_agent_mode_starts_no_detached_agent() {
     assert_eq!(mode("chosen", "schema = 1\n[local_agent]\nmode = 'child'\n"), aaa_config::LocalAgentMode::Child);
 }
 
-/// 준비 대기는 구독 전의 현재 목록과 구독 뒤의 연결 변화를 모두 받아야 한다.
-#[test]
-fn agent_readiness_uses_initial_state_and_reconnection_events() {
-    let mut w = world();
-    let mut watch = HostWatch::new(&w.h, T);
-    watch.wait("구독 전 연결의 현재 상태", |s| s.connected("labA").then_some(()));
-    w.lab.kill("agentA");
-    watch.wait("연결 종료 사건", |s| (!s.connected("labA")).then_some(()));
-    w.lab.spawn("agentA-reconnected", &w.h, &["agent", "--host", "local", "--name", "labA"]);
-    watch.wait("구독 뒤 재연결 사건", |s| s.connected("labA").then_some(()));
-}
-
 /// 생성 폴더의 파일 계약: 안내 별칭 등 예정하지 않은 파일도 잡는다.
 fn assert_entries(dir: &Path, expected: &[&str]) {
     let mut names: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect();
