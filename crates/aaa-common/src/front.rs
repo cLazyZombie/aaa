@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aaa_proto::{
-    ATTACH_CHUNK, B64, DeviceRole, ErrorBody, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME,
-    Version,
+    ATTACH_CHUNK, B64, DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse,
+    MAX_FRAME, Version,
 };
 use anyhow::{Context, Result, bail};
+use tokio::time::{Instant, timeout};
 
 use crate::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
@@ -64,6 +65,42 @@ pub const TUI_REMOVED: &str = "TUI는 삭제됐다. 웹 UI를 쓴다. host에서
 /// 한 번 보내고 끝나는 CLI 연결의 이름. 대화형 front(웹)와 달리 「지금 쓰는 화면」이 되지 않는다.
 pub const CLI_CLIENT: &str = "cli";
 
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+const UNSENT: &str = "이번 요청 미전송";
+const UNKNOWN: &str = "결과 미확정 · 다시 실행하기 전에 상태를 확인한다";
+
+#[derive(Debug, thiserror::Error)]
+#[error("연결 준비 실패 ({elapsed_ms}ms) · {UNSENT} · host socket({path})")]
+struct ConnectError {
+    elapsed_ms: u128,
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+}
+
+impl ConnectError {
+    fn is_absent(&self) -> bool {
+        matches!(self.source.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
+    }
+}
+
+/// 로컬 host가 없는 경우에만 agent 경로를 고를 수 있다. 인사 실패는 호출자가 보아야 한다.
+pub fn host_absent(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<ConnectError>().is_some_and(ConnectError::is_absent)
+}
+
+/// 조작 권한이 필요 없는 요청도 기록을 바꾸는 경우가 있다.
+fn may_change_state(body: &FrontRequest) -> bool {
+    body.needs_control()
+        || body.design_relay_write()
+        || matches!(
+            body,
+            FrontRequest::LibraryOpen { .. }
+                | FrontRequest::LibraryMarkRead { .. }
+                | FrontRequest::InstallPublish { .. }
+        )
+}
+
 impl FrontClient {
     pub async fn connect(state_root: &Path) -> Result<FrontClient> {
         Self::connect_as(state_root, CLI_CLIENT).await
@@ -71,9 +108,18 @@ impl FrontClient {
 
     pub async fn connect_as(state_root: &Path, client: &str) -> Result<FrontClient> {
         let path = socket(state_root);
-        let s = crate::ipc::connect(&path)
+        let started = Instant::now();
+        let connection = timeout(IO_TIMEOUT, crate::ipc::connect(&path))
             .await
-            .with_context(|| format!("host가 없다({}). host 머신에서 `aaa host`가 실행 중인지 본다", path.display()))?;
+            .with_context(|| format!("연결 준비 시간 초과 ({}ms) · {UNSENT}", started.elapsed().as_millis()))?;
+        let s = connection.map_err(|source| {
+            let error = ConnectError { elapsed_ms: started.elapsed().as_millis(), path, source };
+            if error.is_absent() {
+                anyhow::Error::new(error).context("host가 없다. host 머신에서 `aaa host`가 실행 중인지 본다")
+            } else {
+                anyhow::Error::new(error)
+            }
+        })?;
         let (r, w) = tokio::io::split(s);
         let tx = spawn_writer(w, MAX_FRAME);
         let rx = Inbound::Local(FrameRx::new(r, MAX_FRAME));
@@ -86,8 +132,15 @@ impl FrontClient {
     }
 
     async fn hello(tx: FrameTx, mut rx: Inbound, client: &str, session: Option<String>) -> Result<FrontClient> {
-        tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into(), session }).await?;
-        let (front, proto, role) = match tokio::time::timeout(Duration::from_secs(10), rx.control()).await?? {
+        let started = Instant::now();
+        let hello = timeout(IO_TIMEOUT, async {
+            tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into(), session }).await?;
+            rx.control().await
+        })
+        .await
+        .with_context(|| format!("첫 응답 시간 초과 ({}ms) · {UNSENT}", started.elapsed().as_millis()))?
+        .with_context(|| format!("첫 응답 실패 ({}ms) · {UNSENT}", started.elapsed().as_millis()))?;
+        let (front, proto, role) = match hello {
             FrontMsg::Welcome { front, proto, role, warnings, .. } => {
                 for w in warnings {
                     eprintln!("⚠ {w}");
@@ -109,10 +162,32 @@ impl FrontClient {
             bail!("한도 무시 시작에는 Front API 1.98 이상 host가 필요하다");
         }
 
-        let id = self.send(body).await?;
+        let change = may_change_state(&body);
+        let started = Instant::now();
+        let id = timeout(IO_TIMEOUT, Box::pin(self.send(body)))
+            .await
+            .with_context(|| format!("요청 전송 시간 초과 ({}ms) · {UNSENT}", started.elapsed().as_millis()))?
+            .with_context(|| format!("요청 전송 실패 ({}ms) · {UNSENT}", started.elapsed().as_millis()))?;
+        let started = Instant::now();
+        let status = if change { format!(" · {UNKNOWN}") } else { String::new() };
         loop {
-            match self.rx.control().await? {
-                FrontMsg::Res { id: rid, result } if rid == id => return Ok(result.into_result()),
+            let response =
+                self.rx.control().await.with_context(|| {
+                    format!("요청 처리 응답 수신 실패 ({}ms){status}", started.elapsed().as_millis())
+                })?;
+            match response {
+                FrontMsg::Res { id: rid, result } if rid == id => {
+                    return Ok(result.into_result().map_err(|mut error| {
+                        if error.code == ErrorCode::Timeout {
+                            error.message = format!(
+                                "요청 처리 시간 초과 ({}ms){status} · {}",
+                                started.elapsed().as_millis(),
+                                error.message
+                            );
+                        }
+                        error
+                    }));
+                }
                 FrontMsg::Event(e) => self.events.push_back(e),
                 _ => continue,
             }
@@ -159,3 +234,6 @@ pub fn attach_requests(pane: &str, bytes: &[u8]) -> Vec<FrontRequest> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

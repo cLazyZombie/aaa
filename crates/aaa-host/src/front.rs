@@ -4,7 +4,7 @@
 //! 연결 하나가 front 하나다. 「지금 쓰는 화면」(lease)은 이 연결에 묶이고, 다른 front가 입력하면 옮겨 가며, 연결이 끝나면 풀린다.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aaa_proto::{
     DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontEvent, FrontMsg, FrontRequest, FrontResponse, MAX_FRAME,
@@ -128,9 +128,10 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
                         continue;
                     }
                 };
+                let accepted = Instant::now();
                 let host = host.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = serve(host, s, pid).await {
+                    if let Err(e) = serve(host, s, pid, accepted).await {
                         tracing::debug!("front 연결 끝: {e:#}");
                     }
                 });
@@ -140,11 +141,23 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     Ok(())
 }
 
-async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32>) -> Result<()> {
+fn finished_front_stage(pid: Option<u32>, stage: &'static str, started: Instant) -> Instant {
+    let now = Instant::now();
+    let elapsed = now.duration_since(started);
+    if elapsed >= Duration::from_millis(500) {
+        tracing::warn!(peer_pid = ?pid, stage, elapsed_ms = elapsed.as_millis() as u64, "Front CLI 지연");
+    }
+    now
+}
+
+async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32>, accepted: Instant) -> Result<()> {
+    let started = finished_front_stage(pid, "연결 수락 뒤 실행 대기", accepted);
     let (r, w) = tokio::io::split(s);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
-    let hello: FrontMsg = tokio::time::timeout(Duration::from_secs(10), rx.control()).await??;
+    let hello = tokio::time::timeout(Duration::from_secs(10), rx.control::<FrontMsg>()).await;
+    finished_front_stage(pid, "인사 수신", started);
+    let hello = hello.context("Front CLI 인사 수신 시간 초과")??;
     let FrontMsg::Hello { proto, client, session } = hello else { bail!("hello가 와야 한다") };
     if client == "tui" || client.starts_with("tui@") {
         let e = ErrorBody::new(ErrorCode::Unavailable, aaa_common::front::TUI_REMOVED);
@@ -183,7 +196,9 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
             return Ok(());
         }
     }
+    let started = Instant::now();
     let caller = host.caller_of(pid);
+    let started = finished_front_stage(pid, "caller 프로세스 확인", started);
     let found = match &caller {
         Caller::Pane(p) => Some(p.clone()),
         _ => None,
@@ -234,20 +249,24 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (Some(_), _) => format!("local:{client}@unverified"),
         _ => format!("local:{client}"),
     };
+    let started = finished_front_stage(pid, "caller 권한 확인", started);
     let warnings = host
         .coordinator_project_of_actor(&actor)
         .map(|p| host.post_warnings(&p))
         .transpose()
-        .map_err(|e| anyhow::anyhow!(e.message))?
-        .unwrap_or_default();
-    tx.json(&FrontMsg::Welcome {
-        proto: agreed,
-        host_id: host.host_id.clone(),
-        role,
-        front: front.id.clone(),
-        warnings,
-    })
-    .await?;
+        .map_err(|e| anyhow::anyhow!(e.message));
+    let started = finished_front_stage(pid, "coordinator 경고 조회", started);
+    let welcome = tx
+        .json(&FrontMsg::Welcome {
+            proto: agreed,
+            host_id: host.host_id.clone(),
+            role,
+            front: front.id.clone(),
+            warnings: warnings?.unwrap_or_default(),
+        })
+        .await;
+    finished_front_stage(pid, "첫 응답 전송 대기열 등록", started);
+    welcome?;
     serve_conn(host, tx, rx, Conn { role, actor, front, proto: agreed }).await.map(|_| ())
 }
 
@@ -463,9 +482,19 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     );
                 }
                 body => {
+                    let received = Instant::now();
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
+                        let elapsed = received.elapsed();
+                        if elapsed >= Duration::from_secs(5) {
+                            tracing::warn!(
+                                peer_pid = ?front.peer_pid,
+                                stage = "요청 처리",
+                                elapsed_ms = elapsed.as_millis() as u64,
+                                "Front CLI 지연"
+                            );
+                        }
                         aaa_common::diagnostic::ignored(
                             tx.control(res_frame(id, response_for_version(result, proto))).await,
                             "수신자가 끝난 뒤에도 현재 작업은 마친다",

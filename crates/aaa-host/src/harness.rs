@@ -320,7 +320,7 @@ impl Host {
     pub(crate) fn thread_of_pane(&self, pane: &str) -> Option<ThreadRec> {
         let rows = self
             .db
-            .threads(None)
+            .threads_for_pane(pane)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()?;
         rows.iter()

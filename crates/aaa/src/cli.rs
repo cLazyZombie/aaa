@@ -1406,12 +1406,7 @@ fn machine_post_cmd(json: bool, cmd: &MachineCmd) -> Result<Option<ExitCode>> {
         return Ok(None);
     }
     let rt = runtime()?;
-    let control = rt
-        .block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-        .ok()
-        .is_some_and(|c| c.role.can_control());
-    if control {
+    if local_front_in_session(&rt)?.is_some_and(|c| c.role.can_control()) {
         return Ok(None);
     }
     if let MachineCmd::Reserve { holder: Some(_), .. } = cmd {
@@ -1465,6 +1460,14 @@ fn parse_minutes(s: &str) -> Result<u32> {
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
+}
+
+fn local_front_in_session(rt: &tokio::runtime::Runtime) -> Result<Option<aaa_common::front::FrontClient>> {
+    match rt.block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir())) {
+        Ok(client) => Ok(Some(client)),
+        Err(error) if aaa_common::front::host_absent(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// `<대상>`(새 꼴) 또는 `<프로젝트> <대상>`(옛 꼴): (프로젝트, 대상)
@@ -1544,18 +1547,16 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
     // CPU 수만큼 worker thread를 만들지 않아도 같은 I/O·timer를 구동한다.
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut c = match aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await {
-                    Ok(client) => client,
-                    Err(error)
-                        if aaa_agent::hooks::in_session()
-                            && req.thread_relay_allowed()
-                            && error.chain().filter_map(|e| e.downcast_ref::<std::io::Error>()).any(|e| {
-                                matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
-                            }) =>
-                    {
-                        return aaa_agent::thread_read::send(req).await;
-                    }
-                    Err(error) => return Err(error),
-                };
+            Ok(client) => client,
+            Err(error)
+                if aaa_agent::hooks::in_session()
+                    && req.thread_relay_allowed()
+                    && aaa_common::front::host_absent(&error) =>
+            {
+                return aaa_agent::thread_read::send(req).await;
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(&req, FrontRequest::LibraryRead { .. }) && c.proto.minor < 146 {
             anyhow::bail!("library 파일 읽기는 Front API 1.146 이상 host가 필요하다");
         }
