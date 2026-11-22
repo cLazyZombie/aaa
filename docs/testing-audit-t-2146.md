@@ -61,7 +61,7 @@ fixture로 형식을 고정하고 있었다. 먼저 시험을 두 종류로 옮�
 | 자리 | 지운 것 | 줄 |
 | --- | --- | ---: |
 | `aaa-common` `redact` | 청크 사이 보류(`Stream`)와 접두부 표. `bytes()` 하나로 접었다 | −45 |
-| `aaa-host` `notify`·`push` | 보고 첫 줄 요약, 머신 사건 묶음, post 밖의 고정 말, thread 제목 인자, mute 예외, 「보기:」 줄, thread-state 갈래 | −220 |
+| `aaa-host` `notify`·`push` | 보고 첫 줄 요약, 머신 사건 묶음, post 밖의 고정 말, thread 제목 인자, mute 예외, 「보기:」 줄, thread-state 갈래 | −213 |
 | `aaa-agent` `workspace_metrics/lines` | 시험 전용 입구 `collect_with_elapsed`와 branch 추정 | −22 |
 | `aaa-agent` `design` | 만드는 곳이 없는 `Stale` 오류 | −16 |
 
