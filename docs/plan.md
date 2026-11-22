@@ -5505,7 +5505,7 @@ primary 근거:
 - **계약.** FRONT_API1.49, AGENT_LINK1.7(N-1=1.6), macOS agent `deploy_stage.v1`. `--file <머신>:<후보폴더>/aaa`는 source_machine을 저장하고 source/모든 대상 기능을 확인한다. 기존 --from과 L1 저장 기록은 source_machine 생략(None)으로 읽는다. 시작/조회 권한은 coordinator+safety 그대로이며 사람 터미널은 L5다.
 - **읽기.** DeployFetch는 빌드 폴더의 일반 파일aaa와 같은 폴더의 일반 provenance.json만 받는다. symlink와 크기 초과, provenance SHA 불일치, 첫 읽기의 실제 SHA 불일치를 거부한다. source 머신의 인터넷/SSH는 필요 없다.
 - **전송.** host가 source에서256KiB를 받아 대상에 하나씩 보낸다. base64 frame은1MiB보다 작고 전체256MiB 상한이다. DeployStage는 deployments/<rollout>.part와 stage.json에 프로젝트/SHA/크기를 묶고 실제 저장 길이와 다른 offset을 거부한다. 조각은 fsync하고 재개는 DeployStageStatus의 길이를 정본으로 삼는다. EOF SHA→실행 권한→기존 dry-run self-check→.bin 공개/완료 영수증 순서다. 원본 후보를 다시 실행하지 않는다.
-- **재개/순서.** 모든 대상 Transfer→모든 대상 Preflight→L1 교체/재시작 순서다. 각 단계/job ID를 먼저 저장하고 bytes 진행도 DB에 남긴다. host 단절/ACK 유실 뒤 전송 상태를 먼저 조회하고 같은 ID/offset으로 잇는다. 각 조각 전 safety와120초 단계 한도를 확인한다. stage 상태가 완료여도 설치 직전 SHA를 다시 확인한다.
+- **재개/순서.** 모든 대상 Transfer→모든 대상 Preflight→L1 교체/재시작 순서다. 각 단계/job ID를 먼저 저장하고 bytes 진행도 DB에 남긴다. host 단절/ACK 유실 뒤 전송 상태를 먼저 조회하고 같은 ID/offset으로 잇는다. 각 조각 전 safety를 확인한다. Transfer는 마지막으로 더 큰 수신 offset을 확인한 뒤 120초 동안 진척이 없으면 멈춘다. 첫 조각 전에는 단계 시작 시각을 쓴다. stage 상태가 완료여도 설치 직전 SHA를 다시 확인한다.
 - **교체/정리.** UpdateStaged는 자유 경로 없이 rollout ID의 자기 프로젝트 완료 후보만 해석해 CheckedUpdate로 기존 staging·판 고정·보관·rename을 쓴다. job 영수증의 원래 요청은 유지한다. EOF와 끝 정리에서 완료 후보는 마지막 하나만 남기며, 중단 후보는 지운다. 정리 요청의 보존 ID는 유효/존재/완료를 먼저 확인한다. 연결 단절 중 정리 실패는 기록하고 다음 전송에서 크기를 제한한다. old binary 보관과 자동 rollback은 별개다.
 - **시험.** agent가 경로·offset·SHA/실행순서·프로세스 재생성·보존/정리를 소유하고 host가 전이/영수증을 소유한다. 기존 m13은 실제 TLS source 앞의 시험 소유 byte proxy로 다음 조각을 잡은 뒤 pane 왕복/host 종료/동일ID 재개를 검증한다. 전송을 큰 파일이나 sleep으로 늦추지 않는다. 기존 --from 변조·둘째 머신 실패 단언도 유지한다.
 

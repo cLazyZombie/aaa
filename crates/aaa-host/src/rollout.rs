@@ -7,6 +7,8 @@ use std::{path::Path, sync::Arc, time::Duration};
 mod card;
 mod recovery;
 #[cfg(test)]
+mod transfer_tests;
+#[cfg(test)]
 mod web_tests;
 const STEP_LIMIT_MS: u64 = 120_000;
 const RECOVERY_LIMIT_MS: u64 = 3 * STEP_LIMIT_MS;
@@ -69,6 +71,34 @@ fn step(machine: &str, phase: RolloutPhase) -> RolloutStep {
         guard: None,
         guard_ready: false,
     }
+}
+/// 진행 중인 Transfer는 단계 시작과 새 offset 확인 때만 저장된다. 같은 상태 조회와 재접속은 시각을 바꾸지 않는다.
+fn step_deadline(step: &RolloutStep, updated_ms: u64) -> u64 {
+    let since = if step.phase == RolloutPhase::Transfer && step.transferred_bytes > 0 {
+        updated_ms.max(step.started_ms)
+    } else {
+        step.started_ms
+    };
+    since.saturating_add(STEP_LIMIT_MS)
+}
+fn step_timeout_reason(step: &RolloutStep) -> String {
+    if step.phase != RolloutPhase::Transfer {
+        return format!("무응답/옛 판: {} {:?} 단계 한도 초과", step.machine, step.phase);
+    }
+    format!(
+        "{} 후보 전송 중 {}초 동안 수신 진척 없음 (마지막 확인 {}바이트)",
+        step.machine,
+        STEP_LIMIT_MS / 1000,
+        step.transferred_bytes
+    )
+}
+fn transfer_wait(r: &RolloutView, cursor: usize) -> Result<Duration, ErrorBody> {
+    let step = &r.steps[cursor];
+    let left = step_deadline(step, r.updated_ms).saturating_sub(aaa_common::util::now_ms());
+    if left == 0 {
+        return Err(err(ErrorCode::BadRequest, step_timeout_reason(step)));
+    }
+    Ok(Duration::from_millis(left))
 }
 fn action(spec: &RolloutSpec, id: &str, phase: RolloutPhase) -> DeployAction {
     match phase {
@@ -797,13 +827,8 @@ impl Host {
                         self.save_rollout(&mut r)?;
                     }
                     let step = r.steps[cursor].clone();
-                    if aaa_common::util::now_ms().saturating_sub(step.started_ms) >= STEP_LIMIT_MS {
-                        self.stop_or_recover(
-                            &mut r,
-                            cursor,
-                            format!("무응답/옛 판: {} {:?} 단계 한도 초과", step.machine, step.phase),
-                        )
-                        .await?;
+                    if aaa_common::util::now_ms() >= step_deadline(&step, r.updated_ms) {
+                        self.stop_or_recover(&mut r, cursor, step_timeout_reason(&step)).await?;
                     } else {
                         let result = match self.prepare_rollout_guard(&mut r, cursor).await {
                             Ok(()) => {
@@ -843,7 +868,7 @@ impl Host {
             let deadline = if r.state == RolloutState::Recovering {
                 r.recovery_started_ms.saturating_add(RECOVERY_LIMIT_MS)
             } else if let Some(step) = r.steps.get(r.cursor as usize).filter(|s| s.started_ms != 0) {
-                step.started_ms.saturating_add(STEP_LIMIT_MS)
+                step_deadline(step, r.updated_ms)
             } else {
                 r.steps
                     .iter()
@@ -861,7 +886,13 @@ impl Host {
                     break;
                 }
                 let cursor = (r.cursor as usize).min(r.steps.len().saturating_sub(1));
-                self.stop_or_recover(&mut r, cursor, "재개/완료 확인 한도 초과".into()).await?;
+                let step = &r.steps[cursor];
+                let reason = if step.phase == RolloutPhase::Transfer {
+                    step_timeout_reason(step)
+                } else {
+                    "재개/완료 확인 한도 초과".into()
+                };
+                self.stop_or_recover(&mut r, cursor, reason).await?;
                 continue;
             }
             tokio::select! { _=&mut notified=>{}, _=changes.changed()=>{}, _=tokio::time::sleep(Duration::from_millis(remaining))=>{} }
@@ -931,6 +962,21 @@ impl Host {
         }
         assess(r, step, response, &self.rollout_instance, &self.running_sha256)
     }
+    /// 재개 때 agent에만 남은 영수증도 저장한다. 이미 확인한 바이트를 다시 읽거나 써도 기한은 그대로다.
+    fn save_transfer_progress(
+        &self,
+        r: &mut RolloutView,
+        cursor: usize,
+        stage: &DeployStageView,
+    ) -> Result<(), ErrorBody> {
+        let step = &mut r.steps[cursor];
+        step.total_bytes = stage.total;
+        if stage.offset > step.transferred_bytes {
+            step.transferred_bytes = stage.offset;
+            self.save_rollout(r)?;
+        }
+        Ok(())
+    }
     async fn transfer_candidate(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<String>, ErrorBody> {
         let target = r.steps[cursor].machine.clone();
         let candidate = machine_spec(r, &target);
@@ -943,12 +989,19 @@ impl Host {
                 return Err(err(ErrorCode::UnsupportedVersion, "agent 전송 기능이 사라졌다"));
             }
         }
-        let initial = dest.request(AgentRequest::DeployStageStatus { rollout: r.id.clone() }).await;
+        let initial = dest
+            .request_timeout(
+                AgentRequest::DeployStageStatus { rollout: r.id.clone() },
+                crate::REQUEST_TIMEOUT.min(transfer_wait(r, cursor)?),
+            )
+            .await;
         let mut offset = match initial {
             Ok(AgentResponse::DeployStage { stage }) => {
                 let version = stage_receipt(r, &candidate.sha256, &stage)?;
-                r.steps[cursor].transferred_bytes = stage.offset;
-                r.steps[cursor].total_bytes = stage.total;
+                if r.steps[cursor].total_bytes != 0 && r.steps[cursor].total_bytes != stage.total {
+                    return Err(err(ErrorCode::BadRequest, "후보 전송 전체 크기 불일치"));
+                }
+                self.save_transfer_progress(r, cursor, &stage)?;
                 if version.is_some() {
                     return Ok(version);
                 }
@@ -962,19 +1015,17 @@ impl Host {
             if !self.rollout_permitted(r) {
                 return Err(err(ErrorCode::Forbidden, "coordinator 배포 허용이 철회됐다"));
             }
-            let left =
-                r.steps[cursor].started_ms.saturating_add(STEP_LIMIT_MS).saturating_sub(aaa_common::util::now_ms());
-            if left == 0 {
-                return Err(err(ErrorCode::BadRequest, "전송 단계 한도 초과"));
-            }
             let response = self
                 .live_conn(&source)?
-                .request(AgentRequest::DeployFetch {
-                    path: candidate.from.clone(),
-                    offset,
-                    len: DEPLOY_CHUNK as u32,
-                    sha256: candidate.sha256.clone(),
-                })
+                .request_timeout(
+                    AgentRequest::DeployFetch {
+                        path: candidate.from.clone(),
+                        offset,
+                        len: DEPLOY_CHUNK as u32,
+                        sha256: candidate.sha256.clone(),
+                    },
+                    crate::REQUEST_TIMEOUT.min(transfer_wait(r, cursor)?),
+                )
                 .await?;
             let AgentResponse::DeployChunk { offset: got, data, eof, total } = response else {
                 return Err(internal("후보 조각 응답이 아니다"));
@@ -991,11 +1042,6 @@ impl Host {
             {
                 return Err(err(ErrorCode::BadRequest, "후보 전송 크기/offset 불일치"));
             }
-            let left =
-                r.steps[cursor].started_ms.saturating_add(STEP_LIMIT_MS).saturating_sub(aaa_common::util::now_ms());
-            if left == 0 {
-                return Err(err(ErrorCode::BadRequest, "전송 단계 한도 초과"));
-            }
             let reply = dest
                 .request_timeout(
                     AgentRequest::DeployStage {
@@ -1007,7 +1053,7 @@ impl Host {
                         sha256: candidate.sha256.clone(),
                         total,
                     },
-                    Duration::from_millis(left),
+                    transfer_wait(r, cursor)?,
                 )
                 .await?;
             let AgentResponse::DeployStage { stage } = reply else {
@@ -1017,9 +1063,7 @@ impl Host {
             if stage.offset != next || stage.total != total || stage.complete != eof {
                 return Err(err(ErrorCode::BadRequest, "조각 영수증 offset/EOF 불일치"));
             }
-            r.steps[cursor].transferred_bytes = next;
-            r.steps[cursor].total_bytes = total;
-            self.save_rollout(r)?;
+            self.save_transfer_progress(r, cursor, &stage)?;
             if version.is_some() {
                 return Ok(version);
             }

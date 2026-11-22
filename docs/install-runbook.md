@@ -291,7 +291,7 @@ temp로 우회하거나 재시도하지 않고 실패한다. 기존처럼 `--out
 이 위치 선택은 macOS 서명 검사기의 오류까지 해결하지 않는다. temp 밖에서도 SIGKILL이면 최초 빌드 로그와
 해당 시각의 `log show --info --debug`에서 AMFI·syspolicyd 기록을 함께 확인한다.
 
-L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더/aaa`다. 파일명aaa와 옆 provenance.json의 SHA가 맞아야 하며 symlink·일반 파일이 아닌 입력·256MiB 초과는 거부한다. source와 모든 대상에 `deploy_stage.v1`이 있어야 한다. 첫 반영은 이 기능을 아는 host/agent를 기존 방식으로 설치한 뒤 한다. 기존 `--from <절대 경로>`는 같은 경로에 미리 둔 L1 후보로 유지된다. 전송은256KiB 조각 하나씩이며 모든 대상의 전송/SHA/self-check와 사전 검사가 끝나야 첫 교체를 한다. host 재시작/답 유실은 agent가 실제 저장한 길이를 조회해 같은 rollout의 offset부터 잇는다. 설치는 rollout ID로 자기 상태 폴더 후보만 해석한다. 완료 후 마지막 후보 하나를 보관하며 정리 실패는 로그에 남기고 다음 전송 때 다시 제한한다.
+L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더/aaa`다. 파일명aaa와 옆 provenance.json의 SHA가 맞아야 하며 symlink·일반 파일이 아닌 입력·256MiB 초과는 거부한다. source와 모든 대상에 `deploy_stage.v1`이 있어야 한다. 첫 반영은 이 기능을 아는 host/agent를 기존 방식으로 설치한 뒤 한다. 기존 `--from <절대 경로>`는 같은 경로에 미리 둔 L1 후보로 유지된다. 전송은256KiB 조각 하나씩이며 모든 대상의 전송/SHA/self-check와 사전 검사가 끝나야 첫 교체를 한다. host 재시작/답 유실은 agent가 실제 저장한 길이를 조회해 같은 rollout의 offset부터 잇는다. 전송 중 120초 동안 확인된 바이트 수가 늘지 않으면 해당 머신과 마지막 확인 바이트 수를 남기고 멈춘다. 설치는 rollout ID로 자기 상태 폴더 후보만 해석한다. 완료 후 마지막 후보 하나를 보관하며 정리 실패는 로그에 남기고 다음 전송 때 다시 제한한다.
 
 `--machines` 생략/all은 등록된 전부, 쉼표 목록은 그 순서다. host 머신은 항상 맨 앞에 포함한다. 모든 대상의 SHA·self-check·version 고정 검사가 통과해야 첫 교체를 한다. host → host 머신 agent → 나머지 agent 순서이며 새 실행 판·SHA·새 프로세스를 확인한다. 기존 macOS launchd 감독자만 재시작한다. 최초 rollout API 반영은 아래 원시 명령을 쓰는 기존 절차로 한다. 설치·해제·start·stop과 시스템 설정은 사람이 한다.
 
