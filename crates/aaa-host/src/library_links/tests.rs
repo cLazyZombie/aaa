@@ -1279,15 +1279,6 @@ async fn signed_report_listing_and_notice() {
     lab.h.db.set_meta("publish_origin", "https://mac-a.example.ts.net:8443").unwrap();
     lab.h.library_notice_links(&mut items);
     assert!(items[0].body.contains("보기: https://mac-a.example.ts.net:8443/v/"));
-    let telegram = crate::notify::notify_body(
-        "telegram",
-        "example",
-        &crate::notify::Place::Project("demo".into()),
-        &items,
-        &Default::default(),
-    );
-    assert!(telegram["text"].as_str().unwrap().contains("\n보기: https://"));
-    assert_eq!(telegram["disable_web_page_preview"], true);
     assert!(!lab.h.db.inbox_list(Some("demo"), false).unwrap()[0].body.contains("/v/"));
 }
 #[test]

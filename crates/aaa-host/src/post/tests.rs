@@ -1185,6 +1185,15 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
         crate::push::for_device(crate::db::Alerts { input: false, done: true }, &[queued, completed.clone()]).len(),
         1
     );
+    // 음소거한 프로젝트의 coordinator post는 앱 안에만 남는다.
+    h.project_set("demo", "mute", "true", "test").unwrap();
+    let mut quiet = input(94);
+    quiet.to = "user".into();
+    quiet.title = "음소거 확인".into();
+    quiet.body = "## Questions\n### 1. 음소거\n- A 진행\n- B 보류\n".into();
+    quiet.topic = "user-action".into();
+    assert!(matches!(h.front_post("demo", quiet, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+    assert!(queue.try_recv().is_err(), "음소거한 프로젝트의 post를 밖으로 보냈다");
 }
 
 #[test]
