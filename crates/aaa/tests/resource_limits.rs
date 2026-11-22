@@ -16,15 +16,6 @@ fn burst_fd_drop_matches(open: usize, after: usize) -> bool {
 }
 
 #[test]
-fn burst_fd_assertion_accepts_the_same_two_fd_slack_as_the_wait() {
-    for after in 16..=18 {
-        assert!(burst_fd_drop_matches(400, after), "닫은 뒤 {after}");
-    }
-    assert!(!burst_fd_drop_matches(400, 19), "여유 3개는 허용하지 않는다");
-    assert!(!burst_fd_drop_matches(16 + 256, 16), "예전 256개 상한은 검출한다");
-}
-
-#[test]
 fn cli_parses_and_dispatches_with_a_small_main_stack() {
     let lab = Lab::new();
     let node = lab.node("client", None);

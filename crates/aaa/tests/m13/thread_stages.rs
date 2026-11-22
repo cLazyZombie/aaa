@@ -52,11 +52,16 @@ fn report_stages_release_queue_capacity_and_block_new_work_after_return() {
     assert_eq!(w.show(&first)["stage"], "merge_ready", "ack는 작업 복귀가 아니다");
     report(&first, "[진행 중] 중간 단계 착지 뒤 다음 단계 구현\n");
     w.wait_show("다음 단계는 작업으로 복귀", &first, |v| v["stage"].is_null());
+    // 한도는 host가 기동 전에 집행한다. 거부된 직접 시작은 예약 길을 안내하고 thread와 pane을 만들지 않는다.
+    let threads = || w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len();
+    let panes = || w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len();
+    let before = (threads(), panes());
     let denied = w
         .h
         .json(&["thread", "start", "--title", "초과 기동", "--profile", "fake", "--kind", "dir", "--task-file", &task])
         .unwrap_err();
-    assert!(denied.contains("실행 한도"), "{denied}");
+    assert!(denied.contains("실행 한도") && denied.contains("aaa task reserve"), "{denied}");
+    assert_eq!((threads(), panes()), before, "거부한 시작이 thread나 pane을 남겼다");
     for id in [&first, &next, &third] {
         assert_eq!(w.show(id)["status"], "open");
     }

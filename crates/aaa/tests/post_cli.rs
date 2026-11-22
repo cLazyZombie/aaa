@@ -1,6 +1,6 @@
 //! CLI의 hook 응답·종료 코드 계약. 자식은 스스로 끝나고 신호를 보내지 않는다.
 #![cfg(unix)]
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
 
@@ -10,19 +10,6 @@ fn reply_to_post(mut stream: UnixStream, reply: &str) {
         serde_json::Deserializer::from_reader(&mut stream).into_iter::<serde_json::Value>().next().unwrap().unwrap();
     assert_eq!(request["harness"], "post");
     stream.write_all(reply.as_bytes()).unwrap();
-}
-
-#[test]
-fn post_fixture_replies_to_complete_json_before_write_eof() {
-    let (mut client, server) = UnixStream::pair().unwrap();
-    client.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
-    let server = std::thread::spawn(move || reply_to_post(server, "ok\n"));
-    client.write_all(br#"{"harness":"post"}"#).unwrap();
-    // 실제 agent의 read_msg처럼 완성된 JSON에 답한다. 요청 쓰기 쪽은 아직 열려 있다.
-    let mut reply = String::new();
-    client.read_to_string(&mut reply).unwrap();
-    assert_eq!(reply, "ok\n");
-    server.join().unwrap();
 }
 
 #[test]

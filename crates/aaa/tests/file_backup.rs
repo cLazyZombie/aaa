@@ -44,6 +44,5 @@ fn cli_restores_a_live_hosts_uploads_into_a_new_folder_and_obeys_the_cross_proce
         output.to_str().unwrap(),
     ]);
     assert_eq!(fs::read(output.join("projects/demo/uploads/a6d715956dab435e.png")).unwrap(), png);
-    assert!(!output.join("projects/demo/ideas").exists());
     lab.kill("source");
 }

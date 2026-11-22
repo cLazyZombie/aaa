@@ -71,7 +71,10 @@ fn disconnected_start_keeps_a_stopped_record_across_host_restart_without_install
     let record: serde_json::Value = out.lines().find_map(|l| serde_json::from_str(l).ok()).expect(&out);
     let r = &record["rollout"];
     assert_eq!(r["state"], "stopped", "{out}");
-    assert!(r["steps"].as_array().unwrap().iter().all(|s| s["started_ms"] == 0 && s["completed"] == false));
+    // 사전 검사에서 멈춰도 고정 단계 목록은 남고, 어느 단계도 시작하지 않았다.
+    let steps = r["steps"].as_array().unwrap();
+    assert!(!steps.is_empty(), "{out}");
+    assert!(steps.iter().all(|s| s["started_ms"] == 0 && s["completed"] == false));
     let id = r["id"].as_str().unwrap();
     let status = || {
         let (out, code) = person(&["--json", "deploy", "status", id, "--wait"], &[]);

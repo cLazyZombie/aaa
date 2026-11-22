@@ -283,6 +283,9 @@ fn install_status_is_read_only_and_input_authorization_cannot_open_writes() {
     let missing = json(&lab.cmd(&["install", "--status", id, "--json"]));
     assert_eq!(missing["exit_code"], 2);
     assert_eq!(missing["error"]["code"], "installation_not_found");
+    // 실패한 조회도 요청한 ID와 안전한 단계만 싣는다.
+    assert_eq!(missing["installation_id"], id, "{missing}");
+    assert_eq!(missing["error"]["details"], serde_json::json!(["phase=file_journal"]), "{missing}");
     let invalid = json(&lab.cmd(&["install", "--status", "../outside", "--json"]));
     assert_eq!(invalid["exit_code"], 2);
     assert_eq!(invalid["error"]["code"], "invalid_installation_id");
@@ -300,7 +303,9 @@ fn install_dry_run_is_read_only_and_stream_has_the_same_plan() {
     assert_eq!(v["exit_code"], 0);
     assert!(v["installation_id"].is_null());
     assert!(v["resume"].is_null());
-    assert!(v["changes"].as_array().unwrap().iter().all(|c| c["state"] == "planned" || c["state"] == "unchanged"));
+    let changes = v["changes"].as_array().unwrap();
+    assert!(!changes.is_empty(), "{v}");
+    assert!(changes.iter().all(|c| c["state"] == "planned" || c["state"] == "unchanged"));
     for name in ["write_probe", "host_connected", "service_ready"] {
         assert!(v["checks"].as_array().unwrap().iter().any(|c| c["name"] == name && c["state"] == "not_run"));
     }

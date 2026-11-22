@@ -2700,51 +2700,6 @@ fn thread_scope_survives_env_and_detach_bypass() {
     assert!(w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string().contains("\"control\""));
 }
 
-/// 동시 thread 한도는 host가 기동 전 집행한다. 거부된 요청은 thread와 pane을 만들지 않는다.
-#[test]
-fn parallel_threads_enforce_capacity_before_launch() {
-    let w = report_shell_world();
-    std::fs::write(w.projects.join("demo/project.toml"), "schema = 1\nmax_parallel_threads = 2\n").unwrap();
-    let start = |n: &str| {
-        w.h.json(&[
-            "thread",
-            "start",
-            "demo",
-            "--title",
-            n,
-            "--profile",
-            "fake",
-            "--kind",
-            "dir",
-            "--task-file",
-            &w.task(&format!("{n}.txt"), "x"),
-        ])
-    };
-    start("m1").unwrap();
-    let v2 = start("m2").unwrap();
-    assert!(v2.get("warnings").is_none(), "{v2}");
-    let panes = w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len();
-    // 한도에 닿으면 실제 기동을 보내지 않는다.
-    let o = w.h.run(&[
-        "thread",
-        "start",
-        "demo",
-        "--title",
-        "m3",
-        "--profile",
-        "fake",
-        "--kind",
-        "dir",
-        "--task-file",
-        &w.task("m3.txt", "x"),
-    ]);
-    let out = String::from_utf8_lossy(&o.stdout);
-    assert!(!o.status.success(), "{out}");
-    assert!(format!("{out}{}", String::from_utf8_lossy(&o.stderr)).contains("aaa task reserve"));
-    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 2);
-    assert_eq!(w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len(), panes);
-}
-
 /// coordinator safety(herdr-projects `check_allowed`·`Safety::launch_args`의 coordinator 몫): 사람이 터미널에서
 /// `profile allow coordinator`로 정한 목록에 없는 profile은 기본값이어도 거부하고, yolo면 coordinator를 harness의 권한 건너뛰기
 /// 인자로 띄운다(host가 profile을 풀며 붙인다, `resolved_coordinator_profile`). safety가 없는 프로젝트는 그대로다.
