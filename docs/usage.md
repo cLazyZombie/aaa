@@ -131,6 +131,16 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa routine list` · `aaa routine runs <이름>` · `aaa routine toggle <이름> --off` | 일정·thread·CI·Git 사건 자동화 |
 
 모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
+### 로컬 CLI 시간 초과
+
+로컬 host와 통신하다 시간이 초과되면 오류에 연결 준비·첫 응답·요청 전송·요청 처리 중 해당 단계와 경과 시간을 표시한다.
+「이번 요청 미전송」은 그 요청이 CLI의 전송 대기열에 들어가기 전에 실패했다는 뜻이다.
+전체 명령이 여러 요청을 순서대로 보냈다면 앞 요청의 결과도 확인한다.
+
+변경 요청이 전송 대기열에 들어간 뒤 응답이 끊기거나 host가 처리 시간 초과로 답하면 「결과 미확정」이다.
+다시 보내기 전에 해당 상태를 먼저 확인한다. 예를 들어 thread 메시지는 `aaa debug input --thread t-0001 --since 10m`으로
+전송·수락 여부를 확인한다. 결과를 알 수 없으면 중복 입력을 피하기 위해 재전송을 보류한다.
+
 ## 머신 배정
 
 머신은 host가 workspace 허용 → 독점 예약 → 착지 중 → 열린 thread÷비중(기본 CPU 수) 차례로 고른다. 머신을 비워 두려면

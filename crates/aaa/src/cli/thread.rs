@@ -406,14 +406,7 @@ pub(super) fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
     let rt = runtime()?;
     // 세션 안: 조작 권한으로 붙으면(coordinator·사람의 셸 pane) Front로, 보기 권한(thread pane)이면 hook으로 보낸다.
     // 프로젝트는 생략한다(plan §8.288): Front 길이면 host가 맡은 하나를 채운다
-    let mut control = if session {
-        rt.block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
-            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-            .ok()
-            .filter(|c| c.role.can_control())
-    } else {
-        None
-    };
+    let mut control = if session { local_front_in_session(&rt)?.filter(|c| c.role.can_control()) } else { None };
     let use_hook = session && control.is_none();
     let mut handled = None;
     let result = if a.first == "status" {

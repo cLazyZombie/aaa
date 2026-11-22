@@ -57,6 +57,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS threads(
                project TEXT NOT NULL, id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL,
                updated_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE INDEX IF NOT EXISTS threads_pane
+               ON threads(CASE WHEN json_valid(data) THEN json_extract(data, '$.pane') END);
              CREATE TABLE IF NOT EXISTS agy_slots(
                subscription TEXT PRIMARY KEY, machine TEXT NOT NULL, run TEXT NOT NULL UNIQUE, pane TEXT UNIQUE);
              CREATE TABLE IF NOT EXISTS flow_events(

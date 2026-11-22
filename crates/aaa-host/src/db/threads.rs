@@ -111,6 +111,16 @@ impl Db {
         Ok(rows)
     }
 
+    /// 호출자 확인에서 다른 pane의 저장 기록을 읽지 않는다. 같은 pane에 붙은 후보의 순서는 threads와 같다.
+    pub(crate) fn threads_for_pane(&self, pane: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare_cached(
+            "SELECT data FROM threads WHERE CASE WHEN json_valid(data) THEN json_extract(data, '$.pane') END = ?1
+             ORDER BY project, CAST(SUBSTR(id, 3) AS INTEGER), id",
+        )?;
+        Ok(st.query_map([pane], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
     /// 필터와 커서를 DB에서 적용해 끝난 thread 전문을 매 페이지 모두 읽지 않는다.
     pub fn thread_page(
         &self,

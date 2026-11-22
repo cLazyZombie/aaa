@@ -52,3 +52,65 @@ fn post_cli_rejects_old_agent_and_preserves_ack_exit_codes() {
     server.join().unwrap();
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[tokio::test]
+async fn local_post_distinguishes_first_reply_from_request_timeout() {
+    use aaa_common::conn::{FrameRx, spawn_writer};
+    use aaa_proto::{DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontMsg, FrontRequest, MAX_FRAME, Outcome};
+    use std::time::Duration;
+
+    let path = std::env::temp_dir().join(format!("aap-front-{}", aaa_common::util::new_id()));
+    std::fs::create_dir_all(path.join("host")).unwrap();
+    let listener = aaa_common::ipc::LocalListener::bind(&aaa_common::front::socket(&path)).unwrap();
+    for (welcomed, present, absent) in
+        [(false, "첫 응답 실패", "결과 미확정"), (true, "요청 처리 시간 초과", "이번 요청 미전송")]
+    {
+        let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_aaa"));
+        cmd.args(["post", "coordinator", "--notice", "--topic", "lab", "--title", "자료"])
+            .env("AAA_SESSION_ID", "s1")
+            .env_remove("AAA_HOOK_TOKEN")
+            .env_remove("AAA_HOOK_SOCK")
+            .env("AAA_STATE_DIR", &path)
+            .env("AAA_CONFIG_DIR", &path)
+            .kill_on_drop(true);
+        let (output, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(cmd.output(), async {
+                let (stream, _) = listener.accept_peer().await.unwrap();
+                let (rx, tx) = tokio::io::split(stream);
+                let mut rx = FrameRx::new(rx, MAX_FRAME);
+                assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Hello { .. }));
+                if welcomed {
+                    let tx = spawn_writer(tx, MAX_FRAME);
+                    tx.json(&FrontMsg::Welcome {
+                        proto: FRONT_API,
+                        host_id: "test".into(),
+                        role: DeviceRole::Local,
+                        front: "f1".into(),
+                        warnings: vec![],
+                    })
+                    .await
+                    .unwrap();
+                    let FrontMsg::Req { id, body: FrontRequest::Post { .. } } = rx.control().await.unwrap() else {
+                        panic!("로컬 post 요청이 없다")
+                    };
+                    tx.json(&FrontMsg::Res {
+                        id,
+                        result: Outcome::Err(ErrorBody::new(ErrorCode::Timeout, "시험 응답")),
+                    })
+                    .await
+                    .unwrap();
+                }
+            })
+        })
+        .await
+        .unwrap();
+        let output = output.unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(present), "{error}");
+        assert!(!error.contains(absent), "{error}");
+        assert!(error.contains(if welcomed { "결과 미확정" } else { "이번 요청 미전송" }), "{error}");
+    }
+    drop(listener);
+    std::fs::remove_dir_all(path).unwrap();
+}

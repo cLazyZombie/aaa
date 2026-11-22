@@ -1,6 +1,54 @@
 use super::*;
 
 #[tokio::test]
+async fn old_thread_records_keep_bounding_the_cli_role_after_index_creation() {
+    use crate::orch::ThreadRec;
+    use aaa_proto::{ThreadKind, ThreadStatus};
+
+    let root = std::env::temp_dir().join(format!("aaa-front-pane-{}", aaa_common::util::new_id()));
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = root.join("projects").display().to_string();
+    let state = root.join("host");
+    {
+        let h = Host::open(cfg.clone(), state.clone()).unwrap();
+        h.db.conn_for_test().execute("DROP INDEX threads_pane", []).unwrap();
+        assert!(h.db.thread_import("demo", "t-0001", "open", "{").unwrap());
+        for (number, pane, status, role) in [
+            (2, "claimed-pane", ThreadStatus::Resolved, aaa_proto::Role::Worker),
+            (3, "another-pane", ThreadStatus::Open, aaa_proto::Role::Worker),
+            (4, "claimed-pane", ThreadStatus::Open, aaa_proto::Role::Evaluator),
+            (5, "claimed-pane", ThreadStatus::Open, aaa_proto::Role::Worker),
+        ] {
+            let mut row = ThreadRec::starting("demo", "lab", "mac-a", "demo", role, ThreadKind::default(), 0);
+            row.id = format!("t-{number:04}");
+            row.pane = Some(pane.into());
+            row.status = status;
+            assert!(
+                h.db.thread_import("demo", &row.id, status.as_str(), &serde_json::to_string(&row).unwrap()).unwrap()
+            );
+        }
+    }
+    let h = Host::open(cfg, state).unwrap();
+    let rec = h.thread_of_pane("claimed-pane").unwrap();
+    assert_eq!(rec.id, "t-0004");
+    assert!(h.thread_of_pane("missing-pane").is_none());
+    let (client, server) = tokio::io::duplex(MAX_FRAME);
+    let (cr, cw) = tokio::io::split(client);
+    let tx = spawn_writer(cw, MAX_FRAME);
+    let mut rx = FrameRx::new(cr, MAX_FRAME);
+    let serving = tokio::spawn(serve(h.clone(), Box::new(server), Some(std::process::id()), Instant::now()));
+    tx.json(&FrontMsg::Hello { proto: FRONT_API, client: "cli".into(), session: Some("claimed-pane".into()) })
+        .await
+        .unwrap();
+    let hello = tokio::time::timeout(Duration::from_secs(2), rx.control::<FrontMsg>()).await.unwrap().unwrap();
+    assert!(matches!(hello, FrontMsg::Welcome { role: DeviceRole::Reader, .. }));
+    drop((tx, rx));
+    serving.await.unwrap().unwrap();
+    drop(h);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn local_wire_excludes_web_only_rollout_notices() {
     use aaa_proto::{NoticeKind, NoticeView};
     let root = std::env::temp_dir().join(format!("aaa-local-notice-{}", aaa_common::util::new_id()));
