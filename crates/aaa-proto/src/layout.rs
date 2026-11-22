@@ -206,59 +206,6 @@ pub fn ws_contains(ws: &Workspace, pane: &str) -> bool {
     ws.tabs.iter().any(|t| leaves(&t.root).iter().any(|p| p == pane))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rect {
-    pub x: u16,
-    pub y: u16,
-    pub w: u16,
-    pub h: u16,
-}
-
-/// pane별 칸과 구분선 칸
-pub type Rects = (Vec<(String, Rect)>, Vec<(SplitDir, Rect)>);
-
-/// 칸 나누기. 나뉜 두 칸 사이에 구분선 한 칸을 둔다(구분선 위치도 돌려준다).
-pub fn rects(node: &LayoutNode, area: Rect) -> Rects {
-    let mut panes = Vec::new();
-    let mut lines = Vec::new();
-    fn walk(n: &LayoutNode, r: Rect, panes: &mut Vec<(String, Rect)>, lines: &mut Vec<(SplitDir, Rect)>) {
-        match n {
-            LayoutNode::Pane { pane } => panes.push((pane.clone(), r)),
-            LayoutNode::Split { dir, ratio, a, b } => {
-                let total = match dir {
-                    SplitDir::Horizontal => r.w,
-                    SplitDir::Vertical => r.h,
-                };
-                if total < 3 {
-                    // 나눌 자리가 없으면 a만 그린다
-                    walk(a, r, panes, lines);
-                    return;
-                }
-                let first = ((u32::from(total - 1) * u32::from((*ratio).clamp(1, 999))) / 1000)
-                    .clamp(1, u32::from(total - 2)) as u16;
-                let second = total - 1 - first;
-                let (ra, line, rb) = match dir {
-                    SplitDir::Horizontal => (
-                        Rect { w: first, ..r },
-                        Rect { x: r.x + first, w: 1, ..r },
-                        Rect { x: r.x + first + 1, w: second, ..r },
-                    ),
-                    SplitDir::Vertical => (
-                        Rect { h: first, ..r },
-                        Rect { y: r.y + first, h: 1, ..r },
-                        Rect { y: r.y + first + 1, h: second, ..r },
-                    ),
-                };
-                lines.push((*dir, line));
-                walk(a, ra, panes, lines);
-                walk(b, rb, panes, lines);
-            }
-        }
-    }
-    walk(node, area, &mut panes, &mut lines);
-    (panes, lines)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,17 +258,18 @@ mod tests {
     /// herdr `swap_panes_exchanges_leaf_ids_without_changing_cells`
     #[test]
     fn swap_exchanges_leaves_and_keeps_cells() {
-        // a | (b / c), 비율 300
+        // a | (b / c), 안쪽 나눔 비율 300
         let mut root = p("a");
         split(&mut root, "a", "b", SplitDir::Horizontal);
         split(&mut root, "b", "c", SplitDir::Vertical);
-        set_split_ratio(&mut root, "b", 300);
-        let area = Rect { x: 0, y: 0, w: 81, h: 21 };
-        let before: Vec<Rect> = rects(&root, area).0.into_iter().map(|(_, r)| r).collect();
+        assert!(set_split_ratio(&mut root, "c", 300));
         assert!(swap(&mut root, "a", "c"));
-        assert_eq!(leaves(&root), ["c", "b", "a"]);
-        let after = rects(&root, area);
-        assert_eq!(after.0.iter().map(|(_, r)| *r).collect::<Vec<_>>(), before);
+        // 나눔의 방향·비율·모양은 그대로이고 잎의 pane만 바뀐다
+        let inner = LayoutNode::Split { dir: SplitDir::Vertical, ratio: 300, a: Box::new(p("b")), b: Box::new(p("a")) };
+        assert_eq!(
+            root,
+            LayoutNode::Split { dir: SplitDir::Horizontal, ratio: 500, a: Box::new(p("c")), b: Box::new(inner) }
+        );
         assert!(!swap(&mut root, "a", "a") && !swap(&mut root, "a", "zz"));
         assert_eq!(leaves(&root), ["c", "b", "a"]);
     }
@@ -394,20 +342,5 @@ mod tests {
         let mut one = p("a");
         assert!(!resize(&mut one, "a", PaneDirection::Right, 50));
         assert!(!resize(&mut root, "zz", PaneDirection::Right, 50));
-    }
-
-    #[test]
-    fn rects_leave_one_cell_divider_and_cover_area() {
-        let mut root = p("a");
-        split(&mut root, "a", "b", SplitDir::Horizontal);
-        split(&mut root, "b", "c", SplitDir::Vertical);
-        let (panes, lines) = rects(&root, Rect { x: 0, y: 1, w: 81, h: 24 });
-        assert_eq!(panes[0], ("a".into(), Rect { x: 0, y: 1, w: 40, h: 24 }));
-        assert_eq!(lines[0], (SplitDir::Horizontal, Rect { x: 40, y: 1, w: 1, h: 24 }));
-        assert_eq!(panes[1], ("b".into(), Rect { x: 41, y: 1, w: 40, h: 11 }));
-        assert_eq!(panes[2], ("c".into(), Rect { x: 41, y: 13, w: 40, h: 12 }));
-        // 너무 좁으면 나누지 않는다
-        let (panes, lines) = rects(&root, Rect { x: 0, y: 0, w: 2, h: 5 });
-        assert_eq!((panes.len(), lines.len()), (1, 0));
     }
 }

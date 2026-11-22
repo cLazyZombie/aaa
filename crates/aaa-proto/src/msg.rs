@@ -1198,7 +1198,7 @@ pub enum AgentRequest {
         path: String,
         message: String,
     },
-    /// design_ids.v1(t-1957): 기획 branch worktree의 문서 여럿에 ID 표지(`design_put_id`)를 넣고 바뀐 파일만 한 commit으로 남긴다.
+    /// design_ids.v1(t-1957): 기획 branch worktree의 문서 여럿에 ID 표지를 넣고 바뀐 파일만 한 commit으로 남긴다.
     /// 이미 표지가 있는 문서는 그대로 둔다(다시 돌려도 안전하다). 답은 `DesignIdsMarked`다
     DesignMarkIds {
         project: String,
@@ -1260,7 +1260,7 @@ pub enum AgentRequest {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         check: Vec<String>,
     },
-    /// design_main.v1: 기획서 ID 표지(`design_put_id`)를 문서 여럿에 넣어 한 commit으로 올린다(`DesignMainWrite`와 같은 절차).
+    /// design_main.v1: 기획서 ID 표지를 문서 여럿에 넣어 한 commit으로 올린다(`DesignMainWrite`와 같은 절차).
     /// 답은 `DesignIdsMarked`다
     DesignMainMarkIds {
         project: String,
