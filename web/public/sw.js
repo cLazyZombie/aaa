@@ -1,7 +1,8 @@
 // aaa service worker: 홈 화면 앱(PWA), 셸·파일 캐시, Web Push 알림. 캐시는 herdr-web-ui(aa624cb) public/sw.js 1~190줄을
 // 옮겼다(고지는 web/src/herdr/README.md, plan §8.115, 차이 목록 M5).
-// - 화면 이동(navigate)은 네트워크 먼저: 연결되면 늘 host가 주는 지금 빌드다. 네트워크가 안 되면 캐시한 셸로 연다
-//   (앱이 뜨고 host에 다시 붙는다). 셸을 아직 갖지 못했으면 미리 둔 「연결 없음」 화면(offline.html, aaa 것)이다.
+// - 앱 첫 화면(`/`)은 캐시한 셸이 있으면 그것으로 바로 열고 새 셸은 뒤에서 받는다(t-2150, 참고는 네트워크 먼저). 「앱 다시 열기」
+//   (`?fresh`)와 다른 화면 이동은 네트워크 먼저다. 네트워크가 안 되면 캐시한 셸로 연다(앱이 뜨고 host에 다시 붙는다).
+//   셸을 아직 갖지 못했으면 미리 둔 「연결 없음」 화면(offline.html, aaa 것)이다.
 // - 해시 붙은 빌드 파일(/assets/)·아이콘·글꼴(/fonts/)은 캐시 먼저: 이름이 내용이거나 거의 바뀌지 않는다.
 //   manifest는 캐시하지 않는다(브라우저가 다시 읽어 설치된 앱을 고친다). API·WebSocket(/api/)·결과물 보기(/v/)는 건드리지 않는다.
 // - 빌드마다 worker가 따로다: 빌드가 dist/sw.js에 BUILD·BUILD_FILES를 찍는다(web/scripts/service-worker-build.ts).
@@ -116,7 +117,20 @@ async function keepShell(response) {
   await Promise.all(names.map((name) => caches.delete(name)));
 }
 
-/** 오프라인에서 열 셸: 이 캐시의 것, 아니면 아직 지우지 않은 캐시의 것 */
+/** 「앱 다시 열기」가 붙이는 주소 표지(web/src/freshShell.ts FRESH_PARAM과 같다): 캐시한 셸 말고 host의 지금 셸 */
+const FRESH = "fresh";
+
+/** 캐시한 셸로 답해도 되는 앱 첫 화면 주소(manifest start_url "/") */
+function isShellPath(pathname) {
+  return pathname === "/" || pathname === "/index.html";
+}
+
+/** 앱 셸인지: 입구 script를 여는 HTML. 전에 다른 화면 이동의 답이 "/"로 놓였을 수 있다(t-2150 전 worker) */
+async function isAppShell(response) {
+  return isPage(response) && shellFiles(await response.clone().text()).some((path) => path.endsWith(".js"));
+}
+
+/** 캐시한 셸: 이 캐시의 것, 아니면 아직 지우지 않은 캐시의 것 */
 async function cachedShell() {
   const cache = await caches.open(CACHE);
   return (await cache.match("/")) || (await caches.match("/"));
@@ -133,18 +147,28 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
-        let response;
+        // 셸을 받으면 사본을 둔다. 기다리지 않는다: 페이지는 셸을 오는 대로 받고, worker는 사본을 둘 때까지 산다(put은 본문을
+        // 다 읽는다). 그사이 묻는 빌드 파일은 옛 캐시가 답할 수 있다: 해시 파일은 어느 쪽이든 같다. 캐시를 못 써도 페이지는 잃지 않는다
+        // 셸만 둔다: 파일 보기(`/f/`) 같은 다른 화면을 "/"로 두면 캐시 먼저인 첫 화면이 그것을 연다
+        const network = fetch(request).then((response) => {
+          if (response.ok && isShellPath(url.pathname) && isPage(response)) event.waitUntil(keepShell(response.clone()).catch(() => undefined));
+          return response;
+        });
+        // 앱 첫 화면은 캐시 먼저(t-2150, 사용자 q-4688 1A): 다시 연 앱이 새 연결과 셸 왕복을 기다리지 않고 바로 앱을 돌린다. 새 셸은
+        // 위에서 뒤로 받아 다음 실행에 쓴다. 배포 뒤 첫 실행은 옛 빌드이고 앱이 「앱 다시 열기」 줄을 보인다. 그 단추는 FRESH 표지를
+        // 붙여 열어 host의 지금 셸을 받는다. 다른 주소(파일 보기 등)는 네트워크 먼저다
+        if (isShellPath(url.pathname) && !url.searchParams.has(FRESH)) {
+          const cached = await cachedShell();
+          if (cached && (await isAppShell(cached))) {
+            event.waitUntil(network.catch(() => undefined));
+            return cached;
+          }
+        }
         try {
-          response = await fetch(request);
+          return await network;
         } catch (err) {
           return (await cachedShell()) || (await caches.match(OFFLINE_URL)) || Response.error();
         }
-        if (response.ok) {
-          // 기다리지 않는다: 페이지는 셸을 오는 대로 받고, worker는 사본을 둘 때까지 산다(put은 본문을 다 읽는다).
-          // 그사이 묻는 빌드 파일은 옛 캐시가 답할 수 있다: 해시 파일은 어느 쪽이든 같다. 캐시를 못 써도 페이지는 잃지 않는다
-          event.waitUntil(keepShell(response.clone()).catch(() => undefined));
-        }
-        return response;
       })(),
     );
     return;

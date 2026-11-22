@@ -1,8 +1,9 @@
 // 다시 연 앱의 첫 화면(t-2150): 마지막으로 확인한 기기면 기기 확인(me) 응답 전에 상태 연결을 열고, 기억한 coordinator pane은
 // thread 목록 응답을 기다리지 않고 연다. 두 응답을 route로 붙잡은 채 WebSocket 요청과 대화 DOM이 나오는지 보고, 놓은 뒤에도
-// 같은 연결을 쓰는지 본다. 취소된 기기는 기억이 있어도 확인 응답으로 연결 화면이 되고 기억을 지운다. 고정 sleep은 없다.
+// 같은 연결을 쓰는지 본다. 취소된 기기는 기억이 있어도 확인 응답으로 연결 화면이 되고 기억을 지운다. 첫 화면 셸은 service
+// worker가 캐시로 답하고 새 셸은 뒤에서 두며, 「앱 다시 열기」는 host의 셸을 여는지 캐시 셸에 심은 표지로 본다. 고정 sleep은 없다.
 import assert from "node:assert/strict";
-import { aaa, step, webkit, pairPage, inTime } from "../lib/harness.mjs";
+import { aaa, step, webkit, pairPage, inTime, until } from "../lib/harness.mjs";
 import { prepare } from "../lib/chat-retention.mjs";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
@@ -76,6 +77,59 @@ export default async function () {
       await revoked.getByLabel("페어링 코드").waitFor();
       assert.equal(await revoked.evaluate(() => localStorage.getItem("aaa:signed-in")), null);
       await revoked.close();
+    });
+    await step("다시 연 앱: 첫 화면은 캐시한 셸로 바로 열고 새 셸은 뒤에서 두며, 「앱 다시 열기」는 host의 지금 셸을 연다", async () => {
+      const { page } = await pairPage(safari, aaa("web", "pair").code, { width: 390, height: 844 }, { userAgent: IPHONE, touch: true });
+      const ctx = page.context();
+      const start = new URL("/", page.url()).href;
+      const shellHas = (p, mark) => p.evaluate(async mark => (await (await caches.match("/"))?.text() ?? "").includes(mark), mark);
+      // 캐시한 셸에 표지를 심는다: 표지가 있는 화면이 열리면 worker가 캐시로 답한 것이다
+      const markShell = p => p.evaluate(async () => {
+        for (const name of await caches.keys()) {
+          const cache = await caches.open(name);
+          const shell = await cache.match("/");
+          if (!shell) continue;
+          const html = (await shell.text()).replace("<head>", '<head><meta name="aaa-shell" content="cached">');
+          await cache.put("/", new Response(html, { headers: shell.headers }));
+        }
+      });
+      // 셸은 worker가 맡은 화면 이동에서 둔다: worker가 화면을 맡은 뒤 한 번 다시 연다
+      await until("service worker가 화면을 맡음", () => page.evaluate(() => !!navigator.serviceWorker.controller));
+      await page.reload();
+      await until("셸 cache", () => shellHas(page, "/assets/index-"));
+      await markShell(page);
+      assert.equal(await shellHas(page, "aaa-shell"), true);
+      await page.close();
+
+      const reopened = await ctx.newPage();
+      await reopened.goto(start);
+      assert.equal(await reopened.locator('meta[name="aaa-shell"]').count(), 1, "캐시한 셸로 열려야 한다");
+      await reopened.getByTestId("machine-labA").waitFor({ state: "attached" });
+      // 그사이 받은 host의 셸이 캐시 자리를 바꾼다(다음 실행은 새 빌드)
+      await until("뒤에서 받은 셸", async () => !(await shellHas(reopened, "aaa-shell")) && shellHas(reopened, "/assets/index-"));
+
+      // 배포 뒤 첫 실행: host가 다른 웹을 알리면 줄이 뜨고, 단추는 캐시한 셸이 아니라 host의 셸을 연다.
+      // 뒤 갱신이 셸 자리를 바꾼 뒤에 다시 심는다(그 전에 심으면 갱신이 덮는다)
+      await markShell(reopened);
+      await ctx.routeWebSocket(/\/api\/v1\/events/, ws => {
+        const server = ws.connectToServer();
+        server.onMessage(raw => ws.send(typeof raw === "string" && raw.includes('"ev":"web"') ? raw.replace(/"build":"[^"]*"/, '"build":"index-deployed"') : raw));
+      });
+      await reopened.close();
+      const stale = await ctx.newPage();
+      await stale.goto(`${start}#pane=${encodeURIComponent(fixture.coordinator)}`);
+      assert.equal(await stale.locator('meta[name="aaa-shell"]').count(), 1, "배포 뒤 첫 실행은 캐시한 셸");
+      const line = stale.getByTestId("web-update");
+      await line.waitFor();
+      // 뒤 갱신이 끝난 뒤 캐시를 다시 옛 셸로 둔다(새 셸을 아직 받지 못한 경우): 그냥 새로 고치면 이 셸이 다시 열린다
+      await until("뒤에서 받은 셸", async () => !(await shellHas(stale, "aaa-shell")) && shellHas(stale, "/assets/index-"));
+      await markShell(stale);
+      await Promise.all([stale.waitForEvent("load"), line.getByRole("button", { name: "앱 다시 열기" }).click()]);
+      assert.equal(await stale.locator('meta[name="aaa-shell"]').count(), 0, "앱 다시 열기는 host의 셸이어야 한다");
+      await stale.waitForFunction(() => !new URL(location.href).searchParams.has("fresh"));
+      assert.equal(new URL(stale.url()).hash, `#pane=${encodeURIComponent(fixture.coordinator)}`);
+      await ctx.unrouteAll({ behavior: "wait" });
+      await stale.close();
     });
   } finally {
     await safari?.close();
