@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, chromium, webkit } from "../lib/harness.mjs";
+import { repo, aaa, until, shot, base, step, webPort, browser, chromium, webkit } from "../lib/harness.mjs";
 import { chromiumLaunchOptions } from "../lib/chromium-launch.mjs";
 
 export default async function ({ ctl, page }) {

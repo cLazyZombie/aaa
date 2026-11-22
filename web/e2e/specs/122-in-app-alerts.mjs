@@ -112,11 +112,11 @@ async function scenario(engine, width) {
 
 export default async function () {
   await step("앱 안 알림 컴포넌트 준비", buildUI, { always: true });
-  await step("종류 아이콘·한 줄·원문·이동: Chromium 데스크톱", () => scenario(browser, 1280));
-  await step("종류 아이콘·한 줄·원문·이동: Chromium 휴대폰", () => scenario(browser, 390));
+  await step("종류 아이콘·한 줄·원문·누름 대상: Chromium 데스크톱", () => scenario(browser, 1280));
+  await step("종류 아이콘·한 줄·원문·누름 대상: Chromium 휴대폰", () => scenario(browser, 390));
   const safari = await webkit.launch({ headless: true });
   try {
-  await step("종류 아이콘·한 줄·원문·이동: WebKit 데스크톱", () => scenario(safari, 1280));
-  await step("종류 아이콘·한 줄·원문·이동: WebKit 휴대폰", () => scenario(safari, 390));
+  await step("종류 아이콘·한 줄·원문·누름 대상: WebKit 데스크톱", () => scenario(safari, 1280));
+  await step("종류 아이콘·한 줄·원문·누름 대상: WebKit 휴대폰", () => scenario(safari, 390));
   } finally { await safari.close(); }
 }

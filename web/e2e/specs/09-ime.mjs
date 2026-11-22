@@ -2,11 +2,9 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 09-ime(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import path from "node:path";
 import {
-  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable,
-  iphoneKey, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
-  openSettings, inList, sentFrames, sentCount, sentText, domIs,
+  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable, iphoneKey, ipadKey, ipadFresh,
+  fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser, inList, sentFrames, sentCount, sentText,
 } from "../lib/harness.mjs";
 import { compositionOutput } from "../lib/composition-output.mjs";
 

@@ -3,7 +3,7 @@
 // 같음) → 「믿음」 확인 창 → OS 감지 → 준비됨, 비밀번호 꼴 대상은 보내기 전에 막음, 닫힌 포트는 까닭, 보기 기기는 목록만, 휴대폰 390 폭,
 // 지우기. M3(plan §8.420)는 화면의 설정 전송·SSH 거부 표시와 실제 install의 비특권 SSH 거부를 각각 검사한다.
 // 큰 실행 파일의 전송·SHA/판 대조·실패 뒤 정리는 host의 실험실 SSH 시험이 맡는다. 실제 설치·등록 끝까지는
-// host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
+// host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 통과로 넘기지 않고 실패한다.
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { machinePassword } from "../lib/machine-password.mjs";
@@ -42,10 +42,7 @@ if (sshd) {
 }
 
 export default async function ({ page }) {
-  if (!sshd) {
-    console.log("sshd가 없어 72-machine-add를 건너뛴다");
-    return;
-  }
+  if (!sshd) throw new Error("72-machine-add: sshd(/usr/sbin/sshd·/usr/bin/sshd)가 없다. 실험실 SSH 서버 없이 통과로 넘기지 않는다");
   // ssh-keygen -lf가 보이는 host key 지문(사람이 그 머신에서 맞춰 보는 값)
   const fingerprint = execFileSync("ssh-keygen", ["-lf", `${lab}/hostkey.pub`], { encoding: "utf8" }).split(" ")[1];
   await step("실험실 sshd 시작", async () => {

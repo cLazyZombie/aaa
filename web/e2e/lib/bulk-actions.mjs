@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
+import { root, aaa, inList, domIs, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
 import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 import { pendingDeletionCleared } from "./bulk-delete-ready.mjs";

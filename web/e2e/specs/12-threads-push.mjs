@@ -1,9 +1,8 @@
 // 고유 프로세스·전송 경계는 남기고 화면 모델과 겹치는 시나리오는 단위 owner에 맡긴다.
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import {
-  root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, base, setPushKey, openSettings, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
+  root, aaa, until, domIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey, step, browser, base,
+  setPushKey, setInUse, pushInUse, coordinatorPost, inList,
 } from "../lib/harness.mjs";
 import { prepareThreadPages, threadPages } from "../lib/thread-pages.mjs";
 import { threadBodyLifetime, threadFailureLifetime } from "../lib/thread-lifetime.mjs";

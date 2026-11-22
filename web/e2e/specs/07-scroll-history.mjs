@@ -1,7 +1,6 @@
 // 고유 프로세스·전송 경계는 남기고 화면 모델과 겹치는 시나리오는 단위 owner에 맡긴다.
 import {
-  webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, shot, pairPage, base, steps, step, browser,
-  openSettings, start, stop, sentFrames, sentText, inList, paneHash,
+  root, aaa, waitOutput, until, screenText, shot, pairPage, base, step, browser, start, stop, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function () {
