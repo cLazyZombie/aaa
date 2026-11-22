@@ -1,6 +1,5 @@
 """실제 CLI의 한 번 빌드·산출물 불변·SHA/심볼/native 결속을 가짜 컴파일러로 확인한다."""
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -12,9 +11,6 @@ import unittest
 
 
 SCRIPT = Path(__file__).with_name("windows-production.py")
-spec = importlib.util.spec_from_file_location("windows_production", SCRIPT)
-production = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(production)
 
 GUID = "{01234567-89AB-CDEF-0123-456789ABCDEF}"
 TOOLS = r'''

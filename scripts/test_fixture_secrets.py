@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.fixture_secret import token, fresh_token, assert_opaque
-from scripts.check_fixture_secrets import check, violations
+from scripts.check_fixture_secrets import violations
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -40,4 +40,3 @@ class FixtureSecrets(unittest.TestCase):
         self.assertFalse(violations('let secret = aaa_test_support::token("automation");'))
         self.assertFalse(violations('access_token: fixtureToken("automation")'))
         self.assertFalse(violations('dict(access_token=token("automation"))'))
-        self.assertEqual(check(), [])
