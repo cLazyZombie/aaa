@@ -99,11 +99,14 @@ fn ids(text: &str) -> Vec<String> {
 }
 
 /// 교체·폐기·답변 불필요 설명의 참조만 제외한다. 같은 번호의 실제 답 안내는 남긴다.
-fn answer_ids(text: &str) -> Vec<String> {
+fn answer_ids(text: &str, replacements: &HashMap<String, String>) -> Vec<String> {
     static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
         let reference = r"(?:\[[^\]\n]*\]\([^()\n]*q-[0-9]+[^()\n]*\)|q-[0-9]+)";
+        let replacement = format!(
+            r"(?<old>{reference})[ \t]*에서[ \t]*(?<new>{reference})[ \t]*(?:으로|로)[ \t]*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)\b"
+        );
         Regex::new(&format!(
-            r"{reference}\s*에서\s*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)|옛\s*번호\s*[:：]?\s*{reference}|{reference}\s*\(옛\s*번호\)|{reference}\s*(?:(?:은|는|이|가)\s*)?(?:이미\s*)?(?:닫았|닫혔|폐기했)(?:습니다|어요|고|으며|으니|지만)|{reference}\s*(?:에는|에|에서는|에서|은|는)?\s*답하지\s*(?:않으셔도|않아도)\s*됩니다|{reference}\s*(?:은|는)\s*이\s*(?:질문이|시안이|카드가)\s*대신합니다\b"
+            r"{replacement}|{reference}\s*에서\s*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)|옛\s*번호\s*[:：]?\s*{reference}|{reference}\s*\(옛\s*번호\)|{reference}\s*(?:(?:은|는|이|가)\s*)?(?:이미\s*)?(?:닫았|닫혔|폐기했)(?:습니다|어요|고|으며|으니|지만)|{reference}\s*(?:에는|에|에서는|에서|은|는)?\s*답하지\s*(?:않으셔도|않아도)\s*됩니다|{reference}\s*(?:은|는)\s*이\s*(?:질문이|시안이|카드가)\s*대신합니다\b"
         ))
         .unwrap()
     });
@@ -112,7 +115,20 @@ fn answer_ids(text: &str) -> Vec<String> {
     });
     ids(&HISTORY.replace_all(text, |c: &regex::Captures<'_>| {
         let matched = c.get(0).unwrap();
-        if TARGET.is_match(&text[matched.end()..]) { matched.as_str().to_owned() } else { " ".into() }
+        if let (Some(old), Some(new)) = (c.name("old"), c.name("new")) {
+            let old_ids = ids(old.as_str());
+            let new_ids = ids(new.as_str());
+            let at_token_start = !text[..old.start()].ends_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '-');
+            if at_token_start
+                && let ([old_id], [new_id]) = (old_ids.as_slice(), new_ids.as_slice())
+                && replacements.get(old_id) == Some(new_id)
+            {
+                return format!(" {}", &text[old.end()..matched.end()]);
+            }
+        } else if !TARGET.is_match(&text[matched.end()..]) {
+            return " ".into();
+        }
+        matched.as_str().to_owned()
     }))
 }
 
@@ -365,8 +381,9 @@ fn summary_card_count(text: &str, offset: usize) -> Option<usize> {
     })
 }
 
-fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
+fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMap<String, String>) -> Inspection {
     let blocks = blocks(text);
+    let answer_ids = |text| answer_ids(text, replacements);
     let reply_refs = blocks.iter().flat_map(|b| answer_ids(&b.text)).fold(Vec::new(), |mut refs, id| {
         if let Some(state) = cards.get(&id)
             && !refs.iter().any(|(seen, _)| seen == &id)
@@ -540,31 +557,44 @@ impl Host {
         let open = self.question_catalog(false)?;
         let mut cards = HashMap::new();
         let mut replacements = HashMap::<String, Vec<String>>::new();
-        for id in ids(&reply.text).into_iter().take(128) {
-            if open
-                .iter()
-                .any(|q| q.project.as_deref() == Some(&project) && q.short_id.as_ref().unwrap_or(&q.id) == &id)
+        let mut confirmed_replacements = HashMap::new();
+        let referenced = ids(&reply.text).into_iter().take(128).collect::<Vec<_>>();
+        for id in &referenced {
+            if open.iter().any(|q| q.project.as_deref() == Some(&project) && q.short_id.as_ref().unwrap_or(&q.id) == id)
             {
-                cards.insert(id, CardState::Open);
-            } else if let Some(answered) = self.db.question_guard_history(&project, &id)? {
+                cards.insert(id.clone(), CardState::Open);
+            } else if let Some(answered) = self.db.question_guard_history(&project, id)? {
                 if !answered
-                    && let Some(target) = self.db.question_target(Some(&project), &id)?
+                    && let Some(target) = self.db.question_target(Some(&project), id)?
                     && target.kind == "thread"
                 {
-                    let latest = open
+                    let latest: Vec<_> = open
                         .iter()
                         .filter(|q| {
                             q.project.as_deref() == Some(&project) && q.thread.as_deref() == Some(&target.subject)
                         })
-                        .take(8)
                         .map(|q| q.short_id.clone().unwrap_or_else(|| q.id.clone()))
                         .collect();
+                    // 같은 thread 안의 다른 질문이나 순서가 바뀐 기존 카드는 교체 근거가 아니다.
+                    if target.revision.strip_prefix("retired:") == Some(id.as_str()) {
+                        for candidate in &latest {
+                            if referenced.contains(candidate)
+                                && aaa_proto::cmp_short_ids(candidate, id).is_gt()
+                                && let Some(next) = self.db.question_target(Some(&project), candidate)?
+                                && next.position == target.position
+                                && !next.revision.starts_with("retired:")
+                            {
+                                confirmed_replacements.insert(id.clone(), candidate.clone());
+                                break;
+                            }
+                        }
+                    }
                     replacements.insert(id.clone(), latest);
                 }
-                cards.insert(id, if answered { CardState::Answered } else { CardState::Closed });
+                cards.insert(id.clone(), if answered { CardState::Answered } else { CardState::Closed });
             }
         }
-        let inspection = inspect(&reply.text, &cards);
+        let inspection = inspect(&reply.text, &cards, &confirmed_replacements);
         if let Some(evidence) = inspection.missing
             && (!posted || evidence.fresh)
         {

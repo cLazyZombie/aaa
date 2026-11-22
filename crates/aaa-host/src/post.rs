@@ -1888,11 +1888,14 @@ mod tests {
         assert!(
             h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap()
         );
-        let body = "## Questions\n### 1. 그림\n- A 통과 (추천)\n- B 더 고침\n";
+        let body = "## Questions\n### 1. 그림\n- A 통과 (추천)\n- B 더 고침\n### 2. 소리\n- A 통과\n- B 더 고침\n";
         let now = util::now_ms();
         let mut turn_end = now;
         let mut previous = None;
         for (n, revision) in ["first", "replacement"].into_iter().enumerate() {
+            if let Some(prior_revision) = rec.report_hash.as_deref() {
+                h.db.refresh_thread_question_ids("demo", &rec.id, prior_revision, revision, &[]).unwrap();
+            }
             rec.report_hash = Some(revision.into());
             rec.questions =
                 h.identify_questions("demo", "thread", &rec.id, revision, &aaa_proto::report_questions(body)).unwrap();
@@ -1906,6 +1909,9 @@ mod tests {
                 );
                 for text in [
                     text,
+                    format!(
+                        "아래 새 카드로 답해 주세요.\n\n{id}에서 [{current} 질문](#question={current})으로 바뀌었습니다."
+                    ),
                     format!("{current}에서 답해 주세요.\n앞에 안내한 {id}는 닫혔으니 답하지 않으셔도 됩니다."),
                     format!(
                         "[{current} 질문](#question={current})에서 답해 주세요.\n앞서 열려 있던 {id}는 이 질문이 대신합니다."
@@ -1959,6 +1965,24 @@ mod tests {
                         .iter()
                         .any(|i| i.event == crate::question_guard::EVENT)
                 );
+                let other = rec.questions[1].id.as_deref().unwrap();
+                for text in [
+                    format!(
+                        "아래 새 카드로 답해 주세요.\n\n{id}에서 [{other} 질문](#question={other})으로 바뀌었습니다."
+                    ),
+                    format!(
+                        "{id}에서 [{current} 질문](#question={current})으로 바뀌었습니다. 별도로 {id}에서 배포 승인 여부를 알려 주세요."
+                    ),
+                ] {
+                    h.inbox_finish_where("demo", |i| i.event == crate::question_guard::STALE_EVENT);
+                    turn_end += 1;
+                    h.on_harness("m", completed_reply("codex", now, turn_end, &text));
+                    let items = h.db.inbox_list(Some("demo"), false).unwrap();
+                    assert!(
+                        items.iter().any(|i| i.event == crate::question_guard::STALE_EVENT && i.summary.contains(id)),
+                        "{text}"
+                    );
+                }
             }
             previous = Some(current);
         }

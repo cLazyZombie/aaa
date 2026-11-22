@@ -1,5 +1,13 @@
 use super::*;
 
+fn answer_ids(text: &str) -> Vec<String> {
+    super::answer_ids(text, &HashMap::new())
+}
+
+fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
+    super::inspect(text, cards, &HashMap::new())
+}
+
 /// 11-18의 오탐 세 건과 실제 터미널 조작 요청. 주소와 주변 작업 설명은 예시로 바꿨다.
 #[test]
 fn observed_model_offer_and_existing_card_options_do_not_warn() {
@@ -126,6 +134,35 @@ fn observed_replacement_explanation_is_not_an_old_card_answer_request() {
         result.missing,
         result.stale
     );
+}
+
+/// 11-21에 관측한 교체 문장. 링크 주소와 답변 안내는 예시다.
+#[test]
+fn observed_explicit_replacement_keeps_only_the_new_card_in_the_explanation() {
+    let old = "q-4584";
+    let new = "q-4591";
+    let cards = HashMap::from([(old.into(), CardState::Closed), (new.into(), CardState::Open)]);
+    let replacements = HashMap::from([(old.into(), new.into())]);
+    let history = "q-4584에서 [q-4591 질문](#question=q-4591)으로 바뀌었습니다";
+    let text = format!("아래 새 카드로 답해 주세요.\n\n{history}.");
+    let result = super::inspect(&text, &cards, &replacements);
+    assert!(result.missing.is_none() && result.stale.is_none(), "{:?}", result.stale);
+    assert_eq!(super::answer_ids(history, &replacements), [new]);
+
+    let unconfirmed = inspect(&text, &cards);
+    assert_eq!(unconfirmed.stale.unwrap().refs, [(old.into(), CardState::Closed), (new.into(), CardState::Open)]);
+    let closed_cards = HashMap::from([(old.into(), CardState::Closed), (new.into(), CardState::Closed)]);
+    assert!(inspect(&text, &closed_cards).stale.is_some());
+
+    for request in ["q-4584에서 답해 주세요.", "별도로 q-4584에서 배포 승인 여부를 알려 주세요."]
+    {
+        let result = super::inspect(&format!("{history}. {request}"), &cards, &replacements);
+        assert!(result.missing.is_none(), "{request}");
+        assert_eq!(result.stale.unwrap().refs, [(old.into(), CardState::Closed)], "{request}");
+    }
+    let text = format!("{history}. 별도로 배포 승인 여부를 알려 주세요.");
+    let result = super::inspect(&text, &cards, &replacements);
+    assert!(result.missing.is_some() && result.stale.is_none());
 }
 
 /// 교체 경위는 카드 수를 채우지 않고 실제 옛 카드 안내·별개 승인을 면제하지 않는다.
