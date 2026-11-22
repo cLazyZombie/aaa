@@ -103,13 +103,6 @@ impl HostWatch {
         self.panes.iter().find(|p| p.id == id)
     }
 
-    /// 이름이 `name`인 pane(여럿이면 실행 중인 것)
-    pub fn named(&self, name: &str) -> Option<&PaneView> {
-        let mut v: Vec<_> = self.panes.iter().filter(|p| p.name == name).collect();
-        v.sort_by_key(|p| !p.state.is_running());
-        v.first().copied()
-    }
-
     pub fn connected(&self, name: &str) -> bool {
         self.machines.iter().any(|m| m.name == name && m.connection == aaa_proto::Connection::Connected)
     }

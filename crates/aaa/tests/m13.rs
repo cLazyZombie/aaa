@@ -63,11 +63,7 @@ const BRIEF_SETTLE_MS: &str = "300";
 
 /// m13의 host는 모두 여기서 띄운다. `settle_ms`가 `None`이면 제품 기본값(3초)이다
 fn spawn_host(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>) {
-    spawn_host_with_env(lab, tag, node, settle_ms, &[]);
-}
-
-fn spawn_host_with_env(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>, extra: &[(&str, &str)]) {
-    lab.spawn_command(tag, host_command(node, Path::new(lab::BIN), settle_ms, extra));
+    lab.spawn_command(tag, host_command(node, Path::new(lab::BIN), settle_ms, &[]));
 }
 
 fn host_command(node: &Node, exe: &Path, settle_ms: Option<&str>, extra: &[(&str, &str)]) -> Command {
@@ -104,11 +100,6 @@ while IFS= read -r line; do
       # 결과물·commit을 다 남긴 뒤에 보고를 쓴다(실제 agent처럼 보고가 끝 신호다): 보고가 바뀌면 host가 그때의
       # library를 받는다(t-0327 넘김 (나), 0바이트 사본). 보고 뒤에 쓰면 시험이 먼저 resolve해 부하에 따라 실패했다
       case "$task" in
-        *big*)
-          head -c 2097152 /dev/urandom > "$dir/library/big.bin"
-          printf '<!doctype html><p>보고</p><img src="sub/d.txt">' > "$dir/library/index.html" ;;
-      esac
-      case "$task" in
         *commit*) echo change > change.txt && git add change.txt && git -c user.name=t -c user.email=t@example.com commit -qm change ;;
       esac
       case "$task" in
@@ -117,19 +108,6 @@ while IFS= read -r line; do
       printf '[완료] 맡긴 일 끝\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "done"
-      ;;
-    *inbox/*.json*)
-      # 사후 평가자 역할: 사건 묶음을 읽고 평가 기록을 쓴 뒤 report.md를 다시 쓴다
-      f=$(printf '%s' "$line" | tr ' ' '\n' | grep 'inbox/.*[.]json$' | head -n 1)
-      dir=$(dirname "$(dirname "$f")")
-      name=$(basename "$f" .json)
-      mkdir -p "$dir/library/evaluations"
-      printf '{"targets":["t-0002"],"batches":["%s"],"summary":"묶음 %s를 봤다","stages":[{"thread":"t-0002","stage":"전체","minutes":1.4}],"proposals":[{"id":"p1","text":"brief 확인을 자동으로"},{"id":"p2","text":"보고 형식 검사"}]}' "$name" "$name" > "$dir/library/evaluations/e-$name.json"
-      [ -f "$dir/library/evaluations/bad.json" ] || printf '{"proposals":[]}' > "$dir/library/evaluations/bad.json"
-      echo "$name" >> "$dir/processed.txt"
-      printf '## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
-      mv "$dir/report.md.tmp" "$dir/report.md"
-      echo "evaluated $name"
       ;;
     *"[aaa 보류 준비]"*)
       # 보류 정리 부탁(park.rs): 커밋·push는 시험이 한다. 맡긴 대로 Handoff 보고만 다시 쓴다
@@ -248,8 +226,8 @@ while :; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      spin; AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중'
-      printf '%s\n' "$?" > "$dir/progress-exit"; perm 'make test'
+      spin; "$AA" report --percent 40 --activity '권한 확인 중'
+      perm 'make test'
       [ "$pick" = cancel ] || printf '[진행 중] 권한 확인 뒤 계속\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
     *late*)
       # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례, plan §8.99). 진행 보고가 같은 agent
@@ -273,10 +251,6 @@ while :; do
  Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain' "$(printf '\033[1A\r\033[J')"
       echo "race $pick" ;;
     *ask*) spin; perm 'make test' ;;
-    # 일하는 동안(키 하나를 받은 뒤: 시험이 작업 중을 본 뒤 보낸다) 끝낸 보고를 쓰고 `Done`을 알린 턴(턴은 시험이 끝낸다).
-    # 그 턴이 끝나면 검토 대기의 새 보고다
-    *finale*)
-      spin; key; printf '[완료] 전체 끝\n\n## Report\nfinale\n\n## Next\n- 병합\n' > "$dir/report.md"; "$AA" report --percent 100 --activity Done ;;
     *) printf 'got: %s\n' "$line"; spin ;;
   esac
   if [ "$pick" = cancel ]; then interrupted; else turn; fi
@@ -286,31 +260,6 @@ done
 
 /// 안내를 받아도 화면이 바뀌지 않는 agent(echo 없음). 받은 줄은 파일에 남긴다.
 const MUTE_AGENT: &str = "#!/bin/sh\nstty -echo\nexec cat >> \"$MUTE_LOG\"\n";
-
-/// 진행을 보고하는 agent(hook 없음, `aaa report`만): brief를 받으면 배경 CI를 기다린다며 35%와 중간 보고를 쓰고 턴을 끝낸다.
-/// `finish`를 받으면 끝낸 보고를 쓰고 `Done`을 알린다(보고를 먼저 쓰고 진행은 마지막, THREAD.md·진행 보고 안내 차례).
-const PROGRESS_AGENT: &str = r#"#!/bin/sh
-printf 'prog> '
-while IFS= read -r line; do
-  case "$line" in
-    *brief.md*)
-      dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      "$AA" report --percent 35 --activity 'CI 기다림'
-      printf '[진행 중] 배경 CI를 기다린다\n\n## Report\n중간\n\n## Next\n- CI 확인\n' > "$dir/report.md.tmp"
-      mv "$dir/report.md.tmp" "$dir/report.md"
-      echo "interim" ;;
-    *finish*)
-      printf '[완료] 끝냈다\n\n## Report\n끝\n\n## Next\n- 병합\n' > "$dir/report.md.tmp"
-      mv "$dir/report.md.tmp" "$dir/report.md"
-      "$AA" report --percent 100 --activity Done
-      echo "finished"
-      # 끝낸 뒤 받은 입력을 보이지 않는다: host는 받음 확인(화면 바뀜)을 accept_wait_ms까지 기다린다
-      case "$line" in *quiet*) stty -echo; exec cat > /dev/null ;; esac ;;
-    *) echo "got: $line" ;;
-  esac
-  printf 'prog> '
-done
-"#;
 
 /// Claude Code처럼 입력창(위 테두리·`❯ `·아래 테두리)을 그리는 harness(hook 없음, profile harness는 claude). 첫 Enter는
 /// 무시해 brief 줄이 입력창에 남는다. 다음 Enter부터 받아 대화에 `❯ <줄>`·`got: <줄>`을 남기고 입력창을 비운 뒤, Claude처럼
@@ -423,15 +372,11 @@ while :; do
 done
 "#;
 
-/// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
-const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  case \"$line\" in post-probe\\ *) sh \"${line#post-probe }\"; echo post-probe-done ;; esac\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
-
-/// `extra`는 `[projects]`에 덧붙인다. `web`이면 웹을 loopback 임의 port로 연다.
-fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
-    let listen = if web { "127.0.0.1:0" } else { "" };
+/// `extra`는 `[projects]`에 덧붙인다.
+fn host_toml(projects: &Path, extra: &str) -> String {
     format!(
-        "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"{listen}\"\n[local_agent]\nmode = \"none\"\n\
-         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"claude\", \"sticky\", \"prog\", \"asker\", \"paste\", \"resumable\", \"evil\"]\nlibrary_copy_mb = 1\n{extra}",
+        "schema = 1\n[host]\nagent_listen = \"127.0.0.1:0\"\n[web]\nlisten = \"\"\n[local_agent]\nmode = \"none\"\n\
+         [projects]\nroot = \"{}\"\nallow_profiles = [\"fake\", \"mute\", \"claude\", \"sticky\", \"asker\", \"paste\", \"resumable\", \"evil\"]\n{extra}",
         path_str(projects)
     )
 }
@@ -442,7 +387,6 @@ fn fixture_profiles(scripts: &Path, host_state: &Path) -> String {
          [profiles.mute]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
          [profiles.claude]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", HOOK_LOG = \"{}\", CLAUDE_MENU = \"{}\" }}\n\
          [profiles.sticky]\nagent = \"claude\"\ncommand = [\"{}\"]\n\
-         [profiles.prog]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
          [profiles.asker]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.resumable]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", AA_TEST_HOST_STATE = {host_state:?} }}\n\
@@ -456,8 +400,6 @@ fn fixture_profiles(scripts: &Path, host_state: &Path) -> String {
         path_str(&scripts.join("hook.log")),
         path_str(&scripts.join("claude-menu.py")),
         path_str(&scripts.join("sticky.sh")),
-        path_str(&scripts.join("prog.sh")),
-        lab::BIN,
         path_str(&scripts.join("paste.sh")),
         path_str(&scripts.join("paste.log")),
         path_str(&scripts.join("asker.sh")),
@@ -534,21 +476,16 @@ fn world() -> World {
 }
 
 fn world_with(extra: &str) -> World {
-    world_opts(extra, false)
-}
-
-fn world_opts(extra: &str, web: bool) -> World {
-    world_setup(extra, web, |_| Vec::new())
+    world_setup(extra, |_| Vec::new())
 }
 
 /// `agent_env`는 실험실 root를 받아 agent labA에 더 줄 환경 변수를 돌려준다(예: 가짜 `gh`를 PATH 앞에)
-fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(String, String)>) -> World {
-    world_build(extra, web, Some(BRIEF_SETTLE_MS), agent_env)
+fn world_setup(extra: &str, agent_env: impl FnOnce(&Path) -> Vec<(String, String)>) -> World {
+    world_build(extra, Some(BRIEF_SETTLE_MS), agent_env)
 }
 
 fn world_files(
     extra: &str,
-    web: bool,
     settle_ms: Option<&'static str>,
     with_repo: bool,
     agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
@@ -564,13 +501,11 @@ fn world_files(
     std::fs::write(scripts.join("claude.sh"), CLAUDE_AGENT).unwrap();
     std::fs::write(scripts.join("claude-menu.py"), include_str!("fixtures/claude-menu.py")).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
-    std::fs::write(scripts.join("prog.sh"), PROGRESS_AGENT).unwrap();
     std::fs::write(scripts.join("asker.sh"), ASKER_AGENT).unwrap();
     // harness claude는 실행 파일 뒤에 `--settings …`·`--session-id …`를 붙이므로 sh가 아니라 스크립트를 바로 띄운다
     for f in ["claude.sh", "sticky.sh"] {
         std::fs::set_permissions(scripts.join(f), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     }
-    std::fs::write(scripts.join("coord.sh"), COORD_AGENT).unwrap();
     std::fs::write(scripts.join("paste.sh"), PASTE_AGENT).unwrap();
     // harness claude는 실행 파일 뒤에 인자를 붙이므로 스크립트를 바로 띄운다
     std::fs::write(scripts.join("resumable.sh"), RESUMABLE_AGENT).unwrap();
@@ -586,7 +521,7 @@ fn world_files(
     let h = lab.node("h", None);
     std::fs::write(
         h.cfg.join("host.toml"),
-        format!("{}\n{}", host_toml(&projects, extra, web), fixture_profiles(&scripts, &h.state)),
+        format!("{}\n{}", host_toml(&projects, extra), fixture_profiles(&scripts, &h.state)),
     )
     .unwrap();
     std::fs::write(
@@ -594,19 +529,17 @@ fn world_files(
         format!("schema = 1\n[agent]\nwork_root = {:?}\n[reconnect]\nmax_backoff_s = 1\n", lab.root.join("workA")),
     )
     .unwrap();
-    // 가짜 외부 조회 주기만 host에 전달한다. PATH·인증 등 agent 환경을 host에 섞지 않는다.
-    let host_env = env.iter().filter(|(key, _)| key == "AAA_TEST_WATCH_POLL_MS").cloned().collect();
-    let w = World { lab, h, projects, repo, scripts, addr: String::new(), settle_ms, host_env };
+    // agent 환경(PATH·인증 등)은 host에 섞지 않는다. host에 줄 것은 owner가 `host_env`에 더한다.
+    let w = World { lab, h, projects, repo, scripts, addr: String::new(), settle_ms, host_env: Vec::new() };
     (w, env)
 }
 
 fn world_build(
     extra: &str,
-    web: bool,
     settle_ms: Option<&'static str>,
     agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
 ) -> World {
-    let (w, env) = world_files(extra, web, settle_ms, true, agent_env);
+    let (w, env) = world_files(extra, settle_ms, true, agent_env);
     world_start(w, env)
 }
 
@@ -614,7 +547,7 @@ fn world_build(
 /// 적용되지 않는 화면 안정/paste 간격을 빼고 실제 brief 수신·보고 사건을 기다린다.
 /// CLAUDE_AGENT·PASTE_AGENT와 제품 기본 간격은 기존 world가 그대로 검사한다.
 fn report_shell_world() -> World {
-    let (mut w, env) = world_files("", false, Some("0"), true, |_| Vec::new());
+    let (mut w, env) = world_files("", Some("0"), true, |_| Vec::new());
     w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
     world_start(w, env)
 }
@@ -1483,11 +1416,7 @@ fn reboot_resumes_threads() {
 
 /// 이 thread에 열린 질문(종류 `kind`, `not`에 없는 ID)이 생긴 사건
 fn open_question(ev: &mut Events, id: &str, kind: &str, not: &[&str]) -> QuestionView {
-    open_question_with_timeout(ev, id, kind, not, T)
-}
-
-fn open_question_with_timeout(ev: &mut Events, id: &str, kind: &str, not: &[&str], timeout: Duration) -> QuestionView {
-    ev.wait(&format!("{kind} 질문"), timeout, |e| match e {
+    ev.wait(&format!("{kind} 질문"), T, |e| match e {
         FrontEvent::Question(q)
             if q.thread.as_deref() == Some(id)
                 && q.state == QuestionState::Open
@@ -2264,7 +2193,7 @@ fn big_inbox_lists_within_frame() {
     const DONE: u32 = 4000;
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
-    let h = lab.node("h", Some(&host_toml(&projects, "", false)));
+    let h = lab.node("h", Some(&host_toml(&projects, "")));
     // 가짜 0.2 프로젝트(herdr-projects inbox.rs `write` 형식): 끝낸 항목 4000개(합쳐 약 2 MB)와 끝내지 않은 항목 둘
     let src = lab.root.join("hp").join("demo");
     std::fs::create_dir_all(src.join("inbox").join("done")).unwrap();
@@ -2343,7 +2272,7 @@ fn big_inbox_lists_within_frame() {
 /// harness 종료 사건과 늦은 연결을 위한 session host의 수명은 별개다.
 #[test]
 fn harness_exit_is_published_while_the_session_host_still_answers() {
-    let w = world_setup("", false, |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
+    let w = world_setup("", |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
     std::fs::write(
         w.scripts.join("resumable.sh"),
         "#!/bin/sh\nprintf 'owned-exit-ready\\n'\nwhile IFS= read -r line; do\n  [ \"$line\" != owned-exit-now ] || exit 0\ndone\n",
@@ -2378,7 +2307,7 @@ fn harness_exit_is_published_while_the_session_host_still_answers() {
 /// 「session host가 아직 닫히지 않았다」로 pane을 지우지 못한다
 #[test]
 fn closing_ended_sessions_does_not_wait_for_the_session_host_linger() {
-    let w = world_setup("", false, |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
+    let w = world_setup("", |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
     let v = w.start(&[
         "--title",
         "linger",
@@ -2733,7 +2662,7 @@ fn project_open_follows_coordinator_safety() {
 
 /// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
 /// SessionStart hook으로 대화 ID를 알린 뒤, Claude처럼 입력 상자를 그려 Enter마다 받은 줄을 남긴다. brief 안내를 받으면
-/// 그 pane 안에서 자기 thread에 Next 줄을 더해 보고(thread 범위 시험) 결과를 `probe.txt`에, 보고를 report.md에 쓴다.
+/// 보고를 report.md에 쓴다.
 /// 그 턴은 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 다음 입력까지 그린다: hook이 없는 pane은 화면
 /// 감지의 작업 중이 받았다는 사건이다(없으면 host가 `accept_wait_ms`를 다 기다린다). `@BIN@`은 aaa 실행 파일이다.
 const ADOPT_AGENT: &str = r#"#!/bin/sh
@@ -2755,9 +2684,6 @@ while IFS= read -r buf; do
         st=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n_'); st=${st%_}
         draw
         dir=$(dirname "$(printf '%s' "$buf" | sed 's/를 읽고.*//')")
-        id=$(basename "$dir"); id=${id#demo-}
-        "@BIN@" thread next demo "$id" --add probe > "$dir/probe.tmp" 2>&1; echo "rc=$?" >> "$dir/probe.tmp"
-        mv "$dir/probe.tmp" "$dir/probe.txt"
         printf '## Report\n데려온 pane이 보고했다\n\n## Next\n- 확인\n' > "$dir/report.md.tmp"
         mv "$dir/report.md.tmp" "$dir/report.md" ;;
     esac
@@ -3377,7 +3303,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
 fn flow_events_go_out_in_seq_order() {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
-    let h = lab.node("h", Some(&host_toml(&projects, "", false)));
+    let h = lab.node("h", Some(&host_toml(&projects, "")));
     let control = lab.root.join("flow.sock");
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let listener = rt.block_on(async { tokio::net::UnixListener::bind(&control).unwrap() });
@@ -3549,7 +3475,7 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     let mut phases =
         aaa_test_support::phases::Phases::new("coordinator_deployment_is_gated_and_survives_backend_restarts");
     // 줄 단위 coordinator/worker 셸만 쓴다. 저장소·TUI 준비는 필요 없다.
-    let (mut w, env) = world_files("", false, Some("0"), false, |_| Vec::new());
+    let (mut w, env) = world_files("", Some("0"), false, |_| Vec::new());
     w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
     let mut w = world_start(w, env);
     w.add_remote();

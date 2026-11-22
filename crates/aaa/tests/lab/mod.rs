@@ -260,24 +260,6 @@ impl Node {
         })
     }
 
-    /// `wait_output`과 같되 화면 폭에서 접힌 줄을 이어 본다(`--source recent-unwrapped`, 긴 줄을 기다릴 때)
-    pub fn wait_output_unwrapped(&self, pane: &str, needle: &str, timeout: Duration) -> Value {
-        let ms = timeout.as_millis().to_string();
-        let args = [
-            "pane",
-            "wait-output",
-            pane,
-            "--source",
-            "recent-unwrapped",
-            &format!("--match={needle}"),
-            "--timeout",
-            &ms,
-        ];
-        self.json(&args).unwrap_or_else(|e| {
-            panic!("{pane}에 {needle:?}가 {timeout:?} 안에 나오지 않았다: {e}\n화면:\n{}", self.screen(pane))
-        })
-    }
-
     pub fn pane(&self, pane: &str) -> Value {
         let v = self.ok(&["pane", "list"]);
         v["panes"]
@@ -662,11 +644,6 @@ impl Events {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let client = rt.block_on(aaa_common::front::FrontClient::connect(&node.state)).expect("front 연결");
         Events { rt, client, log: Vec::new() }
-    }
-
-    /// 지금까지 읽은 사건 다음 위치. 새 동작의 결과를 기다릴 때 앞 턴의 기록을 다시 고르지 않는다.
-    pub fn cursor(&self) -> usize {
-        self.log.len()
     }
 
     /// `f`가 Some을 내는 첫 사건(지금까지 받은 것부터)

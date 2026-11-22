@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn reports_and_cleanup_never_query_prs_or_resolve_on_main_membership() {
-    let (mut w, env) = world_files("tick_secs=3600\noutage_secs=0\n", false, Some("0"), true, |root| {
+    let (mut w, env) = world_files("tick_secs=3600\noutage_secs=0\n", Some("0"), true, |root| {
         let bin = root.join("gh-trap");
         std::fs::create_dir_all(&bin).unwrap();
         let gh = bin.join("gh");
