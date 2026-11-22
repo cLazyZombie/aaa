@@ -9,11 +9,10 @@ struct Rules {
     needles: HashSet<[u8; 8]>,
     starts: [u64; 1024],
     originals: HashSet<String>,
-    prefixes: HashSet<Vec<u8>>,
 }
 impl Default for Rules {
     fn default() -> Self {
-        Self { needles: HashSet::new(), starts: [0; 1024], originals: HashSet::new(), prefixes: HashSet::new() }
+        Self { needles: HashSet::new(), starts: [0; 1024], originals: HashSet::new() }
     }
 }
 impl Rules {
@@ -68,9 +67,6 @@ pub fn remember(value: &str) {
             if rules.needles.insert(n) {
                 let start = u16::from_le_bytes([n[0], n[1]]) as usize;
                 rules.starts[start / 64] |= 1 << (start % 64);
-                for i in 1..8 {
-                    rules.prefixes.insert(n[..i].to_vec());
-                }
             }
         }
     }
@@ -131,93 +127,52 @@ pub fn remember_auth(harness: &str, value: &str) {
     }
 }
 
-/// 끝이 비밀의 접두부이면 다음 chunk까지 잡는다. ANSI·개행을 넘는 조각도 가린다.
-#[derive(Default)]
-pub struct Stream {
-    pending: Vec<u8>,
-    masked: Vec<bool>,
-}
-impl Stream {
-    pub fn push(&mut self, bytes: &[u8], end: bool) -> Vec<u8> {
-        self.pending.extend_from_slice(bytes);
-        self.masked.resize(self.pending.len(), false);
-        let rules = RULES.read().unwrap_or_else(|e| e.into_inner());
-        if rules.needles.is_empty() {
-            self.masked.clear();
-            return std::mem::take(&mut self.pending);
+/// 완성된 자료에서 등록한 인증의 8바이트 조각을 `*`로 가린다. CSI와 개행을 넘는 조각도 가린다.
+pub fn bytes(value: &[u8]) -> Vec<u8> {
+    let rules = RULES.read().unwrap_or_else(|e| e.into_inner());
+    if rules.needles.is_empty() {
+        return value.to_vec();
+    }
+    let mut masked = vec![false; value.len()];
+    for (at, needle) in value.windows(8).enumerate() {
+        if rules.contains(needle) {
+            masked[at..at + 8].fill(true);
         }
-        // 원문과 가림 표시를 분리한다. 겹치는 8바이트 창의 끝을 다음 청크에서도 검사해야 한다.
-        for (at, needle) in self.pending.windows(8).enumerate() {
-            if rules.contains(needle) {
-                self.masked[at..at + 8].fill(true);
-            }
-        }
+    }
+    // 평문은 원문 창과 보이는 글의 창이 같다. 중복 검색과 바이트별 위치 배열을 만들지 않는다.
+    if value.iter().any(|byte| matches!(byte, 27 | b'\r' | b'\n')) {
         let mut visible = Vec::new();
-        let mut incomplete = None;
-        // 평문은 원문 창과 보이는 글의 창이 같다. 중복 검색과 바이트별 위치 배열을 만들지 않는다.
-        // 이전 청크의 미완성 CSI가 남았다면 ESC가 포함돼 기존 경로로 이어진다.
-        if self.pending.iter().any(|byte| matches!(byte, 27 | b'\r' | b'\n')) {
-            let mut i = 0;
-            while i < self.pending.len() {
-                if self.pending[i] == 27 && self.pending.get(i + 1).is_none() {
-                    incomplete = Some(i);
+        let mut i = 0;
+        while i < value.len() {
+            if value[i] == 27 && value.get(i + 1).is_none() {
+                break;
+            }
+            if value[i] == 27 && value.get(i + 1) == Some(&b'[') {
+                i += 2;
+                while i < value.len() && !(0x40..=0x7e).contains(&value[i]) {
+                    i += 1;
+                }
+                if i == value.len() {
                     break;
                 }
-                if self.pending[i] == 27 && self.pending.get(i + 1) == Some(&b'[') {
-                    let start = i;
-                    i += 2;
-                    while i < self.pending.len() && !(0x40..=0x7e).contains(&self.pending[i]) {
-                        i += 1;
-                    }
-                    if i == self.pending.len() {
-                        incomplete = Some(start);
-                        break;
-                    }
-                    i += 1;
-                    continue;
-                }
-                if !matches!(self.pending[i], b'\r' | b'\n') {
-                    visible.push((i, self.pending[i]));
-                }
                 i += 1;
+                continue;
             }
-            let text: Vec<u8> = visible.iter().map(|x| x.1).collect();
-            for (at, n) in text.windows(8).enumerate() {
-                if rules.contains(n) {
-                    for (raw, _) in &visible[at..at + 8] {
-                        self.masked[*raw] = true;
-                    }
+            if !matches!(value[i], b'\r' | b'\n') {
+                visible.push((i, value[i]));
+            }
+            i += 1;
+        }
+        let text: Vec<u8> = visible.iter().map(|x| x.1).collect();
+        for (at, n) in text.windows(8).enumerate() {
+            if rules.contains(n) {
+                for (raw, _) in &visible[at..at + 8] {
+                    masked[*raw] = true;
                 }
             }
         }
-        let mut cut = self.pending.len();
-        if !end {
-            for n in 1..=7.min(visible.len()) {
-                let start = visible.len() - n;
-                let suffix: Vec<u8> = visible[start..].iter().map(|(_, byte)| *byte).collect();
-                if rules.prefixes.contains(&suffix) {
-                    cut = cut.min(visible[start].0);
-                }
-            }
-            for n in 1..=7.min(self.pending.len()) {
-                if rules.prefixes.contains(&self.pending[self.pending.len() - n..]) {
-                    cut = cut.min(self.pending.len() - n);
-                }
-            }
-            if let Some(at) = incomplete {
-                cut = cut.min(at);
-            }
-        }
-        self.pending
-            .drain(..cut)
-            .zip(self.masked.drain(..cut))
-            .map(|(byte, masked)| if masked { b'*' } else { byte })
-            .collect()
     }
-}
-
-pub fn bytes(value: &[u8]) -> Vec<u8> {
-    Stream::default().push(value, true)
+    value.iter().zip(masked).map(|(byte, masked)| if masked { b'*' } else { *byte }).collect()
 }
 
 /// 바이너리를 바꾸지 않고 등록된 원문·인코딩 형태의 8바이트 조각 일치를 알린다.
