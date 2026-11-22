@@ -460,8 +460,15 @@ impl Host {
                 while let Ok(Some(i)) = tokio::time::timeout_at(until, rx.recv()).await {
                     batch.entry(i.project.clone()).or_default().push(i);
                 }
-                for (project, items) in batch {
-                    let mut items = me.still_news(&project, items);
+                // 보내기 전에 모든 프로젝트의 묶음을 먼저 다시 본다. 남은 것이 없는 프로젝트는 건너뛴다.
+                let batch: Vec<(String, Vec<InboxItem>)> = batch
+                    .into_iter()
+                    .map(|(project, items)| {
+                        let items = me.still_news(&project, items);
+                        (project, items)
+                    })
+                    .collect();
+                for (project, mut items) in batch {
                     if items.is_empty() {
                         continue;
                     }
