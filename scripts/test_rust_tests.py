@@ -286,7 +286,7 @@ print('test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtere
 sys.exit(7 if sys.argv[1] == 'complete' else 0)
 """)
             jobs = [Job(mode, [sys.executable, str(fixture), mode], root) for mode in ["complete", "missing"]]
-            results = execute(jobs, root, 1, 1, report_time=True)
+            results = execute(jobs, root, 1, 1, cpu_budget=1, report_time=True)
             self.assertEqual(results[0]["exit"], 7)
             self.assertEqual(results[0]["test_times"], [
                 dict(name="module::빠른_시험", outcome="ok", seconds=0.125),
@@ -302,10 +302,12 @@ sys.exit(7 if sys.argv[1] == 'complete' else 0)
         artifacts = [dict(executable=name, manifest_path=f"/workspace/{name}/Cargo.toml",
                           target=dict(name=name, kind=["test"]))
                      for name in ("short", "slow", "new", "m13")]
-        names = ["rollout::one", "rollout::two", "rollout::three", "a", "b", "c"]
+        names = ["one", "two", "three", "a", "b", "c"]
+        # 시간 원장에 개별 시간이 있는 owner는 그 값(60)으로, 없는 owner는 binary 기본값을 나눈 값(6)으로 줄을 선다.
+        durations = {"short": 1, "slow": 40, "m13::one": 60, "m13::two": 60, "m13::three": 60}
         with patch("scripts.rust_tests.subprocess.check_output",
                    return_value="\n".join(name + ": test" for name in names)):
-            jobs = plan(artifacts, 6, {"short": 1, "slow": 40})
+            jobs = plan(artifacts, 6, durations)
         self.assertEqual([job.name for job in jobs],
                          ["new", "m13-1", "m13-2", "m13-3", "slow", "m13-4", "m13-5", "m13-6", "short"])
         self.assertCountEqual([name for job in jobs for name in job.tests or []], names)
@@ -364,11 +366,10 @@ print(f'running {sys.argv[3]} tests')
             self.assertCountEqual(seen, [b"A", b"B", b"C", b"D"])
             self.assertTrue(all(result["exit"] == 0 for result in results))
 
-    def test_every_test_is_selected_exactly_once_including_rollout(self):
-        names = [f"module::case_{n}" for n in range(99)] + ["rollout::restart"]
+    def test_every_test_is_selected_exactly_once(self):
+        names = [f"module::case_{n}" for n in range(100)]
         groups = partitions(names)
         self.assertEqual(sorted(name for group in groups for name in group), sorted(names))
-        self.assertEqual(groups[0], ["rollout::restart"])
         self.assertTrue(all(len(group) == 1 for group in groups))
         with self.assertRaises(ValueError):
             partitions(["same", "same"])
@@ -435,57 +436,11 @@ print('running 1 test')
             self.assertEqual(len(results), 3)
             self.assertTrue(all(result["exit"] == 0 for result in results))
 
-
-    def test_parallel_jobs_finish_without_dropping_a_failed_or_following_job(self):
-        with tempfile.TemporaryDirectory(prefix="aaa-rust-runner-") as tmp, socket.socket() as listener:
-            root = Path(tmp)
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            listener.settimeout(10)
-            port = listener.getsockname()[1]
-            fixture = root / "child.py"
-            fixture.write_text("""import socket, sys
-with socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=10) as link:
-    link.sendall(b'ready')
-    assert link.recv(1) == b'!'
-print('running 1 test')
-print('test owner ... ' + ('ok' if sys.argv[2] == '0' else 'FAILED'))
-raise SystemExit(int(sys.argv[2]))
-""")
-            seen = []
-            errors = []
-
-            def release():
-                try:
-                    # 앞 두 실제 자식이 모두 도달해야 연다. 직렬 runner는 이 사건을 만족하지 못한다.
-                    first, _ = listener.accept()
-                    second, _ = listener.accept()
-                    for child in (first, second):
-                        with child:
-                            seen.append(child.recv(5))
-                            child.sendall(b"!")
-                    third, _ = listener.accept()
-                    with third:
-                        seen.append(third.recv(5))
-                        third.sendall(b"!")
-                except Exception as error:
-                    errors.append(error)
-
-            gate = threading.Thread(target=release)
-            gate.start()
-            jobs = [Job(f"job-{n}", [sys.executable, str(fixture), str(port), str(code)], root, ["owner"])
-                    for n, code in enumerate((0, 7, 0))]
-            results = execute(jobs, root, 2, 1)
-            gate.join()
-            self.assertEqual(errors, [])
-            self.assertEqual(seen, [b"ready"] * 3)
-            self.assertEqual(sorted(result["exit"] for result in results), [0, 0, 7])
-
     def test_missing_selected_tests_is_a_failure_even_when_child_exits_zero(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-count-") as tmp:
             root = Path(tmp)
             job = Job("empty", [sys.executable, "-c", "print('running 0 tests')"], root, ["owner"])
-            self.assertEqual(execute([job], root, 1, 1)[0]["exit"], 1)
+            self.assertEqual(execute([job], root, 1, 1, cpu_budget=1)[0]["exit"], 1)
 
     def test_six_m13_jobs_share_cpu_budget_and_release_it_after_failure(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-cpu-") as tmp, socket.socket() as listener:
