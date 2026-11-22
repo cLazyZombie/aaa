@@ -202,13 +202,8 @@ pub(crate) fn check_keys(p256dh: &str, auth: &str) -> Result<(), String> {
 }
 
 /// 알림 내용(webhook과 같은 `notify::alert_text`). 줄은 암호문 한 통에 들게 자른다
-pub(crate) fn payload(
-    place: &crate::notify::Place,
-    items: &[InboxItem],
-    titles: &HashMap<String, String>,
-    app_badge: Option<u32>,
-) -> serde_json::Value {
-    let t = crate::notify::alert_text(place, items, titles);
+pub(crate) fn payload(project: &str, items: &[InboxItem], app_badge: Option<u32>) -> serde_json::Value {
+    let t = crate::notify::alert_text(project, items);
     let title = t.title.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = title.chars().filter(|c| !c.is_control());
     let mut title: String = chars.by_ref().take(120).collect();
@@ -312,13 +307,8 @@ impl Host {
         }
     }
 
-    /// 구독한 모든 기기에 보낸다. 흐름 사건에는 개수와 실패 까닭만 남긴다(머신 사건 자리는 그 사건을 쓴 프로젝트마다).
-    pub(crate) async fn push_items(
-        &self,
-        place: &crate::notify::Place,
-        items: &[InboxItem],
-        titles: &HashMap<String, String>,
-    ) {
+    /// 구독한 모든 기기에 보낸다. 흐름 사건에는 개수와 실패 까닭만 남긴다.
+    pub(crate) async fn push_items(&self, project: &str, items: &[InboxItem]) {
         if self.vapid.is_none() {
             return;
         }
@@ -333,11 +323,7 @@ impl Host {
                 v.basis(aaa_common::util::now_ms()),
             )
         };
-        let flow = |kind: &str, detail: String| {
-            for project in place.projects() {
-                self.flow_project(project, kind, None, detail.clone());
-            }
-        };
+        let flow = |kind: &str, detail: String| self.flow_project(project, kind, None, detail);
         if let Some((user, devices)) = skip {
             let watching = self.in_use.load(std::sync::atomic::Ordering::SeqCst);
             flow(
@@ -368,9 +354,8 @@ impl Host {
             }
             // 기존 coordinator 사용자 post만 보낸다. 배지 전용 조용한 push는 만들지 않는다.
             let body = payload(
-                place,
+                project,
                 &mine,
-                titles,
                 self.app_badge_count()
                     .inspect_err(|error| {
                         aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
@@ -397,7 +382,7 @@ impl Host {
             flow("push_gone", format!("버려진 구독 {gone}개를 지웠다"));
         }
         if !failed.is_empty() {
-            tracing::warn!(projects = ?place.projects(), "Web Push 실패 {}개(다시 보내지 않는다): {}", failed.len(), failed[0]);
+            tracing::warn!(projects = ?[project], "Web Push 실패 {}개(다시 보내지 않는다): {}", failed.len(), failed[0]);
             flow("push_failed", failed.join("; "));
         }
     }
@@ -437,21 +422,14 @@ impl PushedLog {
     }
 }
 
-/// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
-/// 「입력 필요」. 자동 외부 전달은 coordinator 사용자 post만이며, 그 앞의 출처 경계는 notify.rs가 지킨다.
+/// 기기가 고른 알림 종류(N3)에 드는 항목. coordinator 사용자 post만 가른다: 맡긴 일 완료는 「작업 완료」, 사용자 결정 요청은
+/// 「입력 필요」. 그 밖(host 이상)은 늘 보낸다. 그 앞의 출처 경계는 notify.rs가 지킨다.
 pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
     items
         .iter()
         .filter(|i| match i.item_kind.as_str() {
             "post" => {
                 if i.event == "post completed" {
-                    a.done
-                } else {
-                    a.input
-                }
-            }
-            "thread-state" => {
-                if i.event == "new report" {
                     a.done
                 } else {
                     a.input
@@ -614,7 +592,6 @@ mod tests {
 
     #[test]
     fn payloads() {
-        use crate::notify::Place;
         let item = |kind: &str, subject: &str, event: &str, summary: &str| InboxItem {
             short_id: None,
             id: "x".into(),
@@ -633,22 +610,20 @@ mod tests {
             item("post", "coordinator", "post request for user", &format!("coordinator request: 「{title}」"))
         };
         let done = item("post", "coordinator", "post completed", "coordinator notice: 「끝난 일」");
-        let demo = Place::Project("demo".into());
-        let none = HashMap::new();
         let parts = |p: &serde_json::Value| {
             let text = |key: &str| p[key].as_str().unwrap().to_string();
             (text("url"), text("title"), text("tag"), text("body"))
         };
         let own = |v: (&str, &str, &str, &str)| (v.0.to_string(), v.1.to_string(), v.2.to_string(), v.3.to_string());
         // 질문 하나: 제목에 질문 ID, 누르면 그 질문 카드, 줄은 「대상 사건 · 제목」(앱 이름 aaa를 붙이지 않는다)
-        let p = payload(&demo, &[ask("q-1000 배포 승인 aaa:question/q-1000")], &none, Some(u32::MAX));
+        let p = payload("demo", &[ask("q-1000 배포 승인 aaa:question/q-1000")], Some(u32::MAX));
         assert_eq!(
             parts(&p),
             own(("/#question=q-1000", "demo · q-1000", "aaa-demo", "coordinator 사용자 결정 요청 · q-1000 배포 승인"))
         );
         assert_eq!(p["app_badge"], u32::MAX);
         // 섞이면 프로젝트 한 자리이고 누르면 모든 thread다
-        let p = payload(&demo, &[ask("배포 승인"), done.clone()], &none, Some(u32::MAX));
+        let p = payload("demo", &[ask("배포 승인"), done.clone()], Some(u32::MAX));
         assert_eq!(
             parts(&p),
             own((
@@ -661,17 +636,17 @@ mod tests {
         // host 이상·회복: 고정 제목, 그 작업의 자리, 본문은 supervisor 요약
         let health = item("host-health", "ticker", "failed", "host 이상 · ticker · 3회");
         assert_eq!(
-            parts(&payload(&demo, &[health], &none, Some(u32::MAX))),
+            parts(&payload("demo", &[health], Some(u32::MAX))),
             own(("/#threads", "host 이상", "aaa-host-ticker", "host 이상 · ticker · 3회"))
         );
         let back = item("host-health", "ticker", "recovered", "host 회복 · ticker");
-        assert_eq!(payload(&demo, &[back], &none, None)["title"], "host 회복");
+        assert_eq!(payload("demo", &[back], None)["title"], "host 회복");
         let many: Vec<_> = (0..200).map(|n| ask(&format!("질문 {n} {}", "가".repeat(40)))).collect();
-        let body = payload(&demo, &many, &none, Some(u32::MAX))["body"].as_str().unwrap().to_string();
+        let body = payload("demo", &many, Some(u32::MAX))["body"].as_str().unwrap().to_string();
         assert!(body.ends_with('…') && body.len() > BODY_CAP / 2 && body.len() <= BODY_CAP + 3, "{}", body.len());
         // JSON escape·제목·tag·URL과 암호화 머리까지 한 통(4096바이트)에 들어야 한다.
         let escaped = ask(&"\"\\".repeat(80));
-        let p = payload(&demo, &vec![escaped; 30], &none, Some(u32::MAX));
+        let p = payload("demo", &vec![escaped; 30], Some(u32::MAX));
         assert!(p["body"].as_str().unwrap().contains("\"\\\"\\"), "escape가 필요한 글이 본문에 남아야 한다");
         assert!(seal(&[0; 16], &[0; 12], &[0; 16], &[0; 65], p.to_string().as_bytes()).unwrap().len() <= 4096);
     }

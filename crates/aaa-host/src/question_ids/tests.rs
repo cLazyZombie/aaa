@@ -207,7 +207,7 @@ async fn structured_post_answers_by_id_keep_each_question_and_close_once_with_fu
     let (post, r) = lab.post(1, BODY);
     let q = r.questions.unwrap();
     let item = h.db.post_inbox("demo", &post).unwrap().unwrap();
-    let alert = crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &[item], &Default::default());
+    let alert = crate::notify::alert_text("demo", &[item]);
     assert_eq!(alert.title, "demo · q-1000 q-1001");
     assert_eq!(alert.url, "/#question=q-1000");
     assert_eq!(q.items[0].id.as_deref(), Some("q-1000"));

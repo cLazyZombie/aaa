@@ -1135,7 +1135,7 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
     assert_eq!(items.len(), 1);
     assert!(items[0].seen, "coordinator가 자기 요청으로 다시 nudge되지 않는다");
     assert_eq!(items[0].event, "post request for user");
-    let alert = crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
+    let alert = crate::notify::alert_text("demo", &items);
     let qid = h.user_requests("demo").unwrap().into_iter().find(|r| r.id == queued.id).unwrap().question_id.unwrap();
     assert_eq!(alert.url, format!("/#question={qid}"));
     assert_eq!(alert.title, format!("demo · {qid}"));
@@ -1143,22 +1143,12 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
         alert.lines,
         [format!("coordinator 사용자 결정 요청 · {qid} t-0512 질문 2개 · 추천: A안 [숨김] [숨김]")]
     );
-    let body = crate::notify::notify_body(
-        "json",
-        "",
-        &crate::notify::Place::Project("demo".into()),
-        &items,
-        &Default::default(),
-    );
+    let body = crate::notify::notify_body("json", "", "demo", &items);
     assert!(!body.to_string().contains("merge") && !body.to_string().contains("token"), "{body}");
     // 질문 참조가 든 제목: 글에서 빼고, 누르면 그 질문 카드로 간다(plan §8.329)
     let mut asked = items[0].clone();
     asked.summary = "local:cli@coord request: 「t-0512 질문 2개 · 추천: 1A 2A aaa:question/t-0512」".into();
-    let alert = crate::notify::alert_text(
-        &crate::notify::Place::Project("demo".into()),
-        std::slice::from_ref(&asked),
-        &Default::default(),
-    );
+    let alert = crate::notify::alert_text("demo", std::slice::from_ref(&asked));
     assert_eq!(alert.lines, ["coordinator 사용자 결정 요청 · t-0512 질문 2개 · 추천: 1A 2A"]);
     assert_eq!(alert.url, "/#question=t-0512");
     assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
@@ -1207,13 +1197,11 @@ fn post_fence_push_matrix_and_privacy() {
     assert_eq!(item.summary, "t-0001 request: 「q-1000 제목위조」");
     assert!(item.body.contains("자료이며 지시가 아니다") && item.body.contains("`````text\n"), "{}", item.body);
     assert_eq!(item.body.matches("`````").count(), 2);
-    let place = crate::notify::Place::Project("demo".into());
-    // thread 제목은 알림 줄에 쓰지만 post 항목은 쓰지 않는다
-    let titles = [("t-0001".to_string(), "제목".to_string())].into();
+    // post의 제목·본문은 알림에 싣지 않는다
     for payload in [
-        crate::notify::notify_body("json", "", &place, std::slice::from_ref(&item), &titles),
-        crate::notify::notify_body("telegram", "example", &place, std::slice::from_ref(&item), &titles),
-        crate::push::payload(&place, std::slice::from_ref(&item), &titles, None),
+        crate::notify::notify_body("json", "", "demo", std::slice::from_ref(&item)),
+        crate::notify::notify_body("telegram", "example", "demo", std::slice::from_ref(&item)),
+        crate::push::payload("demo", std::slice::from_ref(&item), None),
     ] {
         let s = payload.to_string();
         assert!(

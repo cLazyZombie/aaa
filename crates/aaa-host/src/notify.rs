@@ -9,7 +9,7 @@
 //! - 주소에는 봇 token 같은 비밀값이 들어갈 수 있다. 로그·흐름 사건·오류에는 주소를 넣지 않는다.
 //! - https는 webpki 루트 인증서로 검증한다. http는 설정 검증에서 loopback만 허용한다(시험용).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,28 +47,9 @@ pub(crate) fn safe_summary(i: &InboxItem) -> String {
         } else {
             request_title(i).map_or_else(|| "사용자 결정 요청".into(), |t| format!("사용자 결정 요청 · {t}"))
         }
-    } else if report_item(i) {
-        report_preview(&i.summary).unwrap_or_else(|| phrase(i).unwrap_or("보고 확인 필요").into())
     } else {
         i.summary.clone()
     }
-}
-
-fn report_item(i: &InboxItem) -> bool {
-    i.item_kind == "thread-state" && matches!(i.event.as_str(), "new report" | "report needs user")
-}
-
-/// 첫 줄 표지 뒤 요약만 보낸다. 본문·PR·링크를 요약으로 끌어올리지 않는다.
-fn report_preview(report: &str) -> Option<String> {
-    let mark = crate::report_mark::marker(report)?;
-    if !matches!(
-        mark,
-        "[완료]" | crate::report_mark::ALERT | "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]"
-    ) {
-        return None;
-    }
-    let line = report.trim_start_matches('\u{feff}').lines().next()?.strip_prefix(mark)?.trim();
-    redact(line, 120)
 }
 
 /// coordinator가 사용자에게 묻는 post(`post request for user`)의 제목: 질문 요약·추천 한 줄(plan §8.328). 본문은 싣지 않는다.
@@ -141,121 +122,27 @@ fn redact(line: &str, cap: usize) -> Option<String> {
     (!short.is_empty()).then_some(short)
 }
 
-/// 알림이 가는 자리: 프로젝트 하나, 또는 머신 사건 묶음(그 사건을 쓴 프로젝트들). 머신 사건은 그 머신에 thread가 열린
-/// 프로젝트마다 inbox 항목이 생기지만 밖으로는 한 번만 알린다(plan §8.209)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Place {
-    Project(String),
-    Machines(Vec<String>),
-}
-
-impl Place {
-    /// 흐름 사건을 남길 프로젝트
-    pub(crate) fn projects(&self) -> &[String] {
-        match self {
-            Place::Project(p) => std::slice::from_ref(p),
-            Place::Machines(ps) => ps,
-        }
-    }
-}
-
-/// 머신 사건(연결·점검·세션 끝남)은 프로젝트마다 쓴다. 세션 복원 실패는 thread 하나의 일이다
-pub(crate) fn machine_item(i: &InboxItem) -> bool {
-    match i.item_kind.as_str() {
-        "outage" => true,
-        "health" => true,
-        "session" => i.event == "sessions ended",
-        _ => false,
-    }
-}
-
-/// 프로젝트마다 모은 알림 항목
-pub(crate) type Batch = Vec<(String, Vec<InboxItem>)>;
-
-/// 묶음에서 머신 사건을 빼 같은 종류·머신·사건은 하나만(먼저 온 것) 남긴다. 남은 프로젝트 묶음과 머신 사건 자리
-pub(crate) fn split_machine(batch: Batch) -> (Batch, Option<(Place, Vec<InboxItem>)>) {
-    let (mut rest, mut machine, mut projects) = (Vec::new(), Vec::<InboxItem>::new(), Vec::<String>::new());
-    for (project, items) in batch {
-        let (m, r): (Vec<InboxItem>, Vec<InboxItem>) = items.into_iter().partition(machine_item);
-        if !m.is_empty() && !projects.contains(&project) {
-            projects.push(project.clone());
-        }
-        for i in m {
-            let same = |x: &InboxItem| x.item_kind == i.item_kind && x.subject == i.subject && x.event == i.event;
-            if !machine.iter().any(same) {
-                machine.push(i);
-            }
-        }
-        if !r.is_empty() {
-            rest.push((project, r));
-        }
-    }
-    (rest, (!machine.is_empty()).then_some((Place::Machines(projects), machine)))
-}
-
-/// 사건의 고정 말. 영어 kind·event를 그대로 보이지 않는다. 대상 이름 뒤에 붙어 조사가 필요 없는 꼴로 쓴다(머신·thread
-/// 이름은 받침을 알 수 없다). 모르는 사건은 None(요약을 쓴다)
+/// coordinator 사용자 post의 고정 말. 영어 kind·event를 그대로 보이지 않는다. 그 밖의 사건(host 이상)은 None(요약을 쓴다)
 fn phrase(i: &InboxItem) -> Option<&'static str> {
     Some(match (i.item_kind.as_str(), i.event.as_str()) {
-        ("thread-state", "new report") => "보고 준비",
-        ("thread-state", "blocked on a prompt") => "확인창 응답 기다림",
-        ("thread-state", "thread stalled") => "작업 멈춤 확인 필요",
-        ("thread-state", "thread resumed") => "일시 오류 자동 재개 시도",
-        ("thread-state", "waiting on you") => "확인 필요",
-        ("thread-state", "pane closed") => "pane 닫힘",
-        ("thread-state", "agent gone") => "agent 없음",
-        ("thread-state", "not launched") => "시작 못 함",
-        ("task-start", "account start failed") => "계정 배정 뒤 시작 못 함",
-        ("outage", "down") => "연결 끊김",
-        ("outage", "recovered") => "다시 연결됨",
-        ("health", "ok") => "점검 정상",
-        ("health", "problem") => "점검 이상 · 새 세션 거부",
-        ("session", "sessions ended") => "thread 세션 모두 끝남",
         ("post", "post request for user") => "사용자 결정 요청",
         ("post", "post completed") => "맡긴 일 완료",
-        ("thread-state", "report needs user") => "확인 필요",
-        ("routine", "due") => "차례",
-        ("routine", "output changed") => "출력 바뀜",
-        ("routine", "failed") => "실행 못 함",
-        ("routine-approval", _) => "승인 필요",
-        ("config-error", _) => "읽지 못함",
-        ("evaluation", "evaluation") => "평가 도착",
-        ("evaluation", "invalid") => "평가 기록 거부",
         _ => return None,
     })
 }
 
-/// 알림 줄의 대상 이름(`t-0012`, `mac-a`, `routine nightly`). 머신은 앞에 `machine`을 붙이지 않는다(inbox `who`와 다르다)
-fn alert_who(i: &InboxItem) -> String {
-    match i.item_kind.as_str() {
-        "routine" | "routine-approval" => format!("routine {}", i.subject),
-        _ => i.subject.clone(),
-    }
-}
-
-/// 항목 한 줄(웹 push·webhook 공통): 「대상 사건 · thread 제목」(`t-0012 보고 준비 · 제목`, `mac-a 다시 연결됨`).
-/// `who`가 false면 알림 제목이 이미 그 대상을 말한다(thread 하나·머신 하나 자리): 사건만 쓴다. 고정 말이 없는 사건은 요약이다
-pub(crate) fn alert_line(i: &InboxItem, who: bool, titles: &HashMap<String, String>) -> String {
-    let preview = (report_item(i) || request_title(i).is_some()).then(|| safe_summary(i));
+/// 항목 한 줄(웹 push·webhook 공통): 「보낸 이 사건 · 제목」(`coordinator 사용자 결정 요청 · 제목`).
+/// 고정 말이 없는 사건(host 이상)은 요약이다
+fn alert_line(i: &InboxItem) -> String {
+    let preview = request_title(i).is_some().then(|| safe_summary(i));
     let Some(p) = preview.as_deref().or_else(|| phrase(i)) else { return safe_summary(i).chars().take(120).collect() };
-    if !who {
-        return p.to_string();
-    }
-    let mut s = format!("{} {p}", alert_who(i));
-    if i.item_kind == "thread-state"
-        && let Some(t) = titles.get(&i.subject).map(|t| t.trim()).filter(|t| !t.is_empty())
-    {
-        s.push_str(" · ");
-        s.extend(t.chars().take(80));
-    }
-    s
+    format!("{} {p}", i.subject)
 }
 
 /// 알림 하나의 제목·줄·누르면 갈 주소·자리(tag). 앱 이름(aaa)은 붙이지 않는다: 기기가 이미 보인다(herdr-web-ui
-/// `statusMessage`·herdr-projects notify.rs 「<Project> · <thread>」).
-/// - 한 thread 항목만: 「프로젝트 · thread 제목」(제목이 비면 thread ID), 자리는 그 thread, 누르면 그 thread 보기.
-/// - 그 밖의 프로젝트 항목: 프로젝트 이름, 프로젝트 자리.
-/// - 머신 사건: 머신 하나면 그 이름(자리도 그 머신), 여럿이면 「머신」.
+/// `statusMessage`).
+/// - coordinator 사용자 post: 프로젝트 이름(질문 ID가 있으면 뒤에 붙인다), 프로젝트 자리.
+/// - host 이상·회복: 고정 제목, 그 작업의 자리.
 pub(crate) struct AlertText {
     pub title: String,
     pub lines: Vec<String>,
@@ -263,12 +150,12 @@ pub(crate) struct AlertText {
     pub tag: String,
 }
 
-pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<String, String>) -> AlertText {
-    let lines = |who: bool| items.iter().map(|i| alert_line(i, who, titles)).collect::<Vec<_>>();
+pub(crate) fn alert_text(project: &str, items: &[InboxItem]) -> AlertText {
+    let lines = items.iter().map(alert_line).collect::<Vec<_>>();
     if let Some(first) = items.first().filter(|i| i.item_kind == "host-health") {
         return AlertText {
             title: if first.event == "recovered" { "host 회복" } else { "host 이상" }.into(),
-            lines: lines(false),
+            lines,
             url: "/#threads".into(),
             tag: format!("aaa-host-{}", first.subject),
         };
@@ -284,74 +171,30 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    match place {
-        Place::Project(project) => {
-            let one = items
-                .first()
-                .map(|i| i.subject.as_str())
-                .filter(|s| items.iter().all(|i| i.subject == *s && i.item_kind == "thread-state"));
-            match one {
-                Some(t) => AlertText {
-                    title: format!(
-                        "{project} · {}",
-                        titles.get(t).map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(t)
-                    ),
-                    lines: lines(false),
-                    // 웹 주소에는 프로젝트가 없다(host는 프로젝트 하나, plan §8.291). 옛 `#thread=<p>/<id>`도 웹이 연다
-                    url: format!("/#thread={}", crate::push::url_escape(t)),
-                    tag: format!("aaa-{project}/{t}"),
-                },
-                None => AlertText {
-                    title: if question_ids.is_empty() {
-                        project.clone()
-                    } else {
-                        format!("{project} · {}", question_ids.join(" "))
-                    },
-                    lines: lines(true),
-                    // 질문을 가리키는 post 하나면 그 질문 카드(보고서 패널 「답할 것」), 그 밖의 post 묶음은 모든 thread
-                    url: match items.iter().filter_map(request_question).collect::<Vec<_>>().as_slice() {
-                        [one] if items.len() == 1 => format!("/#question={}", crate::push::url_escape(one)),
-                        _ if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") => {
-                            "/#threads".into()
-                        }
-                        _ => "/".into(),
-                    },
-                    tag: format!("aaa-{project}"),
-                },
-            }
-        }
-        Place::Machines(_) => {
-            let one = items.first().map(|i| i.subject.as_str()).filter(|s| items.iter().all(|i| i.subject == *s));
-            match one {
-                Some(m) => AlertText {
-                    title: m.to_string(),
-                    lines: lines(false),
-                    url: "/".into(),
-                    tag: format!("aaa-machine-{m}"),
-                },
-                None => {
-                    AlertText {
-                        title: "머신".into(), lines: lines(true), url: "/".into(), tag: "aaa-machines".into()
-                    }
-                }
-            }
-        }
+    AlertText {
+        title: if question_ids.is_empty() {
+            project.to_string()
+        } else {
+            format!("{project} · {}", question_ids.join(" "))
+        },
+        lines,
+        // 질문을 가리키는 post 하나면 그 질문 카드(보고서 패널 「답할 것」), 그 밖의 post 묶음은 모든 thread
+        url: match items.iter().filter_map(request_question).collect::<Vec<_>>().as_slice() {
+            [one] if items.len() == 1 => format!("/#question={}", crate::push::url_escape(one)),
+            _ if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") => "/#threads".into(),
+            _ => "/".into(),
+        },
+        tag: format!("aaa-{project}"),
     }
 }
 
-/// webhook 글: 제목 한 줄과 항목마다 한 줄(웹 push와 같은 `alert_text`). 공개 결과물 보기 링크는 그 항목 줄 아래
-pub(crate) fn notify_text(place: &Place, items: &[InboxItem], titles: &HashMap<String, String>) -> String {
-    let t = alert_text(place, items, titles);
+/// webhook 글: 제목 한 줄과 항목마다 한 줄(웹 push와 같은 `alert_text`)
+pub(crate) fn notify_text(project: &str, items: &[InboxItem]) -> String {
+    let t = alert_text(project, items);
     let mut s = t.title;
-    for (i, line) in items.iter().zip(t.lines) {
+    for line in t.lines {
         s.push_str("\n- ");
         s.push_str(&line);
-        if i.item_kind != "post" {
-            for line in i.body.lines().filter(|line| line.starts_with("보기: https://")) {
-                s.push('\n');
-                s.push_str(line);
-            }
-        }
     }
     if s.chars().count() > TEXT_CAP {
         s = s.chars().take(TEXT_CAP).collect::<String>() + "\n…";
@@ -359,18 +202,12 @@ pub(crate) fn notify_text(place: &Place, items: &[InboxItem], titles: &HashMap<S
     s
 }
 
-pub(crate) fn notify_body(
-    format: &str,
-    chat_id: &str,
-    place: &Place,
-    items: &[InboxItem],
-    titles: &HashMap<String, String>,
-) -> serde_json::Value {
-    let text = notify_text(place, items, titles);
+pub(crate) fn notify_body(format: &str, chat_id: &str, project: &str, items: &[InboxItem]) -> serde_json::Value {
+    let text = notify_text(project, items);
     match format {
         "telegram" => serde_json::json!({ "chat_id": chat_id, "text": text, "disable_web_page_preview": true }),
         _ => serde_json::json!({
-            "project": match place { Place::Project(p) => Some(p.as_str()), Place::Machines(_) => None },
+            "project": project,
             "text": text,
             "items": items.iter().map(|i| serde_json::json!({
                 "id": i.id, "short_id": i.short_id, "project": i.project, "kind": i.item_kind, "subject": i.subject, "event": i.event,
@@ -484,24 +321,10 @@ pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
         && matches!(i.event.as_str(), "post request for user" | "post completed")
 }
 
-/// 프로젝트 `mute`(herdr-projects notify.rs 「mute = true silences everything but errors」, 차이 목록 N10)에도 나가는 종류:
-/// 오류(`gh` 실패 등 `outage`, 설정 파일 `config-error`)와 머신 이상(`health`)
-pub(crate) const MUTE_PASSES: &[&str] = &["outage", "config-error", "health"];
-
-/// 이 항목을 프로젝트 mute가 막는가
-pub(crate) fn muted(mute: bool, i: &InboxItem) -> bool {
-    mute && !MUTE_PASSES.contains(&i.item_kind.as_str())
-}
-
-/// 아직 알릴 만한 항목만 남긴다: 끝내지 않았고(`open`), 지난 일(`stale`: 확인한 보고, 확인 필요가 끝난 thread)이 아니다.
-/// 돌려주는 수는 뺀 항목 수다.
-pub(crate) fn news(
-    items: Vec<InboxItem>,
-    open: &HashSet<String>,
-    stale: impl Fn(&InboxItem) -> bool,
-) -> (Vec<InboxItem>, usize) {
+/// 아직 알릴 만한 항목만 남긴다: 모으는 동안 끝내지 않은 것(`open`). 돌려주는 수는 뺀 항목 수다.
+pub(crate) fn news(items: Vec<InboxItem>, open: &HashSet<String>) -> (Vec<InboxItem>, usize) {
     let n = items.len();
-    let keep: Vec<InboxItem> = items.into_iter().filter(|i| open.contains(&i.id) && !stale(i)).collect();
+    let keep: Vec<InboxItem> = items.into_iter().filter(|i| open.contains(&i.id)).collect();
     let dropped = n - keep.len();
     (keep, dropped)
 }
@@ -517,25 +340,11 @@ impl Host {
             }
         };
         let open: HashSet<String> = open.into_iter().collect();
-        let (keep, dropped) = news(items, &open, |_| false);
+        let (keep, dropped) = news(items, &open);
         if dropped > 0 {
             self.flow_project(project, "notify_skipped", None, format!("그 사이 답했거나 확인한 항목 {dropped}개"));
         }
         keep
-    }
-
-    /// 알림 줄에 쓰는 thread 제목(thread 항목의 대상). 읽지 못한 thread는 ID로 남는다
-    pub(crate) fn alert_titles(&self, place: &Place, items: &[InboxItem]) -> HashMap<String, String> {
-        let Place::Project(project) = place else { return HashMap::new() };
-        let mut out = HashMap::new();
-        for i in items.iter().filter(|i| matches!(i.item_kind.as_str(), "thread-state")) {
-            if !out.contains_key(&i.subject)
-                && let Ok(r) = self.load(project, &i.subject)
-            {
-                out.insert(i.subject.clone(), r.title);
-            }
-        }
-        out
     }
 
     /// inbox 발행과 별개인 외부 알림 경계. post 저장 owner만 host가 정한 출처 봉투를 넘긴다.
@@ -555,7 +364,7 @@ impl Host {
             && input.to == "user"
             && intent
             && pushes(&self.cfg.notify.item_kinds(), item)
-            && !muted(self.settings(&item.project).mute, item)
+            && !self.settings(&item.project).mute
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
             aaa_common::diagnostic::ignored(tx.send(item.clone()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
@@ -617,12 +426,10 @@ impl Host {
             });
             return true;
         }
-        let place = Place::Project(project.clone());
-        let titles = HashMap::new();
-        self.push_items(&place, std::slice::from_ref(&item), &titles).await;
+        self.push_items(&project, std::slice::from_ref(&item)).await;
         let n = &self.cfg.notify;
         if !n.webhook.is_empty() && !self.viewing.lock().unwrap().user_in_use() {
-            let body = notify_body(&n.format, &n.telegram_chat_id, &place, &[item], &titles);
+            let body = notify_body(&n.format, &n.telegram_chat_id, &project, &[item]);
             let result = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
             let ok = matches!(result, Ok(Ok(200..=299)));
             self.flow_project(
@@ -653,19 +460,16 @@ impl Host {
                 while let Ok(Some(i)) = tokio::time::timeout_at(until, rx.recv()).await {
                     batch.entry(i.project.clone()).or_default().push(i);
                 }
-                let batch: Batch = batch.into_iter().map(|(p, items)| (p.clone(), me.still_news(&p, items))).collect();
-                // 머신 사건은 프로젝트마다 나누지 않고 한 번(plan §8.209)
-                let (rest, machine) = split_machine(batch);
-                let places = rest.into_iter().map(|(p, items)| (Place::Project(p), items)).chain(machine);
-                for (place, items) in places {
-                    let titles = me.alert_titles(&place, &items);
-                    me.push_items(&place, &items, &titles).await;
+                for (project, items) in batch {
+                    let mut items = me.still_news(&project, items);
+                    if items.is_empty() {
+                        continue;
+                    }
+                    me.push_items(&project, &items).await;
                     let n = &me.cfg.notify;
                     if n.webhook.is_empty() {
                         continue;
                     }
-                    let mut items = items;
-                    me.library_notice_links(&mut items);
                     let mut stored: Vec<_> = items.to_vec();
                     if let Err(e) = me.db.inbox_display_ids(&mut stored) {
                         tracing::error!("알림 inbox 별칭 조회 실패: {e:#}");
@@ -676,7 +480,7 @@ impl Host {
                             item.short_id = display.short_id.clone();
                         }
                     }
-                    let body = notify_body(&n.format, &n.telegram_chat_id, &place, &items, &titles);
+                    let body = notify_body(&n.format, &n.telegram_chat_id, &project, &items);
                     let sent = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
                     let res = match sent {
                         Ok(Ok(code)) if (200..300).contains(&code) => Ok(code),
@@ -687,17 +491,15 @@ impl Host {
                             Err(format!("{}초 안에 끝나지 않았다", SEND_TIMEOUT.as_secs()))
                         }
                     };
-                    for project in place.projects() {
-                        match &res {
-                            Ok(_) => me.flow_project(project, "notify_sent", None, format!("항목 {}개", items.len())),
-                            Err(e) => me.flow_project(project, "notify_failed", None, e.clone()),
-                        }
+                    match &res {
+                        Ok(_) => me.flow_project(&project, "notify_sent", None, format!("항목 {}개", items.len())),
+                        Err(e) => me.flow_project(&project, "notify_failed", None, e.clone()),
                     }
                     match res {
                         Ok(_) => failing = false,
                         Err(e) => {
                             if !failing {
-                                tracing::warn!(projects = ?place.projects(), "알림을 보내지 못했다(다시 보내지 않는다): {e}");
+                                tracing::warn!(projects = ?[&project], "알림을 보내지 못했다(다시 보내지 않는다): {e}");
                             }
                             failing = true;
                         }
@@ -744,12 +546,12 @@ mod tests {
     #[test]
     fn short_question_ids_reach_push_titles_without_changing_legacy_question_links() {
         let mut i = request("x", "q-1000 q-1001 진행 안 aaa:question/t-0001");
-        let text = alert_text(&Place::Project("demo".into()), &[i.clone()], &HashMap::new());
+        let text = alert_text("demo", &[i.clone()]);
         assert_eq!(text.title, "demo · q-1000 q-1001");
         assert_eq!(text.url, "/#question=t-0001");
         assert!(!text.lines.join(" ").contains("aaa:"));
         i.summary = "coordinator request: 「q-1000 진행 안 aaa:question/q-1000」".into();
-        assert_eq!(alert_text(&Place::Project("demo".into()), &[i], &HashMap::new()).url, "/#question=q-1000");
+        assert_eq!(alert_text("demo", &[i]).url, "/#question=q-1000");
     }
 
     /// 보내기 직전: 모으는 동안 끝낸 항목은 빠지고 나머지는 남는다
@@ -757,17 +559,9 @@ mod tests {
     fn drops_what_was_done_meanwhile() {
         let items: Vec<InboxItem> = ["a", "b", "c"].map(|id| request(id, "진행")).into();
         let open: HashSet<String> = ["a", "c"].map(String::from).into();
-        let (keep, dropped) = news(items, &open, |_| false);
+        let (keep, dropped) = news(items, &open);
         assert_eq!(keep.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
         assert_eq!(dropped, 1);
-    }
-
-    /// 프로젝트 mute는 coordinator 사용자 post를 막는다. 대기열까지의 배선은 post 시험이 본다
-    #[test]
-    fn mute_blocks_coordinator_posts() {
-        for i in [request("a", "진행"), user_post("b", "post completed", "끝")] {
-            assert!(!muted(false, &i) && muted(true, &i), "{}", i.event);
-        }
     }
 
     /// kinds를 넓혀도 thread 보고·확인창·세션·머신 사건을 외부로 보낼 수 없다.
@@ -803,14 +597,12 @@ mod tests {
     #[test]
     fn bodies() {
         let items = [request("a", "배포 승인"), user_post("b", "post completed", "끝난 일")];
-        let demo = Place::Project("demo".into());
-        let titles = HashMap::new();
-        let t = notify_body("telegram", "-100", &demo, &items, &titles);
+        let t = notify_body("telegram", "-100", "demo", &items);
         assert_eq!(t["chat_id"], "-100");
         assert_eq!(t["disable_web_page_preview"], true);
         // 웹 push와 같은 제목·줄: 앱 이름·영어 사건을 붙이지 않고, 끝난 일의 제목은 싣지 않는다
         assert_eq!(t["text"], "demo\n- coordinator 사용자 결정 요청 · 배포 승인\n- coordinator 맡긴 일 완료");
-        let j = notify_body("json", "", &demo, &items, &titles);
+        let j = notify_body("json", "", "demo", &items);
         assert_eq!(
             (j["project"].as_str(), j["items"][1]["event"].as_str(), j["items"][1]["project"].as_str()),
             (Some("demo"), Some("post completed"), Some("demo"))
@@ -818,14 +610,14 @@ mod tests {
         assert_eq!(j["items"][0]["summary"], "사용자 결정 요청 · 배포 승인");
         // host 이상: 제목은 고정 말이고, 고정 말이 없는 사건의 줄은 요약 120자다
         let summary = format!("host 이상 · ticker · {}", "가".repeat(200));
-        let h = notify_body("json", "", &demo, &[host_health("failed", &summary)], &titles);
+        let h = notify_body("json", "", "demo", &[host_health("failed", &summary)]);
         assert_eq!(h["text"], format!("host 이상\n- {}", summary.chars().take(120).collect::<String>()));
         assert_eq!((h["project"].as_str(), h["items"][0]["kind"].as_str()), (Some("demo"), Some("host-health")));
-        let back = notify_body("telegram", "-100", &demo, &[host_health("recovered", "host 회복 · ticker")], &titles);
+        let back = notify_body("telegram", "-100", "demo", &[host_health("recovered", "host 회복 · ticker")]);
         assert_eq!(back["text"], "host 회복\n- host 회복 · ticker");
         // 줄이 많으면 텔레그램 한도 안으로 자른다
         let many: Vec<_> = (0..100).map(|n| request(&format!("r{n}"), &"가".repeat(100))).collect();
-        let text = notify_text(&demo, &many, &titles);
+        let text = notify_text("demo", &many);
         assert_eq!(text.chars().count(), TEXT_CAP + 2);
         assert!(text.ends_with("\n…"));
     }
@@ -851,18 +643,16 @@ mod tests {
         // 잘라 낸 뒤에 가리면 긴 token의 앞부분만 알림에 남는다.
         cases.push((format!("{}ghp_{}", "가".repeat(158), "x".repeat(40)), format!("{}[숨…", "가".repeat(158))));
         for (title, want) in cases {
-            let place = Place::Project("demo".into());
-            let titles = HashMap::new();
             let items = [request("x", &title)];
-            let push = crate::push::payload(&place, &items, &titles, None);
-            let hook = notify_body("json", "", &place, &items, &titles);
+            let push = crate::push::payload("demo", &items, None);
+            let hook = notify_body("json", "", "demo", &items);
             assert_eq!(push["body"], format!("coordinator 사용자 결정 요청 · {want}"));
             assert_eq!(hook["items"][0]["summary"], format!("사용자 결정 요청 · {want}"));
             assert_eq!(hook["text"], format!("demo\n- coordinator 사용자 결정 요청 · {want}"));
         }
         // 가린 뒤 남는 글이 없으면 제목 없이 고정 말만 보낸다
         let empty = [request("x", "aaa:report/r-0001")];
-        let hook = notify_body("json", "", &Place::Project("demo".into()), &empty, &HashMap::new());
+        let hook = notify_body("json", "", "demo", &empty);
         assert_eq!(hook["items"][0]["summary"], "사용자 결정 요청");
         assert_eq!(hook["text"], "demo\n- coordinator 사용자 결정 요청");
     }
