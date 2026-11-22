@@ -76,19 +76,6 @@ describe("terminal disposal", () => {
     assert.equal(renderer, undefined);
   });
 
-  it("reproduces the pending viewport read failure with immediate disposal", () => {
-    const clock = scheduler();
-    let renderer = { dimensions: 80 };
-    clock.requestAnimationFrame(() => {
-      if (renderer === undefined) throw new TypeError("renderer disposed before viewport sync");
-      return renderer.dimensions;
-    });
-
-    renderer = undefined;
-
-    assert.throws(() => clock.frame(), TypeError);
-  });
-
   it("disposes once", () => {
     const clock = scheduler();
     let disposed = 0;

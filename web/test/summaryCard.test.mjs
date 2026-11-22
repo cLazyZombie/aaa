@@ -2,7 +2,7 @@
 // 모자라면 왼쪽·위로, 단추 점은 요약 뒤 지시가 있을 때.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, speedWord, summaryActivity, summaryModel, summaryStale, summaryUpdates } from "../src/summaryCard.ts";
+import { cardLines, decidedLines, hoverPlace, modelName, popoverPlace, speedWord, summaryActivity, summaryModel, summaryStale, summaryUpdates } from "../src/summaryCard.ts";
 
 const entry = (text, extra = {}) => ({ who: null, at: null, text, dropped: false, ...extra });
 const view = (over = {}) => ({
@@ -46,7 +46,6 @@ describe("작업 요약 카드", () => {
   });
   it("지금은 3줄까지, 남은 수를 센다", () => {
     const c = cardLines(view(), "제목");
-    assert.equal(CARD_NOW, 3);
     assert.deepEqual(c.now, ["하나", "둘", "셋"]);
     assert.equal(c.moreNow, 1);
     assert.equal(c.goal, "웹 패널 다듬기");

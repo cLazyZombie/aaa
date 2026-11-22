@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-
 // 관측만 한다. 스크롤·높이·휠 전달·대기 조건을 바꾸지 않는다.
 export function installPanelScrollTrace() {
   const events = [];
@@ -49,29 +46,4 @@ export function installPanelScrollTrace() {
     },
     snapshot: () => ({ selected, phase, current: read(true), events }),
   };
-}
-
-export class PanelScrollDiagnostics {
-  constructor(root, page, engine, name) {
-    this.root = root;
-    this.page = page;
-    this.dir = path.join(root, "diagnostics", "panel-scroll");
-    this.label = `${engine}-${name}`;
-  }
-  async save(error) {
-    fs.mkdirSync(this.dir, { recursive: true });
-    const stem = path.join(this.dir, this.label);
-    const state = await this.page.evaluate(() => window.__panelScrollTrace?.snapshot());
-    fs.writeFileSync(`${stem}.json`, JSON.stringify({ label: this.label, error: error ? String(error) : null, stack: error?.stack, ...state }, null, 2));
-    if (error || process.env.AAA_E2E_PANEL_TRACE) {
-      try { await this.page.screenshot({ path: `${stem}.png`, timeout: 5000 }); }
-      catch (captureError) { console.error("목록 진단 화면 저장 오류", String(captureError)); }
-    }
-    if (error) {
-      console.error("panel-scroll-failure", JSON.stringify({ label: this.label, error: String(error), selected: state?.selected, phase: state?.phase, current: state?.current }));
-    }
-    if (process.env.AAA_E2E_PANEL_TRACE && process.env.AAA_E2E_ARTIFACTS) {
-      fs.cpSync(this.dir, path.join(process.env.AAA_E2E_ARTIFACTS, path.basename(this.root), "panel-scroll"), { recursive: true });
-    }
-  }
 }

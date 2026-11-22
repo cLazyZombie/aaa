@@ -221,13 +221,6 @@ web/e2e/specs/번호-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts
 - **번호·수집.** 파일 번호는 두 자리 이상 숫자다(`01-…`, `99-…`, `100-…`). 목록·단일 worker 실행·요약·시간 기록·patch 도구의 파일 목록은 숫자 순으로 정렬한다. 병렬 worker의 기존 긴 작업 우선 배치는 유지하고 같은 우선순위에서는 숫자 순을 따른다. 새 기능은 빈 다음 번호를 쓰고 기존 번호를 재사용하지 않는다. 파일 규칙과 실제 runner `--list` 회귀는 모든 파일의 수집 및 99→100 순서를 함께 확인한다.
 - **새 기능.** 그 기능의 spec 끝에 단계를 더한다. 새 화면·새 기능 묶음이면 다음 번호로 새 spec을 만든다. 도우미는 두 spec 이상이 쓰면 harness에 두고 끝의 `export { … }`에 더하며, 하나만 쓰면 그 spec 안에 둔다. 단계 이름은 모든 spec에서 하나다. harness 이름을 쓰면 spec 머리 `import { … } from "../lib/harness.mjs"`에 더한다(빠지면 그 단계가 ReferenceError로 실패한다). 틀은 `web/test/e2e-layout.test.mjs`가 본다.
 - **기다리기.** pane 출력은 `waitOutput`(host 사건), DOM은 `domIs`(MutationObserver), 주소는 `hashIs`, 그 밖은 `until`(시한 있는 반복). 새 시험은 앞 셋을 먼저 쓴다. 「이 화면이 보내지 않았다」는 `sentFrames`로 바로 보고, 「pane이 다 받았다」는 보낸 글(`sentText`)과 받은 글이 같아질 때까지 기다린다(03 키 막대 `sent`).
-- **나누기 전 한 파일을 고친 branch.** 병합에서 `web/e2e/web.e2e.mjs`가 충돌하면 main의 입구를 받고 자기 변경을 옮긴다:
-  ```
-  git diff $(git merge-base <내 branch> origin/main) <내 branch> -- web/e2e/web.e2e.mjs > /tmp/mine.patch
-  git checkout origin/main -- web/e2e/web.e2e.mjs
-  node web/e2e/tools/port-patch.mjs /tmp/mine.patch   # hunk마다 같은 글이 있는 spec·harness를 찾아 고친다, 새 helper는 export·import까지
-  ```
-  단계 본문은 글자 그대로 옮겼다(바꾼 줄은 t1 표지 기다림 `"한글-8"` → `"t1-42"`과 `pushKey = …` → `setPushKey(…)` 둘, 도구가 같이 바꿔 찾는다). 도구가 못 옮긴 hunk(새 단계 등)는 찍어 주므로 그 기능의 spec에 손으로 둔다.
 
 ## 실험실
 

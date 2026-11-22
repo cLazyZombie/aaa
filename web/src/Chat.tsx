@@ -11,7 +11,7 @@ import { AutoDecisionLines } from "./AutoMode";
 // 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, CornerUpLeft, Eye, Globe, Hammer, LoaderCircle, Minimize2, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView, ContextCompaction } from "./gen/proto";
@@ -29,7 +29,6 @@ import { delivered, type PendingSend } from "./ChatComposer";
 import { receiptSeen } from "./inputReceipt";
 import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
-import { markPlaces as placeMarks } from "./chatMarks";
 import { ChatRow } from "./ChatRow";
 import { usePageVisible } from "./pageVisible";
 import { mergeChatPage } from "./chatPages";
@@ -464,8 +463,6 @@ export function ChatPanel({
   findRequest = 0,
   onQuote,
   onQuoteReturn,
-  marks,
-  contextOf,
 }: {
   active?: boolean;
   onBytes?: (bytes: number) => void;
@@ -494,20 +491,7 @@ export function ChatPanel({
   onQuote?: (text: string, speaker: QuoteSpeaker, comment?: string) => boolean;
   /** 보낸 말 속 인용의 자리로(t-1222). 대화 인용은 이 기록에서 찾고, 터미널·보고·diff 인용은 이것이 연다 */
   onQuoteReturn?: (ref: QuoteRef) => void;
-  /**
-   * 대화 사이에 끼우는 host 사건 줄(기획 대화, t-1894). `after`는 그 사건 전에 보낸 마지막 사람 말의 앞부분이고, 그 말의 답 뒤
-   * (다음 사람 말 앞)에 놓는다. 없으면 맨 앞, 찾지 못하면 바로 앞 사건 자리(보내는 중인 말이면 맨 끝)
-   */
-  marks?: readonly { key: string; after: string | null; node: ReactNode }[];
-  /** 사람 말 앞의 맥락 줄을 떼어 말풍선 위 칩으로 그린다(기획 대화, t-1894). 없으면 글 그대로 */
-  contextOf?: (text: string) => { chips: { label: string; value: string; path: boolean }[]; text: string };
 }) {
-  // 맥락 칩 줄과 말풍선에 남길 글
-  const contextChips = (text: string): [ReactNode, string] => {
-    if (!contextOf) return [null, text];
-    const c = contextOf(text);
-    return [c.chips.length > 0 ? <div className="chat-context-chips">{c.chips.map((chip, n) => <span key={n} className="chat-context-chip">{chip.label} {chip.path ? <code>{chip.value}</code> : chip.value}</span>)}</div> : null, c.text];
-  };
   const visible = usePageVisible();
   const reading = active && visible;
   const readingRef = useRef(reading);
@@ -716,24 +700,6 @@ export function ChatPanel({
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
   // 이어진 도구·생각 줄은 한 줄(묶음)이다(plan §8.304). 묶음 id는 첫 줄 id고, 찾을 때는 묶음 안 어느 줄 id로도 찾는다(`rowAt`)
-  // 사건 줄 자리: 사람 말 순번 → 그 말의 답 뒤에 놓을 줄(-1은 맨 앞, 기록 끝은 Infinity)
-  const markPlaces = useMemo(() => {
-    const at = new Map<number, ReactNode[]>();
-    if (!marks || marks.length === 0) return at;
-    const places = placeMarks(marks, chat?.messages ?? [], pendingSends);
-    marks.forEach((mk, n) => {
-      const place = places[n]!;
-      at.set(place, [...(at.get(place) ?? []), <div key={mk.key} className="chat-mark-row">{mk.node}</div>]);
-    });
-    return at;
-  }, [marks, chat?.messages, pendingSends]);
-  // 사람 말 순번마다 바로 앞 사람 말(그 앞 말의 사건 줄을 이 말 앞에 놓는다)
-  const prevUser = useMemo(() => {
-    const prev = new Map<number, number>();
-    let last = -1;
-    (chat?.messages ?? []).forEach((m, i) => { if (m.role === "user") { prev.set(i, last); last = i; } });
-    return { prev, last };
-  }, [chat?.messages]);
   const displayRows = useMemo(() => {
     const messages = chat?.messages ?? [];
     return groupChatRows(messages, chatRowIds(messages));
@@ -1118,21 +1084,7 @@ export function ChatPanel({
               ) : m.role === "command_output" ? (
                 <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
-                markPlaces.size > 0 && markPlaces.has(prevUser.prev.get(i) ?? -2) ? (
-                  <div key={key} className="chat-mark-group">
-                    {markPlaces.get(prevUser.prev.get(i)!)}
-                    {contextChips(unwrapPasted(m.text))[0]}
-                    <UserTurn active={active} text={contextChips(unwrapPasted(m.text))[1]} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
-                  </div>
-                ) :
-contextOf ? (
-                  <div key={key} className="chat-mark-group">
-                    {contextChips(unwrapPasted(m.text))[0]}
-                                    <UserTurn active={active} text={contextChips(unwrapPasted(m.text))[1]} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
-                  </div>
-                ) : (
-                                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
-                )
+                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
                 <AgentTurn active={active} key={key} text={m.text} />
               ) : (
@@ -1152,16 +1104,10 @@ contextOf ? (
               </ChatRow>
             );
           })}
-          {chat && prevUser.last >= 0 && markPlaces.get(prevUser.last)}
-          {chat && prevUser.last < 0 && markPlaces.get(-1)}
-          {chat && markPlaces.get(Number.POSITIVE_INFINITY)}
           {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
-            <Fragment key={`pending-${p.id}`}>
-              {contextChips(p.text)[0]}
-              <UserTurn active={active} text={contextChips(p.text)[1]} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, chatMessages.length))}
-                pending={{ harness, stage: p.stage, working: status === "working", stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
-            </Fragment>
+            <UserTurn key={`pending-${p.id}`} active={active} text={p.text} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, chatMessages.length))}
+              pending={{ harness, stage: p.stage, working: status === "working", stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && !compacting && <p className="chat-note">아직 대화가 없다.</p>}
           {compacting && <CompactingRow />}

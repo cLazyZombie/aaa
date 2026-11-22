@@ -188,67 +188,6 @@ export default async function () {
   }
   await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 390 Safari", async () => { await phoneBackToBottom(390, false); });
 
-  // t-0780, plan §8.340: 휴대폰 뒤로·앞으로는 메뉴를 항상 닫는다.
-  async function phoneMenuHistory(width, standalone) {
-    const wk = await safariBrowser();
-    const bad = [];
-
-        const tag = `${width}-${standalone ? "app" : "safari"}`;
-        const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone });
-        try {
-          if (width !== 390) await p.setViewportSize({ width, height: 932 });
-          const hashes = Object.fromEntries(["bk1", "bk2", "bk3"].map((label) => [label, paneHashOf(label)]));
-          // 1→2→3은 목록에서 직접 고른다: 줄 선택은 지금처럼 메뉴를 닫고 기록을 한 칸씩 만든다.
-          for (const label of ["bk1", "bk2", "bk3"]) {
-            await inList(p, `pane-${label}`);
-            await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
-          }
-          await p.locator(".view [data-testid='drawer-toggle']").click();
-          await p.locator("#workspace-drawer.is-open").waitFor();
-          await drawerSettled(p, true);
-          await shot(p, `phone-menu-${tag}-3-open`);
-          // 시스템 쓸기의 실제 이동은 history 순회다. popstate 뒤 선택된 줄(hashchange 처리 완료)과 drawer 움직임을 기다린다.
-          const move = async (direction, label, wasOpen) => {
-            if (wasOpen && !(await screen(p)).drawer) {
-              await p.locator(".view [data-testid='drawer-toggle']:visible").click();
-              await p.locator("#workspace-drawer.is-open").waitFor();
-              await drawerSettled(p, true);
-            }
-            await inTime(p.evaluate((direction) => new Promise((r) => {
-              addEventListener("popstate", () => r(), { once: true });
-              history.go(direction);
-            }), direction), 20_000, "쓸기 이동의 popstate");
-            await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
-            await drawerSettled(p, true);
-            const s = await screen(p);
-            if (s.hash !== hashes[label] || s.drawer || s.empty)
-              bad.push(`${tag} ${direction < 0 ? "뒤로" : "앞으로"}: ${fmt(s)} (원함 ${hashes[label]}, 메뉴 닫힘)`);
-          };
-          const len = (await screen(p)).len;
-          // 메뉴가 이미 열린 상태에서 왼쪽 가장자리 쓸기 + Safari 뒤로(touchcancel)도 같은 규칙이다.
-          const swiped = await edgeStroke(p, { end: "touchcancel", back: true });
-          await domIs(p, "bk2 선택", () => document.querySelector('[data-testid="pane-bk2"]')?.getAttribute("aria-current") === "true");
-          if (swiped.hash !== hashes.bk2 || swiped.drawer || swiped.empty)
-            bad.push(`${tag} 메뉴 열고 쓸기 뒤로: ${fmt(swiped)} (원함 ${hashes.bk2}, 메뉴 닫힘)`);
-          await shot(p, `phone-menu-${tag}-2-back`);
-          // 이동 전에 매번 메뉴를 열어도 뒤로·앞으로는 닫는다.
-          await move(-1, "bk1", true);
-          await move(1, "bk2", true);
-          await move(1, "bk3", true);
-          await shot(p, `phone-menu-${tag}-3-forward`);
-          // 닫힌 채 이동해도 메뉴가 다시 열리지 않는다.
-          if ((await screen(p)).drawer) await p.locator(".scrim.is-open").click({ position: { x: width - 10, y: 600 } });
-          await drawerSettled(p, true);
-          await move(-1, "bk2", false);
-          await move(1, "bk3", false);
-          if ((await screen(p)).len !== len) bad.push(`${tag}: 메뉴 토글·기록 순회가 기록 칸 수를 바꿨다`);
-        } finally {
-          await p.context().close();
-        }
-
-    if (bad.length) throw new Error(bad.join("; "));
-  }
-
   async function phoneEdgeHistory(width, standalone) {
     const wk = await safariBrowser();
 

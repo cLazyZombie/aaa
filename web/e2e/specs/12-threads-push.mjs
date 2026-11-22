@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
+  step, browser, base, setPushKey, openSettings, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
 } from "../lib/harness.mjs";
 import { prepareThreadPages, threadPages } from "../lib/thread-pages.mjs";
 import { threadBodyLifetime, threadFailureLifetime } from "../lib/thread-lifetime.mjs";

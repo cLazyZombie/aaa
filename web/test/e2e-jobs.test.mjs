@@ -79,10 +79,6 @@ test("셸 대화의 두 harness 수명은 서로 격리하고 직접 실행부�
   const body = fs.readFileSync(new URL("../e2e/specs/93-shell-chat.mjs", import.meta.url), "utf8");
   const names = [...body.matchAll(/^ {2}await step\("((?:[^"\\]|\\.)*)"/gm)].map((m) => JSON.parse(`"${m[1]}"`));
   const shell = { name: "93-shell-chat", steps: names };
-  const cases = [...body.matchAll(/await harnessCase\("(codex|claude)", "(chromium|webkit)", (1280|390)(, check)?\)/g)]
-    .map((m) => m.slice(1, 4).join(":"));
-  const expected = ["codex:chromium:390", "claude:webkit:390"];
-  assert.deepEqual(cases.sort(), expected.sort());
   assert.equal(names.length, 2);
   const jobs = planJobs([shell], { ...options, repeat: 1 });
   assert.equal(jobs.length, 2);
