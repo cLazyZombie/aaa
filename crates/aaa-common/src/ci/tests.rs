@@ -24,7 +24,10 @@ fn http_status_precedes_gh_exit_and_reduction_discards_text() {
 #[test]
 fn calls_are_get_only_and_reject_header_or_path_injection() {
     let a = api_args("o/app", &q()).unwrap();
+    assert!(a.windows(2).any(|w| w == ["--method", "GET"]), "{a:?}");
+    assert!(a.windows(2).any(|w| w == ["--hostname", "github.com"]), "{a:?}");
     assert!(a.contains(&"If-None-Match: \"v1\"".into()));
+    assert!(a.last().unwrap().starts_with("repos/o/app/actions/runs?"));
     assert!(a.last().unwrap().contains("event=push&per_page=30&exclude_pull_requests=true"));
     for repo in ["o/app/other", "o/app?x", "-x/", "o/..", "../app", ""] {
         assert!(api_args(repo, &q()).is_err());

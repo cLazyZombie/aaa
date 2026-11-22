@@ -213,6 +213,8 @@ fn edits_before_prepare_or_between_stage_and_commit_are_preserved() {
     assert_eq!(tree(&other.0), before);
 }
 
+const LOCK_CHILD_CHECKED: &str = "resource-lock-child-checked";
+
 #[test]
 fn resource_locks_serialize_processes() {
     if let Some(state) = std::env::var_os("AAA_INSTALL_TEST_LOCK_STATE") {
@@ -232,6 +234,8 @@ fn resource_locks_serialize_processes() {
             Transaction::resume(state, &id, Some("lab")).err().unwrap()
         };
         assert_eq!(error.code, "installation_resource_busy");
+        // 부모가 이 줄로 자식 단언이 실제로 돌았음을 확인한다. 이름이 맞지 않으면 libtest는 0개를 돌리고 성공한다.
+        println!("{LOCK_CHILD_CHECKED}");
         return;
     }
     let lab = Lab::new();
@@ -248,10 +252,10 @@ fn resource_locks_serialize_processes() {
             .env("AAA_INSTALL_TEST_LOCK_SAME_CONFIG", if same_config { "1" } else { "0" })
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
-            out.status.success(),
-            "same_config={same_config}: {} {}",
-            String::from_utf8_lossy(&out.stdout),
+            out.status.success() && stdout.contains(LOCK_CHILD_CHECKED),
+            "same_config={same_config}: {stdout} {}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

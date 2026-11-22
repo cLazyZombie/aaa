@@ -614,9 +614,15 @@ mod tests {
     fn bypass_settings_symlink_preserves_its_target() {
         let lab = Lab::new();
         let target = lab.0.join("other.json");
-        std::fs::write(&target, b"fake-secret-do-not-read").unwrap();
-        std::os::unix::fs::symlink(&target, lab.0.join("settings.json")).unwrap();
-        assert!(prepare_claude_bypass(&lab.0, &["claude".into(), "--dangerously-skip-permissions".into()]).is_err());
-        assert_eq!(std::fs::read(&target).unwrap(), b"fake-secret-do-not-read");
+        // 대상이 유효한 설정이어야 symlink 검사가 없을 때 읽기·교체가 성공해 이 시험이 실패한다.
+        std::fs::write(&target, br#"{"theme":"dark"}"#).unwrap();
+        let link = lab.0.join("settings.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let error = prepare_claude_bypass(&lab.0, &["claude".into(), "--dangerously-skip-permissions".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("symlink"), "{error}");
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert_eq!(std::fs::read(&target).unwrap(), br#"{"theme":"dark"}"#);
     }
 }

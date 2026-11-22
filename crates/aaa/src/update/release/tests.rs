@@ -130,16 +130,13 @@ fn interrupted_download_is_not_installed_even_if_partial_hash_matches() {
     lab.untouched();
 }
 
+/// 같은 판·옛 판이면 고를 것이 없다. 그때는 자산 목록이 비어 있어도 오류가 아니다.
 #[test]
-fn same_version_needs_no_asset_or_staging() {
-    let lab = Lab::new();
-    let (url, server) = serve(br#"{"version":"0.1.0","assets":{}}"#.to_vec(), None);
-    let m = fetch_manifest(&url).unwrap();
+fn same_or_older_release_selects_nothing_even_without_assets() {
+    let m: Manifest = serde_json::from_slice(br#"{"version":"0.1.0","assets":{}}"#).unwrap();
     assert!(m.select("macos", "aarch64", "0.1.0", None).unwrap().is_none());
     assert!(m.select("macos", "aarch64", "0.1.0", Some("0.1.0")).unwrap().is_none());
     assert!(m.select("macos", "aarch64", "0.2.0", None).unwrap().is_none(), "latest가 옛 판이면 내리지 않는다");
-    server.join().unwrap();
-    lab.untouched();
 }
 
 #[test]

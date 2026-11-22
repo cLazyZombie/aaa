@@ -1164,13 +1164,7 @@ mod alias_tests {
         let first = stored.iter().find(|i| i.summary == "첫 항목").unwrap();
         let mut public = vec![first.clone()];
         h.db.inbox_display_ids(&mut public).unwrap();
-        let body = crate::notify::notify_body(
-            "json",
-            "",
-            &crate::notify::Place::Project("demo".into()),
-            &public,
-            &HashMap::new(),
-        );
+        let body = crate::notify::notify_body("json", "", "demo", &public);
         assert_eq!(body["items"][0]["id"], first.id);
         assert_eq!(body["items"][0]["short_id"], "i-0001");
         // 구판 payload는 별칭이 없고, 새 응답의 id도 같은 저장 키다.

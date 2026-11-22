@@ -100,14 +100,18 @@ class WindowsInstallRecheck(unittest.TestCase):
         self.assertEqual((result, len(calls)), (7, 1))
 
     def test_only_the_three_documented_owners_have_the_stall_exception(self):
-        for name in [NAME,
-                     'wizard::both_wizards_back_from_host_choices_then_submit_the_same_agent_plan_as_explicit_cli',
-                     'recovery::closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied']:
+        documented = [NAME,
+                      'wizard::both_wizards_back_from_host_choices_then_submit_the_same_agent_plan_as_explicit_cli',
+                      'recovery::closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied']
+        # 사용자가 승인한 재확인 예외의 범위다. 목록이 늘어도 실패해야 한다.
+        self.assertEqual(owner.OWNERS, set(documented))
+        for name in documented:
             with self.subTest(name=name):
                 self.assertEqual(owner.stalled_owners(stalled(name)), [name])
         self.assertEqual(owner.stalled_owners(stalled() + '\nerror: 2 targets failed:\n'), [])
 
-    def test_direct_cli_without_ci_authorization_is_rejected_before_cargo(self):
+    def test_direct_cli_on_a_local_machine_is_rejected_before_cargo(self):
+        # 이 시험이 도는 Unix에서는 OS 조건만으로 거절된다. CI 인가 값 둘의 판정은 여기서 가리지 못한다.
         with tempfile.TemporaryDirectory() as root:
             env = dict(os.environ)
             env.pop('GITHUB_ACTIONS', None)

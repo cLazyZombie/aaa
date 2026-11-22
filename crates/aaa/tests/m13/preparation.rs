@@ -18,7 +18,7 @@ impl GitGate {
         let addr = self.listener.local_addr().unwrap().to_string();
         // 이 gate의 모든 thread는 TUI 없는 FAKE_AGENT의 줄 단위 보고 셸이다.
         // Git 완료/시한 계약은 그대로 두고 해당되지 않는 입력창 안정·paste 준비만 뺀다.
-        let (mut w, env) = world_files("", false, Some("0"), true, |root| {
+        let (mut w, env) = world_files("", Some("0"), true, |root| {
             let real = Command::new("which").arg("git").capture_output().unwrap();
             assert!(real.status.success());
             let real = String::from_utf8(real.stdout).unwrap();

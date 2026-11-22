@@ -23,6 +23,13 @@ fn observed_model_offer_and_existing_card_options_do_not_warn() {
             "**정하실 것:** [q-4295 질문](https://example.ts.net/#question=q-4295)에서 [웹 검수본](library/t-2022/index.html)을 보고 골라 주세요.\n- **A:** 좋습니다. 착지합니다.\n- **B:** 고칠 점을 글로 적어 주세요.",
             Some(("q-4295", CardState::Open)),
         ),
+        // 아래 둘은 완료 사건·DB 경계 시험에 있던 같은 가지의 줄인 꼴이다.
+        ("줄인 꼴", "기본 모델로 시작했습니다. 모델을 바꾸려면 말씀해 주세요.", None),
+        (
+            "줄인 꼴",
+            "[질문](#question=q-4295)에서 [검수본](library/index.html)을 보고 골라 주세요.\n- **A(추천):** 진행합니다.\n- **B:** 고칠 곳을 알려 주세요.",
+            Some(("q-4295", CardState::Open)),
+        ),
     ];
     let mut failures = Vec::new();
     for (time, text, card) in samples {
@@ -43,6 +50,7 @@ fn model_offer_keeps_real_requests_for_input_and_terminal_actions() {
         "모델을 바꾸려면 쓸 모델 이름을 알려 주세요.",
         "새 작업에 쓸 모델을 골라 주세요.",
         "aaa 밖 터미널에서 프로필을 추가해 주세요.\n\n- **주의:** 실행해서 오류가 나면 출력을 알려 주세요.",
+        "터미널에서 프로필을 추가해 주세요.\n\n실행해서 오류가 나면 출력을 알려 주세요.",
     ] {
         assert_eq!(inspect(text, &cards()).missing.unwrap().rule, "request", "{text}");
     }
@@ -84,6 +92,8 @@ fn observed_preview_card_replacements_and_corrections_do_not_require_answers() {
         "q-4027에서 답해 주세요.\n앞 시안 q-4026은 이 시안이 대신합니다.",
         "q-4054에서 답해 주세요.\n앞 카드 q-4053은 이 카드가 대신합니다.",
         "적용한 기준입니다.\n\n다르게 생각하시면 말씀해 주세요.",
+        "제가 정해 둔 것(다르면 말씀해 주세요)\n이미 적용한 기준입니다.",
+        "이미 적용한 기준입니다.\n\n다르게 생각하시면 말씀해 주세요.",
     ] {
         let result = inspect(text, &cards);
         if result.missing.is_some() || result.stale.is_some() {
@@ -254,6 +264,14 @@ fn observed_discarded_cards_and_optional_corrections_are_not_answer_requests() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    // 같은 가지의 줄인 꼴(완료 사건·DB 경계 시험에 있던 것)
+    for text in [
+        "작업은 이미 시작했습니다.\n\n다른 종을 말씀하신 거라면 알려 주세요.",
+        "앞 경고는 정정 안내를 잘못 센 것입니다. 다른 종이라면 그때 말씀해 주세요.",
+    ] {
+        let result = inspect(text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+    }
 
     for text in samples {
         for request in ["지금 배포할까요?", "배포 승인 여부를 알려 주세요.", "추가로 진행할까요?"]
@@ -361,6 +379,24 @@ fn observed_reply_sections_history_and_corrections_keep_decision_boundaries() {
         (
             "11-14 선택지 제목",
             "[q-3706 질문](#question=q-3706)을 열었습니다.\n\n**선택지**\n- A 지금 진행 (추천)\n- B 나중에 진행\n- C 보류\n\nA를 고르시면 작업을 이어 갑니다.",
+            false,
+            false,
+        ),
+        (
+            "일반 안내와 카드 사이의 다른 절",
+            "질문 하나에 답해 주세요.\n\n**작업 결과**\n내용입니다.\n\n**정할 것**\n[q-3578 질문](#question=q-3578)",
+            false,
+            false,
+        ),
+        (
+            "앞 카드와 뒤 선택지 둘",
+            "[q-3619 질문](#question=q-3619)을 열었습니다.\n\n**고칠 방식**\n- A 진행 (추천)\n- B 보류",
+            false,
+            false,
+        ),
+        (
+            "선택지 제목과 선택지 둘",
+            "[q-3706 질문](#question=q-3706)을 열었습니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류\n\nA를 고르시면 이어 갑니다.",
             false,
             false,
         ),
@@ -485,6 +521,7 @@ fn observed_negative_and_optional_feedback_do_not_hide_real_requests() {
         "오류 문구가 있었다면 복구와 삭제 중 하나를 골라 주세요.",
         "화면에 뜬 오류 문구가 있었다면 알려 주세요, 승인 여부도 알려 주세요.",
         "알려 주시면 좋은 것은 오류 문구입니다.",
+        "지금 정해 주실 것은 없습니다. 별도로 배포할까요?",
     ] {
         assert!(inspect(text, &cards).missing.is_some(), "{text}");
     }
@@ -634,6 +671,8 @@ fn optional_feedback_on_a_decided_name_does_not_hide_requests() {
         format!("{decided} {feedback}. 별도로 배포할까요?"),
         format!("{decided} {feedback}.\n- A 현재 이름 (추천)\n- B 새 이름"),
         "새 원격 저장소를 만들까요?".into(),
+        "폴더 이름은 테마로 정했습니다. 다른 이름이 좋으시면 말씀해 주세요, 배포 승인 여부를 알려 주세요.".into(),
+        "폴더 이름은 아직 정하지 않았습니다. 어느 이름으로 할까요?".into(),
     ] {
         assert!(inspect(&text, &cards).missing.is_some(), "{text}");
     }

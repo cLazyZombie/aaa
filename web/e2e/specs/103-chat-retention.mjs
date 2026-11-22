@@ -1,7 +1,7 @@
 // 실제 host·agent의 동일 합성 기록으로 처음/왕복을 측정하고 보관 수명을 확인한다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { root, AA, aaa, step, browser, webkit, pairPage, waitOutput, until, domIs, shot, inTime } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, pairPage, domIs, shot, inTime } from "../lib/harness.mjs";
 import { frames, shown, go, prepare, holdLatest } from "../lib/chat-retention.mjs";
 import { retentionFailure } from "../lib/retention-failure.mjs";
 import { retentionProtocol } from "../lib/retention-protocol.mjs";
@@ -156,14 +156,11 @@ export default async function () {
   await step("대화 보관: 실제 coordinator·일반 pane 준비", async () => { panes = await prepare(); }, { always: true });
   await step("대화 보관: Chromium 1280 처음·최신·과거 왕복 계측", async () => { await check(browser, 1280, panes); });
   await step("대화 보관: WebKit 390 처음·최신·과거 왕복 계측", async () => { safari = await webkit.launch({ headless: true }); await check(safari, 390, panes); });
-  await step("대화 보관: 계측 저장·브라우저 정리", async () => {
+  } finally {
+    if (safari?.isConnected()) await safari.close();
+    // 계측은 단언이 아니라 기록이다: 실험실에 남기고, 요청한 자리가 있으면 거기에도 쓴다.
     const data = JSON.stringify(measurements, null, 2) + "\n";
     fs.writeFileSync(`${root}/chat-measurements.json`, data);
     if (process.env.AAA_CHAT_MEASUREMENTS) fs.writeFileSync(process.env.AAA_CHAT_MEASUREMENTS, data);
-    console.log(data);
-    await safari?.close();
-  });
-  } finally {
-    if (safari?.isConnected()) await safari.close();
   }
 }

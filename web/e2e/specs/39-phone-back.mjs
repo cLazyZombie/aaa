@@ -8,7 +8,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
 
 import fs from "node:fs";
-import { specCleanup, aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
+import { specCleanup, aaa, step, browser, webkit, inList, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 import { historyDestinations, taskSheetHistory } from "../lib/history-destinations.mjs";
 import { settingsDrawerHistory, settingsPanePreparation } from "../lib/settings-drawer-history.mjs";

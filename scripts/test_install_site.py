@@ -38,7 +38,8 @@ class SiteFixture(unittest.TestCase):
                         TMP=str(self.temp), TEMP=str(self.temp),
                         SETUP_RECORD=str(self.record), SETUP_EXIT='23', SETUP_VERSION='0.1.6',
                         AAA_CONFIG_DIR=str(self.home / 'config'), AAA_STATE_DIR=str(self.home / 'state'))
-        self.payloads = {name: b'fixture' for name in ASSETS.values()}
+        # 플랫폼마다 다른 바이트: 다른 플랫폼의 SHA를 넘기는 결속 오류가 같은 해시에 가려지지 않는다.
+        self.payloads = {name: f'fixture {name}'.encode() for name in ASSETS.values()}
         self.payloads.update({name: b'launcher fixture' for name in LAUNCHERS.values()})
         self.requests = []
 

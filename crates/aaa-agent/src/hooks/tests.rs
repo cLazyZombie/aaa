@@ -66,7 +66,7 @@ fn image_reply_preserves_encoded_collisions_and_masks_actual_secret_bytes() {
         Ok(Some(Reply::Image(Outcome::Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::BadRequest, secret))))),
     ] {
         let encoded = reply(out);
-        assert!(!encoded.contains("cG5nMDkx"));
+        assert!(!encoded.contains(&secret[..8]));
         assert!(encoded.contains("********"));
     }
 }

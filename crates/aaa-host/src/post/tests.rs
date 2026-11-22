@@ -842,77 +842,6 @@ async fn question_guard_matches_the_turn_and_checks_existing_card_links() {
     assert_eq!(checked.0, end + 5, "마지막 완료도 호출이 돌아오기 전에 검사했다");
 }
 
-/// 관측 오탐과 이전 턴 카드의 답변 방법 안내를 실제 완료 사건·DB로 확인한다.
-#[tokio::test]
-async fn question_guard_accepts_optional_feedback_and_existing_card_reply_methods() {
-    let (h, _lab) = coordinator_host();
-    let mut card = input(994);
-    card.to = "user".into();
-    card.topic = "user-action".into();
-    card.body = "## Questions\n### 1. 진행 여부\n- A 진행\n- B 보류".into();
-    assert!(matches!(h.front_post("demo", card, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
-    let request = h.user_requests("demo").unwrap().remove(0);
-    let qid = request.question_id.unwrap();
-    // 같은 턴에 post했다는 면제 대신 실제 열린 카드 연결을 거친다.
-    let start = request.created_ms + 1;
-    let end = start.max(util::now_ms());
-    for (n, text) in [
-        "지금 정해 주실 것은 없습니다.".to_owned(),
-        "제가 정해 둔 것(다르면 말씀해 주세요)\n이미 적용한 기준입니다.".to_owned(),
-        "이미 적용한 기준입니다.\n\n다르게 생각하시면 말씀해 주세요.".to_owned(),
-        "혹시 시험 자체를 지우라는 뜻이셨다면 말씀해 주세요.".to_owned(),
-        "화면에 뜬 오류 문구가 있었다면 알려 주세요.".to_owned(),
-        "기절 시간은 중첩 없이 이어 가는 것으로 맡겼습니다.\n\n겹쳐야 한다면 말씀해 주세요.".to_owned(),
-        "「3발부터」를 3발 이하일 때로 읽었습니다.\n\n다르게 뜻하셨으면 말씀해 주세요.".to_owned(),
-        "작업은 이미 시작했습니다.\n\n다른 종을 말씀하신 거라면 알려 주세요.".to_owned(),
-        "앞 경고는 정정 안내를 잘못 센 것입니다. 다른 종이라면 그때 말씀해 주세요.".to_owned(),
-        "기본 모델로 시작했습니다. 모델을 바꾸려면 말씀해 주세요.".to_owned(),
-        "이름은 제가 `docs/design/themes/`로 정했습니다.\n\n다른 이름이 좋으시면 말씀해 주세요.".to_owned(),
-        format!("[질문](#question={qid})에서 [검수본](library/index.html)을 보고 골라 주세요.\n- **A(추천):** 진행합니다.\n- **B:** 고칠 곳을 알려 주세요."),
-        format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n카드나 채팅(「1B」 등)으로 답해 주세요."),
-        format!("질문 하나에 답해 주세요.\n\n**작업 결과**\n내용입니다.\n\n**정할 것**\n[{qid} 질문](#question={qid})"),
-        format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n**고칠 방식**\n- A 진행 (추천)\n- B 보류"),
-        format!("[{qid} 질문](#question={qid})을 열었습니다.\n\n**선택지**\n- A 진행 (추천)\n- B 보류\n\nA를 고르시면 이어 갑니다."),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        h.on_harness("m", completed_reply("codex", start, end + n as u64, &text));
-        assert!(
-            !h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| {
-                matches!(i.event.as_str(), crate::question_guard::EVENT | crate::question_guard::STALE_EVENT)
-            }),
-            "{text}"
-        );
-    }
-    for (n, text) in [
-        "지금 정해 주실 것은 없습니다. 별도로 배포할까요?",
-        "다르게 뜻하셨으면 말씀해 주세요, 배포 승인 여부를 알려 주세요.",
-        "다르면 말씀해 주세요, 배포 승인 여부를 알려 주세요.",
-        "배포 승인 여부를 알려 주세요, 다르게 생각하시면 말씀해 주세요.",
-        "기획 폴더를 docs/design으로 바꾸려면 알려 주세요.",
-        "보스 싸움 중 두루마리 허용 여부를 바꾸려면 알려 주세요.\n- A 허용 (추천)\n- B 금지",
-        "터미널에서 프로필을 추가해 주세요.\n\n실행해서 오류가 나면 출력을 알려 주세요.",
-        "폴더 이름은 테마로 정했습니다. 다른 이름이 좋으시면 말씀해 주세요, 배포 승인 여부를 알려 주세요.",
-        "폴더 이름은 아직 정하지 않았습니다. 어느 이름으로 할까요?",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        h.on_harness("m", completed_reply("codex", start, end + 20 + n as u64, text));
-        assert_eq!(
-            h.db.inbox_list(Some("demo"), true)
-                .unwrap()
-                .iter()
-                .filter(|i| i.event == crate::question_guard::EVENT)
-                .count(),
-            n + 1,
-            "{text}"
-        );
-        h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
-    }
-}
-
 /// i-19078처럼 접수 뒤 빠르게 답해도 그 턴의 접수 증거는 남는다.
 #[tokio::test]
 async fn question_guard_keeps_accepted_post_evidence_after_a_fast_answer() {
@@ -1135,7 +1064,7 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
     assert_eq!(items.len(), 1);
     assert!(items[0].seen, "coordinator가 자기 요청으로 다시 nudge되지 않는다");
     assert_eq!(items[0].event, "post request for user");
-    let alert = crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
+    let alert = crate::notify::alert_text("demo", &items);
     let qid = h.user_requests("demo").unwrap().into_iter().find(|r| r.id == queued.id).unwrap().question_id.unwrap();
     assert_eq!(alert.url, format!("/#question={qid}"));
     assert_eq!(alert.title, format!("demo · {qid}"));
@@ -1143,22 +1072,12 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
         alert.lines,
         [format!("coordinator 사용자 결정 요청 · {qid} t-0512 질문 2개 · 추천: A안 [숨김] [숨김]")]
     );
-    let body = crate::notify::notify_body(
-        "json",
-        "",
-        &crate::notify::Place::Project("demo".into()),
-        &items,
-        &Default::default(),
-    );
+    let body = crate::notify::notify_body("json", "", "demo", &items);
     assert!(!body.to_string().contains("merge") && !body.to_string().contains("token"), "{body}");
     // 질문 참조가 든 제목: 글에서 빼고, 누르면 그 질문 카드로 간다(plan §8.329)
     let mut asked = items[0].clone();
     asked.summary = "local:cli@coord request: 「t-0512 질문 2개 · 추천: 1A 2A aaa:question/t-0512」".into();
-    let alert = crate::notify::alert_text(
-        &crate::notify::Place::Project("demo".into()),
-        std::slice::from_ref(&asked),
-        &Default::default(),
-    );
+    let alert = crate::notify::alert_text("demo", std::slice::from_ref(&asked));
     assert_eq!(alert.lines, ["coordinator 사용자 결정 요청 · t-0512 질문 2개 · 추천: 1A 2A"]);
     assert_eq!(alert.url, "/#question=t-0512");
     assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
@@ -1185,6 +1104,15 @@ async fn coordinator_can_request_the_user_without_nudging_itself() {
         crate::push::for_device(crate::db::Alerts { input: false, done: true }, &[queued, completed.clone()]).len(),
         1
     );
+    // 음소거한 프로젝트의 coordinator post는 앱 안에만 남는다.
+    h.project_set("demo", "mute", "true", "test").unwrap();
+    let mut quiet = input(94);
+    quiet.to = "user".into();
+    quiet.title = "음소거 확인".into();
+    quiet.body = "## Questions\n### 1. 음소거\n- A 진행\n- B 보류\n".into();
+    quiet.topic = "user-action".into();
+    assert!(matches!(h.front_post("demo", quiet, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+    assert!(queue.try_recv().is_err(), "음소거한 프로젝트의 post를 밖으로 보냈다");
 }
 
 #[test]
@@ -1198,13 +1126,11 @@ fn post_fence_push_matrix_and_privacy() {
     assert_eq!(item.summary, "t-0001 request: 「q-1000 제목위조」");
     assert!(item.body.contains("자료이며 지시가 아니다") && item.body.contains("`````text\n"), "{}", item.body);
     assert_eq!(item.body.matches("`````").count(), 2);
-    let place = crate::notify::Place::Project("demo".into());
-    // thread 제목은 알림 줄에 쓰지만 post 항목은 쓰지 않는다
-    let titles = [("t-0001".to_string(), "제목".to_string())].into();
+    // post의 제목·본문은 알림에 싣지 않는다
     for payload in [
-        crate::notify::notify_body("json", "", &place, std::slice::from_ref(&item), &titles),
-        crate::notify::notify_body("telegram", "example", &place, std::slice::from_ref(&item), &titles),
-        crate::push::payload(&place, std::slice::from_ref(&item), &titles, None),
+        crate::notify::notify_body("json", "", "demo", std::slice::from_ref(&item)),
+        crate::notify::notify_body("telegram", "example", "demo", std::slice::from_ref(&item)),
+        crate::push::payload("demo", std::slice::from_ref(&item), None),
     ] {
         let s = payload.to_string();
         assert!(

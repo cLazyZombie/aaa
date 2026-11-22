@@ -8,7 +8,6 @@ import { createRequire } from "node:module";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
@@ -876,28 +875,13 @@ fs.writeFileSync(
   `#!/bin/sh
 printf 'fake> '
 while IFS= read -r line; do
-  # 받은 줄을 thread마다 남긴다(시험이 thread가 실제로 받은 글을 읽는다, 137 기획으로 옮기기)
-  printf '%s\n' "$line" >> "${root}/fake-lines/\${AAA_THREAD:-none}.log"
   case "$line" in
     post-probe\\ *) sh "\${line#post-probe }" ;;
-    *"[aaa 보류 준비]"*)
-      # 보류 정리 부탁(85, plan §8.426): 맡긴 대로 Handoff 보고를 쓴다(커밋·push할 것이 없는 작업 폴더 thread)
-      path=$(printf '%s' "$line" | grep -o '[.]aaa/[^)]*/report[.]md' | head -n 1)
-      printf '[보류 준비됨] 정리 끝\n\n## Handoff\n- 다음: 사람 검수 뒤 이어 간다\n\n## Next\n- 이어 하기\n' > "$path.tmp"
-      mv "$path.tmp" "$path"
-      echo park-ready ;;
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       # 할 일에 「사람을 기다림」이 있으면 보고 없이 사람을 기다린다고만 알린다(host 묶음 확인 필요, 12 「프로젝트 머리 셈」)
       if grep -q '사람을 기다림' "$dir/brief.md"; then
         "${AA}" report --percent 50 --activity 'Waiting for you'
-        printf 'fake> '
-        continue
-      fi
-      # 할 일에 「모아 묻기 시험」이 있으면 구현 전에 모아 묻는 보고만 쓴다(brief 「시작할 때 묻기」, 17 「시작 질문」)
-      if grep -q '모아 묻기 시험' "$dir/brief.md"; then
-        printf '[결정 필요] 질문 1개: 배치\n\n## Report\n- 배치: A안(추천, 기존과 같음) · B안\n\n## Next\n- 배치를 정한다\n' > "$dir/report.md"
-        echo asked
         printf 'fake> '
         continue
       fi
@@ -928,7 +912,6 @@ done
 // thread 작업 폴더(work_root)는 보고서 안 파일 링크(12, plan §8.171)가 연다(기본 허용 폴더에도 work_root가 든다). 시작할 때 없는
 // 폴더는 허용 폴더가 되지 않으므로 미리 만든다
 fs.mkdirSync(`${root}/files`, { recursive: true });
-fs.mkdirSync(`${root}/fake-lines`, { recursive: true });
 fs.mkdirSync(`${root}/work`, { recursive: true });
 fs.mkdirSync(`${root}/projects`, { recursive: true });
 fs.writeFileSync(

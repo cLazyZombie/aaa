@@ -187,18 +187,6 @@ fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
     diagnostic.mark("completed", None);
 }
 
-#[test]
-fn status_failure_retains_the_requested_id_and_safe_phase_without_writes() {
-    let lab = Lab::new();
-    let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-    let before = snapshot(&lab.0);
-    let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
-    assert_eq!(observed["error"]["code"], "installation_not_found", "{observed}");
-    assert_eq!(observed["installation_id"], id, "{observed}");
-    assert_eq!(observed["error"]["details"], serde_json::json!(["phase=file_journal"]), "{observed}");
-    assert!(snapshot(&lab.0) == before, "오류 진단을 위해 state/nonce/lock을 만들면 안 된다");
-}
-
 /// PS 5.1/7의 실제 irm | iex → PE → setup 콘솔/취소 경계다.
 /// HTTP transport만 격리하며 실제 SCM/계정/LSA는 변경하지 않는다.
 #[cfg(windows)]

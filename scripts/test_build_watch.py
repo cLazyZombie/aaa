@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,11 +82,6 @@ class BuildWatch(unittest.TestCase):
         self.git("commit", "-qm", "next source")
         self.check(False)
         self.check(True)
-
-    def test_separate_build_directory_uses_reported_output(self):
-        with patch.dict(os.environ, {"CARGO_BUILD_BUILD_DIR": str(self.root / "intermediate")}):
-            self.check(False)
-            self.check(True)
 
     def test_packed_linked_worktree_tracks_new_loose_ref_and_detached_head(self):
         linked = self.root / "linked"

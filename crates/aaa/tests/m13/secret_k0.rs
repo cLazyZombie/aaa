@@ -108,7 +108,14 @@ fn byte_scan_preserves_overlaps_duplicate_labels_first_offsets_and_binary_files(
         [(1, "앞"), (2, "겹침"), (1, "같은 값의 다른 라벨"), (6, "NUL"), (1, "긴 값")]
             .map(|(at, label)| format!("{} @{at} ({label})", file.display()))
     );
-    assert!(hits(&[file], &[], &|_| false).is_empty());
+    assert!(hits(std::slice::from_ref(&file), &[], &|_| false).is_empty());
+    // 인증 값은 8바이트 조각 하나만 남아도 어느 자리(0..=len-8)든 찾는다.
+    let (value, nonce) = canary("proof");
+    let find = needles(&value, &nonce);
+    for start in 0..=nonce.len() - 8 {
+        std::fs::write(&file, &nonce.as_bytes()[start..start + 8]).unwrap();
+        assert!(!hits(std::slice::from_ref(&file), &find, &|_| false).is_empty(), "8자 조각 {start}");
+    }
 }
 
 // 필요: K2에 허용한 B를 A·C 누출로 오인하지 않되 실제 8바이트 누출은 DB/WAL에서 잡아야 한다.

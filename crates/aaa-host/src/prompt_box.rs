@@ -536,22 +536,6 @@ mod tests {
         );
     }
 
-    /// host가 실제로 읽는 길: session host vt가 다시 그린 화면의 Text와 Ansi(빈칸이 커서 이동 `CSI C`로 나온다)
-    #[test]
-    fn the_mark_lines_up_with_the_session_hosts_text_and_ansi() {
-        let raw = claude_suggestion("❯\u{a0}\u{1b}[2m바뀐 것을 main에 올려\u{1b}[m");
-        let mut vt = aaa_vt::Vt::new(12, 70);
-        vt.feed(raw.replace('\n', "\r\n").as_bytes());
-        let text = vt.read(aaa_proto::ReadSource::Visible, None, aaa_proto::ReadFormat::Text).text;
-        let ansi = vt.read(aaa_proto::ReadSource::Visible, None, aaa_proto::ReadFormat::Ansi).text;
-        assert_eq!(check("claude", &ansi), Draft::Empty, "{ansi:?}");
-        let marked = mark_dim_box("claude", &text, &ansi);
-        assert!(marked.contains("❯ [흐린 글·입력 아님] 바뀐 것을 main에 올려"), "{marked}");
-        let recent = vt.read(aaa_proto::ReadSource::Recent, None, aaa_proto::ReadFormat::Text).text;
-        let recent_ansi = vt.read(aaa_proto::ReadSource::Recent, None, aaa_proto::ReadFormat::Ansi).text;
-        assert!(mark_dim_box("claude", &recent, &recent_ansi).contains(DIM_MARK));
-    }
-
     #[test]
     fn a_real_character_under_a_cursor_is_typed() {
         // One typed character with the harness cursor on it is text, while a

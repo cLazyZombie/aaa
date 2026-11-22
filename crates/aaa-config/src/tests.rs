@@ -283,13 +283,16 @@ fn host_profiles_and_machine_overrides() {
     let a = load_agent(&d.0).unwrap();
     assert!(a.warnings.is_empty() && a.config.profiles.is_empty());
     assert_eq!(a.config.harnesses["codex"].command, ["/opt/tools/codex"]);
-    for bad in [
-        "[profiles.\"-bad\"]\nagent = \"codex\"",
-        "[profiles.bad]\nagent = \"codex\"\nmodel = \"--flag\"",
-        "[profiles.bad]\nagent = \"claude\"\neffort = \"ultra\"",
+    // local 겹침을 치운다: 남아 있으면 harness 없는 `review.fast`가 먼저 거절돼 아래 규칙을 보지 못한다.
+    std::fs::remove_file(d.0.join("host.local.toml")).unwrap();
+    for (bad, want) in [
+        ("[profiles.\"-bad\"]\nagent = \"codex\"", "`-bad`는 profile 이름이 아니다"),
+        ("[profiles.bad]\nagent = \"codex\"\nmodel = \"--flag\"", "`--flag`는 model 이름으로 보이지 않는다"),
+        ("[profiles.bad]\nagent = \"claude\"\neffort = \"ultra\"", "effort `ultra`는 claude의 값"),
     ] {
         d.write("host.toml", &format!("schema = 1\n{bad}\n"));
-        assert!(load_host(&d.0).is_err(), "{bad}");
+        let error = load_host(&d.0).unwrap_err().render();
+        assert!(error.contains(want), "{bad}: {error}");
     }
 }
 

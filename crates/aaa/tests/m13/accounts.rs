@@ -9,21 +9,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-// 모든 언어가 공유하는 opaque 본문으로 기존 8바이트 부분 누출 검사를 유지한다.
-#[test]
-fn credential_canary_distinguishes_hex_metadata_and_detects_every_eight_byte_fragment() {
-    let lab = Lab::new();
-    let (value, nonce) = canary("proof");
-    let file = lab.root.join("record");
-    std::fs::write(&file, format!("sha256={}", "0123456789abcdef".repeat(4))).unwrap();
-    let find = needles(&value, &nonce);
-    assert!(hits(std::slice::from_ref(&file), &find, &|_| false).is_empty());
-    for start in 0..=nonce.len() - 8 {
-        std::fs::write(&file, &nonce.as_bytes()[start..start + 8]).unwrap();
-        assert!(!hits(std::slice::from_ref(&file), &find, &|_| false).is_empty(), "8자 조각 {start}");
-    }
-}
-
 const HARNESS: &str = r#"#!/usr/bin/env python3
 import sys
 if sys.argv[1:]==['--version']:

@@ -4,7 +4,7 @@ use super::*;
 /// 밀린 입력 74개를 음소거 중 CLI 한 번으로 끝낸다. 단건·중복 ID와 실제 수신 목록도 확인한다.
 #[test]
 fn automation_completion_batch_from_muted_pane_records_all_ids() {
-    let (mut w, env) = world_files("", false, Some("0"), false, |_| Vec::new());
+    let (mut w, env) = world_files("", Some("0"), false, |_| Vec::new());
     w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
     let w = world_start(w, env);
     let t = w.start(&[

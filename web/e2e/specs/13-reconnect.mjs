@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 13-reconnect(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, start, stop, until, screenText, shot, base, step, root, killSessionHosts, showPanel } from "../lib/harness.mjs";
+import { aaa, start, stop, until, screenText, shot, step, root, killSessionHosts, showPanel } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("agent 끊김 → 읽기 전용 표시", async () => {
