@@ -1,5 +1,6 @@
 import { logIgnoredFailure } from "./errorDiagnostic.ts";
-import { apiFetch } from "./apiRequest";
+import { apiFetch, pageClosing } from "./apiRequest";
+import { watchConnectionWake } from "./connectionWake";
 import { ApiError, readApiResponse } from "./apiOutcome";
 export { ApiError } from "./apiOutcome";
 // host 웹 API(crates/aaa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
@@ -105,8 +106,8 @@ async function unwrap<T>(res: Response): Promise<T> {
  * loopback 화면·옛 host는 없다 */
 export type Me = { role: DeviceRole; device: string; front_api?: string; passkey?: PasskeyState };
 
-export async function me(): Promise<Me | null> {
-  const res = await apiFetch("/api/v1/me", { credentials: "same-origin" });
+export async function me(signal?: AbortSignal): Promise<Me | null> {
+  const res = await apiFetch("/api/v1/me", { credentials: "same-origin", signal });
   if (res.status === 401) return null;
   return unwrap<Me>(res);
 }
@@ -240,13 +241,6 @@ const PROBE_TIMEOUT_MAX_MS = 12_000;
 const PROBE_OVERDUE_MS = 2_000;
 const IDLE_PROBE_MS = 20_000;
 const IDLE_CHECK_MS = 5_000;
-/**
- * 이만큼 넘게 가려졌다가 다시 보이면 묻지 않고 바로 새로 붙는다. 휴대폰 OS는 멈춘 앱의 소켓을 close 사건 없이 죽이는
- * 일이 잦아, 묻고 기다리는(3초+3초) 동안 화면이 사건 없이 멈춰 있게 된다. t3code(MIT)
- * apps/mobile/src/connection/app-state-wakeups.ts·packages/client-runtime/src/connection/supervisor.ts 522~526줄
- * 「application-active-reconnect」(10초)를 따랐다. herdr-web-ui ws.ts는 이때도 probe한다(plan §8.84).
- */
-const RECONNECT_AFTER_HIDDEN_MS = 10_000;
 /**
  * 쓰는 동안 presence를 이만큼마다 다시 알린다. host는 그 연결에서 앱 글이 끊기면 lease가 끝나 쓰는 화면에서 뺀다.
  * 멈춘 페이지(iOS가 잠재운 앱)는 timer가 돌지 않아 알리지 못한다. WebSocket pong은 브라우저 네트워크 층이 답하므로
@@ -418,6 +412,7 @@ export function watchEvents(
   const drop = (socket: WebSocket) => {
     probeDrops += 1;
     endProbe();
+    socket.onopen = null;
     socket.onclose = null;
     socket.onmessage = null;
     socket.close();
@@ -427,29 +422,41 @@ export function watchEvents(
     delay = 500;
     open();
   };
-  let hiddenAt: number | null = document.visibilityState === "visible" ? null : Date.now();
-  const onShow = () => {
-    if (document.visibilityState !== "visible") {
-      // 가려진 동안은 기한을 멈춘다(얼어 있는 동안 끊지 않는다). 다시 보이면 새로 묻는다
-      hiddenAt ??= Date.now();
-      endProbe();
-      return;
+  // 타이머와 복귀 사건은 재인증을 한 번만 시작한다. 끊긴 망에서 기다리던 조회도 새 망에서 다시 한다.
+  let check: AbortController | undefined;
+  const retry = async (replace = false) => {
+    window.clearTimeout(timer);
+    timer = undefined;
+    if (stopped || pageClosing() || (check && !replace)) return;
+    check?.abort();
+    const current = new AbortController();
+    check = current;
+    let signedOut = false;
+    try {
+      signedOut = await me(current.signal) === null;
+    } catch (e) {
+      signedOut = e instanceof ApiError && e.body.code === "unavailable";
     }
-    const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
-    hiddenAt = null;
-    if (away >= RECONNECT_AFTER_HIDDEN_MS && ws?.readyState === WebSocket.OPEN) {
+    if (current.signal.aborted || stopped) return;
+    check = undefined;
+    if (signedOut) {
+      stopped = true;
+      reportSignedOut();
+    } else if (!pageClosing()) open();
+  };
+  const stopWake = watchConnectionWake((replace) => {
+    if (stopped || !ws) return;
+    if (ws.readyState === WebSocket.CLOSED) {
+      delay = 500;
+      void retry(replace);
+    } else if (replace && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       drop(ws);
       probeDrops = 0;
-      return;
-    }
-    probe();
-  };
+    } else probe();
+  }, endProbe);
   const idle = window.setInterval(() => {
     if (document.visibilityState === "visible" && Date.now() - heard >= IDLE_PROBE_MS) probe();
   }, IDLE_CHECK_MS);
-  document.addEventListener("visibilitychange", onShow);
-  window.addEventListener("pageshow", onShow);
-  window.addEventListener("online", probe);
   const open = () => {
     const socket = new WebSocket(wsUrl("/api/v1/events"));
     ws = socket;
@@ -501,7 +508,7 @@ export function watchEvents(
       }
     };
     socket.onclose = (event) => {
-      if (ws !== socket) return;
+      if (stopped || ws !== socket) return;
       endProbe();
       onLink(false);
       for (const pane of chatWanted.keys()) tellChat(pane, { live: false });
@@ -512,32 +519,14 @@ export function watchEvents(
         return;
       }
       // 다시 붙기 전에 host가 아직 이 기기를 아는지 본다. 끊긴 동안 취소되면 upgrade는 401이라 WebSocket이 그 까닭을 알려 주지 않는다
-      if (!stopped)
-        timer = window.setTimeout(() => {
-          if (stopped) return;
-          void me()
-            .then((m) => {
-              if (stopped) return;
-              if (m === null) {
-                stopped = true;
-                reportSignedOut();
-              } else open();
-            })
-            .catch((e: unknown) => {
-              if (stopped) return;
-              // host가 설정을 읽지 못해 안전 모드로 떴다(503 unavailable, plan §8.370): 다시 붙지 않고 App이 다시 물어 그 글을 보인다
-              if (e instanceof ApiError && e.body.code === "unavailable") {
-                stopped = true;
-                reportSignedOut();
-              } else open();
-            });
-        }, delay);
+      if (!stopped) timer = window.setTimeout(() => void retry(), delay);
       delay = Math.min(delay * 2, 10_000);
     };
   };
   open();
   return () => {
     stopped = true;
+    check?.abort();
     for (const [target, name] of useEvents) target.removeEventListener(name, onUse);
     document.removeEventListener("freeze", onFreeze);
     window.clearInterval(beat);
@@ -545,9 +534,7 @@ export function watchEvents(
     endProbe();
     window.clearTimeout(timer);
     window.clearInterval(idle);
-    document.removeEventListener("visibilitychange", onShow);
-    window.removeEventListener("pageshow", onShow);
-    window.removeEventListener("online", probe);
+    stopWake();
     window.removeEventListener("pointerdown", touch, true);
     window.removeEventListener("keydown", onKey, true);
     ws?.close();
