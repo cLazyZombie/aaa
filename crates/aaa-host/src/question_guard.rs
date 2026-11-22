@@ -1,7 +1,7 @@
 //! coordinator 완료 답의 요청과 카드 연결을 검사한다. 원문은 진단에 복사하지 않는다.
 use crate::Host;
 use aaa_proto::HarnessEvent;
-use pulldown_cmark::{Event, Parser, Tag};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, ops::Range, sync::LazyLock};
@@ -146,8 +146,73 @@ fn prose(line: &str) -> String {
     INDIRECT.replace_all(&unquoted, "$1").into_owned()
 }
 
-/// Markdown 전체를 해석하지 않는다. 인용·코드를 제외하고 제목과 문단의 연결만 보존한다.
-fn blocks(text: &str) -> Vec<Block> {
+struct ListItem {
+    line: usize,
+    indent: usize,
+    open_card: bool,
+}
+
+fn indent_end(text: &str, column: usize) -> usize {
+    text.bytes()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .fold(column, |col, b| if b == b'\t' { col + 4 - col % 4 } else { col + 1 })
+}
+
+/// 실제 목록 본문 행을 찾고, 같은 항목 첫 줄의 열린 카드에 이어지는 행을 표시한다.
+fn list_text(
+    text: &str,
+    cards: &HashMap<String, CardState>,
+    replacements: &HashMap<String, String>,
+) -> HashMap<usize, bool> {
+    let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at + 1)).collect::<Vec<_>>();
+    let line_at = |offset| starts.partition_point(|&start| start <= offset);
+    let source_line = |line| text[starts[line - 1]..].lines().next().unwrap_or_default();
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut excluded = 0;
+    let mut lines = HashMap::new();
+    for (event, span) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::BlockQuote(_) | Tag::CodeBlock(_) | Tag::Heading { .. }) => excluded += 1,
+            Event::End(TagEnd::BlockQuote(_) | TagEnd::CodeBlock | TagEnd::Heading(_)) => excluded -= 1,
+            Event::Start(Tag::Item) => {
+                let line = line_at(span.start);
+                let marker = &text[span];
+                let width = marker.find([' ', '\t', '\r', '\n']).unwrap_or(marker.len());
+                let marker_end = indent_end(source_line(line), 0) + width;
+                let indent = indent_end(&marker[width..], marker_end).max(marker_end + 1);
+                items.push(ListItem { line, indent, open_card: false });
+            }
+            Event::End(TagEnd::Item) => {
+                items.pop();
+            }
+            Event::Start(Tag::Link { dest_url, .. }) if excluded == 0 => {
+                if let Some(item) = items.last_mut()
+                    && line_at(span.start) == item.line
+                    && let [id] = answer_ids(&prose(source_line(item.line)), replacements).as_slice()
+                    && cards.get(id) == Some(&CardState::Open)
+                    && (ids(&dest_url).contains(id) || ids(&text[span]).contains(id))
+                {
+                    item.open_card = true;
+                }
+            }
+            Event::Text(_) if excluded == 0 => {
+                if let Some(item) = items.last() {
+                    let line = line_at(span.start);
+                    if line == item.line {
+                        lines.insert(line, false);
+                    } else if indent_end(source_line(line), 0) >= item.indent {
+                        lines.insert(line, item.open_card);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// 인용·코드를 제외하고 제목과 문단의 연결을 보존한다.
+fn blocks(text: &str, list_text: &HashMap<usize, bool>) -> Vec<Block> {
     let mut out: Vec<Block> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut section = 0;
@@ -170,7 +235,10 @@ fn blocks(text: &str) -> Vec<Block> {
             separated = true;
             continue;
         }
-        if t.is_empty() || t.starts_with('>') || line.starts_with("    ") || line.starts_with('\t') {
+        if t.is_empty()
+            || t.starts_with('>')
+            || (line.starts_with("    ") || line.starts_with('\t')) && !list_text.contains_key(&(index + 1))
+        {
             separated = true;
             continue;
         }
@@ -361,6 +429,18 @@ fn reply_method_only(text: &str) -> bool {
     METHOD.is_match(text)
 }
 
+/// 같은 항목의 보충 정보 요청에만 앞 카드 링크를 적용한다.
+fn supplementary_information(prefix: &str, request: &str) -> bool {
+    static ADDITION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"도\s*(?:함께\s*)?$").unwrap());
+    static DECISION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"승인|허가|결정|여부|(?:어느|어떤)\s*안|해도|(?:[할될갈말]|고를|고칠|바꿀)\s*(?:지|건지|것인지)")
+            .unwrap()
+    });
+    (request.starts_with("알려") || request.starts_with("말씀해"))
+        && ADDITION.is_match(prefix)
+        && !DECISION.is_match(prefix)
+}
+
 /// 카드 목록의 위치를 가리키는 일반 안내만 답 전체에 연결한다.
 /// 다른 요청이 같은 문장에 있어도 해당 '답해 주세요' 위치에만 적용한다.
 fn summary_card_count(text: &str, offset: usize) -> Option<usize> {
@@ -382,7 +462,8 @@ fn summary_card_count(text: &str, offset: usize) -> Option<usize> {
 }
 
 fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMap<String, String>) -> Inspection {
-    let blocks = blocks(text);
+    let list_text = list_text(text, cards, replacements);
+    let blocks = blocks(text, &list_text);
     let answer_ids = |text| answer_ids(text, replacements);
     let reply_refs = blocks.iter().flat_map(|b| answer_ids(&b.text)).fold(Vec::new(), |mut refs, id| {
         if let Some(state) = cards.get(&id)
@@ -420,6 +501,7 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMa
             };
             // 앞 문장의 카드 안내가 같은 줄의 별개 질문까지 면제하지 않는다.
             let start = sentence_start(&block.text, offset, &links);
+            let line = block.line + block.text[..offset].bytes().filter(|b| *b == b'\n').count();
             let tail = fresh_tail(&block.text);
             let fresh = tail.is_some();
             let mut own_ids = answer_ids(tail.unwrap_or(&block.text[start..]));
@@ -437,6 +519,12 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMa
             // 새 요청이 같은 문단의 옛 q-ID 뒤에 붙어도 옛 카드로 가리지 않는다.
             let mut linked = if unresolved { Vec::new() } else { own };
             if linked.is_empty() && !fresh && !unresolved {
+                if rule == "request"
+                    && list_text.get(&line) == Some(&true)
+                    && supplementary_information(&block.text[start..offset], &block.text[offset..])
+                {
+                    continue;
+                }
                 // 요청 뒤 목록·설명을 지나 같은 주제의 카드 링크를 찾는다.
                 linked = blocks[index + 1..]
                     .iter()
@@ -512,7 +600,6 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMa
                 // 같은 카드의 링크·별칭을 여러 번 적어도 질문 수를 채우지 못한다.
                 linked = if reply_refs.len() >= count { reply_refs.clone() } else { Vec::new() };
             }
-            let line = block.line + block.text[..offset].bytes().filter(|b| *b == b'\n').count();
             let evidence = Evidence { rule, line, refs: linked, fresh };
             if evidence.refs.is_empty() {
                 if result.missing.as_ref().is_none_or(|previous| evidence.fresh && !previous.fresh) {
