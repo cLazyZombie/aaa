@@ -2,9 +2,93 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 13-reconnect(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, start, stop, until, screenText, shot, step, root, killSessionHosts, showPanel } from "../lib/harness.mjs";
+import assert from "node:assert/strict";
+import { aaa, start, stop, until, screenText, shot, step, root, killSessionHosts, showPanel, pairPage, browser, webkit, domIs, waitOutput } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("망이 돌아오면 상태 연결의 재시도를 깨우고, 긴 잠자기에서 돌아오면 멈춰 있던 터미널 출력을 다시 받는다", async () => {
+    const safari = await webkit.launch();
+    try {
+      for (const engine of [browser, safari]) {
+        const { page: p, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1100, height: 780 }, {
+          init: () => {
+            const Native = window.WebSocket;
+            window.wakeSockets = { events: [], panes: [] };
+            window.WebSocket = class extends Native {
+              constructor(url, ...args) {
+                super(url, ...args);
+                const path = new URL(url).pathname;
+                if (path.endsWith("/events")) window.wakeSockets.events.push(this);
+                if (path.endsWith("/ws") && path.includes("/panes/")) {
+                  window.wakeSockets.panes.push(this);
+                  this.addEventListener("message", ev => {
+                    if (window.silentPane === this) ev.stopImmediatePropagation();
+                  });
+                }
+              }
+            };
+            window.setWakeVisibility = value => {
+              Object.defineProperty(document, "visibilityState", { configurable: true, value });
+              document.dispatchEvent(new Event("visibilitychange"));
+            };
+          },
+        });
+        try {
+          await p.getByTestId("pane-t1").click();
+          const rows = p.getByTestId("terminal").locator(".xterm-rows");
+          await rows.filter({ hasText: "t1-42" }).waitFor();
+          const since = new Date("2030-01-01T00:00:00Z");
+          await p.clock.install({ time: since });
+          await p.clock.pauseAt(new Date(+since + 1000));
+          const before = await p.evaluate(() => {
+            const sockets = window.wakeSockets.events;
+            const closed = sockets.at(-1);
+            return new Promise(done => {
+              closed.addEventListener("close", () => done(sockets.length), { once: true });
+              closed.close();
+            });
+          });
+          const connected = p.waitForEvent("websocket", { predicate: ws => new URL(ws.url()).pathname.endsWith("/events") });
+          await p.evaluate(() => {
+            window.dispatchEvent(new Event("online"));
+            window.dispatchEvent(new Event("pageshow"));
+          });
+          await connected; // 시계를 진행하지 않았다. 재시도 타이머로는 도달할 수 없다.
+          assert.equal(await p.evaluate(() => window.wakeSockets.events.length), before + 1);
+
+          const count = await p.evaluate(() => window.wakeSockets.panes.length);
+          const shortReturn = await p.evaluate(() => {
+            window.setWakeVisibility("hidden");
+            window.setWakeVisibility("visible");
+            window.silentPane = window.wakeSockets.panes.at(-1);
+            window.setWakeVisibility("hidden");
+            return window.wakeSockets.panes.length;
+          });
+          assert.equal(shortReturn, count);
+          await p.clock.fastForward(11_000);
+          const tag = engine.browserType().name();
+          aaa("pane", "run", "t1", `echo awake-${tag}-$((40+3))`);
+          const marker = `awake-${tag}-43`;
+          await waitOutput("t1", marker);
+          assert.equal((await rows.innerText()).includes(marker), false);
+          await p.evaluate(() => {
+            window.setWakeVisibility("visible");
+            window.dispatchEvent(new Event("pageshow"));
+          });
+          await p.clock.resume();
+          await domIs(p, "새 snapshot의 터미널 출력", text =>
+            document.querySelector('[data-testid="terminal"] .xterm-rows')?.textContent.includes(text), marker);
+          assert.equal(await p.evaluate(() => window.wakeSockets.panes.length), count + 1);
+          assert.deepEqual(errors, []);
+        } finally {
+          await p.context().close();
+        }
+      }
+    } finally {
+      await safari.close();
+    }
+  });
+
   await step("agent 끊김 → 읽기 전용 표시", async () => {
     await stop("agent");
     await until("끊김 배너", async () =>

@@ -5,6 +5,7 @@ import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { createTerminalWorker } from "./terminalWorkerFactory";
 import { pageClosing } from "./apiRequest";
+import { watchConnectionWake } from "./connectionWake";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
@@ -1293,25 +1294,26 @@ export function TermView({
     };
     reattachRef.current = reattach;
     const onVisibility = () => {
-      if (document.visibilityState !== "visible") return;
-      shownAt = Date.now();
-      if (outputStopped && stoppedHidden) reattach();
+      if (document.visibilityState === "visible") shownAt = Date.now();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    // 다시 보이거나 망이 돌아오면 backoff(최대 10초)를 기다리지 않고 바로 다시 붙는다(QA t-0337 Q5, herdr-web-ui ws.ts
-    // `onWake`·`wake()`: online·pageshow·visibilitychange에서 기다리던 재연결을 지금 하고 가장 짧은 지연부터 다시 센다.
-    // t3code client-runtime connection/supervisor.ts도 같다). 열린 연결·출력 정지(4008)는 그대로 둔다
-    const onWake = () => {
-      if (stopped || outputStopped || document.visibilityState !== "visible" || (timer === undefined && !pageWait)) return;
+    let closeForWake: (() => void) | undefined;
+    const stopWake = watchConnectionWake((replace) => {
+      if (stopped) return;
+      if (outputStopped) {
+        if (stoppedHidden) reattach();
+        return;
+      }
+      if (replace && closeForWake && wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+        // close 응답도 못 받을 수 있다. 옛 입력 결과를 정리하고 이 소켓의 사건 수신을 끝낸다.
+        closeForWake();
+      } else if (timer === undefined && !pageWait) return;
       window.clearTimeout(timer);
       timer = undefined;
       delay = 500;
       trace("wake");
-      connect();
-    };
-    window.addEventListener("online", onWake);
-    window.addEventListener("pageshow", onWake);
-    document.addEventListener("visibilitychange", onWake);
+      void connect();
+    });
     // 앞 기록 받기(plan §8.67, 사용자 요청 10-17 「뒤로 스크롤하다 데이터가 부족해지면 받아오면 어때?」). 붙을 때는 최근 기록만 오고
     // (`history_more`면 host에 더 있다), 위로 굴려 받은 기록 맨 위에서 한 화면 안에 들어오면 그 앞 덩어리를 받는다.
     // xterm은 버퍼 앞에 줄을 끼울 수 없으므로 「받은 덩어리 + 지금 버퍼(serialize)」로 다시 쓰고, 보던 줄 자리를 덩어리 줄 수만큼
@@ -1622,8 +1624,8 @@ export function TermView({
         }
         receiver.push(data);
       };
-      ws.onclose = (event) => {
-        attachTiming("ws-close", { code: event.code });
+      const finishSocket = () => {
+        closeForWake = undefined;
         receiver.close();
         const wasCurrent = wsRef.current === ws;
         if (wasCurrent) wsRef.current = null;
@@ -1654,6 +1656,18 @@ export function TermView({
         setLink("closed");
         // 끊기면 유지 키를 푼다(PaneTerminal 1261줄)
         setModifiers(NO_STICKY_MODIFIERS);
+      };
+      closeForWake = () => {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        finishSocket();
+        ws.close();
+      };
+      ws.onclose = (event) => {
+        attachTiming("ws-close", { code: event.code });
+        finishSocket();
+        if (!alive) return;
         // 이 기기가 취소됐다: 다시 붙지 않고 pairing 화면으로(App이 onSignedOut으로 듣는다)
         if (event.code === REVOKED_CLOSE_CODE) {
           stopped = true;
@@ -1693,9 +1707,7 @@ export function TermView({
       stopped = true;
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("online", onWake);
-      window.removeEventListener("pageshow", onWake);
-      document.removeEventListener("visibilitychange", onWake);
+      stopWake();
       wsRef.current?.close();
       attachDone();
       el.removeEventListener("paste", onPaste, true);
