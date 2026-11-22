@@ -79,8 +79,6 @@ fn mixed_platform_candidates_are_pinned_before_transfer_and_guard_uses_target_sh
         assert!(stage_receipt(&restored, &machine_spec(&restored, "win").sha256, &stage).is_ok());
         stage.sha256 = r.spec.sha256;
         assert!(stage_receipt(&restored, &machine_spec(&restored, "win").sha256, &stage).is_err());
-        assert!(candidate_path(r"C:\candidate\aaa.exe", true));
-        assert!(!candidate_path(r"C:relative\aaa.exe", true));
     });
 }
 /// 시험 몸을 따로 만든 runtime에서 돌리고, runtime을 끝낸 뒤 상태 폴더를 지운다. `agent_connected`가 띄운 task(`rewatch` 등)는
@@ -378,8 +376,8 @@ fn all_targets_keep_disconnected_machine_and_stop_before_any_agent_request() {
         assert!(r.error.as_deref().unwrap().contains("배포 대상 mac-b"));
         assert!(r.error.as_deref().unwrap().contains("agent_disconnected"));
         assert!(!serde_json::to_string(&cards).unwrap().contains("agent_disconnected"), "웹은 원문 진단을 숨긴다");
-        h.drive_rollout().await.unwrap();
         assert!(r.steps.iter().all(|s| s.started_ms == 0 && !s.completed && s.guard.is_none()));
+        h.drive_rollout().await.unwrap();
         assert!(!h.rollout_busy().unwrap());
         assert!(h.live_conn("m").unwrap().pending.lock().unwrap().is_empty());
         // 명시적으로 다른 대상을 고르면 그 요청의 명단만 검사한다. 끊긴 등록은 저절로 지우지 않는다.

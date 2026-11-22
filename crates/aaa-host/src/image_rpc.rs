@@ -588,8 +588,11 @@ mod tests {
         wrong["savedPath"] = Value::Null;
         wrong["result"] = STANDARD.encode(b"not an image").into();
         assert!(save_output(&wrong, &home.0, &dir, &mut seen, &mut outputs).is_err());
+        // 그림이 멀쩡해도 실패 표지가 붙은 item은 그 사유로 거부한다.
+        wrong["result"] = item["result"].clone();
         wrong["failure"] = json!({"type":"usageLimitExceeded"});
-        assert!(save_output(&wrong, &home.0, &dir, &mut seen, &mut outputs).is_err());
+        let error = save_output(&wrong, &home.0, &dir, &mut seen, &mut outputs).unwrap_err();
+        assert!(error.contains("한도·제공자 오류"), "{error}");
         #[cfg(unix)]
         {
             let images = home.0.join("generated_images");

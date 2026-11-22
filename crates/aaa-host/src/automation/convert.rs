@@ -1,7 +1,5 @@
-//! 변환 계획을 먼저 검증하고, 실패하면 이번 변환의 파일만 되돌린다.
+//! 변환 계획을 먼저 검증하고 journal에서 재개한다. 계획이 아는 원본·결과 글이 아닌 파일은 덮지 않는다.
 use super::*;
-#[cfg(test)]
-use std::io::Write;
 use std::{collections::BTreeMap, path::Path};
 #[path = "convert_timing.rs"]
 mod timing;
@@ -330,112 +328,6 @@ impl Plan {
         h.update(self.state_hash.as_bytes());
         hex::encode(h.finalize())
     }
-}
-#[cfg(test)]
-pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
-    if plan.originals.is_empty() {
-        return Ok(vec![]);
-    }
-    for file in plan.writes.keys().chain(plan.originals.keys()) {
-        parent(root, file)?;
-    }
-    for (file, text) in &plan.originals {
-        if project_text(root, file)? != *text {
-            return Err(format!("{file}:1:1 변환: 계획 뒤 원본이 바뀌었다"));
-        }
-        let archive = &plan.archives[file];
-        let target = &archive.path;
-        parent(root, target)?;
-        if archive.reuse {
-            if project_text(root, target)? != *text {
-                return Err(format!("{target}:1:1 보존: 계획 뒤 사본이 바뀌었다"));
-            }
-        } else {
-            match root.join(target).symlink_metadata() {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("{target}:1:1 보존: {e}")),
-                Ok(_) => return Err(format!("{target}:1:1 보존: 계획 뒤 사본 자리가 쓰였다")),
-            }
-        }
-    }
-    let mut archived = Vec::new();
-    let mut created = Vec::new();
-    let mut staged = Vec::new();
-    let result = (|| -> Result<(), String> {
-        // 완전히 쓴 일반 파일만 최종 이름으로 공개한다. watcher가 반쪽 TOML을 읽지 않는다.
-        for (file, text) in &plan.writes {
-            let dest = root.join(file);
-            std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-            let temp = dest.parent().unwrap().join(format!(".aaa-convert-{}.tmp", aaa_common::util::new_id()));
-            let mut f =
-                std::fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|e| e.to_string())?;
-            staged.push((file.clone(), temp));
-            f.write_all(text.as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
-        }
-        for (file, archive) in &plan.archives {
-            let target = &archive.path;
-            if !archive.reuse {
-                std::fs::create_dir_all(root.join(target).parent().unwrap()).map_err(|e| e.to_string())?;
-                // hard_link의 create-new 성질로 기존 사본을 덮지 않는다.
-                std::fs::hard_link(root.join(file), root.join(target)).map_err(|e| e.to_string())?;
-            }
-            archived.push((file.clone(), target.clone(), archive.reuse));
-            std::fs::remove_file(root.join(file)).map_err(|e| e.to_string())?;
-        }
-        for (file, temp) in &staged {
-            std::fs::hard_link(temp, root.join(file)).map_err(|e| e.to_string())?;
-            created.push(file.clone());
-            std::fs::remove_file(temp).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        let mut failures = Vec::new();
-        for (_, temp) in &staged {
-            if let Err(e) = std::fs::remove_file(temp)
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                failures.push(e.to_string());
-            }
-        }
-        for file in created.iter().rev() {
-            if let Err(e) = std::fs::remove_file(root.join(file)) {
-                failures.push(e.to_string());
-            }
-        }
-        for (file, backup, reused) in archived.iter().rev() {
-            if root.join(file).exists()
-                && project_text(root, file)
-                    .inspect_err(|error| {
-                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                    })
-                    .ok()
-                    .as_ref()
-                    != plan.originals.get(file)
-            {
-                failures.push(format!("{file}: 원본 자리에 다른 파일이 있어 {backup} 보존"));
-                continue;
-            }
-            if !root.join(file).exists()
-                && let Err(e) = std::fs::hard_link(root.join(backup), root.join(file))
-            {
-                failures.push(e.to_string());
-                continue;
-            }
-            if !reused && let Err(e) = std::fs::remove_file(root.join(backup)) {
-                failures.push(e.to_string());
-            }
-        }
-        return Err(format!(
-            "변환 실패: {error}{}",
-            if failures.is_empty() {
-                " · 원본 복구 완료".into()
-            } else {
-                format!(" · 복구 확인 필요: {}", failures.join("; "))
-            }
-        ));
-    }
-    Ok(plan.writes.keys().cloned().chain(archived.into_iter().map(|(_, path, _)| path)).collect())
 }
 
 impl Plan {

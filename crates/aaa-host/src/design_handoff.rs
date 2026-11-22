@@ -225,23 +225,6 @@ impl Host {
         Ok(())
     }
 
-    /// 버린 기획 branch(그 만든 때)에서 맡긴 기록을 지운다
-    #[cfg(test)]
-    pub(crate) fn design_handoff_forget(&self, project: &str, repo: &str, slug: &str, created_ms: u64) {
-        let Ok(dir) = self.design_handoff_dir(project) else { return };
-        let Ok(entries) = std::fs::read_dir(&dir) else { return };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(rec) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<HandoffRec>(&b).ok())
-            else {
-                continue;
-            };
-            if rec.repo == repo && rec.slug == slug && rec.branch_created_ms == created_ms {
-                aaa_common::diagnostic::ignored(std::fs::remove_file(&path), "맡김 기록 지우기");
-            }
-        }
-    }
-
     fn design_handoff_records(&self, project: &str) -> Vec<HandoffRec> {
         let Ok(dir) = self.design_handoff_dir(project) else { return Vec::new() };
         let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
@@ -500,6 +483,13 @@ impl Host {
 mod tests {
     use super::*;
 
+    /// 옛 기획 branch 기록(t-2050 전)을 저장 형식 그대로 둔다. production은 이 기록을 읽기만 한다
+    fn store_branch(h: &Host, rec: &crate::design_branch::Rec) {
+        let dir = h.state.join("design-branches").join("demo").join(&rec.repo);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{}.json", rec.slug)), serde_json::to_vec_pretty(rec).unwrap()).unwrap();
+    }
+
     #[test]
     fn brief_names_the_branch_doc_sections_and_marker() {
         let rec = HandoffRec {
@@ -522,7 +512,7 @@ mod tests {
     }
 
     /// 시작: 그 할 일의 기록이고 표지를 올린 뒤에만 기획 branch에서 갈라진다. 기준을 준 시작은 그 기준을 지킨다.
-    /// 다른 할 일(번호가 다시 쓰임)·저장소를 바꾼 할 일·같은 이름으로 새로 연 branch에는 쓰지 않고, 버리면 기록이 지워진다
+    /// 다른 할 일(번호가 다시 쓰임)·저장소를 바꾼 할 일·같은 이름으로 새로 연 branch에는 쓰지 않는다
     #[tokio::test]
     async fn start_forks_from_the_design_branch_only_for_its_task_after_the_push() {
         let state = std::env::temp_dir().join(format!("aaa-design-handoff-{}", aaa_common::util::new_id()));
@@ -537,7 +527,7 @@ mod tests {
             created_ms: 100,
             ..Default::default()
         };
-        h.design_branch_store("demo", &branch).unwrap();
+        store_branch(&h, &branch);
         let rec = HandoffRec {
             task: "d-0005".into(),
             task_id: "01TASK".into(),
@@ -557,10 +547,10 @@ mod tests {
         assert_eq!(start(&mut a, "01TASK", "pt").unwrap_err().code, ErrorCode::Unavailable, "올리기 전에는 미룬다");
         branch.head = Some("c1".into());
         branch.pushed = Some("c0".into());
-        h.design_branch_store("demo", &branch).unwrap();
+        store_branch(&h, &branch);
         assert!(start(&mut args(), "01TASK", "pt").is_err(), "표지 commit(c1) 전의 판(c0)만 올렸다");
         branch.pushed = Some("c1".into());
-        h.design_branch_store("demo", &branch).unwrap();
+        store_branch(&h, &branch);
         let mut a = args();
         start(&mut a, "01TASK", "pt").unwrap();
         assert_eq!(a.base.as_deref(), Some("origin/design/loop-plan"));
@@ -576,14 +566,10 @@ mod tests {
             assert_eq!((a.base.as_deref(), a.task.as_str()), (None, "할 일"), "{id} {repo}");
         }
         branch.created_ms = 999;
-        h.design_branch_store("demo", &branch).unwrap();
+        store_branch(&h, &branch);
         let mut a = args();
         start(&mut a, "01TASK", "pt").unwrap();
         assert_eq!((a.base.as_deref(), a.task.as_str()), (None, "할 일"), "같은 이름으로 새로 연 branch");
-        h.design_handoff_forget("demo", "pt", "loop-plan", 999);
-        assert!(h.design_handoff_load("demo", "d-0005").is_some(), "다른 판의 branch는 지우지 않는다");
-        h.design_handoff_forget("demo", "pt", "loop-plan", 100);
-        assert!(h.design_handoff_load("demo", "d-0005").is_none());
         aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&state), "시험 폴더 정리");
     }
 
@@ -602,7 +588,7 @@ mod tests {
             created_ms: 100,
             ..Default::default()
         };
-        h.design_branch_store("demo", &branch).unwrap();
+        store_branch(&h, &branch);
         let mut rec = HandoffRec {
             task: "d-0007".into(),
             task_id: "01TASK".into(),

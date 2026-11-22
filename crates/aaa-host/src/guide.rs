@@ -726,7 +726,7 @@ mod tests {
         }
     }
 
-    /// 질문 post의 규칙은 AGENTS.md에, 문법은 그가 가리키는 `questions`에 있다(웹 E2E74·88이 실제 파일·CLI로 같은 글을 본다).
+    /// 질문 post의 규칙은 AGENTS.md에, 문법은 그가 가리키는 `questions`에 있다.
     /// 문법 예시는 host가 읽는 카드 꼴 그대로다.
     #[test]
     fn question_post_guidance_is_reachable() {

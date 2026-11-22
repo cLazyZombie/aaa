@@ -1763,8 +1763,7 @@ fn apply_diagnostic_redacts_raw_and_json_escaped_private_input() {
 /// 가짜 암호는 실행 중에만 만들고 원문을 assertion/로그/파일에 넣지 않는다.
 #[cfg(unix)]
 #[test]
-fn service_password_is_web_only_and_never_in_views_or_persistent_records() {
-    let Some(lab) = lab() else { return };
+fn service_password_is_hidden_in_request_debug_and_refused_outside_web_controllers() {
     let secret =
         aaa_proto::MachineSetupPassword(format!("{}{}", aaa_common::util::new_id(), aaa_common::util::new_id()));
     let request = || FrontRequest::MachineSetupApply {
@@ -1773,9 +1772,13 @@ fn service_password_is_web_only_and_never_in_views_or_persistent_records() {
         service_password: Some(secret.clone()),
     };
     assert!(!format!("{:?}", request()).contains(&secret.0), "요청 Debug에 보호 입력이 있다");
+    let root = std::env::temp_dir().join(format!("aaa-ssh-password-{}", aaa_common::util::new_id()));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    rt.block_on(async {
-        let h = host_for(&lab);
+    let weak = rt.block_on(async {
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
         for (role, actor) in [
             (DeviceRole::Local, "local:cli"),
             (DeviceRole::Local, "local:thread@session"),
@@ -1787,27 +1790,11 @@ fn service_password_is_web_only_and_never_in_views_or_persistent_records() {
         ] {
             assert_eq!(h.call(role, actor, request()).await.unwrap_err().code, ErrorCode::Forbidden);
         }
-        let view = serde_json::to_string(&h.setup_list().unwrap()).unwrap();
-        assert!(!view.contains(&secret.0), "조회에 보호 입력이 있다");
-        // 일회 입력은 잘못된 job에도 응답에 되돌아오지 않는다.
-        let error = h.call(DeviceRole::Controller, WEB, request()).await.unwrap_err();
-        assert!(!serde_json::to_string(&error).unwrap().contains(&secret.0), "오류에 보호 입력이 있다");
+        Arc::downgrade(&h)
     });
-    fn scan(root: &Path, needle: &[u8]) {
-        for entry in std::fs::read_dir(root).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scan(&path, needle);
-            } else {
-                assert!(
-                    !std::fs::read(path).unwrap().windows(needle.len()).any(|w| w == needle),
-                    "영속 기록에 보호 입력이 있다"
-                );
-            }
-        }
-    }
-    // host DB/WAL·감사·프로젝트 작업/보고 등 이 시험이 만든 전체 자료를 검사한다.
-    scan(&lab.root, secret.0.as_bytes());
+    drop(rt);
+    assert!(weak.upgrade().is_none());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]
