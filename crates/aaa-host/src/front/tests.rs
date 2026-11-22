@@ -28,6 +28,12 @@ async fn old_thread_records_keep_bounding_the_cli_role_after_index_creation() {
             );
         }
     }
+    {
+        // DB 이행 자체는 손상 행을 허용한다. 이후 host의 기존 보고 표지 보충은 JSON 전문이 필요하다.
+        let db = crate::db::Db::open(&state.join("host.db")).unwrap();
+        assert_eq!(db.threads_for_pane("claimed-pane").unwrap().len(), 3);
+        db.conn_for_test().execute("DELETE FROM threads WHERE project='demo' AND id='t-0001'", []).unwrap();
+    }
     let h = Host::open(cfg, state).unwrap();
     let rec = h.thread_of_pane("claimed-pane").unwrap();
     assert_eq!(rec.id, "t-0004");
