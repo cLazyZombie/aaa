@@ -98,33 +98,14 @@ pub(super) fn collect_main(cwd: &Path, store: &Path, known: &[String]) -> Result
     let started = Instant::now();
     collect_main_with_elapsed(cwd, store, known, || started.elapsed())
 }
+// Git 실행을 포함한 경과의 출처만 분리한다. 시험도 같은 750ms 검사·실패 기록·캐시 경로를 쓴다.
 pub(super) fn collect_main_with_elapsed(
     cwd: &Path,
     store: &Path,
     known: &[String],
-    elapsed: impl FnMut() -> Duration,
-) -> Result<Option<CodeLines>> {
-    collect_revision(cwd, store, known, elapsed, "refs/remotes/origin/main", Some("main"))
-}
-// Git 실행을 포함한 경과의 출처만 분리한다. 시험도 같은 750ms 검사·실패 기록·캐시 경로를 쓴다.
-#[cfg(test)]
-pub(super) fn collect_with_elapsed(
-    cwd: &Path,
-    store: &Path,
-    known: &[String],
-    elapsed: impl FnMut() -> Duration,
-) -> Result<Option<CodeLines>> {
-    collect_revision(cwd, store, known, elapsed, "HEAD", None)
-}
-fn collect_revision(
-    cwd: &Path,
-    store: &Path,
-    known: &[String],
     mut elapsed: impl FnMut() -> Duration,
-    revision: &str,
-    branch: Option<&str>,
 ) -> Result<Option<CodeLines>> {
-    let info = text(cwd, &["show", "-s", "--format=%H%n%T%n%ct", revision])?;
+    let info = text(cwd, &["show", "-s", "--format=%H%n%T%n%ct", "refs/remotes/origin/main"])?;
     let fields: Vec<_> = info.lines().collect();
     ensure!(fields.len() == 3, "커밋 자료 없음");
     let commit = fields[0];
@@ -160,9 +141,6 @@ fn collect_revision(
         });
     ensure!(attempted.as_ref() != Some(&(RULES, commit.to_string())), "같은 커밋의 줄 수 집계는 이미 시도함");
     aaa_common::util::write_json(&attempt_path, &(RULES, commit))?;
-    let branch = branch.map(str::to_string).unwrap_or_else(|| {
-        text(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "detached".into())
-    });
     let changed = if cache.commit.is_empty() {
         None
     } else {
@@ -252,7 +230,7 @@ fn collect_revision(
         tree: tree.into(),
         committed_at_ms: committed,
         observed_at_ms: aaa_common::util::now_ms(),
-        branch,
+        branch: "main".into(),
         rules_version: RULES,
         counting_unit: "nonblank_source_lines_including_comments".into(),
         total_lines,

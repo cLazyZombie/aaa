@@ -137,7 +137,21 @@ fn git(l: &Lab, args: &[&str]) -> String {
 }
 fn collect_lines(cwd: &Path, store: &Path, known: &[String]) -> Result<Option<aaa_proto::CodeLines>> {
     // 집계 규칙·오류 원인 시험은 실제 Git을 쓰되 머신 부하로 시간 상한에 걸리지 않게 한다.
-    lines::collect_with_elapsed(cwd, store, known, || Duration::ZERO)
+    collect_lines_elapsed(cwd, store, known, || Duration::ZERO)
+}
+/// 집계는 push된 main을 읽는다. 시험 저장소의 지금 commit을 그 참조에 둔 뒤 production과 같은 입구로 부른다.
+fn collect_lines_elapsed(
+    cwd: &Path,
+    store: &Path,
+    known: &[String],
+    elapsed: impl FnMut() -> Duration,
+) -> Result<Option<aaa_proto::CodeLines>> {
+    let pushed = std::process::Command::new("git")
+        .args(["-C", cwd.to_str().unwrap(), "update-ref", "refs/remotes/origin/main", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(pushed.status.success(), "{}", String::from_utf8_lossy(&pushed.stderr));
+    lines::collect_main_with_elapsed(cwd, store, known, elapsed)
 }
 fn collect_main_fixture(state: &Path, cwd: &Path) -> WorkspaceCollected {
     // main/push 계약도 실제 Git·캐시를 쓰고, 코드 집계의 경과 출처만 고정한다.
@@ -271,14 +285,14 @@ fn failed_code_scan_is_not_repeated_for_the_same_commit_and_next_commit_can_reco
     git(&l, &["commit", "-qm", "broken source"]);
     // 같은 손상 객체도 예산이 먼저 끝나면 UTF-8 대신 시간 상한 오류가 난다.
     let expired = Lab::new();
-    let limit_error = lines::collect_with_elapsed(&l.0, &expired.0, &[], || Duration::from_millis(750)).unwrap_err();
+    let limit_error = collect_lines_elapsed(&l.0, &expired.0, &[], || Duration::from_millis(750)).unwrap_err();
     assert_eq!(limit_error.to_string(), "코드 집계 경과 상한");
     let first = collect_lines(&l.0, &state.0, &[]).unwrap_err();
     assert!(first.to_string().contains("UTF-8"), "{first:#}");
     assert!(!state.0.join("lines.json").exists(), "실패한 집계를 성공 스냅샷으로 저장하지 않는다");
     // 같은 객체를 다시 해독하면 UTF-8 오류다. 두 번째 회수는 객체 읽기 전에 멈춘다.
     let second =
-        lines::collect_with_elapsed(&l.0, &state.0, &[], || panic!("같은 커밋은 객체 읽기 전에 멈춘다")).unwrap_err();
+        collect_lines_elapsed(&l.0, &state.0, &[], || panic!("같은 커밋은 객체 읽기 전에 멈춘다")).unwrap_err();
     assert!(second.to_string().contains("이미 시도"), "{second:#}");
     l.put("broken.ts", "export const repaired = true;\n");
     git(&l, &["add", "."]);
@@ -314,7 +328,7 @@ fn code_scan_elapsed_limit_preserves_snapshot_and_next_commit_can_recover() {
     for ((times, succeeds), state) in cases.iter().zip(&states) {
         let snapshot = fs::read(state.0.join("lines.json")).unwrap();
         let mut checks = 0;
-        let result = lines::collect_with_elapsed(&l.0, &state.0, &[], || {
+        let result = collect_lines_elapsed(&l.0, &state.0, &[], || {
             let elapsed = times[checks];
             checks += 1;
             elapsed
@@ -327,8 +341,8 @@ fn code_scan_elapsed_limit_preserves_snapshot_and_next_commit_can_recover() {
             assert_eq!(error.to_string(), "코드 집계 경과 상한");
             assert_eq!(checks, if times[0] < limit { 2 } else { 1 });
             assert_eq!(fs::read(state.0.join("lines.json")).unwrap(), snapshot, "부분 집계는 저장하지 않는다");
-            let again = lines::collect_with_elapsed(&l.0, &state.0, &[], || panic!("실패한 커밋은 재스캔하지 않는다"))
-                .unwrap_err();
+            let again =
+                collect_lines_elapsed(&l.0, &state.0, &[], || panic!("실패한 커밋은 재스캔하지 않는다")).unwrap_err();
             assert!(again.to_string().contains("이미 시도"), "{again:#}");
         }
     }

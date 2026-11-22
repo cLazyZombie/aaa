@@ -42,26 +42,10 @@ impl std::error::Error for Missing {}
 
 pub(crate) fn reply(r: Result<AgentResponse>) -> Result<AgentResponse, ErrorBody> {
     r.map_err(|e| {
-        let code = if e.downcast_ref::<Missing>().is_some() {
-            ErrorCode::NotFound
-        } else if e.downcast_ref::<Stale>().is_some() {
-            ErrorCode::Conflict
-        } else {
-            ErrorCode::BadRequest
-        };
+        let code = if e.downcast_ref::<Missing>().is_some() { ErrorCode::NotFound } else { ErrorCode::BadRequest };
         ErrorBody::new(code, format!("{e:#}"))
     })
 }
-
-/// 기준 판과 지금 판이 다르다(저장 겹침)
-#[derive(Debug)]
-pub(crate) struct Stale(pub(crate) String);
-impl std::fmt::Display for Stale {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for Stale {}
 
 /// 기획 폴더 트리. `branch`(slug)면 그 기획 branch 끝에서 읽고 main과 달리 고친 파일·앞선 commit 수를 싣는다
 pub async fn tree(repo: &str, folder: &str, branch: Option<&str>) -> Result<AgentResponse, ErrorBody> {
