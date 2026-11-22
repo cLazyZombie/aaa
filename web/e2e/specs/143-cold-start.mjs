@@ -5,7 +5,7 @@
 // host의 셸로 한 번 다시 열어 안전 모드 화면에 닿는다. 고정 sleep은 없다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aaa, step, webkit, pairPage, inTime, until, root, start as startProcess, stop as stopProcess } from "../lib/harness.mjs";
+import { aaa, step, webkit, pairPage, inTime, until, root, start, stop } from "../lib/harness.mjs";
 import { prepare } from "../lib/chat-retention.mjs";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
@@ -39,7 +39,7 @@ export default async function () {
       });
       await chatRows(page).first().waitFor();
       const ctx = page.context();
-      const start = new URL("/", page.url()).href;
+      const home = new URL("/", page.url()).href;
       const remembered = await page.evaluate(() => JSON.parse(localStorage.getItem("aaa:signed-in")));
       assert.equal(remembered.role, "controller");
       await page.close();
@@ -55,7 +55,7 @@ export default async function () {
       again.on("websocket", ws => sockets.push(ws.url()));
       const events = again.waitForEvent("websocket", ws => ws.url().includes("/api/v1/events"));
       // 홈 화면 앱은 주소 없이 start_url로 연다: 고를 것은 기억한 선택이다
-      await again.goto(start);
+      await again.goto(home);
       await inTime(events, 10_000, "기기 확인 응답 전 상태 연결");
       await chatRows(again).first().waitFor();
       assert.equal(me.open, false, "기기 확인 응답을 놓기 전에 열려야 한다");
@@ -75,7 +75,7 @@ export default async function () {
       // 취소된 기기: 기억이 있어도 확인 응답(401)으로 연결 화면이 되고 기억을 지운다
       aaa("web", "revoke", remembered.device);
       const revoked = await ctx.newPage();
-      await revoked.goto(start);
+      await revoked.goto(home);
       await revoked.getByLabel("페어링 코드").waitFor();
       assert.equal(await revoked.evaluate(() => localStorage.getItem("aaa:signed-in")), null);
       await revoked.close();
@@ -83,7 +83,7 @@ export default async function () {
     await step("다시 연 앱: 첫 화면은 캐시한 셸로 바로 열고 새 셸은 뒤에서 두며, 「앱 다시 열기」는 host의 지금 셸을 연다", async () => {
       const { page } = await pairPage(safari, aaa("web", "pair").code, { width: 390, height: 844 }, { userAgent: IPHONE, touch: true });
       const ctx = page.context();
-      const start = new URL("/", page.url()).href;
+      const home = new URL("/", page.url()).href;
       const shellHas = (p, mark) => p.evaluate(async mark => (await (await caches.match("/"))?.text() ?? "").includes(mark), mark);
       // 캐시한 셸에 표지를 심는다: 표지가 있는 화면이 열리면 worker가 캐시로 답한 것이다
       const markShell = p => p.evaluate(async () => {
@@ -104,7 +104,7 @@ export default async function () {
       await page.close();
 
       const reopened = await ctx.newPage();
-      await reopened.goto(start);
+      await reopened.goto(home);
       assert.equal(await reopened.locator('meta[name="aaa-shell"]').count(), 1, "캐시한 셸로 열려야 한다");
       await reopened.getByTestId("machine-labA").waitFor({ state: "attached" });
       // 그사이 받은 host의 셸이 캐시 자리를 바꾼다(다음 실행은 새 빌드)
@@ -119,7 +119,7 @@ export default async function () {
       });
       await reopened.close();
       const stale = await ctx.newPage();
-      await stale.goto(`${start}#pane=${encodeURIComponent(fixture.coordinator)}`);
+      await stale.goto(`${home}#pane=${encodeURIComponent(fixture.coordinator)}`);
       assert.equal(await stale.locator('meta[name="aaa-shell"]').count(), 1, "배포 뒤 첫 실행은 캐시한 셸");
       const line = stale.getByTestId("web-update");
       await line.waitFor();
@@ -136,21 +136,21 @@ export default async function () {
       // 안전 모드 host(설정을 못 읽음)는 첫 화면 주소에 안전 모드 화면을 준다: 캐시한 셸로 연 앱은 host의 셸로 한 번 다시 열어 그 화면에 닿는다
       const toml = `${root}/c/host.toml`;
       const good = fs.readFileSync(toml, "utf8");
-      await stopProcess("host");
+      await stop("host");
       fs.writeFileSync(toml, `${good}\n[[[ 깨진 설정\n`);
-      startProcess("host", "host");
+      start("host", "host");
       try {
-        await until("안전 모드 host", async () => (await fetch(start)).headers.get("x-aaa-mode") !== null);
+        await until("안전 모드 host", async () => (await fetch(home)).headers.get("x-aaa-mode") !== null);
         const safe = await ctx.newPage();
-        await safe.goto(start);
+        await safe.goto(home);
         await safe.waitForFunction(() => document.title === "aaa 안전 모드");
         // 캐시한 앱이 표지를 붙여 다시 연 화면이다(안전 모드 화면은 표지를 지우지 않는다)
         assert.equal(new URL(safe.url()).searchParams.get("fresh"), "1", safe.url());
         await safe.close();
       } finally {
-        await stopProcess("host");
+        await stop("host");
         fs.writeFileSync(toml, good);
-        startProcess("host", "host");
+        start("host", "host");
         await until("host 복귀", () => aaa("status").web_listen);
       }
     });
