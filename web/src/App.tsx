@@ -31,6 +31,7 @@ import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
 import { rememberedSignIn, rememberSignIn } from "./signedIn";
+import { reopenFresh } from "./freshShell";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedChat } from "./retainedChats";
@@ -112,9 +113,12 @@ export function App() {
       })
       // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed).
       // host의 답(안전 모드의 unavailable 등)은 그 말을 그대로 보인다
-      .catch((e: unknown) =>
-        setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : e instanceof ApiError ? e.message : String(e) }),
-      );
+      .catch((e: unknown) => {
+        // 안전 모드 host(설정을 못 읽음)는 앱 API에 unavailable로 답하고 첫 화면 주소에 안전 모드 화면을 준다. worker가 캐시한 셸로
+        // 연 앱이면 그 화면에 닿도록 host의 셸로 한 번 다시 연다(t-2150). 표지로 연 페이지가 또 받으면 아래 카드다
+        if (e instanceof ApiError && e.body.code === "unavailable" && reopenFresh({ once: true })) return;
+        setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : e instanceof ApiError ? e.message : String(e) });
+      });
   }, []);
   useEffect(check, [check]);
   // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다

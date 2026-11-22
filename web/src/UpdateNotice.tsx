@@ -4,7 +4,7 @@
 // 참고는 `reload()`지만 aaa worker는 첫 화면을 캐시한 셸로 열므로(t-2150) 표지를 붙여 host의 지금 셸을 받는다.
 // 입력줄·대화 입력 초안은 localStorage에 있어 다시 열어도 남는다(herdr/terminalDraft.ts·herdr/composerDraft.ts, plan §8.166)
 import { BUILD } from "./api";
-import { freshUrl } from "./freshShell";
+import { reopenFresh } from "./freshShell";
 import "./herdr/UpdateNotice.css";
 
 /** host가 이 페이지와 다른 웹을 준다(참고 `reloadReason`의 "updated"). 어느 쪽이든 모르면 아니다 */
@@ -17,7 +17,7 @@ export function UpdateNotice({ hostBuild }: { hostBuild: string | null }) {
   return (
     <div className="update-notice is-line is-warning" role="status" data-testid="web-update">
       <span>앱이 업데이트됐다.</span>
-      <button type="button" className="btn" onClick={() => window.location.replace(freshUrl(window.location.href))}>
+      <button type="button" className="btn" onClick={() => reopenFresh()}>
         앱 다시 열기
       </button>
     </div>

@@ -1,9 +1,11 @@
 // 다시 연 앱의 첫 화면(t-2150): 마지막으로 확인한 기기면 기기 확인(me) 응답 전에 상태 연결을 열고, 기억한 coordinator pane은
 // thread 목록 응답을 기다리지 않고 연다. 두 응답을 route로 붙잡은 채 WebSocket 요청과 대화 DOM이 나오는지 보고, 놓은 뒤에도
 // 같은 연결을 쓰는지 본다. 취소된 기기는 기억이 있어도 확인 응답으로 연결 화면이 되고 기억을 지운다. 첫 화면 셸은 service
-// worker가 캐시로 답하고 새 셸은 뒤에서 두며, 「앱 다시 열기」는 host의 셸을 여는지 캐시 셸에 심은 표지로 본다. 고정 sleep은 없다.
+// worker가 캐시로 답하고 새 셸은 뒤에서 두며, 「앱 다시 열기」는 host의 셸을 여는지 캐시 셸에 심은 표지로 본다. 안전 모드 host면 캐시한 앱이
+// host의 셸로 한 번 다시 열어 안전 모드 화면에 닿는다. 고정 sleep은 없다.
 import assert from "node:assert/strict";
-import { aaa, step, webkit, pairPage, inTime, until } from "../lib/harness.mjs";
+import fs from "node:fs";
+import { aaa, step, webkit, pairPage, inTime, until, root, start as startProcess, stop as stopProcess } from "../lib/harness.mjs";
 import { prepare } from "../lib/chat-retention.mjs";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1";
@@ -130,6 +132,27 @@ export default async function () {
       assert.equal(new URL(stale.url()).hash, `#pane=${encodeURIComponent(fixture.coordinator)}`);
       await ctx.unrouteAll({ behavior: "wait" });
       await stale.close();
+
+      // 안전 모드 host(설정을 못 읽음)는 첫 화면 주소에 안전 모드 화면을 준다: 캐시한 셸로 연 앱은 host의 셸로 한 번 다시 열어 그 화면에 닿는다
+      const toml = `${root}/c/host.toml`;
+      const good = fs.readFileSync(toml, "utf8");
+      await stopProcess("host");
+      fs.writeFileSync(toml, `${good}\n[[[ 깨진 설정\n`);
+      startProcess("host", "host");
+      try {
+        await until("안전 모드 host", async () => (await fetch(start)).headers.get("x-aaa-mode") !== null);
+        const safe = await ctx.newPage();
+        await safe.goto(start);
+        await safe.waitForFunction(() => document.title === "aaa 안전 모드");
+        // 캐시한 앱이 표지를 붙여 다시 연 화면이다(안전 모드 화면은 표지를 지우지 않는다)
+        assert.equal(new URL(safe.url()).searchParams.get("fresh"), "1", safe.url());
+        await safe.close();
+      } finally {
+        await stopProcess("host");
+        fs.writeFileSync(toml, good);
+        startProcess("host", "host");
+        await until("host 복귀", () => aaa("status").web_listen);
+      }
     });
   } finally {
     await safari?.close();
