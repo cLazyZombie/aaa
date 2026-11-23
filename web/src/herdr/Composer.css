@@ -632,7 +632,7 @@
 
 .composer-controls .icon-button,
 .composer-action,
-.composer-attachment button {
+.composer-attachment-remove {
   flex: none;
   cursor: pointer;
 }
@@ -679,7 +679,7 @@
   height: var(--space-4);
 }
 
-.composer-attachment button svg {
+.composer-attachment-remove svg {
   width: var(--icon-size);
   height: var(--icon-size);
 }
@@ -878,7 +878,19 @@
   object-fit: cover;
 }
 
+.composer-attachment-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: zoom-in;
+}
+
 .composer-attachment-state {
+  pointer-events: none;
   position: absolute;
   inset: auto var(--space-1) var(--space-1);
   padding: var(--hairline) var(--space-1);
@@ -898,7 +910,7 @@
   border-color: var(--status-blocked);
 }
 
-.composer-attachment button {
+.composer-attachment-remove {
   position: absolute;
   top: calc(-1 * var(--space-2));
   right: calc(-1 * var(--space-2));
@@ -1026,7 +1038,7 @@
 
 @media (pointer: coarse) {
   .composer-controls .icon-button,
-  .composer-attachment button {
+  .composer-attachment-remove {
     min-width: var(--touch-target);
     min-height: calc(var(--touch-target) + var(--space-1));
   }
