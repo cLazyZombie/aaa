@@ -30,6 +30,7 @@ struct Submission<'a> {
     id: &'a str,
     message: bool,
     nudge: bool,
+    nudge_input: NudgeInput,
     previous_message: PreviousMessage,
     input: MessageInput,
     late: Option<LateReceipt>,
@@ -50,6 +51,7 @@ impl<'a> Submission<'a> {
             id,
             message: false,
             nudge: false,
+            nudge_input: NudgeInput::default(),
             previous_message: PreviousMessage::None,
             input: MessageInput::NotWritten,
             late: None,
@@ -58,6 +60,14 @@ impl<'a> Submission<'a> {
             resume_claimed: false,
         }
     }
+}
+
+#[derive(Default)]
+pub(crate) struct NudgeInput {
+    pub(crate) id: String,
+    pub(crate) reason: Option<&'static str>,
+    pub(crate) pasted: Option<Instant>,
+    pub(crate) entered: Option<Instant>,
 }
 
 /// 질문에 답할 때 선택 창이 화면에 그려지기를 기다리는 시간

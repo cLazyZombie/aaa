@@ -1,3 +1,5 @@
+- t-2167 [역할 로그 회전 검증](testing-log-rotation-t-2167.md)
+- t-2167 [카드 답과 웹 연결 운영 로그 검증](testing-operational-logs-t-2167.md)
 - t-2141 [질문 감시의 이전 카드에서 새 카드로 바뀐 안내](testing-question-guard-t2141.md)
 - t-2129: [macOS Intel 지정 계정 예약 재연결 수리](testing-macos-intel-reserved-account-t-2129.md)
 - t-2126: [Gemini 터미널 설정 검증](testing-agy-cli-t-2126.md)

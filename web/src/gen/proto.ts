@@ -1,6 +1,8 @@
 // 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
 // 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
+export type WebAnswerTiming = { trace: string, response_ms: number, render_ms: number, };
+
 export type AutoMode = { on: boolean, since_ms: number, ended_ms: number, by: string, run: number, decisions: number, };
 
 export type AutoDecision = { id: string, run: number, subject: string, question: ThreadQuestion, choice: string, pick: number | null, reason: string, action: string,

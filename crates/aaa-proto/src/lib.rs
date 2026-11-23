@@ -69,11 +69,21 @@ pub const LINK_DEAD_AFTER: std::time::Duration = std::time::Duration::from_secs(
 /// 이름 없이 부르면 쓰는 workspace
 pub const DEFAULT_WORKSPACE: &str = "main";
 
+/// 질문 카드 응답을 받은 브라우저가 잰 시간. trace는 host가 응답 헤더로 발급한다.
+#[derive(serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct WebAnswerTiming {
+    pub trace: String,
+    pub response_ms: u32,
+    pub render_ms: u32,
+}
+
 /// 웹 front가 쓰는 타입 선언을 한 파일로 만든다.
 pub fn typescript_bindings() -> String {
     use ts_rs::TS;
     let cfg = ts_rs::Config::default();
     let decls = [
+        WebAnswerTiming::decl(&cfg),
         AutoMode::decl(&cfg),
         AutoDecision::decl(&cfg),
         AutoDecisionNote::decl(&cfg),

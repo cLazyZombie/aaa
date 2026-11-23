@@ -13,6 +13,8 @@ mod events;
 use events::*;
 mod pane_ws;
 use pane_ws::*;
+mod operation_log;
+pub(crate) use operation_log::AnswerReceipts;
 mod static_files;
 use static_files::*;
 use std::collections::HashSet;
@@ -170,6 +172,10 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
         .route("/api/v1/push/test", post(push_test))
         .route("/api/v1/diag/input", post(diag_input))
+        .route(
+            "/api/v1/diag/answer",
+            post(operation_log::answer_timing).layer(axum::extract::DefaultBodyLimit::max(256)),
+        )
         .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/account-usage", get(account_quota_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
@@ -232,6 +238,9 @@ struct PaneIngress {
     origin_us: u64,
 }
 
+#[derive(Clone, Copy)]
+struct RpcIngress(std::time::Instant);
+
 async fn guard(State(host): State<Arc<Host>>, mut req: Request, next: Next) -> Response {
     let started = std::time::Instant::now();
     let h = req.headers();
@@ -274,6 +283,8 @@ async fn guard(State(host): State<Arc<Host>>, mut req: Request, next: Next) -> R
     }
     if is_ws && req.uri().path().starts_with("/api/v1/panes/") {
         req.extensions_mut().insert(PaneIngress { started, origin_us });
+    } else if req.uri().path() == "/api/v1/call" {
+        req.extensions_mut().insert(RpcIngress(started));
     }
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
@@ -440,17 +451,40 @@ async fn app_badge(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
     Json(Outcome::from(host.app_badge_count())).into_response()
 }
 
-async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json<FrontRequest>) -> Response {
+async fn call(
+    State(host): State<Arc<Host>>,
+    ingress: Option<Extension<RpcIngress>>,
+    headers: HeaderMap,
+    Json(req): Json<FrontRequest>,
+) -> Response {
+    use tracing::Instrument as _;
+    let started = ingress.map_or_else(std::time::Instant::now, |Extension(RpcIngress(at))| at);
     let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    let mut operation = operation_log::Operation::of(&req, role);
     // 공개 주소의 조작 기기: 승인 필요 동작은 passkey 승인(`/api/v1/passkey/approve`)으로만 한다(관리 GUI W7)
-    if let Err(e) = host.passkey_gate(&id, role, &origin(&host, &headers), &req) {
-        return Json(Outcome::<()>::Err(e)).into_response();
+    let gate = host.passkey_gate(&id, role, &origin(&host, &headers), &req);
+    let dispatched = std::time::Instant::now();
+    let result = match gate {
+        Ok(()) => {
+            let span = operation.as_ref().map_or_else(tracing::Span::none, operation_log::Operation::span);
+            host.call(role, &format!("device:{id}"), req).instrument(span).await
+        }
+        Err(error) => Err(error),
+    };
+    let handled = std::time::Instant::now();
+    if let Some(operation) = &mut operation {
+        operation.identify_result(&result);
     }
-    let result = host.call(role, &format!("device:{id}"), req).await.map(|mut response| {
+    let reason = result.as_ref().err().map(|error| error.code);
+    let result = result.map(|mut response| {
         attachment_views(&host, &id, &mut response);
         response
     });
-    api_json(&headers, &Outcome::from(result))
+    let mut response = api_json(&headers, &Outcome::from(result));
+    if let Some(operation) = operation {
+        operation.complete(&host, id, [started, dispatched, handled], reason, &mut response);
+    }
+    response
 }
 
 /// 이보다 작은 API 답은 압축하지 않는다(조작 답은 대부분 작고, 압축 머리가 득보다 크다).

@@ -4,6 +4,8 @@
 
 host DB의 정기 암호화 백업·보관 회전·새 파일 복원은 [host DB 백업](host-db-backup.md)을 따른다.
 
+host·agent 파일의 보관 설정과 회전 뒤 검색은 [운영 로그](operational-logs.md)를 따른다.
+
 ## 검증 자동 수집
 
 저장소 폴더에서 `aaa verify`를 실행하면 기존 검증 스크립트를 찾아 실행하고 작업공간 대시보드용 종료 원장을 남긴다.

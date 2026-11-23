@@ -30,6 +30,25 @@ fn missing_files_mean_defaults() {
 }
 
 #[test]
+fn role_logs_default_and_merge_with_local_settings() {
+    let dir = Dir::new("logs");
+    let expected = LogsSection { max_file_mib: 64, keep_files: 4, keep_days: 60 };
+    assert_eq!(load_host(&dir.0).unwrap().config.logs, expected);
+    assert_eq!(load_agent(&dir.0).unwrap().config.logs, expected);
+    for role in ["host", "agent"] {
+        dir.write(&format!("{role}.toml"), "schema=1\n[logs]\nmax_file_mib=12\nkeep_files=3\n");
+        dir.write(&format!("{role}.local.toml"), "schema=1\n[logs]\nkeep_days=0\n");
+    }
+    let expected = LogsSection { max_file_mib: 12, keep_files: 3, keep_days: 0 };
+    assert_eq!(load_host(&dir.0).unwrap().config.logs, expected);
+    assert_eq!(load_agent(&dir.0).unwrap().config.logs, expected);
+    dir.write("agent.local.toml", "schema=1\n[logs]\nmax_file_mib=0\n");
+    let errors = load_agent(&dir.0).unwrap_err().0;
+    assert_eq!(errors[0].line, 3);
+    assert!(errors[0].file.ends_with("agent.local.toml") && errors[0].message.contains("1 MiB"));
+}
+
+#[test]
 fn backup_rejects_unsafe_or_incomplete_enabled_settings() {
     let d = Dir::new("db-backup");
     assert!(!load_host(&d.0).unwrap().config.backup.enabled);

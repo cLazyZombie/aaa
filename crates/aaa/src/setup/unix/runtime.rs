@@ -36,6 +36,7 @@ fn run() -> Result<ExitCode> {
     };
     let observed = manager.query()?.context("서비스 관리자가 이 서비스를 실행하지 않았습니다")?;
     ensure!(observed.running && observed.pid == owner, "setup-service는 등록된 감독자가 실행해야 합니다");
+    let _logs = crate::service_logs::start(&state.join("agent-service.log"), aaa_proto::install::InstallRole::Agent);
     let (stop, stop_rx) = tokio::sync::watch::channel(false);
     let (ready, ready_rx) = tokio::sync::oneshot::channel();
     let (connection, mut connected) = tokio::sync::watch::channel(false);

@@ -11,7 +11,7 @@ import { QuestionReports } from "./QuestionReports";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Lock, Maximize2, MessageSquareReply, PenLine, Send, Trash2, Bot, X, Zap } from "lucide-react";
 import type { TaskAttentionAction, TaskView, AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
-import { ApiError, call, onAsksChanged } from "./api";
+import { ApiError, call, onAsksChanged, startAnswerTiming, type AnswerTiming } from "./api";
 import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
@@ -177,15 +177,15 @@ export function AsksView({
   onClose: () => void;
   selection: AskSelection;
   canControl: boolean;
-  onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
-  onRequestAnswer: (r: UserRequestView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => Promise<void>;
+  onRequestAnswer: (r: UserRequestView, picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => Promise<void>;
   /** 확인 필요 post 「답함으로 표시」 */
   onHandle: (item: string) => Promise<void>;
   /** 「대화에서 답하기」: coordinator 입력칸에 머리글을 채우고 그 pane을 연다 */
   onReply: (title: string) => Promise<void>;
   onForget: (id: string) => Promise<void>;
   /** 답한 것의 답 고치기(t-2117). `base`는 고치기 시작할 때 본 지금 답의 시각 */
-  onCorrect: (id: string, base: number, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onCorrect: (id: string, base: number, picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => Promise<void>;
   onOpenTask: (title: string) => void;
   onTaskAnswer: (task: TaskView, action: TaskAttentionAction) => Promise<void>;
   onThread: (id: string) => void;
@@ -236,12 +236,12 @@ export function AsksView({
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
             <QuestionCard key={JSON.stringify(["question", selection.ask.thread.project, selection.ask.thread.id, questionIdentity(selection.ask.thread.questions)])} t={selection.ask.thread} q={selection.ask.thread.questions} defaultProject={project}
-              active={shown} canControl={canControl} onAnswer={(p, text, comments) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text, comments)} onZoom={setZoom} onThread={onThread} />
+              active={shown} canControl={canControl} onAnswer={(p, text, comments, timing) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text, comments, timing)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
               <QuestionCard key={JSON.stringify([selection.ask.key, questionIdentity(selection.ask.request.questions)])} request={selection.ask.request} q={selection.ask.request.questions} defaultProject={project}
-                active={shown} canControl={canControl} onAnswer={(p, text, comments) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text, comments)} onZoom={setZoom} onThread={onThread} />
+                active={shown} canControl={canControl} onAnswer={(p, text, comments, timing) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text, comments, timing)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
           )}
@@ -253,7 +253,7 @@ export function AsksView({
           {selection.kind === "done" && (
             <DoneCard key={doneCardKey(selection.record)} r={selection.record} canControl={canControl && !selection.now} uploads={selection.now && uploadsBase(selection.now.project)}
               project={project} onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread}
-              onCorrect={(base, picks, text, comments) => onCorrect(selection.record.id, base, picks, text, comments)} />
+              onCorrect={(base, picks, text, comments, timing) => onCorrect(selection.record.id, base, picks, text, comments, timing)} />
           )}
         </div>
       </div>
@@ -394,7 +394,7 @@ function QuestionCard({
   q: ThreadQuestions;
   active: boolean;
   canControl: boolean;
-  onAnswer: (picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onAnswer: (picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => Promise<void>;
   onZoom: (z: { src: string; alt: string }) => void;
   onThread: (id: string) => void;
 }) {
@@ -463,17 +463,19 @@ function QuestionCard({
   const needsReviewText = q.review && picks[0] === 1 && !text && !(multiple && comments[0]?.trim());
   const filled = all ? null : withRecommended(q, picks, multiple ? comments : []);
   const send = async (p: (number | null)[]) => {
+    const timing = startAnswerTiming();
     const sent = questionDrafts.snapshot(owner);
     const sentRevision = q.report_hash;
     setPending(true);
     setError(null);
     try {
-      await onAnswer(p, text || null, multiple ? comments.map(c => c?.trim() || null) : []);
+      await onAnswer(p, text || null, multiple ? comments.map(c => c?.trim() || null) : [], timing);
       questionDrafts.settle(owner, sent);
     } catch (e) {
       if (shown.current && revision.current === sentRevision) setError(e instanceof ApiError ? e.message : String(e));
     }
     if (shown.current && revision.current === sentRevision) setPending(false);
+    timing.afterUpdate();
   };
   // 다 골랐거나 직접 쓴 답이 있으면 그대로, 아니면 남은 질문을 추천으로 채워 보낸다
   const submit = () => { if (!off && !uploading && !needsReviewText) void (all || text ? send(picks) : filled && send(filled)); };
@@ -626,7 +628,7 @@ function DoneAnswer({ text, uploads, testId, onZoom }: { text: string; uploads: 
 
 function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCorrect, onZoom, onThread }: {
   r: AskRecord; canControl: boolean; uploads?: string | false; project: string | null; onForget: () => Promise<void>;
-  onCorrect: (base: number, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onCorrect: (base: number, picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => Promise<void>;
   onZoom: (z: { src: string; alt: string }) => void; onThread: (id: string) => void;
 }) {
   const [report, setReport] = useState<string | null | "loading" | "missing">(null);
@@ -830,12 +832,14 @@ function DoneCard({ r, canControl, uploads: uploadsNow, project, onForget, onCor
             ? `${where}에 「답 정정: ${diff.arrows.join(" ")}」를 보낸다. 앞 답으로 한 일은 고친 답에 맞추라고 함께 알리고 coordinator에도 알린다.`
             : `coordinator에 「답 정정: ${diff.arrows.join(" ")}」를 알린다. 앞 답으로 한 일은 고친 답에 맞추라고 함께 알린다.`}
           onConfirm={async () => {
+            const timing = startAnswerTiming();
             setSending(true);
             try {
-              await onCorrect(edit.base.at_ms, edit.picks, edit.text.trim() || null, multiple ? edit.comments.map((c) => c.trim() || null) : []);
+              await onCorrect(edit.base.at_ms, edit.picks, edit.text.trim() || null, multiple ? edit.comments.map((c) => c.trim() || null) : [], timing);
               setEdit(null);
             } finally {
               setSending(false);
+              timing.afterUpdate();
             }
           }}
           onClose={() => setConfirm(false)}>

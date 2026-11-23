@@ -79,6 +79,62 @@ fn token(h: &Host) -> String {
     h.redeem_pairing(&code, "").unwrap().0
 }
 
+#[tokio::test]
+async fn answer_timing_consumes_only_the_issuing_devices_receipt() {
+    let lab = lab("https://mac-a.example.ts.net:8443");
+    let owner = token(&lab.0);
+    let other = token(&lab.0);
+    let post = |token: &str, path: &'static str, body: serde_json::Value| {
+        let host = lab.0.clone();
+        let cookie = format!("{}={token}", cookie_name(false));
+        async move {
+            router(host)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::HOST, LOOP)
+                        .header(header::ORIGIN, "http://127.0.0.1:7000")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::COOKIE, cookie)
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let response = post(
+        &owner,
+        "/api/v1/call",
+        serde_json::json!({"op":"thread_answer", "project":"demo", "thread":"t-5001", "report_hash":"old",
+            "picks": [0], "text":"private answer specimen"}),
+    )
+    .await;
+    let trace = response.headers()[operation_log::ANSWER_TRACE].to_str().unwrap().to_string();
+    let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+    assert!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["err"].is_object());
+    let timing = serde_json::json!({"trace":trace, "response_ms":501, "render_ms":10});
+    let wrong = post(&other, "/api/v1/diag/answer", timing.clone()).await;
+    assert_eq!(wrong.status(), StatusCode::NO_CONTENT);
+    let invalid =
+        post(&owner, "/api/v1/diag/answer", serde_json::json!({"trace":trace, "response_ms":120001, "render_ms":10}))
+            .await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let unknown = post(
+        &owner,
+        "/api/v1/diag/answer",
+        serde_json::json!({"trace":trace, "response_ms":501, "render_ms":10, "text":"private"}),
+    )
+    .await;
+    assert_eq!(unknown.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let device = lab.0.device_role(&owner).unwrap().0;
+    assert!(lab.0.answer_receipts.lock().unwrap().contains(&device, &trace));
+    assert_eq!(post(&owner, "/api/v1/diag/answer", timing.clone()).await.status(), StatusCode::NO_CONTENT);
+    assert_eq!(post(&owner, "/api/v1/diag/answer", timing).await.status(), StatusCode::NO_CONTENT);
+    assert!(!lab.0.answer_receipts.lock().unwrap().contains(&device, &trace));
+}
+
 async fn ask(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> Response {
     let mut req = Request::builder().method(method).uri(path).header(header::HOST, host);
     for (k, v) in more {

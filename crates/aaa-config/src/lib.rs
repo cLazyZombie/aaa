@@ -76,6 +76,7 @@ pub struct Loaded<T> {
 #[serde(default)]
 pub struct HostConfig {
     pub schema: u32,
+    pub logs: LogsSection,
     pub host: HostSection,
     pub web: WebSection,
     pub local_agent: LocalAgentSection,
@@ -97,6 +98,23 @@ pub struct HostConfig {
     pub update: UpdateSection,
     pub backup: BackupSection,
     pub file_backup: FileBackupSection,
+}
+
+/// AAA가 소유한 역할 로그의 회전·보관 정책.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LogsSection {
+    pub max_file_mib: u32,
+    /// 활성 파일을 제외한 사본 수.
+    pub keep_files: u32,
+    /// 회전 시각부터 센다. 0이면 개수로만 정리한다.
+    pub keep_days: u32,
+}
+
+impl Default for LogsSection {
+    fn default() -> Self {
+        Self { max_file_mib: 64, keep_files: 4, keep_days: 60 }
+    }
 }
 
 /// 첨부 파일 백업. 목적지·공개키는 `[backup]`에서 가져온다.
@@ -319,6 +337,7 @@ impl Default for HostConfig {
     fn default() -> Self {
         HostConfig {
             schema: SCHEMA,
+            logs: LogsSection::default(),
             host: HostSection::default(),
             web: WebSection::default(),
             local_agent: LocalAgentSection::default(),
@@ -540,6 +559,7 @@ impl Default for LocalAgentSection {
 #[serde(default)]
 pub struct AgentConfig {
     pub schema: u32,
+    pub logs: LogsSection,
     pub agent: AgentSection,
     pub reconnect: ReconnectSection,
     pub selfcheck: SelfcheckSection,
@@ -603,6 +623,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         AgentConfig {
             schema: SCHEMA,
+            logs: LogsSection::default(),
             agent: AgentSection::default(),
             reconnect: ReconnectSection::default(),
             selfcheck: SelfcheckSection::default(),
@@ -802,6 +823,7 @@ fn key(parts: &[&str]) -> Vec<String> {
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    validate_logs(c.logs, &mut out);
     if c.backup.time().is_none() {
         out.push(Invalid {
             path: key(&["backup", "daily_utc"]), message: "UTC HH:MM(00:00~23:59)이어야 한다".into()
@@ -998,6 +1020,7 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
 
 fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    validate_logs(c.logs, &mut out);
     if let Some(account) = &c.agy {
         if let Err(message) = profile_edit::validate_name(&account.subscription) {
             out.push(Invalid { path: key(&["agy", "subscription"]), message });
@@ -1091,6 +1114,12 @@ fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
     }
     validate_update(&c.update, &mut out);
     out
+}
+
+fn validate_logs(logs: LogsSection, out: &mut Vec<Invalid>) {
+    if logs.max_file_mib == 0 {
+        out.push(Invalid { path: key(&["logs", "max_file_mib"]), message: "1 MiB 이상이어야 한다".into() });
+    }
 }
 
 struct Source {

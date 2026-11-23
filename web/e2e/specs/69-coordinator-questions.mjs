@@ -203,13 +203,27 @@ export default async function ({ page }) {
     if ((await phone.page.getByTestId("thread-ask-text-2-pick").count()) !== 1) throw new Error("확인 필요 post 카드에 그림 단추가 없다(프로젝트를 모른다)");
     await phone.page.getByTestId("thread-ask-text-2-input").setInputFiles({ name: "shot.png", mimeType: "image/png", buffer: png });
     await phone.page.getByTestId("thread-ask-text-2-image").waitFor();
+    const saved = phone.page.waitForResponse(res => res.url().endsWith("/api/v1/call")
+      && res.request().method() === "POST" && res.request().postDataJSON().op === "ask_answer");
+    const reported = phone.page.waitForResponse(res => res.url().endsWith("/api/v1/diag/answer"));
     await phone.page.getByTestId("thread-ask-send").click();
     await domIs(phone.page, "답한 post 카드", () => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind === "request");
+    const [answerResponse, timingResponse] = await Promise.all([saved, reported]);
+    const timing = timingResponse.request().postDataJSON();
+    const trace = answerResponse.headers()["x-aaa-answer-trace"];
+    if (!/^[0-9A-Z]{26}$/.test(trace) || timingResponse.status() !== 204 || timing.trace !== trace
+        || Object.keys(timing).sort().join(",") !== "render_ms,response_ms,trace"
+        || ![timing.response_ms, timing.render_ms].every(ms => Number.isInteger(ms) && ms >= 0)) {
+      throw new Error("답 계측에 응답의 추적 ID와 두 경과 시간만 있어야 한다");
+    }
     const data = (await call(page, { op: "asks" })).ok;
     const done = data.done.find((r) => r.subject === req.id);
     if (done?.summary !== "1B 2직접" || done.answer.text !== null || JSON.stringify(done.answer.picks) !== "[1,null]" || JSON.stringify(done.answer.comments) !== JSON.stringify([null, `${direct}\n![그림](uploads/${name})`]) || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
     const inbox = aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.event === "question answered" && i.summary.includes(req.question_id));
     if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(`2번 직접 쓴 답: ${direct}\n![그림](${root}/projects/demo/uploads/${name})`) || !inbox[0].summary.includes("2 직접: 눈 아이콘은 항상 보이게")) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
+    const inboxId = createHash("sha256").update(inbox[0].id).digest("hex").slice(0, 16);
+    const entry = fs.readFileSync(`${root}/host.log`, "utf8").split("\n").find(line => line.includes("answer_inbox") && line.includes(`inbox=${inboxId}`));
+    if (!entry || !entry.includes('result="ok"') || entry.includes("눈 아이콘")) throw new Error("답 원문 없이 기록한 알림함 운영 로그가 없다");
     if (!aaa("post", "status", "demo", post.id).handled) throw new Error("post가 답함이 아니다");
     const copy = `${root}/projects/demo/asks/${done.id}/uploads/${name}`;
     if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(png)) throw new Error(`답 사본 폴더에 그림이 없다: ${copy}`);
@@ -225,8 +239,23 @@ export default async function ({ page }) {
     await page.getByTestId("ask-done-text-2-images").scrollIntoViewIfNeeded();
     await shot(page, "69-request-answer-image");
     await page.setViewportSize(size);
-    const again = await call(page, { op: "ask_answer", item: req.id, body_hash: req.questions.report_hash, picks: [0,0], text: null });
-    if (!again.err) throw new Error("두 번째 답을 받았다");
+    const again = await page.evaluate(async ({ item, hash }) => {
+      const post = (path, body) => fetch(path, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      const res = await post("/api/v1/call", { op: "ask_answer", item, body_hash: hash, picks: [0, 0], text: null });
+      const { err } = await res.json();
+      const trace = res.headers.get("x-aaa-answer-trace");
+      const diag = await post("/api/v1/diag/answer", { trace, response_ms: 12, render_ms: 34 });
+      return { code: err?.code, trace, status: diag.status };
+    }, { item: req.id, hash: req.questions.report_hash });
+    if (!again.code || again.status !== 204) throw new Error("두 번째 답이 거부되고 그 계측이 접수되어야 한다");
+    const diagnostics = fs.readFileSync(`${root}/host.log`, "utf8").split("\n")
+      .filter(line => line.includes(`trace="${again.trace}"`) || line.includes(`trace=${again.trace}`));
+    if (!diagnostics.some(line => line.includes("web_rpc") && line.includes('result="failed"'))
+        || !diagnostics.some(line => line.includes("web_answer") && line.includes("response_ms=12") && line.includes("render_ms=34"))) {
+      throw new Error("실패한 카드 답과 브라우저 계측의 추적 ID가 같아야 한다");
+    }
     // 답 고치기(t-2117, WebKit 휴대폰): 연결된 thread가 없는 coordinator 카드는 기록이 남아 있는 동안 고치고, coordinator inbox에
     // 정정이 남으며 처음 답은 이력에 남는다
     const card = phone.page.getByTestId("ask-done-card");

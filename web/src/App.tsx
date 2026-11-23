@@ -26,7 +26,7 @@ import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
 import { reportDoc, reportDocLink, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
-import { ApiError, call, me, onAsksChanged, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
+import { ApiError, call, me, onAsksChanged, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents, type AnswerTiming } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
@@ -1436,10 +1436,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (next === "asks" && wideScreen && opening && !asksShown) goSel(asksAt.current);
   };
   const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
-  const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => {
+  const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[], timing: AnswerTiming) => {
     const reply = threadReload.current.beginReply(t);
     try {
-      const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text, comments });
+      const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text, comments }, false, timing);
       if (r.kind === "thread") putThread(reply.finish(r));
     } finally { reply.cancel(); }
   };
@@ -1803,12 +1803,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}
-            onRequestAnswer={async (r, picks, text, comments) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text, comments }))}
+            onRequestAnswer={async (r, picks, text, comments, timing) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text, comments }, false, timing))}
             onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
             onReply={(title) => handOff(`「${title}」에 대한 답: `)}
             onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}
-            onCorrect={async (id, base, picks, text, comments) => {
-              putAsks(await call({ op: "ask_correct", id, base_at_ms: base, picks, text, comments }));
+            onCorrect={async (id, base, picks, text, comments, timing) => {
+              putAsks(await call({ op: "ask_correct", id, base_at_ms: base, picks, text, comments }, false, timing));
               // 첫 쪽 밖의 기록도 고친 원문으로 바꾼다
               await loadDone(id);
             }}
