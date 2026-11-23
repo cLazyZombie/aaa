@@ -1,3 +1,4 @@
+- t-2172 [macOS Intel 배포·설치 시한 초과와 진단 보강](testing-macos-intel-deploy-install-t-2172.md)
 - t-2167 [역할 로그 회전 검증](testing-log-rotation-t-2167.md)
 - t-2167 [카드 답과 웹 연결 운영 로그 검증](testing-operational-logs-t-2167.md)
 - t-2141 [질문 감시의 이전 카드에서 새 카드로 바뀐 안내](testing-question-guard-t2141.md)

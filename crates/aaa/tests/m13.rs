@@ -14,6 +14,8 @@ mod auto_merge;
 mod automation_completion;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
+#[path = "m13/deployment_trace.rs"]
+mod deployment_trace;
 #[path = "m13/design_branch.rs"]
 mod design_branch;
 #[path = "m13/instance.rs"]
@@ -3547,25 +3549,7 @@ esac
     w.wait_screen(&pane, "fake>");
     let pid = w.h.pane(&pane)["pid"].clone();
     let mut probe_number = 0;
-    let probe = |w: &World, pane: &str, n: &mut usize, args: &str| -> (String, String, String) {
-        *n += 1;
-        let prefix = w.lab.root.join(format!("deploy-probe-{n}"));
-        let script = w.task(
-            &format!("deploy-probe-{n}.sh"),
-            &format!(
-                "'{}' --json {args} > '{}.out' 2> '{}.err'\nprintf '%s' \"$?\" > '{}.rc'\nprintf 'deploy-finished-{n}\\n'\n",
-                lab::BIN,
-                prefix.display(),
-                prefix.display(),
-                prefix.display()
-            ),
-        );
-
-        w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
-        w.h.wait_output(pane, &format!("deploy-finished-{n}"), T);
-        let read = |suffix: &str| std::fs::read_to_string(prefix.with_extension(suffix)).unwrap();
-        (read("rc"), read("out"), read("err"))
-    };
+    let probe = |w: &World, pane: &str, n: &mut usize, args: &str| deployment_trace::probe(w, &b, pane, n, args);
     phases.mark("contract", "authorization-update-and-rollback");
     let update = format!("update --machine labB --from '{}'", candidate.display());
     let (rc, _, err) = probe(&w, &pane, &mut probe_number, &update);
@@ -3659,11 +3643,13 @@ esac
             std::fs::read_to_string(&service_log).ok().filter(|c| c.contains("/dev.aaa.agent"))
         });
         w.lab.kill("agentB-copy");
+        deployment_trace::backend("agentB-copy", "exited");
         w.lab.spawn_command("agentB-restarted", {
             let mut cmd = b.cmd_bin(&exe, &["agent", "--host", &w.addr, "--name", "labB"]);
             cmd.envs(service_env);
             cmd
         });
+        deployment_trace::backend("agentB-restarted", "spawned");
         let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("deploy status {id} --wait"));
         assert_eq!(rc, "0", "{out}\n{err}");
         let done: Value = serde_json::from_str(&out).unwrap();
@@ -3724,15 +3710,21 @@ esac
     let config = w.h.cfg.join("host.toml");
     std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
     w.lab.kill("host");
+    deployment_trace::backend("host", "exited");
     w.spawn_host("host-restored");
+    deployment_trace::backend("host-restored", "spawned");
     wait_for("host와 원격 agent 재연결", T, || {
         w.h.json(&["status"]).ok().filter(|_| w.h.connected("labA") && w.h.connected("labB"))
     });
+    deployment_trace::backend("host-restored", "agents_connected");
     w.lab.kill("agentA");
+    deployment_trace::backend("agentA", "exited");
     w.lab.spawn("agentA-restored", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    deployment_trace::backend("agentA-restored", "spawned");
     wait_for("coordinator agent 재연결", T, || {
         (w.lab.log("agentA-restored").contains("host에 연결했다") && w.h.connected("labA")).then_some(())
     });
+    deployment_trace::backend("agentA-restored", "connected");
     assert_eq!(w.h.pane(&pane)["pid"], pid, "coordinator 프로세스가 바뀌었다");
     let (rc, out, err) =
         probe(&w, &pane, &mut probe_number, &format!("update status {rollback_id} --machine labB --wait"));
