@@ -17,8 +17,8 @@ use aaa_proto::{
     ThreadQuestion, ThreadStatus,
 };
 
-use crate::orch::internal;
 use crate::{Host, err};
+use crate::{db::CorrectionPost, orch::internal};
 
 /// 「답할 것」 기록 보존 기간 안내(asks.rs `ASK_KEEP_DAYS`)
 const KEEP_NOTE: &str = "답한 것 기록이 남아 있는 동안(답한 뒤 14일) 고칠 수 있다";
@@ -132,7 +132,7 @@ impl Host {
         thread: &str,
         r: &AskRecord,
         after_ms: u64,
-        posts: &[aaa_proto::PostEnvelope],
+        posts: &[CorrectionPost],
     ) -> Vec<String> {
         let mut out = Vec::new();
         if r.kind == AskKind::Question
@@ -156,10 +156,9 @@ impl Host {
                 out.push(format!("새 보고 {id}: {}", first.chars().take(80).collect::<String>()));
             }
         }
-        let mut sent: Vec<_> =
-            posts.iter().filter(|p| p.from.thread.as_deref() == Some(thread) && p.created_ms > after_ms).collect();
+        let mut sent: Vec<_> = posts.iter().filter(|p| p.thread == thread && p.created_ms > after_ms).collect();
         sent.sort_by_key(|p| p.created_ms);
-        out.extend(sent.into_iter().take(5).map(|p| format!("coordinator에 보낸 요청: {}", p.input.title)));
+        out.extend(sent.into_iter().take(5).map(|p| format!("coordinator에 보낸 요청: {}", p.title)));
         out
     }
 
@@ -168,19 +167,14 @@ impl Host {
         self.ask_correction_with(project, r, &self.posts_for_since(project))
     }
 
-    fn posts_for_since(&self, project: &str) -> Vec<aaa_proto::PostEnvelope> {
+    fn posts_for_since(&self, project: &str) -> Vec<CorrectionPost> {
         self.db
-            .post_list(project)
+            .post_correction_titles(project)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "post 목록을 못 읽어 답 뒤 요청을 싣지 않는다"))
             .unwrap_or_default()
     }
 
-    fn ask_correction_with(
-        &self,
-        project: &str,
-        r: &AskRecord,
-        posts: &[aaa_proto::PostEnvelope],
-    ) -> Option<AskCorrection> {
+    fn ask_correction_with(&self, project: &str, r: &AskRecord, posts: &[CorrectionPost]) -> Option<AskCorrection> {
         let answer = r.answer.as_ref()?;
         let thread = match r.kind {
             AskKind::Question => Some(r.subject.clone()),
@@ -212,6 +206,9 @@ impl Host {
 
     /// 보낼 기록마다 정정 상태를 채운다(저장하지 않는다)
     pub(crate) fn with_corrections(&self, project: &str, mut done: Vec<AskRecord>) -> Vec<AskRecord> {
+        if done.is_empty() {
+            return done;
+        }
         let posts = self.posts_for_since(project);
         for r in &mut done {
             r.correction = self.ask_correction_with(project, r, &posts);
@@ -480,6 +477,84 @@ mod tests {
             by: "iPhone".into(),
             at_ms: 1,
         }
+    }
+
+    #[test]
+    fn correction_keeps_the_first_five_post_titles_after_the_answer() {
+        use aaa_proto::{PostEnvelope, PostInput, PostSender, PostType};
+
+        let (h, _lab) = host();
+        let rec = thread(&h, ThreadStatus::Open);
+        h.record_answer(&rec, &QuestionAnswerView { at_ms: 100, ..answer(vec![Some(0)], vec![], "1A") });
+        let db = h.db.conn_for_test();
+        let add = |n: u32, project: &str, thread: Option<&str>, at: u64, title: &str| {
+            let key = format!("{n:032x}");
+            let post = PostEnvelope {
+                id: format!("p-{n:08}"),
+                project: project.into(),
+                from: PostSender {
+                    thread: thread.map(str::to_string),
+                    role: Role::Worker,
+                    mission: None,
+                    machine: "mac-a".into(),
+                    session: None,
+                    verified: "test".into(),
+                },
+                body_sha256: "hash".into(),
+                input: PostInput {
+                    post_id: key.clone(),
+                    to: "coordinator".into(),
+                    post_type: PostType::Request,
+                    topic: "test".into(),
+                    title: title.into(),
+                    body: String::new(),
+                    needs_user: false,
+                    refs: vec![],
+                },
+                caused_by: vec![],
+                created_ms: at,
+                state: "delivered".into(),
+            };
+            db.execute(
+                "INSERT INTO posts(post_id,project,sender,machine,content_sha,created_ms,result,data)
+                 VALUES(?1,?2,'worker','mac-a','hash',?3,'{}',?4)",
+                rusqlite::params![key, project, at, serde_json::to_string(&post).unwrap()],
+            )
+            .unwrap();
+        };
+        let own = Some(rec.id.as_str());
+        add(1, "demo", own, 101, "100개 밖");
+        for n in 2..=91 {
+            add(n, "demo", None, 101, "thread 없음");
+        }
+        add(92, "demo", own, 100, "답과 같은 시각");
+        add(93, "demo", Some("t-0002"), 102, "다른 thread");
+        add(94, "elsewhere", own, 101, "다른 프로젝트");
+        add(95, "demo", own, 106, "여섯째");
+        add(96, "demo", own, 104, "넷째");
+        add(97, "demo", own, 103, "셋째");
+        add(98, "demo", own, 103, "둘째");
+        add(99, "demo", own, 102, "첫째");
+        add(100, "demo", own, 105, "다섯째");
+        add(101, "demo", own, 100, "답과 같은 시각");
+        add(102, "demo", own, 100, "답과 같은 시각");
+        drop(db);
+        let FrontResponse::Asks { done, .. } = h.asks_after("demo").unwrap() else { panic!("asks") };
+        let first = done[0].correction.as_ref().unwrap();
+        let labels = ["첫째", "둘째", "셋째", "넷째", "다섯째"].map(|s| format!("coordinator에 보낸 요청: {s}"));
+        assert_eq!(first.since, labels);
+        assert_eq!(h.ask_correction("demo", &done[0]).unwrap().since, labels);
+
+        // newest 조각 하나가 응답 바이트 한도를 넘으면 예전 목록과 같이 그 아래도 읽지 않는다.
+        let db = h.db.conn_for_test();
+        db.execute(
+            "UPDATE posts SET data=json_set(data,'$.body',?1) WHERE post_id=?2",
+            ["가".repeat(175_000), format!("{:032x}", 102)],
+        )
+        .unwrap();
+        drop(db);
+        assert!(h.db.post_list("demo").unwrap().is_empty());
+        assert!(h.ask_correction("demo", &done[0]).unwrap().since.is_empty());
     }
 
     /// 실제 coordinator post 답 경로(`ask_answer_apply`): 제목의 t-ID(이 프로젝트에 있는 thread)로 이어져 그 thread가 끝나면

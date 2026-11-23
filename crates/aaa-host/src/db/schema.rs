@@ -15,11 +15,11 @@ impl Db {
         scrub_audit_env(&mut conn)?;
         // 이름 없는 메모리 DB는 두 연결이 데이터를 공유하지 않는다.
         let origin_reader = if conn.path().is_some_and(|name| !name.is_empty()) {
-            Some(Mutex::new(crate::backup::readonly(path)?))
+            Some(TimedConnection(Mutex::new(crate::backup::readonly(path)?)))
         } else {
             None
         };
-        Ok(Db { conn: Mutex::new(conn), origin_reader })
+        Ok(Db { conn: TimedConnection(Mutex::new(conn)), origin_reader })
     }
 
     pub(super) fn initialize_schema(conn: &Connection) -> Result<()> {
@@ -79,6 +79,7 @@ impl Db {
                sender TEXT NOT NULL, session TEXT, machine TEXT NOT NULL, content_sha TEXT NOT NULL,
                created_ms INTEGER NOT NULL, result TEXT NOT NULL, data TEXT);
              CREATE INDEX IF NOT EXISTS posts_sender_time ON posts(project,sender,created_ms);
+             CREATE INDEX IF NOT EXISTS posts_recent_envelopes ON posts(project,seq DESC) WHERE data IS NOT NULL;
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
@@ -131,6 +132,9 @@ impl Db {
         // post 한도는 본문 정리 뒤에도 출처별로 남는다. 옛 행은 기존 한도로 유지한다.
         if !conn.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='quota'")?.exists([])? {
             conn.execute("ALTER TABLE posts ADD COLUMN quota TEXT NOT NULL DEFAULT 'standard'", [])?;
+        }
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='inbox_id'")?.exists([])? {
+            conn.execute("ALTER TABLE posts ADD COLUMN inbox_id TEXT", [])?;
         }
         // 기기 이름(웹 설정 → 기기, herdr-web-ui devices.json `label`). 열만 더하므로 schema를 올리지 않는다: 옛 aaa도 이 DB를 연다
         let has_label = conn.prepare("SELECT 1 FROM pragma_table_info('devices') WHERE name='label'")?.exists([])?;
