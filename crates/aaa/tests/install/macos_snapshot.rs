@@ -10,6 +10,7 @@ pub(crate) fn enabled() -> bool {
 pub(super) struct Probe {
     lab: PathBuf,
     events: Option<PathBuf>,
+    authorization_output: Option<PathBuf>,
     cpu_at_start: Option<[u32; 4]>,
 }
 
@@ -26,13 +27,17 @@ impl Probe {
         {
             return None;
         }
-        let events = command
-            .get_argv()
-            .windows(2)
-            .find(|pair| pair[0] == "--events-file")
-            .map(|pair| PathBuf::from(&pair[1]))
-            .filter(|path| path.parent() == Some(lab.as_path()));
-        Some(Self { lab, events, cpu_at_start: cpu_ticks() })
+        let lab_file = |flag: &str| {
+            command
+                .get_argv()
+                .windows(2)
+                .find(|pair| pair[0] == flag)
+                .map(|pair| PathBuf::from(&pair[1]))
+                .filter(|path| path.parent() == Some(lab.as_path()))
+        };
+        let events = lab_file("--events-file");
+        let authorization_output = lab_file("--out");
+        Some(Self { lab, events, authorization_output, cpu_at_start: cpu_ticks() })
     }
 
     pub(super) fn record(self, cli_pid: u32, cli_live: bool) {
@@ -52,6 +57,17 @@ impl Probe {
         record_memory();
         record_disk_space(&self.lab);
         record_executions(&self.lab.join("state"));
+        if let Some(path) = &self.authorization_output {
+            match path.symlink_metadata() {
+                Ok(metadata) => {
+                    let bytes = metadata.is_file().then_some(metadata.len());
+                    eprintln!("PTY macOS authorization_output bytes={bytes:?}");
+                }
+                Err(error) => {
+                    eprintln!("PTY macOS authorization_output unavailable os_code={:?}", error.raw_os_error())
+                }
+            }
+        }
         if let Some(events) = &self.events {
             super::super::recovery::record_public_events("PTY macOS", events);
         }

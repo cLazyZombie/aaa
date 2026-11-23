@@ -124,6 +124,8 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
     #[cfg(target_os = "macos")]
     tracing::debug!(target: "aaa::install::pty", "install_approval_accepted");
     require_outside(state)?;
+    #[cfg(target_os = "macos")]
+    tracing::debug!(target: "aaa::install::pty", "install_approval_tty_rechecked");
     if resume.is_none() {
         let check = InstallInvocation {
             choices: plan.choices.clone(),
@@ -132,9 +134,13 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
             ..Default::default()
         };
         let current = detect::inspect(&check)?.1;
+        #[cfg(target_os = "macos")]
+        tracing::debug!(target: "aaa::install::pty", "install_approval_plan_rebuilt");
         if current != *plan || engine::preview(&current, None)? != preview {
             return Err(error("installation_content_conflict", 4));
         }
+        #[cfg(target_os = "macos")]
+        tracing::debug!(target: "aaa::install::pty", "install_approval_preview_rechecked");
     }
     Ok(Consent { plan: plan.clone(), resume: resume.map(str::to_owned), scope: preview })
 }

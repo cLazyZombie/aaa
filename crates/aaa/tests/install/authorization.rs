@@ -235,6 +235,10 @@ fn drive_terminal_inner(
     let mut reader_end = None;
     #[cfg(target_os = "macos")]
     let mut last_output = None;
+    #[cfg(target_os = "macos")]
+    let mut reader_done_at = None;
+    #[cfg(target_os = "macos")]
+    let mut child_exited_at = None;
     let mut input_writes = Vec::new();
     let mut query_events = Vec::new();
     let mut queries_omitted = 0usize;
@@ -285,8 +289,18 @@ fn drive_terminal_inner(
                     }
                 }
             }
-            Ok(TerminalEvent::ReaderDone(result)) => reader_end = Some(result),
+            Ok(TerminalEvent::ReaderDone(result)) => {
+                #[cfg(target_os = "macos")]
+                {
+                    reader_done_at = Some(started.elapsed());
+                }
+                reader_end = Some(result);
+            }
             Ok(TerminalEvent::ChildExited(result)) => {
+                #[cfg(target_os = "macos")]
+                {
+                    child_exited_at = Some(started.elapsed());
+                }
                 result.expect("소유한 PTY 자식 종료 사건");
                 status = Some(child.child.wait().unwrap());
                 child.finished = true;
@@ -325,7 +339,9 @@ fn drive_terminal_inner(
                         Some(Err(error)) => error.raw_os_error(),
                         _ => None,
                     };
-                    eprintln!("PTY macOS reader={reader} os_code={os_code:?} last_output_elapsed={last_output:?}");
+                    eprintln!(
+                        "PTY macOS reader={reader} os_code={os_code:?} last_output_elapsed={last_output:?} reader_done_elapsed={reader_done_at:?} child_exited_elapsed={child_exited_at:?} child_exit={child_exit:?}"
+                    );
                     snapshot.record(pid, child_exit.is_none());
                 }
                 if child_exit.is_none() {
@@ -927,7 +943,25 @@ fn unknown_required_harness_auth_cannot_be_completed_and_explicit_defer_reuses_t
         "--out".into(),
         approval.to_string_lossy().into_owned(),
     ]);
-    assert_eq!(terminal(&lab, &issue, Some("yes\r"), false).0, 0);
+    let (code, output) = terminal(&lab, &issue, Some("yes\r"), false);
+    assert_eq!(code, 0, "{}", redact_private(&output));
+    #[cfg(target_os = "macos")]
+    if macos_snapshot::enabled() {
+        let mut rest = output.as_str();
+        for event in [
+            "install_plain_read_returned",
+            "install_approval_accepted",
+            "install_approval_tty_rechecked",
+            "install_approval_plan_rebuilt",
+            "install_approval_preview_rechecked",
+            "install_authorization_scope_rechecked",
+            "install_authorization_authority_ready",
+            "install_authorization_record_written",
+            "install_authorization_output_synced",
+        ] {
+            rest = rest.split_once(event).unwrap_or_else(|| panic!("설치 승인 진단 사건 누락: {event}")).1;
+        }
+    }
     let authorization: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
     let id = authorization["claims"]["installation_id"].as_str().unwrap();
     base.extend([
