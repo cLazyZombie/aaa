@@ -147,13 +147,18 @@ interface Note {
 interface Attachment {
   id: number;
   name: string;
+  file?: File;
   preview?: string;
   state: "uploading" | "waiting" | "ready" | "error" | "no-room";
   path?: string;
 }
 
 /** 화면을 다시 열면 blob URL 대신 host가 허용한 파일 URL로 초안의 그림을 읽는다. */
-function AttachmentImage({ pane, attachment: a }: { pane: string; attachment: Attachment }) {
+function AttachmentImage({ pane, attachment: a, onOpen }: {
+  pane: string;
+  attachment: Attachment;
+  onOpen?: (image: File | string) => void;
+}) {
   const [url, setUrl] = useState(a.preview ?? null);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -166,8 +171,12 @@ function AttachmentImage({ pane, attachment: a }: { pane: string; attachment: At
     }, () => { if (live) setError(true); });
     return () => { live = false; };
   }, [pane, a.path, a.preview]);
-  return url && !error ? <img src={url} alt={a.name} onError={() => setError(true)} />
-    : <span role="status">{error ? "그림을 표시할 수 없음" : "그림 여는 중…"}</span>;
+  if (!url || error) return <span role="status">{error ? "그림을 표시할 수 없음" : "그림 여는 중…"}</span>;
+  const thumbnail = <img src={url} alt={a.name} onError={() => setError(true)} />;
+  const image = a.path ?? a.file;
+  if (!onOpen || !image) return thumbnail;
+  return <button type="button" className="composer-attachment-open" aria-label="첨부 그림 확대"
+    onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpen(image); }}>{thumbnail}</button>;
 }
 
 /** 편집 중인 칸을 줄이지 않고 같은 폭·글꼴의 숨은 textarea에서 자연 높이를 잰다. */
@@ -251,6 +260,7 @@ export interface ChatComposerProps {
   imagesOff?: string | null;
   /** 그림을 pane 대신 여기로 올리고 초안에 넣을 경로를 받는다(기획 대화: 그 branch에 commit, t-1950) */
   uploadImage?: (file: File) => Promise<string>;
+  onOpenAttachment?: (image: File | string) => void;
 }
 
 export function ChatComposer({
@@ -281,6 +291,7 @@ export function ChatComposer({
   prepare,
   imagesOff = null,
   uploadImage,
+  onOpenAttachment,
 }: ChatComposerProps) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -427,7 +438,7 @@ export function ChatComposer({
     }
     const added = files.map((source) => {
       const file = normalizeComposerImageFile(source);
-      const attachment: Attachment = { id: ++sequence.current, name: file.name, preview: URL.createObjectURL(file), state: "uploading" };
+      const attachment: Attachment = { id: ++sequence.current, name: file.name, file, preview: URL.createObjectURL(file), state: "uploading" };
       return { file, attachment };
     });
     setNote(null);
@@ -1084,9 +1095,9 @@ export function ChatComposer({
           )}
           {attachments.length > 0 && <div className="composer-attachments" aria-label="첨부한 그림">
             {attachments.map((a) => <div className={`composer-attachment is-${a.state}`} key={a.id}>
-              <AttachmentImage pane={pane} attachment={a} />
+              <AttachmentImage pane={pane} attachment={a} onOpen={onOpenAttachment} />
               <span className="composer-attachment-state">{a.state === "ready" ? "첨부됨" : a.state === "error" ? "실패" : a.state === "no-room" ? "글을 줄여 주세요" : "올리는 중"}</span>
-              <button type="button" aria-label={`${a.name} 첨부 삭제`} disabled={locked} onClick={() => {
+              <button type="button" className="composer-attachment-remove" aria-label={`${a.name} 첨부 삭제`} disabled={locked} onClick={() => {
                 clearAttachments([a]);
                 if (a.path) setText(textRef.current.replace(imageMention(a.path), ""));
               }}><X aria-hidden="true" /></button>

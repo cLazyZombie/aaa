@@ -155,6 +155,7 @@ export function TermView({
   dock,
   controls,
   onOpenFile,
+  onOpenAttachment,
   onOpenLink,
   autoSelected = false,
   focusRequest = 0,
@@ -181,6 +182,7 @@ export function TermView({
   controls?: MutableRefObject<PaneControls | null>;
   /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.125). 없으면(보기 권한) 링크로 그리지 않는다 */
   onOpenFile?: (path: string) => void;
+  onOpenAttachment?: (image: File | string) => void;
   /** 대화 글의 링크를 앱 안에서 연다(휴대폰의 보고서·앱 주소, plan §8.300): 열었으면 true */
   onOpenLink?: (href: string) => boolean;
   /** App이 스스로 고른 pane(주소의 pane이 없어 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected) */
@@ -2523,6 +2525,7 @@ export function TermView({
           onInterrupt={interruptAgent}
           messages={chatMessages}
           onInspect={() => setChatView(false)}
+          onOpenAttachment={onOpenAttachment}
           onSend={sendTerminalLine}
           onInputTrace={(id, event, method) => {
             const ws = wsRef.current;

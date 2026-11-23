@@ -3937,6 +3937,7 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
 
 ## 대화 첨부 미리보기 복원(t-0583)
 
+- [보내기 전 첨부 그림 확대(t-2179)](testing-draft-attachment-viewer-t-2179.md)
 - E2E23의 「대화 이미지」는 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 붙여넣기 뒤
   대화 → 터미널 → 대화 → 보고서 → 대화로 이동하고, 드롭·파일 선택 뒤에는 새로고침한다.
   초안의 글·경로 보존, 복원한 썸네일 하나의 실제 이미지 decode, 전송 뒤 원본 SHA-256·경로와 미리보기 제거를 본다.

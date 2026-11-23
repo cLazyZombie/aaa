@@ -19,16 +19,16 @@ async function openChat(p, label = "composer") {
   await domIs(p, "입력 가능", () => !document.querySelector('[aria-label="그림 첨부"]')?.disabled);
   return p.getByRole("textbox", { name: "메시지", exact: true });
 }
-async function fileEvent(box, type, png, text = "") {
-  return box.evaluate((el, { type, b64, text }) => {
+async function fileEvent(box, type, png, text = "", name = "clipboard.png") {
+  return box.evaluate((el, { type, b64, text, name }) => {
     const dt = new DataTransfer();
-    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "clipboard.png", { type: "image/png" }));
+    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name, { type: "image/png" }));
     if (text) dt.setData("text/plain", text);
     if (type === "drop") el.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true }));
     const event = type === "paste" ? new ClipboardEvent(type, { clipboardData: dt, bubbles: true, cancelable: true }) : new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true });
     el.dispatchEvent(event);
     return event.defaultPrevented;
-  }, { type, b64: png.toString("base64"), text });
+  }, { type, b64: png.toString("base64"), text, name });
 }
 
 export default async function ({ page }) {
@@ -469,6 +469,106 @@ while True:
     await p.getByTestId("file-viewer").waitFor({ state: "detached" });
     if (!await thumb.evaluate((el) => el === document.activeElement)) throw new Error("확대 닫기 뒤 썸네일 focus를 잃었다");
     await p.context().close();
+  });
+
+  await step("초안 첨부 확대: 업로드 중에 열고 Esc로 닫으며, 드롭·삭제·복원 뒤에도 그림을 고른다", async () => {
+    const { promise: uploadGate, resolve: releaseUpload } = Promise.withResolvers();
+    const uploadUrl = "**/api/v1/panes/*/image";
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      serviceWorkers: "block",
+      route: [uploadUrl, async (route) => {
+        await uploadGate;
+        await route.continue();
+      }],
+    });
+    const p = client.page;
+    const viewer = p.getByTestId("file-viewer");
+    const composer = p.getByTestId("chat-composer");
+    const enlarge = composer.getByRole("button", { name: "첨부 그림 확대", exact: true });
+    const first = enlarge.filter({ has: p.getByAltText("clipboard.png", { exact: true }) });
+    const second = enlarge.filter({ has: p.getByAltText("dropped.png", { exact: true }) });
+    const shownWidth = () => viewer.locator("img").evaluate(async (img) => {
+      await img.decode();
+      return img.naturalWidth;
+    });
+    const box = await openChat(p);
+    try {
+      await box.fill("보내기 전 초안");
+      const upload = p.waitForRequest(uploadUrl);
+      assert.equal(await fileEvent(box, "paste", fs.readFileSync(`${root}/pic.png`)), true);
+      await upload;
+      await first.press("Enter");
+      assert.equal(await shownWidth(), 1);
+      assert.match(await viewer.locator("img").getAttribute("src"), /^blob:/);
+      await p.keyboard.press("Escape");
+      await viewer.waitFor({ state: "detached" });
+      assert.equal(await first.evaluate((el) => el === document.activeElement), true);
+      assert.equal(await box.inputValue(), "보내기 전 초안");
+
+      assert.equal(await fileEvent(box, "drop", fs.readFileSync(`${project}/uploads/seed.png`), "", "dropped.png"), true);
+      releaseUpload();
+      await domIs(p, "두 첨부 경로 삽입", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2);
+      await second.click();
+      assert.equal(await shownWidth(), 640);
+      await p.keyboard.press("Escape");
+      await viewer.waitFor({ state: "detached" });
+
+      const draftWithBoth = await box.inputValue();
+      const remove = composer.getByRole("button", { name: "clipboard.png 첨부 삭제", exact: true });
+      await remove.click();
+      await first.waitFor({ state: "detached" });
+      assert.equal(await viewer.count(), 0, "첨부 삭제는 파일 뷰어를 열지 않는다");
+      assert.equal(await enlarge.count(), 1);
+      const draft = draftWithBoth.slice(draftWithBoth.indexOf(" ") + 1);
+      assert.equal(await box.inputValue(), draft, "선택한 그림의 경로만 초안에서 뺀다");
+
+      await p.reload();
+      const restored = await openChat(p);
+      assert.equal(await restored.inputValue(), draft);
+      await enlarge.click();
+      assert.equal(await shownWidth(), 640, "복원된 그림도 같은 파일 뷰어에서 연다");
+      await p.keyboard.press("Escape");
+      await viewer.waitFor({ state: "detached" });
+      assert.deepEqual(client.errors, []);
+      await p.context().close();
+    } finally {
+      releaseUpload();
+    }
+  });
+
+  await step("초안 첨부 확대: iPhone Safari와 홈 화면 앱에서 탭으로 열고 닫는다", async () => {
+    const wk = await webkit.launch();
+    try {
+      for (const standalone of [false, true]) {
+        const client = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone });
+        const p = client.page;
+        await openChat(p);
+        const composer = p.getByTestId("chat-composer");
+        await composer.locator('input[type="file"]').setInputFiles([
+          { name: "small.png", mimeType: "image/png", buffer: fs.readFileSync(`${root}/pic.png`) },
+          { name: "wide.png", mimeType: "image/png", buffer: fs.readFileSync(`${project}/uploads/seed.png`) },
+        ]);
+        await domIs(p, "휴대폰 첨부 두 장 준비", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2);
+        const enlarge = composer.getByRole("button", { name: "첨부 그림 확대", exact: true });
+        await enlarge.filter({ has: p.getByAltText("wide.png", { exact: true }) }).tap();
+        const viewer = p.getByTestId("file-viewer");
+        assert.equal(await viewer.locator("img").evaluate(async (img) => {
+          await img.decode();
+          return img.naturalWidth;
+        }), 640);
+        await viewer.getByRole("button", { name: "파일 닫기", exact: true }).tap();
+        await viewer.waitFor({ state: "detached" });
+
+        await composer.getByRole("button", { name: "wide.png 첨부 삭제", exact: true }).tap();
+        await enlarge.filter({ has: p.getByAltText("wide.png", { exact: true }) }).waitFor({ state: "detached" });
+        assert.equal(await viewer.count(), 0, "터치로 삭제해도 파일 뷰어를 열지 않는다");
+        assert.equal(await enlarge.count(), 1);
+        assert.deepEqual(client.errors, []);
+        await p.context().close();
+      }
+    } finally {
+      await wk.close();
+    }
   });
 
   await step("첨부 권한: 허용 밖·symlink·reader·미인증 읽기를 막는다", async () => {

@@ -47,10 +47,10 @@ const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
 
 
 /**
- * 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, thread 작업 폴더의 파일(보고서 안 링크, plan §8.171), 또는
- * 보기 경로 맨 위(`/v/<cap>/`, 대화의 보고서 주소, plan §8.300)
+ * 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, thread 작업 폴더의 파일(보고서 안 링크, plan §8.171),
+ * 보기 경로 맨 위(`/v/<cap>/`, 대화의 보고서 주소, plan §8.300), 아직 올리는 대화 첨부 그림
  */
-export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } } | { view: string };
+export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } } | { view: string } | { image: File };
 /** 찾은 파일과 그 읽기 경로, 또는 같은 이름의 후보들 */
 type Found = { info: FileInfo; url: string | null } | { candidates: string[] };
 /** 결과물 목록: 보기 경로 맨 위와 상대 경로별 파일 */
@@ -113,6 +113,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   // 보고서 안 링크는 pane 대신 그 thread의 머신·작업 폴더에서 찾는다. 찾은 뒤는 pane 파일과 같은 읽기 경로(`/f/`)다
   const worktree = "worktree" in from ? from.worktree : null;
   const viewBase = "view" in from ? from.view : null;
+  const image = "image" in from ? from.image : null;
   const isLibrary = project !== null || viewBase !== null;
   // 결과물 목록은 한 번 받는다(보기 경로는 2시간 산다)
   const library = useRef<Promise<Library> | null>(null);
@@ -142,7 +143,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     [pane, project, thread, worktree?.project, worktree?.thread, viewBase],
   );
   const [path, setPath] = useState(asked);
-  const target = useMemo(() => fileLineTarget(path), [path]);
+  const target = useMemo(() => image ? { path: image.name, line: null } : fileLineTarget(path), [image, path]);
   const wrapCode = useTerminalToggle("wrapCode");
   const markdownWidth = useMarkdownWidth();
   const { resolvedTheme } = useAppearance();
@@ -167,15 +168,22 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   useEffect(() => setSource(target.line !== null), [path, target.line]);
 
   useEffect(() => {
-    let cancelled = false;
-    const abort = new AbortController();
-    let deadline: ReturnType<typeof setTimeout> | undefined;
     setInfo(null);
     setUrl(null);
     setCandidates(null);
     setProblem(null);
     setLoaded(null);
     setDirectory(null);
+    if (image !== null) {
+      // 입력창에서 업로드·정리가 끝나도 이 창에서 보는 그림을 유지한다.
+      const preview = URL.createObjectURL(image);
+      setInfo({ path: image.name, name: image.name, size: image.size, modified_ms: image.lastModified, mime: image.type, kind: "image" });
+      setUrl(preview);
+      return () => URL.revokeObjectURL(preview);
+    }
+    let cancelled = false;
+    const abort = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       try {
         const r = await locate(target.path);
@@ -233,7 +241,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       clearTimeout(deadline);
       abort.abort();
     };
-  }, [locate, pane, target.path]);
+  }, [image, locate, pane, target.path]);
 
   useLayoutEffect(() => {
     // 첫 focus rAF 전이나 터미널 재부착 뒤에도 Escape는 파일 보기 몫이다.
@@ -478,7 +486,8 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
                 </button>
               </div>
             )}
-            {url !== null && (
+            {/* host 확인 전의 로컬 blob은 img 안에서만 연다. */}
+            {url !== null && image === null && (
               <div className="file-viewer-group">
                 <a
                   className="icon-button file-viewer-action"

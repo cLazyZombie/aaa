@@ -1893,6 +1893,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             role={role}
             autoSelected={activePane === chatKey(p) && autoSelected}
             onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: p.id }) : undefined}
+            onOpenAttachment={role !== "reader" ? (image) => {
+              if (typeof image === "string") openFile({ path: image, pane: p.id });
+              else openFile({ path: image.name, pane: p.id, image });
+            } : undefined}
             onOpenLink={openLink}
             title={paneTitle(p)}
             quoteSource={threadOfPane.get(p.id)?.id ?? (p.coordinator_project ? "coordinator" : `${p.machine} ${p.name || p.id}`)}
@@ -2017,7 +2021,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       {!machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} machine={selectedMachine} onClose={closeMachineInfo} />}
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
-        <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
+        <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path}
+          source={fileViewing.image ? { image: fileViewing.image } : { pane: fileViewing.pane }}
+          onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
       )}
       {/* thread 결과물(차이 목록 R1): 고른 다른 파일도 그 결과물 안이다 */}
       {fileViewing && fileViewing.pane === null && fileViewing.library && (
