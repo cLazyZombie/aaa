@@ -17,7 +17,8 @@ mod posts;
 mod projects;
 pub(crate) use posts::*;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{LockResult, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -93,14 +94,58 @@ impl StartAdmission {
 }
 
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: TimedConnection,
     /// HTTP 공개 주소 판정은 긴 쓰기·이력 조회와 독립된 WAL 읽기 연결을 쓴다.
-    origin_reader: Option<Mutex<Connection>>,
+    origin_reader: Option<TimedConnection>,
+}
+
+struct TimedConnection(Mutex<Connection>);
+
+impl TimedConnection {
+    #[track_caller]
+    fn lock(&self) -> LockResult<ConnectionGuard<'_>> {
+        let caller = std::panic::Location::caller();
+        let guard = self.0.lock();
+        let acquired = Instant::now();
+        let wrap = |guard| ConnectionGuard { guard: Some(guard), acquired, caller };
+        guard.map(wrap).map_err(|error| PoisonError::new(wrap(error.into_inner())))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ConnectionGuard<'a> {
+    guard: Option<MutexGuard<'a, Connection>>,
+    acquired: Instant,
+    caller: &'static std::panic::Location<'static>,
+}
+
+impl std::ops::Deref for ConnectionGuard<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.as_deref().unwrap()
+    }
+}
+
+impl std::ops::DerefMut for ConnectionGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.as_deref_mut().unwrap()
+    }
+}
+
+impl Drop for ConnectionGuard<'_> {
+    fn drop(&mut self) {
+        let held = self.acquired.elapsed();
+        drop(self.guard.take());
+        if held >= Duration::from_secs(1) {
+            tracing::warn!(callsite = %self.caller, held_ms = held.as_millis() as u64, "host DB 잠금 장기 점유");
+        }
+    }
 }
 
 impl Db {
     #[cfg(test)]
-    pub(crate) fn conn_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn_for_test(&self) -> ConnectionGuard<'_> {
         self.conn.lock().unwrap()
     }
     /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.

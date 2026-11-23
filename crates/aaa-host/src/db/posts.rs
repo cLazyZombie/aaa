@@ -2,6 +2,15 @@
 
 use super::*;
 
+const POST_LIST_LIMIT: i64 = 100;
+const POST_LIST_BYTES: usize = 512 * 1024;
+
+pub(crate) struct CorrectionPost {
+    pub thread: String,
+    pub created_ms: u64,
+    pub title: String,
+}
+
 /// post 원장은 거부도 ID별로 남긴다. 거부 본문은 저장하지 않는다.
 #[derive(Debug)]
 pub(crate) struct PostRow {
@@ -83,7 +92,7 @@ impl Db {
     ) -> Result<()> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
-        tx.execute("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data,quota) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![post_id,row.project,row.sender,row.session,row.machine,row.content_sha,row.created_ms,serde_json::to_string(&row.result)?,env.map(serde_json::to_string).transpose()?,row.quota])?;
+        tx.execute("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data,quota,inbox_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![post_id,row.project,row.sender,row.session,row.machine,row.content_sha,row.created_ms,serde_json::to_string(&row.result)?,env.map(serde_json::to_string).transpose()?,row.quota,inbox.map(|i| &i.id)])?;
         if let Some(i) = inbox {
             tx.execute(
                 "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
@@ -277,15 +286,22 @@ impl Db {
     }
 
     pub(crate) fn post_list(&self, project: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
-        let c = self.conn.lock().unwrap();
-        let mut st = c.prepare("SELECT data, EXISTS(SELECT 1 FROM inbox i WHERE i.project=posts.project AND i.done=1 AND i.id LIKE '%-post-' || json_extract(posts.data,'$.id')) FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
-        let rows = st
-            .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = {
+            let c = self.conn.lock().unwrap();
+            // 옛 실행 파일도 봉투와 inbox ID를 같은 접수 시각으로 만들었다. 밀리초를 버려 파일명 형식으로 맞춘다.
+            let mut st = c.prepare(
+                "SELECT p.data, EXISTS(SELECT 1 FROM inbox i WHERE i.id=COALESCE(p.inbox_id,
+                        strftime('%Y%m%dT%H%M%SZ',p.created_ms/1000,'unixepoch') || '-post-' || json_extract(p.data,'$.id'))
+                    AND i.project=p.project AND i.done=1)
+                 FROM posts p WHERE p.project=?1 AND p.data IS NOT NULL ORDER BY p.seq DESC LIMIT ?2",
+            )?;
+            st.query_map(params![project, POST_LIST_LIMIT], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
         let mut bytes = 0;
         let mut posts = Vec::new();
         for (s, handled) in rows {
-            if bytes + s.len() > 512 * 1024 {
+            if bytes + s.len() > POST_LIST_BYTES {
                 break;
             }
             bytes += s.len();
@@ -294,6 +310,29 @@ impl Db {
                 post.state = "handled".into();
             }
             posts.push(post);
+        }
+        Ok(posts)
+    }
+
+    /// 정정에는 post 목록의 표시 범위 안에서 발신 thread·시각·제목만 필요하다.
+    pub(crate) fn post_correction_titles(&self, project: &str) -> Result<Vec<CorrectionPost>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT length(CAST(data AS BLOB)),json_extract(data,'$.from.thread'),
+                    json_extract(data,'$.created_ms'),json_extract(data,'$.title')
+             FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let mut rows = st.query(params![project, POST_LIST_LIMIT])?;
+        let mut bytes = 0;
+        let mut posts = Vec::new();
+        while let Some(row) = rows.next()? {
+            bytes += row.get::<_, usize>(0)?;
+            if bytes > POST_LIST_BYTES {
+                break;
+            }
+            if let Some(thread) = row.get(1)? {
+                posts.push(CorrectionPost { thread, created_ms: row.get(2)?, title: row.get(3)? });
+            }
         }
         Ok(posts)
     }

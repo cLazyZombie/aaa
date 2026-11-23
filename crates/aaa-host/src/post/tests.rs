@@ -52,6 +52,38 @@ fn put(h: &Host, n: u32, now: u64) -> PostResult {
     h.store_post("demo", sender(), input(n), "post:t-0001@mac-a", None, now)
 }
 
+#[test]
+fn post_list_checks_the_associated_inbox_id_for_new_and_old_rows() {
+    let (h, _lab) = host();
+    h.project_create("demo", Default::default(), "test").unwrap();
+    let before = 1_789_999_999_999;
+    let after = 1_790_000_000_000;
+    let PostResult::Accepted { id: old } = put(&h, 1, before) else { panic!("옛 봉투") };
+    let PostResult::Accepted { id: new } = put(&h, 2, after) else { panic!("새 봉투") };
+    let old_inbox = format!("{}-post-{old}", util::utc_compact(before));
+    let new_inbox = format!("{}-post-{new}", util::utc_compact(after));
+    let saved_id = format!("stored-post-{new}");
+    {
+        let db = h.db.conn_for_test();
+        db.execute("UPDATE posts SET inbox_id=NULL WHERE inbox_id=?1", [&old_inbox]).unwrap();
+        db.execute("UPDATE inbox SET done=1 WHERE id=?1", [&old_inbox]).unwrap();
+        db.execute("UPDATE inbox SET id=?2 WHERE id=?1", [&new_inbox, &saved_id]).unwrap();
+        db.execute("UPDATE posts SET inbox_id=?2 WHERE inbox_id=?1", [&new_inbox, &saved_id]).unwrap();
+        db.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data)
+             SELECT ?2,project,kind,subject,event,1,created_at,data FROM inbox WHERE id=?1",
+            [&saved_id, &new_inbox],
+        )
+        .unwrap();
+    }
+    let states = || h.db.post_list("demo").unwrap().into_iter().map(|p| (p.id, p.state)).collect::<Vec<_>>();
+    assert_eq!(states(), [(new.clone(), "delivered".into()), (old.clone(), "handled".into())]);
+    h.db.conn_for_test().execute("UPDATE inbox SET done=1 WHERE id=?1", [&saved_id]).unwrap();
+    assert_eq!(states(), [(new.clone(), "handled".into()), (old.clone(), "handled".into())]);
+    h.db.conn_for_test().execute("DELETE FROM inbox WHERE id=?1", [&saved_id]).unwrap();
+    assert_eq!(states(), [(new, "delivered".into()), (old, "handled".into())]);
+}
+
 /// 한도 경계 사이의 접수 이력만 같은 원장에 준비한다. 실제 게시·중복·원자 저장·
 /// 재시작은 경계 요청과 post_rate_duplicate_mute_and_restart가 지킨다.
 fn seed_accepted_quota(
