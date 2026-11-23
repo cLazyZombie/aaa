@@ -53,6 +53,7 @@ fn entry(context: &Path, sha: &str) -> Result<()> {
     }
     std::env::set_current_dir(&spec.profile).map_err(Fault::io)?;
     native::verify_launcher(&spec)?;
+    let _logs = crate::service_logs::start(&spec.directory().join("service.log"), spec.role);
     let (session, process) = native::own_process(&spec)?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(Fault::io)?;
     let (stop, _) = tokio::sync::watch::channel(false);

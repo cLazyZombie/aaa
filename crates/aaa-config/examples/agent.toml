@@ -2,6 +2,12 @@
 # Windows %LOCALAPPDATA%\aaa\config\agent.toml (AAA_CONFIG_DIR로 바꿀 수 있다)
 schema = 1
 
+# Unix 서비스 운영 로그. keep_files는 활성 파일을 제외하며 keep_days=0이면 개수만 적용한다.
+[logs]
+max_file_mib = 64
+keep_files = 4
+keep_days = 60
+
 [agent]
 # 머신 이름(비우면 hostname)
 name = ""

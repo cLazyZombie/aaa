@@ -2,6 +2,12 @@
 # 머신별 값은 같은 폴더의 host.local.toml에 두면 덮어쓴다.
 schema = 1
 
+# Unix 서비스 운영 로그. keep_files는 활성 파일을 제외하며 keep_days=0이면 개수만 적용한다.
+[logs]
+max_file_mib = 64
+keep_files = 4
+keep_days = 60
+
 # DB 전체를 압축·age 암호화해 하루 한 번 보관한다. 설정·복원: docs/host-db-backup.md
 [backup]
 enabled = false

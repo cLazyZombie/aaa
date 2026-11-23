@@ -16,6 +16,8 @@ mod plan_preview;
 mod restart;
 mod rollout;
 mod service;
+#[cfg(unix)]
+mod service_logs;
 mod settings;
 mod setup;
 mod update;

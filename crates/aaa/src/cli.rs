@@ -142,13 +142,22 @@ pub fn main() -> ExitCode {
         }
         _ => {}
     }
-    match run(cli) {
-        Ok(code) => crate::restart::finish(code),
+    #[cfg(unix)]
+    let logs = match &cli.cmd {
+        Cmd::Host => crate::service_logs::direct(aaa_proto::install::InstallRole::Host),
+        Cmd::Agent(AgentArgs { cmd: None, .. }) => crate::service_logs::direct(aaa_proto::install::InstallRole::Agent),
+        _ => None,
+    };
+    let code = match run(cli) {
+        Ok(code) => code,
         Err(e) => {
             eprintln!("aaa: {}", aaa_common::redact::text(&format!("{e:#}")));
             ExitCode::from(1)
         }
-    }
+    };
+    #[cfg(unix)]
+    drop(logs);
+    crate::restart::finish(code)
 }
 
 fn init_log(default: &str) {
