@@ -506,6 +506,8 @@ pub struct Host {
     nudge_delivery: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 프로젝트별로 coordinator에게 이미 알린 처음 보는 inbox 항목 ID(hook·nudge). hook은 여기 없는 항목만 알린다(t-1627)
     nudge_told: Mutex<HashMap<String, HashSet<String>>>,
+    nudge_wait_log: Mutex<HashMap<String, inbox::NudgeWait>>,
+    answer_receipts: Mutex<web::AnswerReceipts>,
     /// task.md Follow-ups 덧붙이기는 한 번에 하나씩
     follow_up_lock: Mutex<()>,
     /// thread 작업 요약 표지 재료(summary.rs): 목록이 매번 파일을 읽지 않게
@@ -579,6 +581,19 @@ pub fn token_hash(token: &str) -> String {
 /// (처음 띄울 때 준 이름은 host가 모른다)
 pub(crate) fn respawn_name(info: &SessionInfo) -> String {
     if info.label.is_some() { String::new() } else { info.name.clone() }
+}
+
+/// 운영 로그의 대상은 짧은 ID 또는 그 외 입력의 고정 길이 지문이다.
+fn operation_log_id(id: &str) -> String {
+    if id.split_once('-').is_some_and(|(kind, number)| {
+        matches!(kind, "t" | "q" | "d" | "p" | "i" | "r")
+            && (1..=10).contains(&number.len())
+            && number.bytes().all(|b| b.is_ascii_digit())
+    }) {
+        id.into()
+    } else {
+        hex::encode(&sha2::Sha256::digest(id.as_bytes())[..8])
+    }
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
@@ -760,6 +775,8 @@ impl Host {
             nudge_checked: tokio_watch::channel(0).0,
             nudge_delivery: Mutex::new(HashMap::new()),
             nudge_told: Mutex::new(HashMap::new()),
+            nudge_wait_log: Mutex::new(HashMap::new()),
+            answer_receipts: Mutex::new(web::AnswerReceipts::default()),
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
             usage_limits: Mutex::new(HashMap::new()),

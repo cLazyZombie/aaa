@@ -19,12 +19,13 @@ import type {
   RolloutCard,
   SharedPreferences,
   ThreadView,
+  WebAnswerTiming,
 } from "./gen/proto";
 import type { PreferencesChange } from "./herdr/preferences.ts";
 import { pageInUse } from "./herdr/presence";
 import { createPasskey, signPasskey, withGesture } from "./passkey";
 
-async function post<T>(path: string, body: unknown, keepalive = false): Promise<T> {
+async function post<T>(path: string, body: unknown, keepalive = false, received?: (headers: Headers) => void): Promise<T> {
   const res = await apiFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -32,8 +33,43 @@ async function post<T>(path: string, body: unknown, keepalive = false): Promise<
     credentials: "same-origin",
     keepalive,
   });
-  return unwrap<T>(res);
+  try {
+    return await unwrap<T>(res);
+  } finally {
+    received?.(res.headers);
+  }
 }
+
+/** 버튼을 누른 시각과 답을 읽은 시각은 같은 브라우저의 단조 시계로 잰다. */
+export function startAnswerTiming() {
+  const clicked = performance.now();
+  let response: { trace: string; at: number } | null = null;
+  return {
+    received(headers: Headers) {
+      const trace = headers.get("x-aaa-answer-trace");
+      if (trace) response = { trace, at: performance.now() };
+    },
+    afterUpdate() {
+      const received = response;
+      if (!received || document.visibilityState !== "visible") return;
+      // React의 답 상태를 예약한 뒤 브라우저가 한 번 그릴 기회를 지난다.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (document.visibilityState !== "visible" || pageClosing()) return;
+        const timing: WebAnswerTiming = {
+          trace: received.trace,
+          response_ms: Math.round(received.at - clicked),
+          render_ms: Math.round(performance.now() - received.at),
+        };
+        void apiFetch("/api/v1/diag/answer", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify(timing), credentials: "same-origin",
+        }).catch(() => {}); // 계측 전송 실패는 카드 결과에 영향을 주지 않는다.
+      }));
+    },
+  };
+}
+
+export type AnswerTiming = ReturnType<typeof startAnswerTiming>;
 
 /**
  * 이 브라우저의 기기가 취소됐거나 로그아웃했다: host가 cookie를 모른다(401) 또는 열린 WebSocket을 4401로 닫았다.
@@ -122,9 +158,9 @@ export async function signOut(): Promise<void> {
 }
 /** 공개 주소로 연 조작 기기의 승인 필요 동작(관리 GUI W7): host가 `passkey_required`로 답하면 이 기기 passkey의 사용자
  * 확인(UV)으로 다시 보낸다. host는 begin 때 받은 요청만 실행한다. passkey가 없으면 begin이 등록 안내로 거부한다 */
-export async function call(req: FrontRequest, keepalive = false): Promise<FrontResponse> {
+export async function call(req: FrontRequest, keepalive = false, timing?: AnswerTiming): Promise<FrontResponse> {
   try {
-    return await post<FrontResponse>("/api/v1/call", req, keepalive);
+    return await post<FrontResponse>("/api/v1/call", req, keepalive, timing?.received);
   } catch (e) {
     if (!(e instanceof ApiError) || e.body.code !== "passkey_required") throw e;
     const challenge = await post<PasskeyChallenge>("/api/v1/passkey/approve/begin", req);

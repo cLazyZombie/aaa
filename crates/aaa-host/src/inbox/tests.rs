@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn nudge_logs_each_reason_once_even_when_retries_alternate() {
+    let mut wait = NudgeWait::default();
+    assert!(wait.first("batch-1", Some("pane-a"), "quiet_wait"));
+    assert!(wait.first("batch-1", Some("pane-a"), "prompt_changed"));
+    assert!(!wait.first("batch-1", Some("pane-a"), "quiet_wait"));
+    assert!(!wait.first("batch-1", Some("pane-a"), "prompt_changed"));
+    assert!(wait.first("batch-1", Some("pane-b"), "quiet_wait"));
+    assert!(wait.first("batch-2", Some("pane-b"), "quiet_wait"));
+}
+
+#[test]
 fn nudge_windows_reset_on_changed_observations_and_require_two_empty_checks() {
     let t0 = Instant::now();
     let mut seen = HashMap::new();

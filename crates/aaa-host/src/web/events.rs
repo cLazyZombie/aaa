@@ -3,17 +3,53 @@
 use super::*;
 
 pub(super) async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSocketUpgrade) -> Response {
+    let started = std::time::Instant::now();
     let Some((dev, role)) = device(&host, &headers) else { return unauthorized() };
-    ws.on_upgrade(move |socket| events_loop(host, dev, role, socket))
+    let failed_device = crate::operation_log_id(&dev);
+    ws.on_failed_upgrade(move |_| {
+        tracing::info!(device = %failed_device, total_ms = operation_log::ms(started.elapsed()),
+            result = "failed", reason = "upgrade_failed", "web_events");
+    })
+    .on_upgrade(move |socket| events_loop(host, dev, role, socket, started))
+}
+
+struct EventsOpen {
+    started: std::time::Instant,
+    upgrade_ms: u64,
+    conn: u64,
+    reason: &'static str,
+}
+
+impl Drop for EventsOpen {
+    fn drop(&mut self) {
+        let total_ms = operation_log::ms(self.started.elapsed());
+        let result = if self.reason == "initial_state_sent" { "ok" } else { "failed" };
+        if total_ms >= 500 || result == "failed" {
+            tracing::info!(
+                conn = self.conn,
+                total_ms,
+                upgrade_ms = self.upgrade_ms,
+                result,
+                reason = self.reason,
+                "web_events"
+            );
+        }
+    }
 }
 
 /// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문·thread 사건. 질문·thread는 연결한 뒤 목록을 한 번 읽고 이 사건으로 따라간다.
-pub(super) async fn events_loop<S>(host: Arc<Host>, dev: String, role: DeviceRole, mut socket: S)
-where
+pub(super) async fn events_loop<S>(
+    host: Arc<Host>,
+    dev: String,
+    role: DeviceRole,
+    mut socket: S,
+    started: std::time::Instant,
+) where
     S: futures_util::Stream<Item = Result<Message, axum::Error>>
         + futures_util::Sink<Message, Error = axum::Error>
         + Unpin,
 {
+    let upgrade_ms = operation_log::ms(started.elapsed());
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
@@ -33,6 +69,7 @@ where
     let mut chats = ChatInterest { host: host.clone(), panes: HashSet::new() };
     let mut presence = Presence { conn: host.conn_open(&dev), host: host.clone(), dev: dev.clone(), active: false };
     let conn = presence.conn;
+    let mut opening = Some(EventsOpen { started, upgrade_ms, conn, reason: "initial_state_send_failed" });
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
@@ -55,6 +92,9 @@ where
     };
     // 듣기 시작한 뒤에 다시 본다(pane_session과 같다)
     if host.is_revoked(&dev) {
+        if let Some(opening) = &mut opening {
+            opening.reason = "revoked";
+        }
         return close_revoked(socket).await;
     }
     // 살아 있는지: 브라우저는 WebSocket ping에 저절로 pong한다. 휴대폰이 잠들거나 망이 바뀌어 반쯤 열린 연결은 보내기가
@@ -216,6 +256,9 @@ where
             {
                 break;
             }
+            if let Some(mut opened) = opening.take() {
+                opened.reason = "initial_state_sent";
+            }
         }
         tokio::select! {
             biased;
@@ -236,7 +279,11 @@ where
                 send_state = false;
                 heard = tokio::time::Instant::now();
                 match m {
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => {
+                        tracing::info!(conn, total_ms = operation_log::ms(started.elapsed()), result = "failed", reason = "read_failed", "web_events");
+                        break;
+                    }
                     Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
                     Some(Ok(Message::Text(t))) => {
                         app_heard = tokio::time::Instant::now();
@@ -414,7 +461,8 @@ where
             _ = ping.tick() => {
                 send_state = false;
                 if heard.elapsed() >= dead_after {
-                    tracing::info!("상태 사건 연결이 {}초 동안 답하지 않아 끊는다", dead_after.as_secs());
+                    tracing::info!(conn, total_ms = operation_log::ms(started.elapsed()),
+                        silent_ms = operation_log::ms(heard.elapsed()), result = "failed", reason = "pong_timeout", "web_events");
                     break;
                 }
                 if socket.send(Message::Ping(Default::default())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {

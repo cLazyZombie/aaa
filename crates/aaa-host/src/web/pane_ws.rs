@@ -34,6 +34,11 @@ pub(super) struct PaneFlow {
     pub(super) colors: Option<aaa_proto::TermColors>,
     pub(super) requested: std::time::Instant,
     pub(super) trace: bool,
+    ingress: std::time::Instant,
+    checked: std::time::Instant,
+    auth_ms: u64,
+    lookup_ms: u64,
+    state_wait_ms: u64,
 }
 
 pub(super) async fn pane_ws(
@@ -56,7 +61,10 @@ pub(super) async fn pane_ws(
     let exists = state.panes.contains_key(&id);
     drop(state);
     let checked = std::time::Instant::now();
+    let ingress_started = ingress.as_ref().map_or(requested, |i| i.started);
     if !exists {
+        tracing::info!(pane = %crate::operation_log_id(&id), total_ms = operation_log::ms(checked - ingress_started),
+            result = "failed", reason = "pane_not_found", "pane_attach");
         return (StatusCode::NOT_FOUND, "pane이 없다").into_response();
     }
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
@@ -69,6 +77,11 @@ pub(super) async fn pane_ws(
         colors,
         requested,
         trace,
+        ingress: ingress_started,
+        checked,
+        auth_ms: operation_log::ms(authenticated - requested),
+        lookup_ms: operation_log::ms(checked - lookup_started),
+        state_wait_ms: operation_log::ms(acquired - lookup_started),
     };
     let lookup_us = (checked - lookup_started).as_micros() as u64;
     let state_wait_us = (acquired - lookup_started).as_micros() as u64;
@@ -87,7 +100,53 @@ pub(super) async fn pane_ws(
         response_wall_ms = aaa_common::util::now_ms(),
         "웹 터미널 요청"
     );
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, attach_id, socket))
+    let failed_pane = id.clone();
+    ws.max_message_size(1 << 20)
+        .on_failed_upgrade(move |_| {
+            tracing::info!(pane = %failed_pane, total_ms = operation_log::ms(ingress_started.elapsed()),
+                result = "failed", reason = "upgrade_failed", "pane_attach");
+        })
+        .on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, attach_id, socket))
+}
+
+struct PaneStartup<'a> {
+    flow: PaneFlow,
+    pane: &'a str,
+    front: &'a str,
+    upgrade_ms: u64,
+    copy_ms: u64,
+    snapshot_ms: u64,
+    queued_at: Option<std::time::Instant>,
+    reason: &'static str,
+}
+
+impl Drop for PaneStartup<'_> {
+    fn drop(&mut self) {
+        let total_ms = operation_log::ms(self.flow.ingress.elapsed());
+        let result = match self.reason {
+            "snapshot_queued" | "snapshot_acknowledged" => "ok",
+            "closed_before_snapshot_ack" => "closed",
+            _ => "failed",
+        };
+        if total_ms >= 500 || result == "failed" {
+            tracing::info!(
+                pane = self.pane,
+                front = self.front,
+                total_ms,
+                before_handler_ms = operation_log::ms(self.flow.requested - self.flow.ingress),
+                auth_ms = self.flow.auth_ms,
+                lookup_ms = self.flow.lookup_ms,
+                state_wait_ms = self.flow.state_wait_ms,
+                upgrade_ms = self.upgrade_ms,
+                copy_ms = self.copy_ms,
+                snapshot_ms = self.snapshot_ms,
+                ack_ms = self.queued_at.map(|at| operation_log::ms(at.elapsed())),
+                result,
+                reason = self.reason,
+                "pane_attach"
+            );
+        }
+    }
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -455,6 +514,16 @@ pub(super) async fn pane_session(
     socket: WebSocket,
 ) {
     let PaneFlow { acks, colors, grid, trace, .. } = flow;
+    let mut startup = PaneStartup {
+        flow,
+        pane: id,
+        front: &front.id,
+        upgrade_ms: operation_log::ms(flow.checked.elapsed()),
+        copy_ms: 0,
+        snapshot_ms: 0,
+        queued_at: None,
+        reason: "revoked",
+    };
     let id = id.to_string();
     let actor = format!("device:{dev}");
     // 취소를 듣기 시작한 뒤에 다시 본다: upgrade와 취소가 엇갈려도 놓치지 않는다(t3code SessionStore `awaitInvalidation`)
@@ -470,7 +539,10 @@ pub(super) async fn pane_session(
     let mut color_wait =
         colors.and_then(|c| host.front_colors(&front.id, &id, c)).filter(|wait| wait.borrow().is_none());
     let started_attach = std::time::Instant::now();
-    let Some(mut attach) = host.attach_pane(&id) else { return };
+    startup.reason = "pane_gone";
+    let attach = host.attach_pane(&id);
+    startup.copy_ms = operation_log::ms(started_attach.elapsed());
+    let Some(mut attach) = attach else { return };
     attach_event!(
         trace,
         front = %front.id, elapsed_us = started_attach.elapsed().as_micros() as u64,
@@ -485,6 +557,7 @@ pub(super) async fn pane_session(
     let started = std::time::Instant::now();
     let now = || started.elapsed().as_millis() as u64;
     let mut streams = 0;
+    startup.reason = "front_enqueue_failed";
     if !out.msg(&TermServerMsg::Front { id: front.id.clone(), steer_queued: true }) {
         return;
     }
@@ -492,14 +565,28 @@ pub(super) async fn pane_session(
         color_wait = None;
     }
     let preparing = color_wait.is_some();
-    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, access.readonly(role, preparing), now()).await
-    else {
+    startup.reason = "snapshot_failed";
+    let snapshot_started = std::time::Instant::now();
+    let mut snapshot_bytes = attach.replay.len() as u64;
+    let window = open_stream(&out, &mut streams, &mut attach, access.readonly(role, preparing), now()).await;
+    startup.snapshot_ms = operation_log::ms(snapshot_started.elapsed());
+    let Some(mut window) = window else {
         return;
     };
     let mut rx = attach.rx;
+    startup.reason = "state_enqueue_failed";
     if !out.msg(&access.message(role, preparing)) || !out.msg(&state) {
         return;
     }
+    let mut opening = if acks {
+        startup.queued_at = Some(std::time::Instant::now());
+        startup.reason = "closed_before_snapshot_ack";
+        Some(startup)
+    } else {
+        startup.reason = "snapshot_queued";
+        drop(startup);
+        None
+    };
     // ACK가 아예 오지 않아도(가려진 탭) 정지를 잰다(참고 outputTimer 100ms)
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -517,6 +604,9 @@ pub(super) async fn pane_session(
             check_unacked(out.buffered(), &mut queue_since, now())
         };
         if verdict == Verdict::Stop {
+            if let Some(opening) = &mut opening {
+                opening.reason = "snapshot_ack_stalled";
+            }
             out.stop("ACK가 나아가지 않는다", &id, window.pending());
             break;
         }
@@ -583,6 +673,7 @@ pub(super) async fn pane_session(
                 if resync {
                     let Some(mut a) = host.attach_pane(&id) else { break };
                     next = a.offset;
+                    snapshot_bytes = a.replay.len() as u64;
                     let readonly = TerminalAccess::read(host, &id).is_none_or(|access| access.readonly(role, false));
                     let Some(w) = open_stream(&out, &mut streams, &mut a, readonly || color_wait.is_some(), now()).await else { break };
                     rx = a.rx;
@@ -605,9 +696,13 @@ pub(super) async fn pane_session(
                         }
                         Ok(TermClientMsg::Ack { stream, offset }) => {
                             // 앞 구독(snapshot 전)의 늦은 ACK는 그냥 버린다
-                            if stream == window.id && !window.acknowledge(stream, offset) {
-                                let e = ErrorBody::new(ErrorCode::BadRequest, "ACK offset이 보낸 출력을 넘는다");
-                                if !out.msg(&TermServerMsg::Error(e)) { break; }
+                            if stream == window.id {
+                                if !window.acknowledge(stream, offset) {
+                                    let e = ErrorBody::new(ErrorCode::BadRequest, "ACK offset이 보낸 출력을 넘는다");
+                                    if !out.msg(&TermServerMsg::Error(e)) { break; }
+                                } else if offset >= snapshot_bytes && let Some(mut opened) = opening.take() {
+                                    opened.reason = "snapshot_acknowledged";
+                                }
                             }
                             None
                         }

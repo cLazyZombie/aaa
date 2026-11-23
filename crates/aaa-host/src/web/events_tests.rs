@@ -58,7 +58,8 @@ async fn stalled_loop(answer: bool, revoke: bool) {
     let (sender, mut sent) = mpsc::unbounded_channel();
     let (resume, gate) = oneshot::channel();
     let socket = Socket { incoming: receiver, sent: sender, resume: Some(gate), holding_state: false };
-    let task = tokio::spawn(events_loop(host.clone(), dev.clone(), DeviceRole::Controller, socket));
+    let task =
+        tokio::spawn(events_loop(host.clone(), dev.clone(), DeviceRole::Controller, socket, std::time::Instant::now()));
     // 실제 첫 state 송신에서만 멈춘다. timer를 기다리며 실제 시간을 자지 않는다.
     loop {
         if let Some(Message::Text(text)) = sent.recv().await {

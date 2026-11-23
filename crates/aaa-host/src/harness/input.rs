@@ -10,11 +10,19 @@ impl Host {
         self.submit(mid, pane, Some(text), None).await
     }
 
-    pub(crate) async fn send_nudge(self: &Arc<Self>, mid: &str, pane: &str, text: &str) -> Result<bool, SubmitErr> {
+    pub(crate) async fn send_nudge(
+        self: &Arc<Self>,
+        mid: &str,
+        pane: &str,
+        text: &str,
+    ) -> (Result<bool, SubmitErr>, NudgeInput) {
         let id = aaa_common::util::new_id();
         let mut submission = Submission::new(&id);
         submission.nudge = true;
-        self.submit_traced(mid, pane, Some(text), None, &mut submission).await
+        let result = self.submit_traced(mid, pane, Some(text), None, &mut submission).await;
+        let mut timing = submission.nudge_input;
+        timing.id = id;
+        (result, timing)
     }
 
     /// 입력창에 남은 글을 Enter로만 보낸다(다시 치지 않는다). 받았다고 알리면 true.
@@ -92,20 +100,25 @@ impl Host {
             let agent = self.pane_agent(pane);
             let empty = screen.as_ref().is_some_and(|s| crate::inbox::nudge_prompt_empty(s, agent.as_ref()));
             if !empty || agent.is_some_and(|a| !matches!(a.activity, AgentActivity::Idle | AgentActivity::Started)) {
+                submission.nudge_input.reason =
+                    Some(if screen.is_none() { "screen_unavailable_before_input" } else { "prompt_changed" });
                 return Err(before("알림을 보내기 전에 입력창이 바뀌었다".into()));
             }
         }
         let shown = screen.map(|s| s.lines);
         if shown.as_deref().is_some_and(limit_wait_screen) {
             submission.limit_wait = true;
+            submission.nudge_input.reason = Some("usage_limit");
             return Err(before("사용량 한도 대기 화면에 입력하지 않았다".into()));
         }
         if let Some((_, q)) = shown.as_deref().and_then(modal_of) {
+            submission.nudge_input.reason = Some("modal");
             return Err(before(format!("선택 창이 떠 있어 입력하지 않았다: {q}")));
         }
         let agent = self.pane_agent(pane);
         // 확인창(권한·질문)이 떠 있으면 친 글과 Enter를 그 창이 받는다
         if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
+            submission.nudge_input.reason = Some("agent_question");
             return Err(before("확인창이 떠 있어 입력하지 않았다".into()));
         }
         let agy = agent.as_ref().is_some_and(|a| a.harness == "agy");
@@ -224,6 +237,9 @@ impl Host {
             .map_err(|e| after(e.message))?
             .ok_or_else(|| before("다른 입력이 와 알림을 쓰지 않았다".into()))?;
             submission.input = MessageInput::DraftWritten;
+            if submission.nudge {
+                submission.nudge_input.pasted = Some(Instant::now());
+            }
             self.input_event(
                 pane,
                 trace,
@@ -241,12 +257,15 @@ impl Host {
         let typed = loop {
             let now = self.screen_lines(mid, pane).await;
             if now.as_deref().is_some_and(limit_wait_screen) {
+                submission.nudge_input.reason = Some("usage_limit_after_paste");
                 return Err(after("치는 동안 사용량 한도 대기 화면이 떠 Enter를 보내지 않았다".into()));
             }
             if let Some((_, q)) = now.as_deref().and_then(modal_of) {
+                submission.nudge_input.reason = Some("modal_after_paste");
                 return Err(after(format!("치는 동안 선택 창이 떠 Enter를 보내지 않았다: {q}")));
             }
             if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
+                submission.nudge_input.reason = Some("question_after_paste");
                 return Err(after("치는 동안 확인창이 떠 Enter를 보내지 않았다".into()));
             }
             if text.is_none() || !hooked || now != shown || tokio::time::Instant::now() >= deadline {
@@ -311,6 +330,9 @@ impl Host {
         .map_err(|e| after(e.message))?
         .ok_or_else(|| after("알림을 쓰는 동안 다른 입력이 와 제출하지 않았다".into()))?;
         submission.input = MessageInput::Submitted;
+        if submission.nudge {
+            submission.nudge_input.entered = Some(Instant::now());
+        }
         self.input_event(pane, trace, "enter_written", "key=enter bytes=0d enter_count=1");
         let valid = || watch.as_ref().is_none_or(|watch| *watch.borrow());
         if prior_unknown || !valid() {
