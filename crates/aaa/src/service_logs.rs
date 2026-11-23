@@ -159,7 +159,9 @@ impl RotatingFile {
     fn open(path: &Path, expected: &Metadata, policy: LogsSection) -> io::Result<Self> {
         let parent = path.parent().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
         let dir = fs::metadata(parent)?;
-        if !dir.is_dir() || dir.uid() != expected.uid() || dir.mode() & 0o022 != 0 {
+        // Unix setup은 umask에 따라 그룹 쓰기 가능한 상태 폴더를 만든다.
+        // 열린 파일의 소유자·inode를 확인하고, 누구나 쓰는 폴더만 거부한다.
+        if !dir.is_dir() || dir.uid() != expected.uid() || dir.mode() & 0o002 != 0 {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "로그 폴더 소유권 또는 쓰기 권한이 다르다"));
         }
         let name = path.file_name().and_then(|name| name.to_str()).ok_or(io::ErrorKind::InvalidInput)?;

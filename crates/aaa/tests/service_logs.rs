@@ -5,6 +5,7 @@ mod lab;
 use aaa_common::child_process::StdCommandExt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
@@ -40,6 +41,7 @@ fn output_path(node: &lab::Node, home: &Path, role: &str) -> PathBuf {
         node.state.clone()
     };
     fs::create_dir_all(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o775)).unwrap();
     dir.join(format!("{role}.log"))
 }
 

@@ -101,6 +101,20 @@ fn same_role_rejects_a_second_writer_but_another_role_can_write() {
 }
 
 #[test]
+fn rotation_accepts_the_setup_umask_but_refuses_world_writable_log_directories() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let lab = Lab::new();
+    fs::set_permissions(&lab.0, fs::Permissions::from_mode(0o775)).unwrap();
+    let log = lab.open(LogsSection::default());
+    let path = log.path.clone();
+    drop(log);
+    fs::set_permissions(&lab.0, fs::Permissions::from_mode(0o777)).unwrap();
+    let result = RotatingFile::open(&path, &fs::metadata(&path).unwrap(), LogsSection::default());
+    assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied));
+}
+
+#[test]
 fn collector_caps_a_split_line_and_drains_the_last_fragment_on_shutdown() {
     let lab = Lab::new();
     let log = lab.open(LogsSection::default());
