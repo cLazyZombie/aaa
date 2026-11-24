@@ -329,6 +329,44 @@ fn discarded_card_references_do_not_cover_or_count_as_answer_targets() {
     }
 }
 
+/// t-2184의 15:55 폐기 문장과 새 카드 안내를 재현한다. 링크와 선택지 내용은 예시다.
+#[test]
+fn observed_withdrawal_needs_a_confirmed_open_successor() {
+    let old = "q-4753";
+    let new = "q-4754";
+    let cards = HashMap::from([(old.into(), CardState::Closed), (new.into(), CardState::Open)]);
+    let history = "앞서 올린 순서 카드 q-4753은 상황이 바뀌어 닫았습니다.";
+    let notice = "이제 새 카드 [q-4754](#question=q-4754)에서 답해 주세요.";
+    let options = "- A 진행 (추천)\n- B 보류";
+    for gap in [" ", "\n", "\n\n"] {
+        let text = format!("{history}{gap}{notice}\n{options}");
+        let result = inspect(&text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}: {:?}", result.stale);
+    }
+    let text = format!("{history} 지금 답할 카드는 **[q-4754](#question=q-4754) 하나**입니다.\n{options}");
+    let result = inspect(&text, &cards);
+    assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+
+    let text = format!("{history} {notice}\n{options}");
+    let unconfirmed = HashMap::from([(old.into(), CardState::Closed), (new.into(), CardState::Answered)]);
+    assert!(inspect(&text, &unconfirmed).stale.is_some());
+    assert!(inspect(&text, &HashMap::from([(new.into(), CardState::Open)])).missing.is_some());
+
+    for text in [
+        format!("{history} 다른 작업의 q-4754도 열려 있습니다.\n{options}"),
+        format!("{history} q-4754에서 별개 질문에 답해 주세요.\n{options}"),
+        format!("{history} {notice} q-4753에서 답해 주세요."),
+        format!("{history} q-4753에서 답해 주세요. {notice}"),
+    ] {
+        let result = inspect(&text, &cards);
+        assert!(result.stale.unwrap().refs.contains(&(old.into(), CardState::Closed)), "{text}");
+    }
+    let text = format!("{history} {notice}\n{options}\n\n별도로 배포 승인 여부를 알려 주세요.");
+    assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    let text = format!("질문 2개에 답해 주세요.\n\n{history} {notice}\n{options}");
+    assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+}
+
 /// t-1845의 다섯 발췌와 11-14 선택지 제목 사례. 주변 설명·주소는 재구성한다.
 #[test]
 fn observed_reply_sections_history_and_corrections_keep_decision_boundaries() {
@@ -741,6 +779,39 @@ fn optional_feedback_on_a_decided_name_does_not_hide_requests() {
         assert!(inspect(&text, &cards).missing.is_some(), "{text}");
         let text = prose(&text);
         assert_eq!(requests(&text, false, None), [("request", text.find("알려 주세요").unwrap())], "{text}");
+    }
+}
+
+/// t-2184의 12:47·17:30 의견 요청. 앞 완료 설명과 인용되지 않은 문구는 점검 기록대로 재구성한다.
+#[test]
+fn optional_feedback_on_completed_results_keeps_decisions_visible() {
+    let cards = cards();
+    for (completed, feedback) in [
+        ("시험 카드는 이미 처리했습니다.", "체감이 어땠는지 알려 주세요"),
+        ("빛 반경은 그대로 두기로 확정했습니다.", "반경 변경도 하지 않으려던 것이면 말씀해 주세요"),
+    ] {
+        for gap in [" ", "\n", "\n\n"] {
+            let text = format!("{completed}{gap}{feedback}.");
+            let result = inspect(&text, &cards);
+            assert!(result.missing.is_none() && result.stale.is_none(), "{text}");
+        }
+        for text in [
+            format!("{feedback}."),
+            format!("시험 카드는 아직 처리하지 않았습니다. {feedback}."),
+            format!("{completed}\n\n## 다른 작업\n{feedback}."),
+            format!("{completed} {feedback}, 임시 브랜치 삭제 승인 여부를 알려 주세요."),
+            format!("{completed} 임시 브랜치 삭제 승인 여부를 알려 주세요, {feedback}."),
+            format!("{completed} {feedback}. 지금 배포할까요?"),
+            format!("{completed} {feedback}.\n- A 진행 (추천)\n- B 보류"),
+        ] {
+            assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+        }
+    }
+    for text in [
+        "시험 카드를 처리했습니다. 체감이 어땠는지와 배포 승인 여부를 알려 주세요.",
+        "빛 반경은 확정했습니다. 반경 변경도 하지 않으려던 것이면 배포 승인 여부를 말씀해 주세요.",
+    ] {
+        assert!(inspect(text, &cards).missing.is_some(), "{text}");
     }
 }
 

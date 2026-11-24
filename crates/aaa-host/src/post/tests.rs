@@ -909,6 +909,50 @@ async fn question_guard_distinguishes_closed_cards_from_unknown_project_referenc
     assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
 }
 
+/// coordinator가 닫은 독립 post와 새로 올린 질문을 실제 완료 사건에서 확인한다.
+#[tokio::test]
+async fn question_guard_checks_the_successor_of_a_withdrawn_post() {
+    let (h, _lab) = coordinator_host();
+    let actor = "local:cli@coord";
+    let post = |n, title| {
+        let mut card = input(n);
+        card.to = "user".into();
+        card.topic = "user-action".into();
+        card.title = title;
+        card.body = "## Questions\n### 1. 진행 여부\n- A 진행\n- B 보류".into();
+        assert!(matches!(h.front_post("demo", card, actor).unwrap(), PostResult::Accepted { .. }));
+        h.user_requests("demo").unwrap().remove(0).question_id.unwrap()
+    };
+    let old = post(994, "순서".into());
+    h.post_handled("demo", &old, actor).unwrap();
+    let new = post(995, "범위".into());
+    let start = util::now_ms();
+    let history = format!("앞서 올린 순서 카드 {old}은 상황이 바뀌어 닫았습니다.");
+    let notice = format!("이제 새 카드 [{new}](#question={new})에서 답해 주세요.");
+    let choices = "- A 진행 (추천)\n- B 보류";
+    let text = format!("{history} {notice}\n{choices}");
+    let warnings = || {
+        h.db.inbox_list(Some("demo"), false)
+            .unwrap()
+            .into_iter()
+            .filter(|i| matches!(i.event.as_str(), crate::question_guard::EVENT | crate::question_guard::STALE_EVENT))
+            .collect::<Vec<_>>()
+    };
+    h.on_harness("m", completed_reply("codex", start, start, &text));
+    assert!(warnings().is_empty());
+
+    let unrelated = format!("{history} 다른 작업의 {new}도 열려 있습니다.\n{choices}");
+    h.on_harness("m", completed_reply("codex", start, start + 1, &unrelated));
+    let items = warnings();
+    assert!(items.iter().any(|i| i.event == crate::question_guard::STALE_EVENT && i.summary.contains(&old)));
+    h.inbox_finish_where("demo", |i| i.event == crate::question_guard::STALE_EVENT);
+
+    let wrong_target = format!("{history} {notice} {old}에서 답해 주세요.");
+    h.on_harness("m", completed_reply("codex", start, start + 2, &wrong_target));
+    let items = warnings();
+    assert!(items.iter().any(|i| i.event == crate::question_guard::STALE_EVENT && i.summary.contains(&old)));
+}
+
 /// 인용 설명과 카드 링크가 섞여도 실제 완료 사건에서 누락과 교체 안내를 구별한다.
 #[tokio::test]
 async fn question_guard_keeps_reported_card_links_through_replacement() {
