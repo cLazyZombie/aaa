@@ -216,9 +216,10 @@ thread 보고의 `[완료]`는 맡긴 일 전체의 끝, `[결정 필요]`·`[�
 aaa가 자동으로 올린다).
 
 ## TASKS.md(coordinator와 사용자가 고친다)
-- 고치기는 `aaa task add|edit|move|rm|restore|log`와 목록 명령 `aaa task list-…`를 쓰고, 할 일은 `d-0001` 같은 ID로 가리킨다.
-- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다(새 작업을 맡긴 요청은 기록 요청도 된다). 사용자가 맡긴 새 일(지금 시작할
-  일도)·나중 일·사용자 자신의 일·미룬 제안·한도로 못 시작한 일은 기록하고, 승인을 기다리는 제안은 넣지 않는다.
+- 할 일은 `d-0001` 같은 ID로 가리킨다.
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 맡긴 일(즉시·나중·한도 대기)과 사용자의 할 일·미룬 제안은 기록한다.
+  승인을 기다리는 제안은 넣지 않는다.
+- 대화에 붙은 그림은 사용자가 그 작업의 참고로 준 것만 할 일 메모에 첨부한다. thread 시작 뒤 작업 폴더의 사본을 확인한다(`aaa guide tasks`).
 - 모델·머신은 `aaa assignable`이 보인 것을 쓴다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile …
   --machine … --user-request '사용자 지시 근거'`로 바꾼다. 지시 없이 바꾸거나 낮추지 않으며, 다른 옵션·원문 편집으로 이 보호를
   우회하지 않는다.
@@ -562,9 +563,10 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 모델·머신은 `aaa assignable`이 보인 것을 쓴다(`aaa task`가 같은 판정을 하고, 한 값은 `aaa assignable --check <모델@머신>`).
 - 메모의 첨부 줄(`![그림](uploads/…)`·`[제목](uploads/….md)`·`[제목](library/<보고서>/<경로>)`·`[제목](https://…)`)은 사용자가
   웹에서 붙인 그림·문서다. 메모 추가는 `aaa task edit <ID> --add-note "한 줄"`(여러 번)로 한다.
+  대화에 붙은 그림은 사용자가 그 작업의 참고로 준 것만 `![그림](uploads/<파일명>)` 첨부 줄로 해당 할 일 메모에 추가한다.
   `--note`는 메모 전체 교체, `--clear-notes`는 전체 삭제다(서로 함께 쓰지 않는다). 교체할 때 첨부 줄도 함께 남긴다.
   기존 줄이 빠지거나 바뀌면 저장 결과의 「메모 N줄→M줄」과 기록 번호를 확인한다. `aaa --json task log`의 `before`에 변경 전 원문이 있다.
-  `--from-task`가 그 파일을 thread에 넘긴다.
+  `--from-task`가 첨부 파일을 thread에 넘긴다. 시작 결과의 첨부 경고를 살피고, 그 머신 작업 폴더의 `attachments/`에서 그림 사본을 확인한다.
 - 제목 속 thread 번호·긴 제목 등 목록의 형식 어긋남은 add·edit와 웹 저장에서 미리 거부한다. thread 번호는 `--thread` 연결 칸,
   상태·긴 글은 `--add-note` 메모로 옮긴다. 기존 형식 어긋남은 `aaa task list`의 ▲ 표시를 유지한다. 고칠지는 사용자에게 묻는다.
 - task를 thread에 맡길 때는 `aaa thread start --from-task <task ID> --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
