@@ -5,6 +5,8 @@ use aaa_common::child_process::StdCommandExt;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
+const PREPARE_LOG: &str = "info,aaa::thread_prepare=debug";
+
 struct GitGate {
     listener: TcpListener,
 }
@@ -25,21 +27,7 @@ impl GitGate {
             let bin = root.join("git-bin");
             std::fs::create_dir(&bin).unwrap();
             let source = root.join("git-source.py");
-            std::fs::write(&source, r#"#!/usr/bin/env python3
-import os, pathlib, socket, subprocess, sys
-args = sys.argv[1:]
-rc = subprocess.call([os.environ['REAL_GIT'], *args])
-if rc == 0 and 'worktree' in args:
-    index = args.index('worktree')
-    action = args[index + 1]
-    gate = pathlib.Path(os.environ['GIT_GATE_ROOT']) / ('gate-' + action)
-    if gate.exists():
-        with socket.create_connection(tuple([os.environ['GIT_GATE_HOST'], int(os.environ['GIT_GATE_PORT'])]), timeout=60) as s:
-            s.sendall((action + '\n').encode())
-            if s.recv(1) != b'!':
-                sys.exit(42)
-sys.exit(rc)
-"#).unwrap();
+            std::fs::write(&source, include_str!("../fixtures/git-gate.py")).unwrap();
             // 실행 파일은 별도 복사 자식이 쓴다(docs/testing.md, ETXTBSY 쓰기 fd 상속 경계).
             assert!(Command::new("cp").arg(&source).arg(bin.join("git")).status_guarded().unwrap().success());
             std::fs::set_permissions(bin.join("git"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
@@ -50,28 +38,89 @@ sys.exit(rc)
                 ("GIT_GATE_ROOT".into(), root.to_string_lossy().into()),
                 ("GIT_GATE_HOST".into(), host.into()),
                 ("GIT_GATE_PORT".into(), port.into()),
+                ("AAA_LOG".into(), PREPARE_LOG.into()),
             ]
         });
         w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+        w.host_env.push(("AAA_LOG".into(), PREPARE_LOG.into()));
         world_start(w, env)
     }
-    fn take(&self, action: &str) -> TcpStream {
+    fn take(&self, w: &World, action: &str, phase: &str) -> TcpStream {
+        Self::record(w, action, "accept-wait", phase);
+        match self.receive(w, action, phase) {
+            Ok(stream) => {
+                Self::record(w, action, "signal-received", phase);
+                stream
+            }
+            Err(error) => {
+                Self::record(w, action, "receive-error", phase);
+                panic!("Git {action} 진입 실패 ({phase}): {error:#}\n{}", Self::diagnostics(w));
+            }
+        }
+    }
+    fn receive(&self, w: &World, action: &str, phase: &str) -> anyhow::Result<TcpStream> {
+        use anyhow::{Context, ensure};
         // 100ms마다 accept를 다시 묻지 않고 실제 socket 읽기 준비로 깨어난다.
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
         let (stream, _) = rt.block_on(async {
-            let listener = tokio::net::TcpListener::from_std(self.listener.try_clone().unwrap()).unwrap();
-            tokio::time::timeout(T, listener.accept()).await.expect("Git 진입 사건 한도").expect("Git 연결 수신")
-        });
-        let mut stream = stream.into_std().unwrap();
-        stream.set_nonblocking(false).unwrap();
-        stream.set_read_timeout(Some(T)).unwrap();
+            let listener = tokio::net::TcpListener::from_std(self.listener.try_clone()?)?;
+            tokio::time::timeout(T, listener.accept()).await.context("Git 진입 사건 한도")?.context("Git 연결 수신")
+        })?;
+        Self::record(w, action, "accepted", phase);
+        let mut stream = stream.into_std()?;
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(T))?;
         let mut text = vec![0; action.len() + 1];
-        stream.read_exact(&mut text).unwrap();
-        assert_eq!(text, format!("{action}\n").as_bytes());
-        stream
+        stream.read_exact(&mut text).context("Git 진입 신호 읽기")?;
+        ensure!(text == format!("{action}\n").as_bytes(), "다른 Git 동작의 진입 신호");
+        Ok(stream)
+    }
+    fn record(w: &World, action: &str, event: &str, phase: &str) {
+        let result = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(w.lab.root.join("git-gate.events"))
+            .and_then(|mut log| writeln!(log, "{} test {action} {event} {phase}", aaa_common::util::now_ms()));
+        if let Err(error) = result {
+            eprintln!("Git gate 시험 기록 오류 ({phase} {event}): {error}");
+        }
+    }
+    fn diagnostics(w: &World) -> String {
+        let mut out = String::from("Git gate 사건 (UTC epoch ms):\n");
+        match std::fs::read_to_string(w.lab.root.join("git-gate.events")) {
+            Ok(events) => out.push_str(&events),
+            Err(error) => out.push_str(&format!("Git gate 사건 읽기 실패: {error}\n")),
+        }
+        let files = match std::fs::read_dir(&w.lab.root) {
+            Ok(files) => files,
+            Err(error) => {
+                out.push_str(&format!("실험실 로그 목록 읽기 실패: {error}\n"));
+                return aaa_common::redact::text(&out);
+            }
+        };
+        for file in files.flatten() {
+            let name = file.file_name();
+            let name = name.to_string_lossy();
+            if !name.ends_with(".log") || !(name.starts_with("host") || name.starts_with("agent")) {
+                continue;
+            }
+            out.push_str(&format!("{name} (UTC):\n"));
+            let log = std::fs::read_to_string(file.path()).unwrap_or_else(|error| format!("로그 읽기 실패: {error}"));
+            for line in log.lines().filter(|line| {
+                line.contains("thread 준비")
+                    || line.contains("agent 응답 시간 초과")
+                    || line.contains("host 등록 대기 중")
+                    || line.starts_with("로그 읽기 실패")
+            }) {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        aaa_common::redact::text(&out)
     }
     fn enable(w: &World, action: &str) {
         std::fs::write(w.lab.root.join(format!("gate-{action}")), "").unwrap();
+        Self::record(w, action, "armed", "");
     }
     fn release(w: &World, action: &str, mut stream: TcpStream) {
         std::fs::remove_file(w.lab.root.join(format!("gate-{action}"))).unwrap();
@@ -121,7 +170,7 @@ fn prepare_and_cleanup_wait_for_git_before_publishing_completion() {
     let v = start_gated(&w);
     assert_eq!(v["status"], "starting", "{v}");
     let id = v["id"].as_str().unwrap().to_string();
-    let pending = gate.take("add");
+    let pending = gate.take(&w, "add", &id);
     assert_eq!(w.show(&id)["status"], "starting");
     assert_eq!(w.show(&id)["group"], "working");
     GitGate::release(&w, "add", pending);
@@ -129,7 +178,7 @@ fn prepare_and_cleanup_wait_for_git_before_publishing_completion() {
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
     GitGate::enable(&w, "remove");
     let (_, mut output) = w.lab.spawn_piped("resolve", &w.h, &["--json", "thread", "resolve", "demo", &id]);
-    let pending = gate.take("remove");
+    let pending = gate.take(&w, "remove", &id);
     assert!(w.show(&id)["error"].as_str().is_some_and(|s| s.contains("정리 중")));
     assert_eq!(w.show(&id)["cleanup_pending"], true);
     assert_eq!(w.show(&id)["group"], "working");
@@ -151,7 +200,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     GitGate::enable(&w, "add");
     let v = start_gated(&w);
     let id = v["id"].as_str().unwrap().to_string();
-    let pending = gate.take("add");
+    let pending = gate.take(&w, "add", &id);
     let cwd = w.lab.root.join("workA/repo/demo-t-0001");
     assert!(cwd.exists(), "응답 전에 worktree가 만들어졌다");
     phases.mark("contract", "host-restart-and-placement-receipt");
@@ -200,6 +249,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
             ("GIT_GATE_ROOT", &gate_root),
             ("GIT_GATE_HOST", &gate_host),
             ("GIT_GATE_PORT", &gate_port),
+            ("AAA_LOG", PREPARE_LOG),
             ("CLAUDE_CODE_CHILD_SESSION", "1"),
             ("CLAUDECODE", "1"),
         ],
@@ -208,7 +258,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
 
     GitGate::enable(&w, "remove");
     let (_, _old_output) = w.lab.spawn_piped("resolve-old", &w.h, &["--json", "thread", "resolve", "demo", &id]);
-    let pending = gate.take("remove");
+    let pending = gate.take(&w, "remove", &id);
     assert!(!cwd.exists(), "Git 정리는 끝났지만 응답은 아직 안 왔다");
     phases.mark("contract", "host-restart-and-cleanup-receipt");
     restart_host(&mut w, "host2", "host3");
@@ -249,7 +299,7 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
     GitGate::enable(&w, "add");
     let v = start_gated(&w);
     let id = v["id"].as_str().unwrap();
-    let mut pending = gate.take("add");
+    let mut pending = gate.take(&w, "add", id);
     let failed = w.wait_show("설정한 준비 상한", id, |v| v["status"] == "failed");
     assert!(failed["error"].as_str().unwrap().contains("시간 초과"), "{failed}");
     // kill_on_drop가 자기 Git 자식을 끝냈다. EOF 사건 뒤에만 같은 자리를 다시 본다.
@@ -276,7 +326,7 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
         GitGate::enable(&w, "add");
         let second = start_gated(&w);
         let second = second["id"].as_str().unwrap();
-        let mut pending = gate.take("add");
+        let mut pending = gate.take(&w, "add", second);
         w.wait_show("다음 준비 상한", second, |v| v["status"] == "failed");
         assert_eq!(pending.read(&mut b).unwrap(), 0);
         std::fs::remove_file(w.lab.root.join("gate-add")).unwrap();

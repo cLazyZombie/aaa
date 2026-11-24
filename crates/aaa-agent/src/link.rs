@@ -376,6 +376,10 @@ async fn session_state_mode(
                         let (agent, reply, mut gate) = (agent.clone(), tx.clone(), request_gate.clone());
                         let started = tokio::time::Instant::now();
                         let wait = Duration::from_millis(deadline_ms.unwrap_or(600_000).clamp(1, 86_400_000));
+                        if let aaa_proto::AgentRequest::ThreadPrepare(p) = &body {
+                            tracing::debug!(target: "aaa::thread_prepare", request = %id, project = %p.project, thread = %p.thread,
+                                wait_ms = wait.as_millis() as u64, "thread 준비 요청 수신");
+                        }
                         tokio::spawn(async move {
                             let ready = tokio::time::timeout_at(started + wait, gate.wait_for(|ready| *ready))
                                 .await
