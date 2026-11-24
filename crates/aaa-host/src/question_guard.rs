@@ -98,10 +98,12 @@ fn ids(text: &str) -> Vec<String> {
         })
 }
 
+const CARD_REFERENCE: &str = r"(?:\[[^\]\n]*\]\([^()\n]*q-[0-9]+[^()\n]*\)|q-[0-9]+)";
+
 /// 교체·폐기·답변 불필요 설명의 참조만 제외한다. 같은 번호의 실제 답 안내는 남긴다.
 fn answer_ids(text: &str, replacements: &HashMap<String, String>) -> Vec<String> {
     static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
-        let reference = r"(?:\[[^\]\n]*\]\([^()\n]*q-[0-9]+[^()\n]*\)|q-[0-9]+)";
+        let reference = CARD_REFERENCE;
         let replacement = format!(
             r"(?<old>{reference})[ \t]*에서[ \t]*(?<new>{reference})[ \t]*(?:으로|로)[ \t]*(?:바뀜|바뀌었습니다|교체됨|교체됐습니다)\b"
         );
@@ -130,6 +132,44 @@ fn answer_ids(text: &str, replacements: &HashMap<String, String>) -> Vec<String>
         }
         matched.as_str().to_owned()
     }))
+}
+
+/// 거둔 번호와 바로 이어서 답하라고 지정한 새 번호의 상태를 확인한다.
+fn mask_withdrawn_card(text: &mut String, next_paragraph: &str, cards: &HashMap<String, CardState>) {
+    static WITHDRAWAL: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(
+            r"(?<old>{CARD_REFERENCE})\*{{0,2}}[ \t]*(?:은|는|이|가)[ \t]*상황이\s*바뀌어\s*(?:닫았|폐기했)습니다\*{{0,2}}[.。]"
+        ))
+        .unwrap()
+    });
+    static SUCCESSOR: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(
+            r"(?x)^\*{{0,2}}\s*(?:(?:이제|대신|지금\s*답할\s*(?:것은|건))\s+)?\*{{0,2}}\s*
+            (?:새\s+(?:질문\s+)?카드|지금\s*답할\s*카드는)\*{{0,2}}\s*[:：]?\s*\*{{0,2}}(?<new>{CARD_REFERENCE})\*{{0,2}}\s*
+            (?:(?:에서|으로|로|에)\s*(?:(?:답해|선택해)\s*(?:주세요|주십시오)|답하시면\s*됩니다)
+            |하나\*{{0,2}}\s*(?:입니다|만\s*답하시면\s*됩니다))\b"
+        ))
+        .unwrap()
+    });
+    let history = WITHDRAWAL.captures_iter(text).filter_map(|c| {
+        let old = c.name("old")?;
+        if text[..old.start()].ends_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '-') {
+            return None;
+        }
+        let following = text[c.get(0)?.end()..].trim_start();
+        let following = if following.is_empty() { next_paragraph.trim_start() } else { following };
+        let new = SUCCESSOR.captures(following)?.name("new")?;
+        let old_ids = ids(old.as_str());
+        let new_ids = ids(new.as_str());
+        let ([old_id], [new_id]) = (old_ids.as_slice(), new_ids.as_slice()) else { return None };
+        (cards.get(old_id) == Some(&CardState::Closed)
+            && cards.get(new_id) == Some(&CardState::Open)
+            && aaa_proto::cmp_short_ids(new_id, old_id).is_gt())
+        .then(|| old.range())
+    });
+    for span in history.collect::<Vec<_>>() {
+        text.replace_range(span.clone(), &" ".repeat(span.len()));
+    }
 }
 
 /// 간접 인용은 보고한 구절만 지운다. 같은 줄의 카드 안내·새 요청까지 지우지 않는다.
@@ -188,11 +228,15 @@ fn list_text(
             Event::Start(Tag::Link { dest_url, .. }) if excluded == 0 => {
                 if let Some(item) = items.last_mut()
                     && line_at(span.start) == item.line
-                    && let [id] = answer_ids(&prose(source_line(item.line)), replacements).as_slice()
-                    && cards.get(id) == Some(&CardState::Open)
-                    && (ids(&dest_url).contains(id) || ids(&text[span]).contains(id))
                 {
-                    item.open_card = true;
+                    let mut line = prose(source_line(item.line));
+                    mask_withdrawn_card(&mut line, "", cards);
+                    if let [id] = answer_ids(&line, replacements).as_slice()
+                        && cards.get(id) == Some(&CardState::Open)
+                        && (ids(&dest_url).contains(id) || ids(&text[span]).contains(id))
+                    {
+                        item.open_card = true;
+                    }
                 }
             }
             Event::Text(_) if excluded == 0 => {
@@ -328,6 +372,12 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'
         Regex::new(r"(?:^|[,，])\s*다른\s+이름이\s+좋으시면\s*[,，]?\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\b")
             .unwrap()
     });
+    static COMPLETED_RESULT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[.!?？。\n])[^.!?？。\n]*(?:처리했습니다|처리됐습니다|처리를\s*마쳤습니다|반영했습니다|적용했습니다|완료했습니다|확정했습니다|두기로\s*했습니다|그대로입니다)[.!。]\s*$").unwrap()
+    });
+    static RESULT_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[,，])\s*(?:(?:체감이\s*어땠는지|체감상\s*빨라졌는지)|[가-힣 ]{1,32}\s*변경도\s*하지\s*않으려던\s*(?:것이면|거라면))\s*[,，]?\s*(?:알려|말씀해)\s*(?:주세요|주십시오)\b").unwrap()
+    });
     static NO_INFORMATION_NEEDED: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?:정해\s*주실\s*것|알려\s*주시면\s*좋은\s*것)(?:은|이|도)?\s*없(?:습니다|어요|고|으며|지만|는데|다)",
@@ -340,9 +390,11 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'
     let mut previous = previous_block.unwrap_or_default();
     let mask = |m: &regex::Captures<'_>| " ".repeat(m[0].len());
     for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
-        // 직전 이름 확정 안내에 붙은 의견 구절만 같은 바이트 길이의 공백으로 바꾼다.
+        // 직전 확정·완료 안내에 붙은 의견 구절만 같은 바이트 길이의 공백으로 바꾼다.
         let actionable = if NAME_FEEDBACK.is_match(sentence) && DECIDED_NAME.is_match(previous) {
             NAME_FEEDBACK.replace_all(sentence, mask)
+        } else if RESULT_FEEDBACK.is_match(sentence) && COMPLETED_RESULT.is_match(previous) {
+            RESULT_FEEDBACK.replace_all(sentence, mask)
         } else {
             std::borrow::Cow::Borrowed(sentence)
         };
@@ -463,7 +515,16 @@ fn summary_card_count(text: &str, offset: usize) -> Option<usize> {
 
 fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMap<String, String>) -> Inspection {
     let list_text = list_text(text, cards, replacements);
-    let blocks = blocks(text, &list_text);
+    let mut blocks = blocks(text, &list_text);
+    for index in 0..blocks.len() {
+        let (current, later) = blocks.split_at_mut(index + 1);
+        let block = &mut current[index];
+        let next = later
+            .first()
+            .filter(|next| next.section == block.section && next.question_group == block.question_group)
+            .map_or("", |next| next.text.as_str());
+        mask_withdrawn_card(&mut block.text, next, cards);
+    }
     let answer_ids = |text| answer_ids(text, replacements);
     let reply_refs = blocks.iter().flat_map(|b| answer_ids(&b.text)).fold(Vec::new(), |mut refs, id| {
         if let Some(state) = cards.get(&id)

@@ -1,3 +1,4 @@
+- t-2190 [질문 감시의 선택적 의견과 거둔 카드 안내](testing-question-guard-t2190.md)
 - t-2172 [macOS Intel 배포·설치 시한 초과와 진단 보강](testing-macos-intel-deploy-install-t-2172.md)
 - t-2167 [역할 로그 회전 검증](testing-log-rotation-t-2167.md)
 - t-2167 [카드 답과 웹 연결 운영 로그 검증](testing-operational-logs-t-2167.md)
