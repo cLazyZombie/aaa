@@ -500,7 +500,13 @@ impl Host {
             safety: None,
             resolved_profile,
         };
-        let ready = match conn.request(AgentRequest::ThreadPrepare(prep)).await? {
+        tracing::debug!(target: "aaa::thread_prepare", project = %rec.project, thread = %rec.id, "thread 준비 요청 전송 시작");
+        let result = conn.request(AgentRequest::ThreadPrepare(prep)).await;
+        if let Err(error) = &result {
+            tracing::debug!(target: "aaa::thread_prepare", project = %rec.project, thread = %rec.id, code = ?error.code,
+                message = %error.message, "thread 준비 응답 오류");
+        }
+        let ready = match result? {
             AgentResponse::ThreadReady(r) => r,
             other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
         };

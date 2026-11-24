@@ -322,13 +322,18 @@ impl Agent {
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadPrepare(p) => {
+                tracing::debug!(target: "aaa::thread_prepare", request = %id, project = %p.project, thread = %p.thread,
+                    wait_ms = wait.as_millis() as u64, "thread 준비 실행");
                 let cfg = self.threads_cfg.lock().unwrap().clone();
-                match cfg.fresh() {
+                let result = match cfg.fresh() {
                     Ok(cfg) => threads::prepare(&cfg, p, wait).await,
                     Err(e) => Err(e),
-                }
-                .map(AgentResponse::ThreadReady)
-                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                };
+                tracing::debug!(target: "aaa::thread_prepare", request = %id,
+                    error = ?result.as_ref().err().map(|e| format!("{e:#}")), "thread 준비 종료");
+                result
+                    .map(AgentResponse::ThreadReady)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadPlacement { project, thread, title, kind, repo } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();

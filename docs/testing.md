@@ -432,6 +432,7 @@ E2E12 연결 중 취소·재연결 검증은 [별도 기록](testing-terminal-so
 
 ## Rust shard 중단 기록과 완료 경고 구별(t-1182)
 
+- 작업 트리 준비 시험의 Git·소켓 진입 기록은 [t-2193 검증 기록](testing-worktree-prepare-t-2193.md)을 본다.
 - macOS Intel CI의 준비 소켓 시한과 단계별 실패 진단을 기록했다. [t-2134 검증 기록](testing-rust-doctest-sigint-t-2134.md)
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40470706270/job/122076871066)의
   다섯 60초 경고는 모두 같은 test 단계에서 `... ok`로 끝났다. rollout 세 shard는 각각
