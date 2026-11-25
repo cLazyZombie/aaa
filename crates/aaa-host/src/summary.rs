@@ -67,8 +67,10 @@ enum Part {
 
 /// 요약 글을 읽는다. 형식·상한을 어기면 까닭을 돌려준다(쓰기는 거부하고, 읽기는 글만 보인다)
 pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
-    if text.len() > MAX_BYTES {
-        return Err(format!("요약이 {}바이트다. {MAX_BYTES}바이트 아래로 줄인다(지금 유효한 것만)", text.len()));
+    // 저장할 글의 크기를 재고, 오류 줄 번호는 원본에서 센다.
+    let bytes = text.trim().len();
+    if bytes > MAX_BYTES {
+        return Err(format!("요약이 {bytes}바이트다. {MAX_BYTES}바이트 아래로 줄인다(지금 유효한 것만)"));
     }
     let mut p = Parsed::default();
     let mut part: Option<Part> = None;
@@ -572,8 +574,8 @@ impl Host {
     ) -> Result<ThreadSummaryView, ErrorBody> {
         let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
-        let text = text.trim();
         crate::validate_thread_summary(text)?;
+        let text = text.trim();
         let by = self.summary_writer(project, actor);
         {
             // 지시 덧붙이기와 엇갈리지 않게(그 사이에 온 지시를 「본 것」으로 세지 않는다)
