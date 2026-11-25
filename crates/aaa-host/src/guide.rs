@@ -34,7 +34,7 @@ pub const TOPICS: &[GuideTopic] = &[
     GuideTopic {
         name: "reports",
         audience: Audience::Coordinator,
-        when: "웹 보고서를 보내거나 보고서 판·앱 안 주소를 다룰 때",
+        when: "스샷·영상 첨부, 웹 보고서·보고 판·앱 안 주소를 다룰 때",
         text: REPORTS,
     },
     GuideTopic {
@@ -214,6 +214,7 @@ thread 보고의 `[완료]`는 맡긴 일 전체의 끝, `[결정 필요]`·`[�
 공개하지 않았으면 q-NNNN만). 공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
 웹 보고서는 `aaa library publish <폴더> --name <이름> --to-user --title '<제목>'`로 보낸다(thread의 완료·사용자 확인이 필요한 보고는
 aaa가 자동으로 올린다).
+- 스샷·영상 답은 `aaa guide reports`를 따른다.
 
 ## TASKS.md(coordinator와 사용자가 고친다)
 - 할 일은 `d-0001` 같은 ID로 가리킨다.
@@ -359,6 +360,13 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 "#;
 
 const REPORTS: &str = r#"# 보고서 보내기와 앱 안 참조
+
+## 대화에서 스크린샷·영상 보여 주기
+대화 답에 `![화면 캡처](library/r-0001/preview/screen.png)` 또는
+`![영상](library/r-0002/preview/clip.mp4)`를 붙인다. 실제 보고 판 번호와 그 판의 library 상대 경로를 쓴다.
+직접 가진 파일은 `aaa library publish <파일> --name <이름>`으로 복사해 r 번호를 얻는다.
+다른 머신의 thread도 자기 library에 파일을 넣고 보고한다. `aaa library show <t-ID>`로 복사된 파일과 r 번호를 확인한다.
+PNG·JPEG·GIF·WebP는 16 MiB, MP4·WebM은 64 MiB까지다. 휴대폰용 영상은 H.264 MP4를 우선한다.
 
 ## 사용자에게 보고서 보내기
 사용자에게 웹 보고서(맨 위에 index.html이 있는 폴더)를 보여 줄 때는

@@ -73,6 +73,42 @@ impl Lab {
 }
 
 #[test]
+fn chat_media_reads_only_listed_bounded_report_files() {
+    let lab = Lab::new();
+    let source = lab.state.join("chat-media");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("small.png"), b"png").unwrap();
+    std::fs::File::create(source.join("large.png")).unwrap().set_len((16 << 20) + 1).unwrap();
+    let FrontResponse::LibraryLink(link) =
+        lab.h.library_publish("demo", "chat-media", source.to_str().unwrap(), false, None, None, "test").unwrap()
+    else {
+        panic!("보고 판 번호가 없다");
+    };
+    let id = link.report_id.unwrap();
+    let (file, mime) = lab.h.chat_media_source(&id, "small.png").unwrap();
+    assert_eq!(file.size(), 3);
+    assert_eq!(mime, "image/png");
+    let snapshot = lab.h.project_dir("demo").unwrap().join("library").join(&id);
+    std::fs::write(snapshot.join("unlisted.png"), b"png").unwrap();
+    for (name, path, code) in [
+        (id.as_str(), "unlisted.png", ErrorCode::NotFound),
+        (id.as_str(), "large.png", ErrorCode::BadRequest),
+        (id.as_str(), "../chat-media/small.png", ErrorCode::BadRequest),
+        (id.as_str(), "other\\small.png", ErrorCode::BadRequest),
+        ("chat-media", "small.png", ErrorCode::BadRequest),
+    ] {
+        assert_eq!(lab.h.chat_media_source(name, path).err().unwrap().code, code, "{name}/{path}");
+    }
+    #[cfg(unix)]
+    {
+        let path = snapshot.join("small.png");
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(source.join("small.png"), path).unwrap();
+        assert_eq!(lab.h.chat_media_source(&id, "small.png").err().unwrap().code, ErrorCode::NotFound);
+    }
+}
+
+#[test]
 fn report_repository_uses_task_archive_then_thread_and_keeps_unknown() {
     let lab = Lab::new();
     for n in 1..=4 {

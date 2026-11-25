@@ -122,6 +122,14 @@ fn file_type(path: &str, local: Option<&Path>) -> (String, FileKind) {
     }
 }
 
+fn open_local_file(dir: &Path, id: &str, path: &str) -> Result<ViewSource, ErrorBody> {
+    let (local, _) = local_file(dir, id, path)?;
+    let missing = |error| aaa_common::diagnostic::context(error, err(ErrorCode::NotFound, "host 사본이 없다"));
+    let file = std::fs::File::open(local).map_err(missing)?;
+    let size = file.metadata().map_err(missing)?.len();
+    Ok(ViewSource::Local(file, size))
+}
+
 /// 확장자로 정하는 Content-Type(nosniff를 쓰므로 정확히 준다)
 pub(crate) fn content_type(path: &str) -> &'static str {
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
@@ -229,6 +237,35 @@ impl ViewSource {
 }
 
 impl Host {
+    /// 대화 기록에는 프로젝트의 불변 보고 판에 복사된 미디어만 연결한다.
+    pub(crate) fn chat_media_source(&self, id: &str, path: &str) -> Result<(ViewSource, &'static str), ErrorBody> {
+        let mime = content_type(path);
+        let limit = match mime {
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" => 16 << 20,
+            "video/mp4" | "video/webm" => 64 << 20,
+            _ => return Err(err(ErrorCode::BadRequest, "대화 첨부 이미지·영상 형식이 아니다")),
+        };
+        if !safe_rel(path) || crate::report_ids::number(id).is_none() {
+            return Err(err(ErrorCode::BadRequest, "보고 판의 library 상대 경로가 아니다"));
+        }
+        let project = self.instance_project()?;
+        let dir = self.project_dir(&project)?;
+        let _ops = self.library_ops.lock().unwrap();
+        let missing = || err(ErrorCode::NotFound, "대화 첨부가 이 보고 판에 없다");
+        if self.db.report_target(&project, id).map_err(crate::orch::internal)?.is_none() {
+            return Err(missing());
+        }
+        let entry = self.manifest(&dir, id).into_iter().find(|f| !f.on_agent && f.path == path).ok_or_else(missing)?;
+        let source = open_local_file(&dir, id, path)?;
+        if source.size() != entry.size {
+            return Err(missing());
+        }
+        if source.size() > limit {
+            return Err(err(ErrorCode::BadRequest, format!("대화 첨부는 {} MiB까지 볼 수 있다", limit >> 20)));
+        }
+        Ok((source, mime))
+    }
+
     pub(crate) fn manifest(&self, dir: &Path, id: &str) -> Vec<LibraryFile> {
         std::fs::read(manifest_path(dir, id))
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
@@ -470,17 +507,7 @@ impl Host {
                 let (file, size) = crate::library_publish::live_file(Path::new(&root), path)?;
                 return Ok(view(ViewSource::Local(file, size)));
             }
-            let (local, _) = local_file(&dir, &id, path)?;
-            let file = std::fs::File::open(local).map_err(|source_error| {
-                aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
-            })?;
-            let size = file
-                .metadata()
-                .map_err(|source_error| {
-                    aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
-                })?
-                .len();
-            return Ok(view(ViewSource::Local(file, size)));
+            return open_local_file(&dir, &id, path).map(view);
         }
         if signed {
             return Ok(view(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec())));

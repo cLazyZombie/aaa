@@ -180,6 +180,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/account-usage", get(account_quota_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/api/v1/panes/{id}/image", post(chat_image))
+        .route("/api/v1/chat-media/{report}/{*path}", get(chat_media_get))
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))

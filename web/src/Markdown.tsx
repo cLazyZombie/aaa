@@ -33,6 +33,8 @@ export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(
 export const MarkdownCaptionContext = createContext(false);
 /** library 첨부를 읽는 본문만 제공한다. */
 export const MarkdownAttachmentContext = createContext<((src: string) => string | null) | null>(null);
+/** 대화는 지정된 Markdown 첨부를 별도 미리보기 단추로 그린다. */
+export const MarkdownMediaContext = createContext<((src: string, alt: string) => ReactNode) | null>(null);
 
 /**
  * 링크를 새 창 대신 앱 안에서 연다(대화 보기, plan §8.300): 열었으면 true. 없거나 false면 링크 그대로(새 창)다. 보조 키·가운데
@@ -141,6 +143,7 @@ function InlineContent({ nodes, interactive = true, standalone = false, refs }: 
   const exists = refs === null ? null : chipOf === null ? refs.exists : (id: AppId) => chipOf(id) !== null || refs.exists(id);
   const idNode = (id: AppId, key: number | string) => <Fragment key={key}>{chipOf?.(id) ?? <AppIdLink at={id} refs={refs!} />}</Fragment>;
   const attachment = useContext(MarkdownAttachmentContext);
+  const media = useContext(MarkdownMediaContext);
   const captions = useContext(MarkdownCaptionContext);
   const follow = (href: string) =>
     openLink === null ? undefined : (e: MouseEvent<HTMLAnchorElement>) => {
@@ -183,6 +186,8 @@ function InlineContent({ nodes, interactive = true, standalone = false, refs }: 
           case "math":
             return <span key={key}>{`\\(${node.value}\\)`}</span>;
           case "image": {
+            const preview = interactive && media?.(node.src, node.alt);
+            if (preview) return <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>{preview}</span>;
             const video = interactive && isVideoPath(node.src) ? attachment?.(node.src) : null;
             const caption = captions && standalone && node.alt.trim() !== "" && !["그림", "영상"].includes(node.alt.trim())
               ? <span className="markdown-caption" data-testid="markdown-caption">{node.alt}</span> : null;

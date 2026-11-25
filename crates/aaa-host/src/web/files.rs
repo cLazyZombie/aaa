@@ -528,6 +528,55 @@ pub(super) async fn request_file_get(
     ask_file_response(&host, &headers, file, &path)
 }
 
+/// coordinator 대화의 보고 판 첨부. pairing cookie가 있어야 하며 영상 탐색에 Range를 쓴다.
+pub(super) async fn chat_media_get(
+    State(host): State<Arc<Host>>,
+    Path((report, path)): Path<(String, String)>,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
+    if headers.get("sec-fetch-site").is_some_and(|v| v != "same-origin" && v != "none") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let (source, mime) = match host.chat_media_source(&report, &path) {
+        Ok(found) => found,
+        Err(e) => return error_response(e),
+    };
+    let size = source.size();
+    let range = match crate::files::parse_range(headers.get(header::RANGE).and_then(|v| v.to_str().ok()), size) {
+        Ok(range) => range,
+        Err(()) => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+                .body(Body::empty())
+                .unwrap();
+        }
+    };
+    let (start, len) = range.map(|(a, b)| (a, b - a + 1)).unwrap_or((0, size));
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else {
+        match source.open(start, len).await {
+            Ok(stream) => Body::from_stream(stream),
+            Err(e) => return error_response(e),
+        }
+    };
+    let mut res = Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CONTENT_LENGTH, len)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_SECURITY_POLICY, FILE_CSP)
+        .header("cross-origin-resource-policy", "same-origin");
+    if let Some((a, b)) = range {
+        res = res.status(StatusCode::PARTIAL_CONTENT).header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{size}"));
+    }
+    res.body(body).unwrap()
+}
+
 /// 참고 `/api/pane/image`: 저장만 하고 경로를 돌려준다. Origin·cookie는 기존 웹 guard와 같다.
 /// 인증·권한을 확인한 뒤 본문을 읽으며, base64 대신 원본 bytes를 16MiB 한도로 받는다.
 pub(super) async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req: Request) -> Response {
