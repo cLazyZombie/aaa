@@ -9,6 +9,7 @@ host의 `chat_media_reads_only_listed_bounded_report_files`는 목록에 없는 
 Chromium·WebKit에서 데스크톱 1160px와 휴대폰 390px를 각각 연다. 실제로 올린 사용자 이미지와 coordinator
 답에 붙은 이미지·영상의 미리보기 크기를 비교한다. 이미지는 원본 확대와 닫기·휴대폰 뒤로 가기,
 영상은 첫 프레임이 들어 있는 미리보기, 큰 재생기의 시작·멈춤·탐색과 닫기를 확인한다.
+macOS WebKit의 탐색 예외와 재검증 조건은 [t-2236 기록](testing-webkit-seek-t-2236.md)을 따른다.
 
 ## 개발 중에 발견한 문제
 
