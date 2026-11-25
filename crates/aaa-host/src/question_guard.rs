@@ -4,12 +4,16 @@ use aaa_proto::HarnessEvent;
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, ops::Range, sync::LazyLock};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    sync::LazyLock,
+};
 
 pub(crate) const EVENT: &str = "question card missing";
 pub(crate) const STALE_EVENT: &str = "question card outdated";
 pub(crate) const REMINDER: &str = "사용자 답을 구하는 표현과 연결된 질문 카드를 확인하지 못했습니다. 실제 답이 필요한 요청이면 aaa post user --request --needs-user --topic user-action --title '<질문 제목>' --body-file <질문 파일>로 카드를 만드세요. 기존 카드 안내라면 해당 q-ID와 상태를 확인하세요.";
-pub(crate) const STALE_REMINDER: &str = "안내한 질문 카드가 닫혔거나 교체됐습니다. 최신 카드와 이미 받은 답을 확인해 안내를 갱신하세요. 같은 질문을 새로 만들지 마세요.";
+pub(crate) const STALE_REMINDER: &str = "안내한 질문 카드에 이미 답했거나 카드가 닫혔습니다. 최신 카드와 이미 받은 답을 확인해 안내를 갱신하세요. 같은 질문을 새로 만들지 마세요.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CardState {
@@ -189,7 +193,7 @@ fn prose(line: &str) -> String {
 struct ListItem {
     line: usize,
     indent: usize,
-    open_card: bool,
+    has_link: bool,
 }
 
 fn indent_end(text: &str, column: usize) -> usize {
@@ -198,29 +202,73 @@ fn indent_end(text: &str, column: usize) -> usize {
         .fold(column, |col, b| if b == b'\t' { col + 4 - col % 4 } else { col + 1 })
 }
 
-/// 실제 목록 본문 행을 찾고, 같은 항목 첫 줄의 열린 카드에 이어지는 행을 표시한다.
-fn list_text(
-    text: &str,
-    cards: &HashMap<String, CardState>,
-    replacements: &HashMap<String, String>,
-) -> HashMap<usize, bool> {
+#[derive(Clone, Copy)]
+struct ListLine {
+    item_line: usize,
+    follows_card_link: bool,
+}
+
+struct OrderedList {
+    start: usize,
+    end: usize,
+    items: Vec<usize>,
+}
+
+#[derive(Default)]
+struct Markdown {
+    list_lines: HashMap<usize, ListLine>,
+    ordered: Vec<OrderedList>,
+    item_cards: HashMap<usize, Vec<String>>,
+    headings: HashSet<usize>,
+    omitted: HashSet<usize>,
+}
+
+/// CommonMark의 제목·인용·코드와 목록 항목을 원문 행에 대응시킨다.
+fn markdown(text: &str) -> Markdown {
     let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at + 1)).collect::<Vec<_>>();
     let line_at = |offset| starts.partition_point(|&start| start <= offset);
     let source_line = |line| text[starts[line - 1]..].lines().next().unwrap_or_default();
     let mut items: Vec<ListItem> = Vec::new();
+    let mut lists = Vec::new();
     let mut excluded = 0;
-    let mut lines = HashMap::new();
+    let mut markdown = Markdown::default();
     for (event, span) in Parser::new(text).into_offset_iter() {
         match event {
-            Event::Start(Tag::BlockQuote(_) | Tag::CodeBlock(_) | Tag::Heading { .. }) => excluded += 1,
+            Event::Start(Tag::BlockQuote(_) | Tag::CodeBlock(_)) => {
+                markdown.omitted.extend(line_at(span.start)..=line_at(span.end.saturating_sub(1)));
+                excluded += 1;
+            }
+            Event::Start(Tag::Heading { .. }) => {
+                markdown.headings.insert(line_at(span.start));
+                excluded += 1;
+            }
             Event::End(TagEnd::BlockQuote(_) | TagEnd::CodeBlock | TagEnd::Heading(_)) => excluded -= 1,
+            Event::Start(Tag::List(ordinal)) => lists.push(if ordinal.is_some() && excluded == 0 {
+                let index = markdown.ordered.len();
+                markdown.ordered.push(OrderedList {
+                    start: line_at(span.start),
+                    end: line_at(span.end.saturating_sub(1)),
+                    items: Vec::new(),
+                });
+                Some(index)
+            } else {
+                None
+            }),
+            Event::End(TagEnd::List(_)) => {
+                lists.pop();
+            }
             Event::Start(Tag::Item) => {
                 let line = line_at(span.start);
                 let marker = &text[span];
                 let width = marker.find([' ', '\t', '\r', '\n']).unwrap_or(marker.len());
                 let marker_end = indent_end(source_line(line), 0) + width;
                 let indent = indent_end(&marker[width..], marker_end).max(marker_end + 1);
-                items.push(ListItem { line, indent, open_card: false });
+                if let Some(Some(list)) = lists.last()
+                    && excluded == 0
+                {
+                    markdown.ordered[*list].items.push(line);
+                }
+                items.push(ListItem { line, indent, has_link: false });
             }
             Event::End(TagEnd::Item) => {
                 items.pop();
@@ -229,59 +277,47 @@ fn list_text(
                 if let Some(item) = items.last_mut()
                     && line_at(span.start) == item.line
                 {
-                    let mut line = prose(source_line(item.line));
-                    mask_withdrawn_card(&mut line, "", cards);
-                    if let [id] = answer_ids(&line, replacements).as_slice()
-                        && cards.get(id) == Some(&CardState::Open)
-                        && (ids(&dest_url).contains(id) || ids(&text[span]).contains(id))
+                    let card_ids = ids(&dest_url);
+                    item.has_link |= !card_ids.is_empty() || !ids(&text[span.clone()]).is_empty();
+                    let prefix = text[starts[item.line - 1]..span.start].trim().trim_end_matches(['*', '_']).trim_end();
+                    if let Some(number) = prefix.strip_suffix(['.', ')'])
+                        && !number.is_empty()
+                        && number.bytes().all(|b| b.is_ascii_digit())
+                        && !card_ids.is_empty()
                     {
-                        item.open_card = true;
+                        markdown.item_cards.insert(item.line, card_ids);
                     }
                 }
             }
             Event::Text(_) if excluded == 0 => {
                 if let Some(item) = items.last() {
                     let line = line_at(span.start);
-                    if line == item.line {
-                        lines.insert(line, false);
-                    } else if indent_end(source_line(line), 0) >= item.indent {
-                        lines.insert(line, item.open_card);
+                    if line == item.line || indent_end(source_line(line), 0) >= item.indent {
+                        markdown.list_lines.insert(
+                            line,
+                            ListLine { item_line: item.line, follows_card_link: line != item.line && item.has_link },
+                        );
                     }
                 }
             }
             _ => {}
         }
     }
-    lines
+    markdown
 }
 
 /// 인용·코드를 제외하고 제목과 문단의 연결을 보존한다.
-fn blocks(text: &str, list_text: &HashMap<usize, bool>) -> Vec<Block> {
+fn blocks(text: &str, markdown: &Markdown) -> Vec<Block> {
     let mut out: Vec<Block> = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
     let mut section = 0;
     let mut choices_section = 0;
     let mut question_group = None;
     let mut separated = true;
     for (index, line) in text.lines().enumerate() {
         let t = line.trim_start();
-        let mark = t.chars().next().filter(|c| matches!(c, '`' | '~'));
-        let count = mark.map_or(0, |c| t.chars().take_while(|x| *x == c).count());
-        if let Some((c, n)) = fence {
-            if mark == Some(c) && count >= n {
-                fence = None;
-            }
-            separated = true;
-            continue;
-        }
-        if count >= 3 {
-            fence = Some((mark.unwrap(), count));
-            separated = true;
-            continue;
-        }
         if t.is_empty()
-            || t.starts_with('>')
-            || (line.starts_with("    ") || line.starts_with('\t')) && !list_text.contains_key(&(index + 1))
+            || markdown.omitted.contains(&(index + 1))
+            || (line.starts_with("    ") || line.starts_with('\t')) && !markdown.list_lines.contains_key(&(index + 1))
         {
             separated = true;
             continue;
@@ -293,7 +329,7 @@ fn blocks(text: &str, list_text: &HashMap<usize, bool>) -> Vec<Block> {
             continue;
         }
         let heading = t.trim_matches('*').trim_start_matches('#').trim();
-        let title = t.starts_with('#') || t.starts_with("**") && t.ends_with("**");
+        let title = markdown.headings.contains(&(index + 1)) || t.starts_with("**") && t.ends_with("**");
         // 한 주제 안의 질문 1·2가 뒤의 카드 목록을 공유할 수 있다.
         let numbered = heading.chars().next().is_some_and(|c| c.is_ascii_digit()) && heading.contains(['.', ')']);
         // 목록 제목을 건너 연결할 수 있는 것은 선택지뿐이다. 독립 승인 요청은 계속 분리한다.
@@ -303,12 +339,6 @@ fn blocks(text: &str, list_text: &HashMap<usize, bool>) -> Vec<Block> {
             if !presentation {
                 choices_section += 1;
             }
-            question_group = None;
-            separated = true;
-        }
-        if fresh_request(t) {
-            section += 1;
-            choices_section += 1;
             question_group = None;
             separated = true;
         }
@@ -342,25 +372,28 @@ fn fresh_tail(text: &str) -> Option<&str> {
         .map(|at| &text[at..])
 }
 
-fn fresh_request(text: &str) -> bool {
-    fresh_tail(text).is_some()
-}
-
 fn choice_prefix(line: &str) -> Option<usize> {
     static CHOICE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^\s*(?:[-*]\s*)?\*{0,2}[A-D](?:[.)]|\(추천\))?:?\*{0,2}:?\s+").unwrap());
     CHOICE.find(line).map(|m| m.end()).filter(|&end| end < line.len())
 }
 
-fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'static str, usize)> {
+struct Request {
+    rule: &'static str,
+    offset: usize,
+    scope: Range<usize>,
+    fresh_at: Option<usize>,
+}
+
+fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<Request> {
     static QUESTION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)[^\n.!?。;]*?(?:[가-힣]+까요|[가-힣]+나요|하시겠|원하시|어느|어떤|무엇|어떻게|해도 될|진행해도)[^\n.!?。;]*[?？]|\b(?:shall i|should i|can i|would you like|do you want|which .{0,100}prefer)\b[^\n]*[?？]").unwrap()
+        Regex::new(r"(?i)[^\n.!?。;,，]*?(?:[가-힣]+까요|[가-힣]+나요|하시겠|원하시|어느|어떤|무엇|어떻게|해도 될|진행해도)[^\n.!?。;]*[?？]|\b(?:shall i|should i|can i|would you like|do you want|which .{0,100}prefer)\b[^\n]*[?？]").unwrap()
     });
     static ASK: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(?:골라|선택해|알려|말씀해|정해|답해|확인해)[^\n.!?。;,:：]{0,80}(?:주세요|주십시오)|(?:라고|이라고)(?:만)?\s*해\s*(?:주세요|주십시오)|\b(?:let me know|please choose)\b").unwrap()
     });
     static CONDITIONAL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|보신 뒤|보시고 정해|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
+        Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:필요하면|필요하다면|모델\s*을\s*바꾸려면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|다른\s*[가-힣 ]{1,40}(?:을|를)\s*말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
@@ -384,12 +417,13 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'
         )
         .unwrap()
     });
-    let mut out = QUESTION.find_iter(text).map(|m| ("question", m.start())).collect::<Vec<_>>();
+    let mut out = Vec::new();
     // 조건부 제안은 실제 질문 어미와 분리한다. 한 문장의 제안이 다음 문장의 요청을 가리지 않는다.
     let mut offset = 0;
     let mut previous = previous_block.unwrap_or_default();
     let mask = |m: &regex::Captures<'_>| " ".repeat(m[0].len());
-    for sentence in text.split_inclusive(['.', '!', '?', '？', '\n']) {
+    for sentence in text.split_inclusive(['.', '!', '?', '？', '。', ';', '\n']) {
+        let mut matches = QUESTION.find_iter(sentence).map(|m| ("question", m.range())).collect::<Vec<_>>();
         // 직전 확정·완료 안내에 붙은 의견 구절만 같은 바이트 길이의 공백으로 바꾼다.
         let actionable = if NAME_FEEDBACK.is_match(sentence) && DECIDED_NAME.is_match(previous) {
             NAME_FEEDBACK.replace_all(sentence, mask)
@@ -405,24 +439,35 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'
         let actionable = OPTIONAL_FEEDBACK.replace_all(&actionable, mask);
         let actionable = NO_INFORMATION_NEEDED.replace_all(&actionable, mask);
         let sentence = actionable.as_ref();
-        let future_permission = sentence.contains("해도 되면") && text.contains("여쭙겠습니다");
-        if !CONDITIONAL.is_match(sentence) && !future_permission {
-            for ask in ASK.find_iter(sentence) {
-                let verification = ask.as_str().starts_with("확인해")
-                    && !["할지", "될지", "여부", "맞는지", "괜찮은지", "승인", "결정"]
-                        .iter()
-                        .any(|s| sentence.contains(s));
-                if !verification {
-                    out.push(("request", offset + ask.start()));
-                }
+        for ask in ASK.find_iter(sentence) {
+            matches.push(("request", ask.range()));
+        }
+        if (sentence.contains("알려 주시면 좋은")
+            || sentence.contains("정해 주실 것")
+            || required && ["답해 주시면", "알려 주시면", "정해 주시면"].iter().any(|s| sentence.contains(s)))
+            && !sentence.contains("나중")
+        {
+            matches.push(("required_information", 0..sentence.len()));
+        }
+        matches.sort_by_key(|(_, span)| span.start);
+        for (i, (rule, span)) in matches.iter().enumerate() {
+            let previous_end = if i == 0 { 0 } else { matches[i - 1].1.end.min(span.start) };
+            let end = matches.get(i + 1).map_or(sentence.len(), |(_, next)| next.start.max(span.end));
+            // 쉼표 앞 설명은 새 주제 여부에 쓰되, 직전 요청이 끝나면 새 요청을 따로 본다.
+            let start = sentence[previous_end..span.start].rfind([',', '，']).map_or(previous_end, |at| {
+                let comma = sentence[previous_end + at..].chars().next().unwrap();
+                previous_end + at + comma.len_utf8()
+            });
+            let end = sentence[span.end..end].find([',', '，']).map_or(end, |at| span.end + at);
+            let context = &sentence[previous_end..end];
+            let verification = sentence[span.clone()].starts_with("확인해")
+                && !["할지", "될지", "여부", "맞는지", "괜찮은지", "승인", "결정"].iter().any(|s| context.contains(s));
+            let future_permission = context.contains("해도 되면") && text.contains("여쭙겠습니다");
+            if *rule != "question" && (verification || CONDITIONAL.is_match(context) || future_permission) {
+                continue;
             }
-            if (sentence.contains("알려 주시면 좋은")
-                || sentence.contains("정해 주실 것")
-                || required && ["답해 주시면", "알려 주시면", "정해 주시면"].iter().any(|s| sentence.contains(s)))
-                && !sentence.contains("나중")
-            {
-                out.push(("required_information", offset));
-            }
+            let fresh_at = fresh_tail(context).map(|tail| offset + start.max(end - tail.len()));
+            out.push(Request { rule, offset: offset + span.start, scope: offset + start..offset + end, fresh_at });
         }
         offset += sentence.len();
     }
@@ -433,19 +478,28 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<(&'
             || text.contains("고를 것")
             || text.lines().all(|l| l.chars().count() < 24 && !l.contains(['.', ':'])))
     {
-        out.push(("choices", 0));
+        let fresh_at = fresh_tail(text).map(|tail| text.len() - tail.len());
+        out.push(Request { rule: "choices", offset: 0, scope: 0..text.len(), fresh_at });
     }
     out
 }
 
-fn sentence_start(text: &str, offset: usize, links: &[Range<usize>]) -> usize {
+/// 링크는 카드 참조에서 원문을 쓰고, 문장 감지에서는 URL과 링크 제목을 건너뛴다.
+fn request_prose(text: &str) -> String {
+    let mut prose = text.to_owned();
+    for (event, span) in Parser::new(text).into_offset_iter() {
+        if matches!(event, Event::Start(Tag::Link { .. } | Tag::Image { .. })) {
+            let blank = text[span.clone()].bytes().map(|b| if b == b'\n' { '\n' } else { ' ' }).collect::<String>();
+            prose.replace_range(span, &blank);
+        }
+    }
+    prose
+}
+
+fn sentence_start(text: &str, offset: usize) -> usize {
     text[..offset]
-        .rmatch_indices(['.', '!', '?', '？', '。', ';', '\n'])
-        .find(|(at, separator)| {
-            let before = links.partition_point(|link| link.start <= *at);
-            *separator == "\n" || before == 0 || !links[before - 1].contains(at)
-        })
-        .map_or(0, |(at, separator)| at + separator.len())
+        .rfind(['.', '!', '?', '？', '。', ';', '\n'])
+        .map_or(0, |at| at + text[at..].chars().next().unwrap().len_utf8())
 }
 
 /// 선택지 첫 문장의 요청은 붙어 있는 선택지 묶음 바로 앞의 답변 안내에 연결한다.
@@ -481,16 +535,61 @@ fn reply_method_only(text: &str) -> bool {
     METHOD.is_match(text)
 }
 
+/// 대상이 없는 선택 안내는 같은 주제에서 이미 소개한 카드 하나를 받는다.
+fn selection_guidance(text: &str) -> bool {
+    static GUIDANCE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?x)^\s*[*]*\s*(?:(?:그중|이\s*중|여기서)\s+)?",
+            r"(?:(?:(?:시안|화면|자료|그림|영상|검수본|내용)(?:을|를)\s+)?",
+            r"(?:보고|읽고|(?:읽어\s+)?보시고|살펴보시고|보신\s*(?:뒤|후|다음)|(?:확인|검토)(?:하고|하신\s*(?:뒤|후)|\s*후))\s+)?",
+            r"(?:(?:둘|두\s*가지|두\s*안|[A-D](?:\s*/\s*[A-D])+)(?:\s*중(?:에서)?)\s+)?",
+            r"(?:(?:하나|한\s*가지)(?:를)?\s+|(?:[A-D]|한\s*안|원하(?:는|시는)\s*(?:안|쪽|선택지))(?:을|를)?\s+)?",
+            r"(?:골라|선택해|정해|답해)\s*(?:주세요|주십시오)[.!?？。*]*\s*$"
+        ))
+        .unwrap()
+    });
+    GUIDANCE.is_match(text)
+}
+
+/// "두 질문 모두"처럼 요청이 받을 카드 수를 밝힌 경우다.
+fn named_question_group(text: &str) -> Option<(Range<usize>, usize)> {
+    static GROUP: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?x)(?:(?<before>[0-9]+|한|두|세)\s*(?:질문|카드)",
+            r"|(?:질문|카드)\s*(?<after>[0-9]+\s*개?|한\s*개|두\s*개|세\s*개))\s*(?:모두|각각)\b",
+        ))
+        .unwrap()
+    });
+    let matched = GROUP.captures_iter(text).last()?;
+    let count = card_count(matched.name("before").or_else(|| matched.name("after"))?.as_str());
+    (count > 1).then(|| (matched.get(0).unwrap().range(), count))
+}
+
+fn lettered_options(sentence: &str) -> bool {
+    static OPTIONS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?x)^\s*(?:[^,.!?。\n]{1,60}면\s+[A-D]\s*[,，]\s*)+",
+            r"[^,.!?。\n]{1,60}면\s+[A-D](?:을|를)?\s+(?:골라|선택해)\s*(?:주세요|주십시오)[.!?？。]*\s*$",
+        ))
+        .unwrap()
+    });
+    OPTIONS.is_match(sentence)
+}
+
+fn decision_details(text: &str) -> bool {
+    static DECISION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"승인|허가|결정|여부|(?:어느|어떤)\s*안|해도|(?:[할될갈말]|고를|고칠|바꿀|지울|삭제할)\s*(?:지|건지|것인지)")
+            .unwrap()
+    });
+    DECISION.is_match(text)
+}
+
 /// 같은 항목의 보충 정보 요청에만 앞 카드 링크를 적용한다.
 fn supplementary_information(prefix: &str, request: &str) -> bool {
     static ADDITION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"도\s*(?:함께\s*)?$").unwrap());
-    static DECISION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"승인|허가|결정|여부|(?:어느|어떤)\s*안|해도|(?:[할될갈말]|고를|고칠|바꿀)\s*(?:지|건지|것인지)")
-            .unwrap()
-    });
     (request.starts_with("알려") || request.starts_with("말씀해"))
         && ADDITION.is_match(prefix)
-        && !DECISION.is_match(prefix)
+        && !decision_details(prefix)
 }
 
 /// 카드 목록의 위치를 가리키는 일반 안내만 답 전체에 연결한다.
@@ -503,19 +602,265 @@ fn summary_card_count(text: &str, offset: usize) -> Option<usize> {
         if c.name("ask")?.start() != offset {
             return None;
         }
-        let count = c["count"].split_whitespace().collect::<String>();
-        Some(match count.as_str() {
-            "하나" | "한개" => 1,
-            "둘" | "두개" => 2,
-            "셋" | "세개" => 3,
-            _ => count.trim_end_matches('개').parse().unwrap_or(usize::MAX),
-        })
+        Some(card_count(&c["count"]))
     })
 }
 
+fn card_count(count: &str) -> usize {
+    let count = count.split_whitespace().collect::<String>();
+    match count.as_str() {
+        "하나" | "한" | "한개" => 1,
+        "둘" | "두" | "두개" => 2,
+        "셋" | "세" | "세개" => 3,
+        _ => count.trim_end_matches('개').parse().unwrap_or(usize::MAX),
+    }
+}
+
+enum CardLink {
+    Mentioned(Vec<String>),
+    Guidance { expected: usize, ids: Vec<String> },
+    Supplementary(Vec<String>),
+    SeparateRequest,
+}
+
+impl CardLink {
+    fn evidence(self, request: &Request, line: usize, cards: &HashMap<String, CardState>) -> Evidence {
+        let resolve = |ids: Vec<String>| -> Option<Vec<_>> {
+            ids.into_iter().map(|id| cards.get(&id).map(|&state| (id, state))).collect()
+        };
+        let separate = matches!(self, Self::SeparateRequest);
+        let refs = match self {
+            Self::Mentioned(ids) => resolve(ids),
+            Self::Guidance { expected, ids } if ids.len() == expected => resolve(ids),
+            Self::Supplementary(ids) if matches!(ids.as_slice(), [id] if cards.get(id) == Some(&CardState::Open)) => {
+                resolve(ids)
+            }
+            _ => None,
+        };
+        Evidence {
+            rule: request.rule,
+            line,
+            refs: refs.unwrap_or_default(),
+            fresh: separate || request.fresh_at.is_some(),
+        }
+    }
+}
+
+struct CardLinks<'a> {
+    blocks: &'a [Block],
+    markdown: &'a Markdown,
+    replacements: &'a HashMap<String, String>,
+    cards: &'a HashMap<String, CardState>,
+    reply_ids: Vec<String>,
+}
+
+impl CardLinks<'_> {
+    fn ids(&self, text: &str) -> Vec<String> {
+        answer_ids(text, self.replacements)
+    }
+
+    fn prior_selection_ids(&self, index: usize, before: usize, line: usize) -> Vec<String> {
+        let current = &self.blocks[index];
+        let item = self.markdown.list_lines.get(&line).map(|list| list.item_line);
+        let mut ids = Vec::new();
+        for (at, block) in self.blocks[..=index].iter().enumerate().rev() {
+            if block.section != current.section || block.question_group != current.question_group {
+                break;
+            }
+            let text = if at == index { &block.text[..before] } else { &block.text };
+            if let Some(item_line) = item {
+                let own_lines = text
+                    .lines()
+                    .enumerate()
+                    .filter(|(n, _)| {
+                        self.markdown.list_lines.get(&(block.line + n)).is_some_and(|m| m.item_line == item_line)
+                    })
+                    .map(|(_, line)| line);
+                extend_unique(&mut ids, own_lines.flat_map(|line| self.ids(line)));
+            } else {
+                extend_unique(&mut ids, self.ids(text));
+            }
+        }
+        ids
+    }
+
+    fn line(&self, index: usize, line: usize) -> Option<&str> {
+        self.blocks[..=index].iter().rev().find_map(|b| b.text.lines().nth(line.checked_sub(b.line)?))
+    }
+
+    fn named_group_ids(&self, index: usize, line: usize, expected: usize) -> Vec<String> {
+        let block = &self.blocks[index];
+        let topic_start = self.blocks[..=index]
+            .iter()
+            .rev()
+            .take_while(|b| b.section == block.section && b.question_group == block.question_group)
+            .last()
+            .map_or(block.line, |b| b.line);
+        let Some(list) = self.markdown.ordered.iter().rev().find(|list| list.start >= topic_start && list.end < line)
+        else {
+            return Vec::new();
+        };
+        if list.items.len() != expected {
+            return Vec::new();
+        }
+        let mut result = Vec::new();
+        for &item in &list.items {
+            let Some((id, source)) = self.markdown.item_cards.get(&item).and_then(|cards| {
+                let [id] = cards.as_slice() else { return None };
+                Some((id, self.line(index, item)?))
+            }) else {
+                return Vec::new();
+            };
+            if !self.ids(source).contains(id) || result.contains(id) {
+                return Vec::new();
+            }
+            result.push(id.clone());
+        }
+        result
+    }
+
+    fn link(&self, index: usize, request: &Request, prose: &str, line: usize, has_next: bool) -> CardLink {
+        let block = &self.blocks[index];
+        let fresh = request.fresh_at.is_some();
+        let start = request.fresh_at.unwrap_or(request.scope.start);
+        let is_request = request.rule == "request";
+        let is_choices = request.rule == "choices";
+        let same_section = |other: &Block| {
+            if is_choices { other.choices_section == block.choices_section } else { other.section == block.section }
+        };
+
+        let mut own = self.ids(&block.text[start..request.scope.end]);
+        if own.is_empty()
+            && !fresh
+            && is_request
+            && let Some(end) = option_intro_end(prose, request.offset, request.scope.start)
+        {
+            let intro = sentence_start(prose, end);
+            own = self.ids(&block.text[intro..end]);
+        }
+        // 기존 카드의 빠른 응답은 명시한 카드의 증거를 없애지 않는다.
+        if fresh || own.iter().any(|id| !self.cards.contains_key(id)) {
+            return CardLink::Mentioned(own);
+        }
+        if is_request && let Some(count) = summary_card_count(prose, request.offset) {
+            let ids = if self.reply_ids.len() >= count { self.reply_ids.clone() } else { Vec::new() };
+            return CardLink::Mentioned(ids);
+        }
+        let clause = &prose[request.scope.clone()];
+        if is_request
+            && own.is_empty()
+            && let Some((group, expected)) = named_question_group(&prose[..request.offset])
+        {
+            let after_group = group.end.saturating_sub(request.scope.start);
+            if selection_guidance(&clause[after_group..])
+                || lettered_options(&prose[sentence_start(prose, request.scope.start)..request.scope.end])
+            {
+                return CardLink::Guidance { expected, ids: self.named_group_ids(index, line, expected) };
+            }
+        }
+        if is_request && selection_guidance(clause) {
+            let ids = if own.is_empty() { self.prior_selection_ids(index, request.scope.start, line) } else { own };
+            if !ids.is_empty() {
+                return CardLink::Guidance { expected: 1, ids };
+            }
+        } else if !own.is_empty() {
+            return CardLink::Mentioned(own);
+        }
+
+        if is_request
+            && let Some(list) = self.markdown.list_lines.get(&line).filter(|m| m.follows_card_link)
+            && supplementary_information(&prose[request.scope.start..request.offset], &prose[request.offset..])
+        {
+            return CardLink::Supplementary(
+                self.line(index, list.item_line).map_or_else(Vec::new, |line| self.ids(line)),
+            );
+        }
+
+        let earlier = self.prior_selection_ids(index, request.scope.start, line);
+        let known = |id: &String| self.cards.contains_key(id);
+        let mut linked = Vec::new();
+        // 질문 뒤에 붙인 카드 목록은 연결한다. 이미 등장한 카드로 뒤의 별개 결정을 덮지 않는다.
+        if is_choices || earlier.is_empty() && !has_next {
+            extend_unique(
+                &mut linked,
+                self.ids(&block.text[request.scope.end..])
+                    .into_iter()
+                    .chain(
+                        self.blocks[index + 1..].iter().take_while(|b| same_section(b)).flat_map(|b| self.ids(&b.text)),
+                    )
+                    .filter(known),
+            );
+            if let Some(group) = block.question_group {
+                let mut groups = Vec::new();
+                for other in self.blocks.iter().filter(|b| same_section(b)).filter_map(|b| b.question_group) {
+                    if !groups.contains(&other) {
+                        groups.push(other);
+                    }
+                }
+                if groups.len() > 1 {
+                    linked = groups
+                        .iter()
+                        .position(|g| *g == group)
+                        .and_then(|i| linked.get(i))
+                        .cloned()
+                        .into_iter()
+                        .collect();
+                }
+            }
+        }
+        if linked.is_empty()
+            && (is_choices
+                || is_request
+                    && !decision_details(clause)
+                    && (reply_method_only(clause)
+                        || ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
+                            .iter()
+                            .any(|part| clause.contains(part))))
+        {
+            extend_unique(
+                &mut linked,
+                self.ids(&block.text[..request.scope.start])
+                    .into_iter()
+                    .chain(
+                        self.blocks[..index]
+                            .iter()
+                            .rev()
+                            .take_while(|b| same_section(b))
+                            .flat_map(|b| self.ids(&b.text)),
+                    )
+                    .filter(known),
+            );
+        }
+        if linked.is_empty()
+            && is_request
+            && ["카드를 확인", "아래 질문", "아래 새 카드", "새 카드로 답", "새 번호로 답"]
+                .iter()
+                .any(|part| clause.contains(part))
+        {
+            linked = self.reply_ids.clone();
+        }
+        // 그 턴에서 앞 카드를 실제로 올렸어도 뒤의 별개 승인은 새 카드가 필요하다.
+        if linked.is_empty()
+            && !earlier.is_empty()
+            && (request.rule == "question" || is_request && decision_details(clause))
+        {
+            return CardLink::SeparateRequest;
+        }
+        CardLink::Mentioned(linked)
+    }
+}
+
+fn extend_unique(ids: &mut Vec<String>, new: impl IntoIterator<Item = String>) {
+    for id in new {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+}
+
 fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMap<String, String>) -> Inspection {
-    let list_text = list_text(text, cards, replacements);
-    let mut blocks = blocks(text, &list_text);
+    let markdown = markdown(text);
+    let mut blocks = blocks(text, &markdown);
     for index in 0..blocks.len() {
         let (current, later) = blocks.split_at_mut(index + 1);
         let block = &mut current[index];
@@ -525,148 +870,43 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>, replacements: &HashMa
             .map_or("", |next| next.text.as_str());
         mask_withdrawn_card(&mut block.text, next, cards);
     }
-    let answer_ids = |text| answer_ids(text, replacements);
-    let reply_refs = blocks.iter().flat_map(|b| answer_ids(&b.text)).fold(Vec::new(), |mut refs, id| {
-        if let Some(state) = cards.get(&id)
-            && !refs.iter().any(|(seen, _)| seen == &id)
-        {
-            refs.push((id, *state));
-        }
-        refs
-    });
-    let mut result = Inspection::default();
-    for (index, block) in blocks.iter().enumerate() {
-        let required = blocks.iter().filter(|b| b.section == block.section).any(|b| {
+
+    let mut links = CardLinks { blocks: &blocks, markdown: &markdown, replacements, cards, reply_ids: Vec::new() };
+    let refs = blocks.iter().flat_map(|b| links.ids(&b.text)).filter(|id| cards.contains_key(id));
+    let mut reply_ids = Vec::new();
+    extend_unique(&mut reply_ids, refs);
+    links.reply_ids = reply_ids;
+
+    let required_sections = blocks
+        .iter()
+        .filter(|b| {
             ["카드는 없음", "카드로 올리지", "선택지는 두 가지", "해 주실 것"]
                 .iter()
                 .any(|marker| b.text.contains(marker))
-        });
-        let previous_block =
+        })
+        .map(|b| b.section)
+        .collect::<HashSet<_>>();
+    let mut result = Inspection::default();
+    for (index, block) in blocks.iter().enumerate() {
+        let previous =
             blocks[..index].last().filter(|prev| prev.section == block.section).map(|prev| prev.text.as_str());
-        let requests = requests(&block.text, required, previous_block);
-        if requests.is_empty() {
-            continue;
-        }
-        // 링크 원문은 q-ID 확인에 쓰고 링크 안의 문장부호만 경계에서 제외한다.
-        let mut links: Vec<Range<usize>> = Vec::new();
-        for (event, span) in Parser::new(&block.text).into_offset_iter() {
-            if matches!(event, Event::Start(Tag::Link { .. }))
-                && links.last().is_none_or(|outer| span.start >= outer.end)
-            {
-                links.push(span);
-            }
-        }
-        for (rule, offset) in requests {
-            let same_section = |b: &Block| {
-                if rule == "choices" { b.choices_section == block.choices_section } else { b.section == block.section }
-            };
-            // 앞 문장의 카드 안내가 같은 줄의 별개 질문까지 면제하지 않는다.
-            let start = sentence_start(&block.text, offset, &links);
-            let line = block.line + block.text[..offset].bytes().filter(|b| *b == b'\n').count();
-            let tail = fresh_tail(&block.text);
-            let fresh = tail.is_some();
-            let mut own_ids = answer_ids(tail.unwrap_or(&block.text[start..]));
-            if own_ids.is_empty()
-                && !fresh
-                && rule == "request"
-                && let Some(end) = option_intro_end(&block.text, offset, start)
-            {
-                let intro = sentence_start(&block.text, end, &links);
-                own_ids = answer_ids(&block.text[intro..end]);
-            }
-            let unresolved = own_ids.iter().any(|id| !cards.contains_key(id));
-            let own =
-                own_ids.iter().filter_map(|id| cards.get(id).map(|state| (id.clone(), *state))).collect::<Vec<_>>();
-            // 새 요청이 같은 문단의 옛 q-ID 뒤에 붙어도 옛 카드로 가리지 않는다.
-            let mut linked = if unresolved { Vec::new() } else { own };
-            if linked.is_empty() && !fresh && !unresolved {
-                if rule == "request"
-                    && list_text.get(&line) == Some(&true)
-                    && supplementary_information(&block.text[start..offset], &block.text[offset..])
-                {
-                    continue;
-                }
-                // 요청 뒤 목록·설명을 지나 같은 주제의 카드 링크를 찾는다.
-                linked = blocks[index + 1..]
-                    .iter()
-                    .take_while(|next| same_section(next))
-                    .flat_map(|next| answer_ids(&next.text))
-                    .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
-                    .collect();
-                // 질문 1·2를 따로 묻고 링크를 뒤에 모았으면 같은 카드 하나로 둘을 면제하지 않는다.
-                if let Some(group) = block.question_group {
-                    let groups = blocks.iter().filter(|b| same_section(b)).filter_map(|b| b.question_group).fold(
-                        Vec::new(),
-                        |mut groups, group| {
-                            if !groups.contains(&group) {
-                                groups.push(group);
-                            }
-                            groups
-                        },
-                    );
-                    if groups.len() > 1 {
-                        let unique = linked.into_iter().fold(Vec::new(), |mut refs, item| {
-                            if !refs.iter().any(|(id, _)| id == &item.0) {
-                                refs.push(item);
-                            }
-                            refs
-                        });
-                        linked = groups
-                            .iter()
-                            .position(|g| *g == group)
-                            .and_then(|i| unique.get(i))
-                            .cloned()
-                            .into_iter()
-                            .collect();
-                    }
-                }
-                // 카드 아래의 선택지 목록은 같은 안내다. 일반 새 질문은 앞 카드로 면제하지 않는다.
-                if linked.is_empty()
-                    && (rule == "choices"
-                        || rule == "request"
-                            && (reply_method_only(&block.text[start..])
-                                || ["직접 답", "카드에", "카드에서", "그 질문", "위 질문", "해당 질문"]
-                                    .iter()
-                                    .any(|s| block.text[start..].contains(s))))
-                {
-                    linked = answer_ids(&block.text[..start])
-                        .into_iter()
-                        .chain(
-                            blocks[..index]
-                                .iter()
-                                .rev()
-                                .take_while(|prev| same_section(prev))
-                                .flat_map(|prev| answer_ids(&prev.text)),
-                        )
-                        .filter_map(|id| cards.get(&id).map(|state| (id, *state)))
-                        .collect();
-                }
-            }
-            // 첫 문단의 일반 카드 안내는 뒤의 여러 주제 카드 목록을 가리킬 수 있다.
-            if linked.is_empty()
-                && !fresh
-                && !unresolved
-                && rule == "request"
-                && ["카드를 확인", "아래 질문", "아래 새 카드", "새 카드로 답", "새 번호로 답"]
-                    .iter()
-                    .any(|s| block.text[start..].contains(s))
-            {
-                linked = reply_refs.clone();
-            }
-            if !fresh
-                && !unresolved
-                && rule == "request"
-                && let Some(count) = summary_card_count(&block.text, offset)
-            {
-                // 같은 카드의 링크·별칭을 여러 번 적어도 질문 수를 채우지 못한다.
-                linked = if reply_refs.len() >= count { reply_refs.clone() } else { Vec::new() };
-            }
-            let evidence = Evidence { rule, line, refs: linked, fresh };
+        let prose = request_prose(&block.text);
+        let requests = requests(&prose, required_sections.contains(&block.section), previous);
+        for (i, request) in requests.iter().enumerate() {
+            let line = block.line + block.text[..request.offset].bytes().filter(|b| *b == b'\n').count();
+            let has_next = requests[i + 1..].iter().any(|next| next.rule != "choices");
+            let link = links.link(index, request, &prose, line, has_next);
+            let selection = matches!(link, CardLink::Guidance { .. });
+            let evidence = link.evidence(request, line, cards);
             if evidence.refs.is_empty() {
                 if result.missing.as_ref().is_none_or(|previous| evidence.fresh && !previous.fresh) {
                     result.missing = Some(evidence);
                 }
-            } else if evidence.refs.iter().any(|(_, state)| *state == CardState::Closed) {
+            } else if evidence
+                .refs
+                .iter()
+                .any(|(_, state)| *state == CardState::Closed || selection && *state == CardState::Answered)
+            {
                 result.stale.get_or_insert(evidence);
             }
         }
