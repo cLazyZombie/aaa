@@ -874,6 +874,52 @@ async fn question_guard_matches_the_turn_and_checks_existing_card_links() {
     assert_eq!(checked.0, end + 5, "마지막 완료도 호출이 돌아오기 전에 검사했다");
 }
 
+#[tokio::test]
+async fn question_guard_checks_open_card_guidance_and_separate_approval_at_turn_end() {
+    use crate::question_guard::{EVENT, STALE_EVENT};
+    let (h, _lab) = coordinator_host();
+    let actor = "local:cli@coord";
+    let mut card = input(996);
+    card.to = "user".into();
+    card.topic = "user-action".into();
+    card.body = "## Questions\n### 1. 시안 선택\n- A 첫 안\n- B 둘째 안".into();
+    assert!(matches!(h.front_post("demo", card, actor).unwrap(), PostResult::Accepted { .. }));
+    let request = h.user_requests("demo").unwrap().remove(0);
+    let id = request.question_id.unwrap();
+    let start = request.created_ms + 1;
+    let guidance =
+        format!("[검수 질문](#question={id})을 열었습니다.\n화면을 같이 올렸습니다.\n\n보시고 하나를 골라 주세요.");
+    let warnings = || {
+        h.db.inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| matches!(i.event.as_str(), EVENT | STALE_EVENT))
+            .collect::<Vec<_>>()
+    };
+
+    h.on_harness("m", completed_reply("codex", start, start, &guidance));
+    assert!(warnings().is_empty(), "열린 카드에 연결한 선택 안내: {:?}", warnings());
+
+    let approval = format!("{guidance} 로컬 시안 브랜치를 지울까요?");
+    // 이번 완료 턴에서 기존 카드가 실제 접수됐어도 브랜치 삭제는 별개 승인이다.
+    let event = completed_reply("codex", request.created_ms, start + 1, &approval);
+    h.on_harness("m", event.clone());
+    let items = warnings();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].event, EVENT);
+    assert!(items[0].summary.contains("답변 4행 · 질문 어미"));
+    h.inbox_finish_where("demo", |i| i.event == EVENT);
+    h.on_harness("m", event);
+    assert_eq!(warnings().len(), 1, "처리한 완료 사건은 다시 경고하지 않는다");
+
+    h.post_handled("demo", &id, actor).unwrap();
+    h.on_harness("m", completed_reply("codex", start, start + 2, &guidance));
+    let items = warnings();
+    assert_eq!(items.len(), 2);
+    let stale = items.iter().find(|i| i.event == STALE_EVENT).unwrap();
+    assert!(stale.summary.contains(&format!("{id} 닫힘·교체")));
+}
+
 /// i-19078처럼 접수 뒤 빠르게 답해도 그 턴의 접수 증거는 남는다.
 #[tokio::test]
 async fn question_guard_keeps_accepted_post_evidence_after_a_fast_answer() {

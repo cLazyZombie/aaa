@@ -778,7 +778,8 @@ fn optional_feedback_on_a_decided_name_does_not_hide_requests() {
     ] {
         assert!(inspect(&text, &cards).missing.is_some(), "{text}");
         let text = prose(&text);
-        assert_eq!(requests(&text, false, None), [("request", text.find("알려 주세요").unwrap())], "{text}");
+        let detected = requests(&text, false, None).into_iter().map(|r| (r.rule, r.offset)).collect::<Vec<_>>();
+        assert_eq!(detected, [("request", text.find("알려 주세요").unwrap())], "{text}");
     }
 }
 
@@ -976,4 +977,121 @@ fn reported_explanations_do_not_hide_unlinked_requests() {
     }
     let text = format!("{explanation}\n\n승인 여부를 알려 주세요.");
     assert_eq!(inspect(&text, &cards).missing.unwrap().line, 3);
+}
+
+#[test]
+fn observed_open_card_guidance_follows_one_card_across_explanations() {
+    let cards = cards();
+    let card = "[검수 질문](https://example.ts.net/#question=q-1001)";
+    for (announcement, guidance) in [
+        (format!("질문은 {card}에 열려 있습니다. "), "보시고 하나를 골라 주세요."),
+        (format!("{card}입니다. 화면에서 두 시안을 볼 수 있습니다.\n\n"), "화면을 보신 뒤 원하는 안을 선택해 주세요."),
+        (format!("{card}\n\n[시안](library/a.b.html?view=1)도 있습니다.\n\n"), "확인하신 뒤 한 가지를 선택해 주세요."),
+        (format!("- {card}를 열었습니다.\n\n  화면 두 장을 같이 올렸습니다.\n  "), "A/B 중 하나를 골라 주세요."),
+    ] {
+        let text = format!("{announcement}{guidance}");
+        let result = inspect(&text, &cards);
+        assert!(result.missing.is_none() && result.stale.is_none(), "{text}: {:?} {:?}", result.missing, result.stale);
+
+        let markdown = markdown(&text);
+        let blocks = blocks(&text, &markdown);
+        let current = blocks.last().unwrap();
+        let prose = request_prose(&current.text);
+        let detected = requests(&prose, false, None);
+        let [request] = detected.as_slice() else { panic!("선택 안내 한 건: {text}") };
+        let links = CardLinks {
+            blocks: &blocks,
+            markdown: &markdown,
+            replacements: &HashMap::new(),
+            cards: &cards,
+            reply_ids: Vec::new(),
+        };
+        let line = text.lines().count();
+        let link = links.link(blocks.len() - 1, request, &prose, line, false);
+        assert_eq!(link.evidence(request, line, &cards).refs, [("q-1001".into(), CardState::Open)]);
+    }
+}
+
+#[test]
+fn general_guidance_checks_card_state_and_topic_boundaries() {
+    let mut cards = cards();
+    cards.insert("q-1004".into(), CardState::Open);
+    let guide = "보시고 하나를 골라 주세요.";
+    let closed = inspect(&format!("q-1003에 카드가 있습니다.\n\n{guide}"), &cards);
+    assert!(closed.missing.is_none());
+    assert_eq!(closed.stale.unwrap().refs, [("q-1003".into(), CardState::Closed)]);
+    let answered = inspect(&format!("q-1002에 카드가 있습니다.\n\n{guide}"), &cards);
+    assert!(answered.missing.is_none());
+    assert_eq!(answered.stale.unwrap().refs, [("q-1002".into(), CardState::Answered)]);
+
+    for (announcement, line) in [
+        ("", 1),
+        ("q-9999에 카드가 있습니다. ", 1),
+        ("q-1001과 q-1004가 열려 있습니다.\n\n", 3),
+        ("q-1001과 q-9999가 열려 있습니다.\n\n", 3),
+        ("q-1001 카드입니다.\n\n## 별개 작업\n", 4),
+        ("- [질문](#question=q-1001)입니다.\n- 다른 시안입니다.\n  ", 3),
+        ("q-1003은 닫았습니다.\n\n", 3),
+    ] {
+        let text = format!("{announcement}{guide}");
+        let result = inspect(&text, &cards);
+        assert_eq!(result.missing.map(|e| (e.rule, e.line, e.refs)), Some(("request", line, Vec::new())), "{text}");
+        assert!(result.stale.is_none(), "{text}");
+    }
+}
+
+#[test]
+fn selection_guidance_keeps_the_branch_deletion_approval_and_new_questions_visible() {
+    let cards = cards();
+    let card = "[시안 검수](#question=q-1001)를 열었습니다.";
+    let approval = "로컬 시안 브랜치 삭제 승인 여부를 알려 주세요.";
+    for (text, line, rule) in [
+        (approval.to_owned(), 1, "request"),
+        (format!("{card}\n\n보시고 하나를 골라 주세요, {approval}"), 3, "request"),
+        (format!("[시안 검수](#question=q-1001)에서 하나를 골라 주세요, {approval}"), 1, "request"),
+        (format!("{card}\n\n{approval} 보시고 하나를 골라 주세요."), 3, "request"),
+        (format!("{card}\n\n보시고 하나를 골라 주세요. 로컬 시안 브랜치를 지울까요?"), 3, "question"),
+        (format!("{card}\n\n브랜치를 지울지 정해 주세요.\n\nq-1001에서 답합니다."), 3, "request"),
+        (format!("{card}\n\n카드에서 브랜치 삭제 승인 여부를 알려 주세요."), 3, "request"),
+        ("카드가 뜨면 답해 주세요, 로컬 시안 브랜치 삭제 승인 여부를 알려 주세요.".into(), 1, "request"),
+    ] {
+        let result = inspect(&text, &cards);
+        assert_eq!(result.missing.map(|e| (e.rule, e.line, e.refs)), Some((rule, line, Vec::new())), "{text}");
+        assert!(result.stale.is_none(), "{text}");
+    }
+}
+
+#[test]
+fn observed_two_card_guidance_names_the_numbered_cards() {
+    let text = concat!(
+        "어제 사용 점검에서 고칠 곳 두 가지를 찾았습니다.\n\n",
+        "1. [q-4843 질문](#question=q-4843) **보고 첨부가 깨지는 문제:** 마지막 사본은 열립니다.\n",
+        "2. [q-4844 질문](#question=q-4844) **질문 감시 문제:** 기존 q-4834 안내에서 잘못 경고했습니다.\n\n",
+        "두 질문 모두 **A(할 일로 만들기)**를 추천합니다. 지금 당장 불편은 없습니다. ",
+        "바로 고치려면 B, 넘기려면 C를 골라 주세요.",
+    );
+    let mut cards = HashMap::from([
+        ("q-4843".into(), CardState::Open),
+        ("q-4844".into(), CardState::Open),
+        ("q-4834".into(), CardState::Answered),
+    ]);
+    let clean = inspect(text, &cards);
+    assert!(clean.missing.is_none() && clean.stale.is_none(), "{:?} {:?}", clean.missing, clean.stale);
+    for unrelated in [
+        text.replace("두 질문 모두", "추천은"),
+        text.replace("두 질문 모두", "세 질문 모두"),
+        text.replace("1. [q-4843", "- [q-4843").replace("2. [q-4844", "- [q-4844"),
+        text.replace("두 질문 모두", "## 다른 작업\n\n두 질문 모두"),
+        text.replace("두 질문 모두", "다른 작업\n---------\n\n두 질문 모두"),
+        format!("{text} 로컬 시안 브랜치 삭제 승인 여부를 알려 주세요."),
+    ] {
+        let result = inspect(&unrelated, &cards);
+        assert!(result.missing.is_some() && result.stale.is_none(), "{unrelated}");
+    }
+    cards.insert("q-4844".into(), CardState::Closed);
+    let stale = inspect(text, &cards);
+    assert!(stale.missing.is_none());
+    assert_eq!(stale.stale.unwrap().refs, [("q-4843".into(), CardState::Open), ("q-4844".into(), CardState::Closed)]);
+    cards.remove("q-4844");
+    assert!(inspect(text, &cards).missing.is_some());
 }
