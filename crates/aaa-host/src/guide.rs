@@ -481,6 +481,7 @@ const SUMMARY: &str = r#"# 작업 요약(웹 카드)
 
 웹은 thread 줄에 마우스를 올리거나 thread 화면의 「요약」 단추를 누르면 `threads/<id>.summary.md`를 보인다. 사용자가 순간
 훑어보는 카드다: 길면 안 된다. 쉽고 빨리 읽히게 쓴다.
+- 시작하거나 말을 보내기 전에 `aaa thread summary --check-file <파일>`로 요약 파일의 형식을 검사한다.
 - 쓸 때: thread를 시작할 때(`aaa thread start … --summary-file <파일>`), 방향을 바꾸는 말을 보낼 때
   (`aaa thread message <id> --text … --summary-file <파일>`). 요약만 고치면 `aaa thread summary <id> --file <파일>`.
   coordinator는 처음 목표·작업 뼈대와 사용자 결정(정함·바뀜)을 쓴다. 진행은 thread 보고의 `## 진행`으로 host가 자동 갱신한다.

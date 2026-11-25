@@ -183,13 +183,18 @@ pub(super) enum ThreadCmd {
     /// 큰 작업 3~6개(최대 6개)를 순서대로 두고 완료해도 남긴다. 한 줄 30자, 진행 외 한 절 3줄, 전체 1KB까지.
     /// 옛 ## 지금 / ## 끝남도 읽는다. 상태 없는 항목은 완료 여부를 추측하지 않는다.
     Summary {
-        thread: String,
+        /// 볼 요약의 thread ID
+        #[arg(required_unless_present = "check_file")]
+        thread: Option<String>,
         /// (옛 꼴 `<프로젝트> <대상>`의 대상)
         #[arg(hide = true)]
         legacy: Option<String>,
         /// 요약 파일(`-`면 표준 입력)
         #[arg(long)]
         file: Option<String>,
+        /// host 연결 없이 요약 형식만 검사한다(`-`면 표준 입력)
+        #[arg(long, conflicts_with_all = ["thread", "legacy", "file"])]
+        check_file: Option<String>,
     },
     /// 지금 보고를 확인했다
     Ack {
@@ -517,6 +522,19 @@ pub(super) fn file_text(file: &str, what: &str) -> Result<String> {
         return Ok(t);
     }
     std::fs::read_to_string(file).with_context(|| format!("{what}: {file}"))
+}
+
+pub(super) fn check_summary_file(json: bool, file: &str) -> Result<ExitCode> {
+    let text = file_text(file, "요약 파일")?;
+    if let Err(error) = aaa_host::validate_thread_summary(&text) {
+        return front_print(json, Err(error));
+    }
+    if json {
+        println!("{}", serde_json::json!({ "valid": true }));
+    } else {
+        println!("작업 요약 형식이 맞다");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// 시작 뒤 할 일(자동 병합, 작업 요약)을 이어 한다. `merge_after`는 제목으로 띄운 thread의 자동 병합(host가 만든 할 일에 둔다)

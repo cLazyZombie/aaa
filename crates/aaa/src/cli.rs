@@ -894,8 +894,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadShow { project, thread }
                 }
-                ThreadCmd::Summary { thread, legacy, file } => {
-                    let (project, thread) = on_target(thread, legacy)?;
+                ThreadCmd::Summary { thread, legacy, file, check_file } => {
+                    if let Some(f) = check_file {
+                        return check_summary_file(json, &f);
+                    }
+                    let (project, thread) = on_target(thread.context("thread ID가 필요하다")?, legacy)?;
                     match file {
                         None => FrontRequest::ThreadSummary { project, thread },
                         Some(f) => {
