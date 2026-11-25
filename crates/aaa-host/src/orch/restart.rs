@@ -72,11 +72,13 @@ impl Host {
         profile: Option<String>,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
+        let _guard = self.claim_thread(project, id)?;
         self.thread_restart_with(project, id, resume, profile, actor, None).await
     }
 
     /// `thread_restart`. `unpark`면 보류한 thread도 받고(park.rs 이어 하기), 그 글(이어 하기 안내·마지막 보고)을 새 대화의
     /// 할 일 뒤에 붙인다. `Some("")`은 붙일 글 없이 보류만 받는다(같은 대화를 잇는다)
+    /// 호출자는 작업 자리 변경 전부터 thread 작업 잠금을 잡는다.
     pub(crate) async fn thread_restart_with(
         self: &Arc<Self>,
         project: &str,
@@ -86,7 +88,6 @@ impl Host {
         actor: &str,
         unpark: Option<&str>,
     ) -> Result<ThreadView, ErrorBody> {
-        let _guard = self.claim_thread(project, id)?;
         let mut rec = self.load(project, id)?;
         // 참고 threads.rs `restart`: 데려온 pane은 사람이 띄운 것이라 같은 것을 다시 띄울 방법을 모른다
         if rec.kind == ThreadKind::Adopted {

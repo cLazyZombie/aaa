@@ -1032,6 +1032,29 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     assert!(swork.join("report.md").is_file(), "사본 없이 끝낸 worktree를 지웠다");
 }
 
+#[test]
+fn resolve_preserves_attachments_written_before_the_first_report() {
+    let w = report_shell_world();
+    let task = w.task("before-report.txt", "noreport");
+    let v = w.start(&["--title", "첨부 먼저", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task]);
+    let id = v["id"].as_str().unwrap();
+    let work = PathBuf::from(v["work_dir"].as_str().unwrap());
+    w.wait_show("brief 전달", id, |v| v["brief"] == "delivered");
+    let attachment = work.join("library/result.txt");
+    std::fs::write(&attachment, "보고 전에 만든 결과물").unwrap();
+    let args = ["thread", "resolve", "demo", id];
+    let error = w.h.json(&args).unwrap_err();
+    assert!(error.contains("마지막 사본이 실패") && error.contains("첨부가 남아 있다"), "{error}");
+    assert_eq!(w.show(id)["status"], "open");
+    assert!(attachment.is_file());
+    std::fs::write(work.join("report.md"), "[완료] 첨부 보존\n").unwrap();
+    assert_eq!(w.h.ok(&args)["status"], "resolved");
+    assert!(!work.exists(), "마지막 사본 뒤 worktree를 정리한다");
+    let saved = w.h.run(&["library", "cat", id, "result.txt"]);
+    assert!(saved.status.success(), "{:?}", saved.stderr);
+    assert_eq!(saved.stdout, "보고 전에 만든 결과물".as_bytes());
+}
+
 /// 원격(TLS) 머신의 작업 폴더 thread, host 재시작 뒤 보고 감시 재개, 평가자 역할 필터
 #[test]
 fn remote_dir_thread_survives_host_restart() {

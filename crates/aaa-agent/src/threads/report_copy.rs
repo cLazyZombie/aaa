@@ -63,11 +63,20 @@ fn priority<'a>(file: &'a Candidate, linked: &HashSet<String>) -> (u8, u64, &'a 
     (tier, file.size, &file.path)
 }
 
+pub(super) fn library_entries(lib: &Path) -> Result<Option<std::fs::ReadDir>> {
+    match std::fs::symlink_metadata(lib) {
+        Ok(meta) if meta.is_dir() => Ok(Some(std::fs::read_dir(lib).context("library 목록 읽기 실패")?)),
+        Ok(_) => bail!("library가 폴더가 아니다(symlink 등)"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).context("library 상태 읽기 실패"),
+    }
+}
+
 pub(super) fn select(lib: &Path, report: &[u8], max_bytes: u64) -> Result<(Vec<Candidate>, Vec<Skipped>)> {
     let mut files = Vec::new();
     let mut skipped = Vec::new();
-    if std::fs::symlink_metadata(lib).is_ok_and(|m| m.is_dir()) {
-        walk(lib, lib, &mut |path, meta, absolute| {
+    if let Some(entries) = library_entries(lib)? {
+        walk(lib, entries, &mut |path, meta, absolute| {
             if meta.is_file() {
                 files.push(Candidate { path, size: meta.len(), absolute: absolute.into() });
             } else {

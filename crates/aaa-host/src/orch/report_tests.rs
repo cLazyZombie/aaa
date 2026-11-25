@@ -13,12 +13,20 @@ struct BriefGate {
     inputs: std::sync::Mutex<Vec<u8>>,
 }
 
+#[derive(Default)]
+struct ReportGate {
+    requested: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
 struct Lab {
     h: Arc<Host>,
     root: PathBuf,
     requests: Arc<AtomicUsize>,
     hash_requests: Arc<AtomicUsize>,
     empty_conflict: Arc<std::sync::atomic::AtomicBool>,
+    report_gate: Arc<std::sync::Mutex<Option<Arc<ReportGate>>>>,
+    report_error: Arc<std::sync::Mutex<Option<ErrorBody>>>,
     report: Arc<std::sync::Mutex<&'static str>>,
     file: Arc<std::sync::Mutex<(&'static [u8], &'static [u8])>>,
     cleanup: Arc<std::sync::Mutex<aaa_proto::Cleanup>>,
@@ -130,6 +138,10 @@ impl Lab {
         let reply_file = file.clone();
         let empty_conflict = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reject_empty = empty_conflict.clone();
+        let report_gate = Arc::new(std::sync::Mutex::new(None::<Arc<ReportGate>>));
+        let reply_gate = report_gate.clone();
+        let report_error = Arc::new(std::sync::Mutex::new(None::<ErrorBody>));
+        let reply_error = report_error.clone();
         let cleanup = Arc::new(std::sync::Mutex::new(aaa_proto::Cleanup {
             worktree_removed: true,
             branch_deleted: true,
@@ -192,7 +204,15 @@ impl Lab {
                     }
                     AgentRequest::ReportCollect { max_library_bytes, .. }
                     | AgentRequest::ReportTransfer { max_library_bytes, .. } => {
-                        if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
+                        let gate = if max_library_bytes != 0 { reply_gate.lock().unwrap().take() } else { None };
+                        if let Some(gate) = gate {
+                            gate.requested.notify_one();
+                            gate.release.notified().await;
+                        }
+                        let fail = max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures;
+                        if let Some(error) = reply_error.lock().unwrap().clone() {
+                            Outcome::Err(error)
+                        } else if fail {
                             Outcome::Err(internal("시험 agent 복사 실패"))
                         } else {
                             let report = reply_report.lock().unwrap().as_bytes().to_vec();
@@ -284,6 +304,8 @@ impl Lab {
             requests,
             hash_requests,
             empty_conflict,
+            report_gate,
+            report_error,
             report,
             file,
             cleanup,
@@ -294,7 +316,7 @@ impl Lab {
     }
 }
 
-/// 변경 확인과 resolve의 probe가 새 agent에는 hash만 요청하며, 구판 경로도 유지해야 한다.
+/// 변경 확인은 새 agent에는 hash만 요청하며, 구판 경로도 유지해야 한다.
 #[tokio::test]
 async fn current_report_hash_uses_the_negotiated_probe_and_legacy_fallback() {
     let lab = Lab::new(0, b"");
@@ -1191,7 +1213,12 @@ async fn empty_report_snapshots_preserve_state_until_one_nonempty_revision_arriv
             // 마지막 사본 경로도 빈 보고를 강제로 발행하지 않는다.
             for (last, conflict) in [(false, false), (true, false), (false, true), (true, true)] {
                 lab.empty_conflict.store(conflict, Ordering::SeqCst);
-                h.collect("p", "t-0001", last).await.unwrap();
+                let result = h.collect("p", "t-0001", last).await;
+                if last {
+                    assert_eq!(result.unwrap_err().code, ErrorCode::Conflict);
+                } else {
+                    result.unwrap();
+                }
                 assert_eq!(serde_json::to_value(h.load("p", "t-0001").unwrap()).unwrap(), rec_before);
                 assert_eq!(h.report_version_names("p", "t-0001"), versions_before);
                 assert_eq!(h.events(Some("p"), 0, None, false).unwrap().len(), events_before);
@@ -1312,6 +1339,100 @@ async fn pending_questions_invalidate_only_changed_material_even_without_report_
     assert_eq!(missing.items[1].id.as_ref(), Some(&ids[1]));
     assert!(missing.draft.is_none());
     assert!(missing.format_warning.unwrap().contains("a.png"));
+    lab.close().await;
+}
+
+#[tokio::test]
+async fn queued_background_copy_keeps_the_last_report_after_resolve_or_park() {
+    for park in [false, true] {
+        let lab = Lab::with_report(0, b"old", "result.txt", b"old", "[진행 중] 이전 보고\n");
+        let h = &lab.h;
+        h.inner.lock().unwrap().machines.get_mut("m").unwrap().features.push("report_hash.v1".into());
+        if !park {
+            lab.cleanup_thread();
+        }
+        h.collect("p", "t-0001", false).await.unwrap();
+        let previous = h.report_id("p", "t-0001").unwrap();
+        let gate = Arc::new(ReportGate::default());
+        *lab.report_gate.lock().unwrap() = Some(gate.clone());
+        *lab.report.lock().unwrap() = if park { "[보류 준비됨] 인계\n" } else { "[완료] 종료 보고\n" };
+        *lab.file.lock().unwrap() = (b"final", b"final");
+        {
+            let mut close = std::pin::pin!(async {
+                if park {
+                    h.thread_park("p", "t-0001", true, None, None, false, "device:person").await
+                } else {
+                    h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "device:person").await
+                }
+            });
+            tokio::select! {
+                result = close.as_mut() => panic!("마지막 회수를 기다리지 않았다: {result:?}"),
+                () = gate.requested.notified() => {}
+            }
+            let mut waiting = std::pin::pin!(h.collect_if_changed("p", "t-0001"));
+            // 마지막 사본 요청이 잡힌 동안 배경 future를 직접 한 번 진행한다.
+            assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+            gate.release.notify_one();
+            let view = close.await.unwrap();
+            assert_eq!(view.status, if park { ThreadStatus::Parked } else { ThreadStatus::Resolved });
+            if !park {
+                // 정리 응답 뒤에는 실제 agent처럼 작업 폴더를 읽을 수 없다.
+                *lab.report_error.lock().unwrap() = Some(err(ErrorCode::NotFound, "작업 폴더가 없다"));
+            }
+            waiting.await;
+        }
+        let rec = h.load("p", "t-0001").unwrap();
+        assert_eq!(rec.copy.as_deref(), Some("complete"));
+        assert_eq!(rec.copy_failures, 0);
+        assert_eq!(lab.requests.load(Ordering::SeqCst), 2);
+        assert_eq!(lab.hash_requests.load(Ordering::SeqCst), 0, "닫힌 자리의 hash도 요청하지 않는다");
+        let latest = h.report_id("p", "t-0001").unwrap();
+        assert_eq!(h.report_version_names("p", "t-0001"), [latest.clone(), previous.clone()]);
+        assert!(h.inbox("p", true, true).unwrap().items.iter().all(|item| item.item_kind != "report-copy-failed"));
+        assert!(h.events(Some("p"), 0, None, false).unwrap().iter().all(|event| event.kind != "copy_failed"));
+        for (name, expected) in [("t-0001", b"final".as_slice()), (latest.as_str(), b"final"), (&previous, b"old")] {
+            let FrontResponse::LibraryChunk { data, next: None } =
+                h.library_read("p", name, "result.txt", 0).await.unwrap()
+            else {
+                panic!("보고 첨부 응답이어야 한다");
+            };
+            assert_eq!(data.0, expected, "{name}");
+        }
+        lab.close().await;
+    }
+}
+
+#[tokio::test]
+async fn resolve_protects_the_worktree_when_the_last_report_cannot_be_read() {
+    let lab = Lab::with_report(0, b"old", "result.txt", b"old", "[완료] 이전 보고\n");
+    let h = &lab.h;
+    lab.cleanup_thread();
+    h.collect("p", "t-0001", false).await.unwrap();
+    let before = h.report_version_names("p", "t-0001");
+    for (fault, expected_copy) in [
+        (err(ErrorCode::Conflict, "report.md가 비어 있어 다음 본문을 기다린다"), "complete"),
+        (err(ErrorCode::NotFound, "report.md 없이 library에 첨부가 남아 있다"), "failed"),
+        (err(ErrorCode::NotFound, "report.md 상태 읽기 실패: Permission denied (os error 13)"), "failed"),
+        (err(ErrorCode::AgentDisconnected, "agent가 연결을 끊었다"), "failed"),
+    ] {
+        *lab.report_error.lock().unwrap() = Some(fault.clone());
+        let error = h
+            .thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "device:person")
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("마지막 사본이 실패") && error.message.contains(&fault.message));
+        let rec = h.load("p", "t-0001").unwrap();
+        assert_eq!(rec.status, ThreadStatus::Open);
+        assert!(rec.resolve_pending.is_none());
+        assert_eq!(rec.copy.as_deref(), Some(expected_copy));
+        assert_eq!(h.report_version_names("p", "t-0001"), before);
+        assert!(h.events(Some("p"), 0, None, false).unwrap().iter().all(|event| event.kind != "thread_resolved"));
+    }
+    let FrontResponse::LibraryChunk { data, .. } = h.library_read("p", &before[0], "result.txt", 0).await.unwrap()
+    else {
+        panic!("보고 첨부 응답이어야 한다");
+    };
+    assert_eq!(data.0, b"old");
     lab.close().await;
 }
 
@@ -1442,8 +1563,14 @@ async fn cli_resolve_allows_empty_next_automation_and_failed_without_report() {
                 lab.h.update_rec("p", "t-0001", |r| r.automation = Some("watch".into())).unwrap();
             }
             "failed" => {
-                *lab.report.lock().unwrap() = "";
-                lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Failed).unwrap();
+                *lab.report_error.lock().unwrap() = Some(err(ErrorCode::NotFound, "report.md와 첨부가 없다"));
+                lab.h
+                    .update_rec("p", "t-0001", |r| {
+                        r.status = ThreadStatus::Failed;
+                        r.report_hash = None;
+                        r.acked_hash = None;
+                    })
+                    .unwrap();
             }
             _ => {}
         }

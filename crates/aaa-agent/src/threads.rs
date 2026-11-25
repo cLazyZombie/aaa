@@ -554,7 +554,18 @@ pub fn collect_hash(work_dir: &str) -> Result<String> {
 pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot> {
     let dir = check_work_dir(work_dir)?;
     let path = dir.join("report.md");
-    let meta = std::fs::symlink_metadata(&path).context("report.md가 없다")?;
+    let library = dir.join("library");
+    let meta = match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(entries) = report_copy::library_entries(&library)?
+                && entries.into_iter().next().transpose()?.is_some()
+            {
+                bail!("report.md 없이 library에 첨부가 남아 있다");
+            }
+            bail!("report.md와 첨부가 없다");
+        }
+        result => result.context("report.md 상태 읽기 실패")?,
+    };
     if !meta.file_type().is_file() {
         bail!("report.md가 regular file이 아니다");
     }
@@ -566,7 +577,7 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
         return Err(EmptyReport.into());
     }
     let hash = hex::encode(Sha256::digest(&report));
-    let (candidates, mut skipped) = report_copy::select(&dir.join("library"), &report, max_library_bytes)?;
+    let (candidates, mut skipped) = report_copy::select(&library, &report, max_library_bytes)?;
     let mut files = Vec::new();
     for candidate in candidates {
         let report_copy::Candidate { path: rel, size, absolute } = candidate;
@@ -593,20 +604,15 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
     Ok(ReportSnapshot { hash, report: aaa_proto::B64(report), files, skipped })
 }
 
-fn walk(root: &Path, dir: &Path, f: &mut impl FnMut(String, std::fs::Metadata, &Path)) -> Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| {
-            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
-                .ok()
-        })
-        .collect();
+fn walk(root: &Path, entries: std::fs::ReadDir, f: &mut impl FnMut(String, std::fs::Metadata, &Path)) -> Result<()> {
+    let mut entries = entries.collect::<std::io::Result<Vec<_>>>()?;
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let path = e.path();
         let meta = std::fs::symlink_metadata(&path)?;
         let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
         if meta.is_dir() {
-            walk(root, &path, f)?;
+            walk(root, std::fs::read_dir(&path)?, f)?;
         } else {
             f(rel, meta, &path);
         }
@@ -781,8 +787,22 @@ mod tests {
         // library가 디렉터리조차 아니어도 보고 hash에는 영향이 없다.
         std::fs::write(work.join("library"), b"not a directory").unwrap();
         assert_eq!(collect_hash(work.to_str().unwrap()).unwrap(), hex::encode(Sha256::digest(report)));
+        assert!(collect(work.to_str().unwrap(), 0).unwrap_err().to_string().contains("library가 폴더가 아니다"));
         std::fs::remove_file(work.join("report.md")).unwrap();
         assert!(collect_hash(work.to_str().unwrap()).unwrap_err().to_string().contains("report.md"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_report_checks_for_attachments_before_allowing_cleanup() {
+        let root = std::env::temp_dir().join(format!("aaa-no-report-{}", aaa_common::util::new_id()));
+        let work = root.join(".aaa/p-t-0001");
+        let library = work.join("library");
+        std::fs::create_dir_all(&library).unwrap();
+        let work_path = work.to_str().unwrap();
+        assert_eq!(collect(work_path, 1 << 20).unwrap_err().to_string(), "report.md와 첨부가 없다");
+        std::fs::write(library.join("result.txt"), b"result").unwrap();
+        assert_eq!(collect(work_path, 1 << 20).unwrap_err().to_string(), "report.md 없이 library에 첨부가 남아 있다");
         std::fs::remove_dir_all(root).unwrap();
     }
 
