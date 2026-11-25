@@ -74,18 +74,15 @@ impl Host {
         }
         let report_lock = self.report_collect_lock(project, id);
         let report_guard = report_lock.lock().await;
-        if rec.status != ThreadStatus::Resolved && !opts.skip_copy && rec.work_dir.is_some() {
-            let has_report = self.current_report_hash(&rec, &conn).await.is_ok();
-            if has_report {
-                self.collect(project, id, true)
-                    .await
-                    .map_err(|e| {
-                        bad(format!(
-                            "마지막 사본이 실패해 resolve하지 않는다: {} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)",
-                            e.message
-                        ))
-                    })?;
-            }
+        if rec.status != ThreadStatus::Resolved
+            && !opts.skip_copy
+            && rec.work_dir.is_some()
+            && let Err(e) = self.collect(project, id, true).await
+        {
+            return Err(bad(format!(
+                "마지막 사본이 실패해 resolve하지 않는다: {} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)",
+                e.message
+            )));
         }
         // 마지막 사본에서 새 후속을 받았을 수 있다. 종료 상태·pane·worktree를 바꾸기 전에 다시 확인한다.
         rec = self.load(project, id)?;
@@ -107,7 +104,6 @@ impl Host {
             r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
         })?;
-        drop(report_guard);
         if let Some(revision) = &rec.report_hash {
             let path = self.project_dir(project)?.join("threads").join(format!("{id}.md"));
             match std::fs::read_to_string(path) {
@@ -116,6 +112,7 @@ impl Host {
                 Err(e) => return Err(crate::library_publish::io_error(e)),
             }
         }
+        drop(report_guard);
         self.followup_notice(&rec);
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
         // 그 사본이 「진행 중」(지울 수 없음)에서 풀린다: 보고서 화면이 다시 읽는다(plan §8.256)
@@ -161,7 +158,7 @@ impl Host {
         let uncopied = rec.kind == ThreadKind::Worktree
             && !opts.keep_worktree
             && !opts.discard_uncopied
-            && (opts.skip_copy || rec.copy.as_deref() == Some("partial"));
+            && (opts.skip_copy || matches!(rec.copy.as_deref(), Some("partial" | "failed")));
         if uncopied {
             notes.push(if opts.skip_copy {
                 "마지막 사본 없이 끝냈다".to_string()

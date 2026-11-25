@@ -11,8 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentActivity, AgentRequest, AgentResponse, DiffQuery, DiffScope, ErrorBody, ErrorCode, FrontResponse, GitQuery,
-    MessageMode, Role, ThreadGroup, ThreadKind, ThreadPark, ThreadStatus, ThreadView, UnparkOption, UnparkPreview,
+    AgentActivity, AgentRequest, DiffQuery, DiffScope, ErrorBody, ErrorCode, FrontResponse, GitQuery, MessageMode,
+    Role, ThreadGroup, ThreadKind, ThreadPark, ThreadStatus, ThreadView, UnparkOption, UnparkPreview,
 };
 use serde::{Deserialize, Serialize};
 
@@ -230,20 +230,15 @@ impl Host {
         let mut park = request.or_else(|| rec.park.clone()).ok_or_else(|| bad(format!("{id}에 보류 요청이 없다")))?;
         let conn = self.live_conn(&rec.machine_id)?;
         let mut notes = Vec::new();
-        // 마지막 사본(resolve와 같다). 실패해도 worktree가 남으므로 보류는 한다
-        if let Some(w) = &rec.work_dir
-            && matches!(
-                conn.request(AgentRequest::ReportCollect { work_dir: w.clone(), max_library_bytes: 0 }).await,
-                Ok(AgentResponse::Report(_))
-            )
-        {
-            let lock = self.report_collect_lock(project, id);
-            let _collect = lock.lock().await;
-            if let Err(e) = self.collect(project, id, true).await {
-                notes.push(format!("마지막 사본 실패(worktree에 남는다): {}", e.message));
-            }
-        }
         self.park_git(&rec, &conn, &mut park).await;
+        let lock = self.report_collect_lock(project, id);
+        let collect_guard = lock.lock().await;
+        // 마지막 사본(resolve와 같다). 실패해도 worktree가 남으므로 보류는 한다
+        if rec.work_dir.is_some()
+            && let Err(e) = self.collect(project, id, true).await
+        {
+            notes.push(format!("마지막 사본 실패(작업 폴더에 남는다): {}", e.message));
+        }
         // 대화 ID: hook이 알린 값이 aaa가 준 값보다 새롭다(정리·/clear 뒤 바뀐다). pane을 지우면 잃으므로 launch에 옮긴다
         let key = rec
             .pane
@@ -269,6 +264,7 @@ impl Host {
             r.last_group = Some(ThreadGroup::Parked);
             r.group_changed_ms = Some(now);
         })?;
+        drop(collect_guard);
         let pane_rx = rec.pane.as_deref().and_then(|p| {
             self.pane_events(p)
                 .inspect_err(|error| {
@@ -443,6 +439,8 @@ impl Host {
         dry_run: bool,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        // 이어 할 작업 자리를 바꾸기 전에 잠근다. 종료의 마지막 회수가 다른 자리를 읽지 않게 한다.
+        let _guard = if dry_run { None } else { Some(self.claim_thread(project, id)?) };
         let rec = self.load(project, id)?;
         if rec.status != ThreadStatus::Parked {
             return Err(bad(format!("{id}는 보류한 thread가 아니다(지금 {})", rec.status.as_str())));

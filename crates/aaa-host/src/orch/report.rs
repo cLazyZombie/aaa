@@ -102,25 +102,26 @@ impl Host {
     }
 
     pub(super) async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
+        // 종료·보류의 마지막 사본과 상태 전이 뒤에는 대기하던 요청도 다시 상태를 읽는다.
+        let lock = self.report_collect_lock(project, id);
+        let _guard = lock.lock().await;
         let Ok(rec) = self
             .load(project, id)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
-        let (Some(_), Ok(conn)) = (rec.work_dir.as_ref(), self.live_conn(&rec.machine_id)) else { return };
-        self.warn_question_format(&rec).await;
         if rec.status != ThreadStatus::Open {
             return;
         }
+        let (Some(_), Ok(conn)) = (rec.work_dir.as_ref(), self.live_conn(&rec.machine_id)) else { return };
+        self.warn_question_format(&rec).await;
         let probe = self.current_report_hash(&rec, &conn).await;
         if rec.copy.as_deref() != Some("failed")
             && !matches!(&probe, Ok(hash) if Some(hash) != rec.report_hash.as_ref())
         {
             return;
         }
-        let lock = self.report_collect_lock(project, id);
-        let _guard = lock.lock().await;
         // 한 번의 일시 오류는 바로 새 manifest로 다시 받는다. 계속 실패하면 ticker 간격으로 재수집한다.
         for _ in 0..2 {
             match self.collect(project, id, false).await {
@@ -133,6 +134,7 @@ impl Host {
     /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash·마지막 사본을 보존하고 자동 재수집한다.
     /// `last`(resolve의 마지막 사본)는 보고가 그대로여도 library를 다시 받는다. 보고 뒤에 바뀐 결과물이 옛 사본으로
     /// 남지 않게 한다(herdr-projects threads.rs `final_copy`가 늘 `copy_home_*`로 library까지 다시 복사하는 것과 같다).
+    /// 호출자는 thread별 회수 잠금을 잡는다. 종료·보류는 상태를 저장할 때까지 놓지 않는다.
     pub(crate) async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         // FileRead뿐 아니라 manifest·보고 사본을 host에 저장하다 실패해도 같은 재수집 경로를 쓴다.
         match self.collect_snapshot(project, id, last).await {
@@ -144,6 +146,8 @@ impl Host {
                 tokio::spawn(async move { host.collect_workspace_metrics(&project, &id).await });
                 Ok(())
             }
+            // 빈 보고는 쓰기 중이다. 마지막 회수에서는 종료를 멈추되 앞 사본의 상태를 그대로 둔다.
+            Err(e) if last && e.code == ErrorCode::Conflict => Err(e),
             Err(e) => {
                 // 전송 프로토콜은 io 오류를 문자열로 보존한다. host 저장·agent 응답의 EMFILE도 경고한다.
                 #[cfg(unix)]
@@ -216,14 +220,19 @@ impl Host {
             let mut snap = match conn.request(request).await {
                 Ok(AgentResponse::ReportTransfer(s)) if transfer => s,
                 Ok(AgentResponse::Report(s)) if !transfer => s,
-                // 새 agent가 hash 확인 뒤 비워진 파일을 읽은 경우다. 사본 실패·즉시 재시도 없이 다음 사건을 기다린다.
-                Err(e) if e.code == ErrorCode::Conflict => return Ok(None),
+                // 한 번의 요청으로 마지막 본문과 첨부 목록을 읽는다. 읽기 실패를 보고 없음으로 처리하지 않는다.
+                Err(e) if last && final_report_absent(&rec, &work_dir, &e) => return Ok(None),
+                Err(e) if !last && e.code == ErrorCode::Conflict => return Ok(None),
                 Err(e) => return Err(e),
                 _ => return Err(internal("보고 사본 응답이 아니다")),
             };
             // 구판 agent의 빈 snapshot도 파일·manifest·r-ID·질문·Next를 바꾸기 전에 보류한다.
             if snap.report.0.is_empty() {
-                return Ok(None);
+                return if last {
+                    Err(err(ErrorCode::Conflict, "보고가 비어 있어 다음 본문을 기다린다"))
+                } else {
+                    Ok(None)
+                };
             }
             if transfer && hex::encode(sha2::Sha256::digest(&snap.report.0)) != snap.hash {
                 return Err(internal("보고 본문 hash가 다르다"));
@@ -557,4 +566,19 @@ impl Host {
             Err(e) => Err(e),
         }
     }
+}
+
+fn final_report_absent(rec: &ThreadRec, work_dir: &str, error: &ErrorBody) -> bool {
+    if error.code != ErrorCode::NotFound {
+        return false;
+    }
+    // 작업 폴더를 사람이 먼저 없앤 경우 Git 기록을 정리할 수 있다. 구판 agent도 이 IO 문맥을 보낸다.
+    let missing_path = error.message.ends_with("(os error 2)") || error.message.ends_with("(os error 3)");
+    if missing_path && error.message.starts_with(&format!("작업 폴더가 없다: {work_dir}: ")) {
+        return true;
+    }
+    // 보류 뒤 새 자리에서는 이전 보고가 남아 있어도 새 본문이 없을 수 있다. 구판은 첨부 유무를 알려 주지 않으므로
+    // 지워질 수 있는 worktree에서는 보고·첨부가 모두 없다는 응답을 요구한다.
+    error.message == "report.md와 첨부가 없다"
+        || (rec.kind != ThreadKind::Worktree && missing_path && error.message.starts_with("report.md가 없다: "))
 }
