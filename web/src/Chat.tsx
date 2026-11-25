@@ -19,7 +19,8 @@ import { compactionText } from "./contextUsage";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
 import { linkFilePaths } from "./FilePathLink";
-import { Markdown, OpenLinkContext } from "./Markdown";
+import { Markdown, MarkdownMediaContext, OpenLinkContext } from "./Markdown";
+import { useChatMedia } from "./ChatMedia";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { copyText } from "./herdr/clipboard.ts";
 import { imagePaths } from "./herdr/composerImages";
@@ -414,7 +415,7 @@ function ImageThumb({ pane, path, onOpenFile }: { pane: string; path: string; on
     }).catch((e) => { if (alive) setError(e instanceof Error ? e.message : "이미지를 표시할 수 없음"); });
     return () => { alive = false; };
   }, [pane, path]);
-  return <button type="button" className="chat-user-image" aria-label="첨부 그림 확대" title={error ?? path}
+  return <button type="button" className="chat-attachment-thumb chat-user-image" aria-label="첨부 그림 확대" title={error ?? path}
     disabled={url === null || error !== null} data-state={error ? "error" : url ? "ready" : "loading"}
     onClick={(e) => { e.currentTarget.focus({ preventScroll: true }); onOpenFile(path); }}>
     {url && !error ? <img src={url} alt={path.split(/[\\/]/).at(-1)} loading="lazy" onError={() => setError("이미지를 표시할 수 없음")} />
@@ -423,12 +424,14 @@ function ImageThumb({ pane, path, onOpenFile }: { pane: string; path: string; on
 }
 
 /** 답: 카드 없이 Markdown, 그 아래 마크다운·일반 텍스트 복사(참고 `chat-agent-meta`) */
-const AgentTurn = memo(function AgentTurn({ active, text }: { active: boolean; text: string }) {
+const AgentTurn = memo(function AgentTurn({ active, text, media }: {
+  active: boolean; text: string; media: ReturnType<typeof useChatMedia>["render"] | null;
+}) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-agent">
       <div className="chat-msg assistant" data-role="assistant" data-chat-find-text="">
-        <Markdown>{text}</Markdown>
+        <MarkdownMediaContext.Provider value={media}><Markdown>{text}</Markdown></MarkdownMediaContext.Provider>
       </div>
       <div className="chat-turn-meta chat-agent-meta">
         <CopyButton active={active} className="chat-meta-btn" text={text} label="마크다운으로 복사" onResult={onResult}>
@@ -493,6 +496,7 @@ export function ChatPanel({
   onQuoteReturn?: (ref: QuoteRef) => void;
 }) {
   const visible = usePageVisible();
+  const media = useChatMedia(active && coordinator);
   const reading = active && visible;
   const readingRef = useRef(reading);
   readingRef.current = reading;
@@ -1086,7 +1090,7 @@ export function ChatPanel({
               ) : m.role === "user" ? (
                 <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
-                <AgentTurn active={active} key={key} text={m.text} />
+                <AgentTurn active={active} key={key} text={m.text} media={coordinator ? media.render : null} />
               ) : (
                 <div key={key} className={`chat-msg ${m.role}`} data-role={m.role}>
                   {linkFilePaths(m.text, onOpenFile ?? null)}
@@ -1123,6 +1127,7 @@ export function ChatPanel({
         )}
       </div>
       </div>
+      {media.node}
       </OpenLinkContext.Provider>
     </OpenFileContext.Provider>
   );

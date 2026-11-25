@@ -5194,3 +5194,4 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [망 복귀와 잠자기 뒤 웹 재연결 검증(t-2148)](testing-web-wake-t-2148.md)
 - [다시 연 앱의 첫 화면 왕복 줄이기(t-2150)](testing-cold-start-t-2150.md)
 - [로컬 CLI 시간 초과와 caller 조회 검증](testing-front-timeout-t-2162.md)
+- [coordinator 대화 첨부 검증](testing-chat-media-t-2220.md)

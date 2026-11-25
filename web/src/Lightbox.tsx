@@ -9,17 +9,19 @@ import { useFocusTrap } from "./herdr/useFocusTrap";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
 import { DOUBLE_TAP_MS, FIT, TAP_SLOP, bound, doubleTap, pinch, swipeOf, wheel, type Point, type View } from "./lightboxGesture";
 import { reportImages, viewRoot, type LightboxItem } from "./reportImages";
+import { ReportVideo } from "./ReportVideo";
 import "./Lightbox.css";
 
 export type { LightboxItem };
 /** 열린 크게 보기: 그림들과 보는 자리 */
-export type LightboxState = { items: LightboxItem[]; at: number };
+type ViewItem = LightboxItem & { video?: true };
+export type LightboxState = { items: ViewItem[]; at: number };
 
 type Gesture =
   | { kind: "pinch"; start: View; a: number; b: number; a0: Point; b0: Point }
   | { kind: "pan" | "swipe"; start: View; id: number; p0: Point };
 
-export function Lightbox({ items, at, onAt, onClose }: { items: readonly LightboxItem[]; at: number; onAt: (i: number) => void; onClose: () => void }) {
+export function Lightbox({ items, at, onAt, onClose }: { items: readonly ViewItem[]; at: number; onAt: (i: number) => void; onClose: () => void }) {
   usePhoneSheetBack(() => onClose());
   const close = useRef<HTMLButtonElement>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: close });
@@ -57,7 +59,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
         e.preventDefault();
         e.stopPropagation();
         onClose();
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      } else if (!item?.video && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         e.stopPropagation();
         go(e.key === "ArrowLeft" ? at - 1 : at + 1);
@@ -66,7 +68,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
     // 뒤에 깔린 화면(상세의 Esc 닫기 등)보다 먼저 받는다
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [at, go, onClose]);
+  }, [at, go, item?.video, onClose]);
   const sizes = () => ({
     image: { width: img.current?.offsetWidth ?? 0, height: img.current?.offsetHeight ?? 0 },
     stage: { width: stage.current?.clientWidth ?? 0, height: stage.current?.clientHeight ?? 0 },
@@ -177,7 +179,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
   if (!item) return null;
   const shift = drag ?? { x: 0, y: 0 };
   return createPortal(
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label={count > 1 ? `그림 ${at + 1}/${count}` : item.alt || "그림"}
+    <div className="lightbox" role="dialog" aria-modal="true" aria-label={count > 1 ? `그림 ${at + 1}/${count}` : item.alt || (item.video ? "영상" : "그림")}
       ref={surface as Ref<HTMLDivElement>} data-testid="lightbox" data-at={at} data-count={count} data-scale={view.scale.toFixed(2)}>
       <div className="lightbox-bar">
         <span className="lightbox-count">{count > 1 ? `${at + 1} / ${count}` : ""}</span>
@@ -190,7 +192,11 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
           <X aria-hidden="true" />
         </button>
       </div>
-      <div ref={stage} className={`lightbox-stage${moving ? " is-moving" : ""}`} data-testid="lightbox-stage"
+      {item.video ? (
+        <div className="lightbox-stage lightbox-video-stage" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+          <ReportVideo src={item.src} label={item.alt} autoPlay />
+        </div>
+      ) : <div ref={stage} className={`lightbox-stage${moving ? " is-moving" : ""}`} data-testid="lightbox-stage"
         onPointerDown={down} onPointerMove={move} onPointerUp={(e) => up(e, false)} onPointerCancel={(e) => up(e, true)}
         onClick={(e) => {
           // 바깥 누름은 닫기(끌기·쓸기·확대 끝의 click은 아니다)
@@ -198,7 +204,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
         }}>
         <img ref={img} key={item.src} className="lightbox-img" src={item.src} alt={item.alt} draggable={false} data-testid="lightbox-img"
           style={{ transform: `translate(${view.x + shift.x}px, ${view.y + shift.y}px) scale(${view.scale})` }} />
-      </div>
+      </div>}
       {at > 0 && (
         <button type="button" className="lightbox-nav is-prev" aria-label="앞 그림" data-testid="lightbox-prev" onClick={() => go(at - 1)}>
           <ChevronLeft aria-hidden="true" />
@@ -215,7 +221,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
 }
 
 /** 크게 보기 하나를 연 상태와 그 화면. `open`으로 열고 `node`를 그린다 */
-export function useLightbox(): { open: (s: LightboxState | null) => void; shown: boolean; node: ReactNode } {
+export function useLightbox(): { open: (s: LightboxState | null) => void; close: () => void; shown: boolean; node: ReactNode } {
   const [state, setState] = useState<LightboxState | null>(null);
   const onAt = useCallback((at: number) => setState((s) => (s ? { ...s, at } : s)), []);
   const onClose = useCallback(() => setState(null), []);
@@ -223,7 +229,7 @@ export function useLightbox(): { open: (s: LightboxState | null) => void; shown:
     if (s && s.items[s.at]) setState(s);
   }, []);
   const node = state ? <Lightbox items={state.items} at={state.at} onAt={onAt} onClose={onClose} /> : null;
-  return { open, shown: state !== null, node };
+  return { open, close: onClose, shown: state !== null, node };
 }
 
 /**

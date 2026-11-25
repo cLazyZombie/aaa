@@ -49,6 +49,25 @@ agent의 thread 보고 회수에 적용한다. 이미 손상된 과거 r 판은 
 새 판으로 보존한다. 원본 보존 전송을 지원하지 않는 옛 agent의 전송 중 가림은 host의 hash 검사에서
 실패하며, 새 host만으로 이미 바뀐 전송 바이트를 복구하지 않는다.
 
+## coordinator 대화에 이미지·영상 첨부
+
+coordinator 답에 불변 보고 판의 번호와 그 판 안의 파일 경로를 붙인다.
+
+```markdown
+![화면 캡처](library/r-0001/preview/screen.png)
+![재생 시안](library/r-0002/preview/clip.mp4)
+```
+
+coordinator가 가진 파일은 `aaa library publish <파일> --name <이름>`으로 올리면 `r-NNNN` 번호를 받는다.
+다른 머신에서 만든 파일은 thread가 자기 library에 파일을 두고 보고하면 host가 수집한다. `aaa library show <t-ID>`로
+복사된 파일 이름과 판 번호를 확인한다. 이름에 공백이 있으면 Markdown 경로에서 `%20`으로 쓴다.
+기존 프로젝트의 coordinator 안내는 새 판을 배포한 뒤 `aaa doctor files --fix`로 갱신한다.
+
+대화에서는 붙여 넣은 이미지와 같은 크기의 미리보기를 보인다. 누르면 이미지 확대 화면이나 큰 영상 재생기가 열린다.
+pairing한 기기는 자기 host 프로젝트의 보고 판에 복사된 파일을 볼 수 있다. 지원 형식은 PNG·JPEG·GIF·WebP(16 MiB까지)와
+MP4·WebM(64 MiB까지)이다. 휴대폰 재생은 H.264 MP4를 권장한다. 보고 판을 삭제하면 지난 대화의 미리보기에서도 그 판의
+파일이 사라진다.
+
 ## 질문 카드·보고 본문에 영상 넣기
 
 [질문 작성 문서](questions.md)와 같이 그림과 같은 문법으로 library의 영상을 본문에 넣는다. 질문에서는 반드시 `## Questions` 안에 넣는다.
