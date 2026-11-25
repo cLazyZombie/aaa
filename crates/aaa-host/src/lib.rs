@@ -602,7 +602,10 @@ fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
 
 /// CLI도 시작·전송 전에 host와 같은 요약 형식을 검사한다. 상태를 읽거나 쓰지 않는다.
 pub fn validate_thread_summary(text: &str) -> std::result::Result<(), ErrorBody> {
-    summary::parse(text)
+    // 저장할 글의 크기를 재면서 오류 줄 번호는 원본 기준으로 표시한다.
+    let body = text.trim_start();
+    let skipped_lines = text[..text.len() - body.len()].bytes().filter(|&b| b == b'\n').count();
+    summary::parse_at(body.trim_end(), skipped_lines + 1)
         .map(|_| ())
         .map_err(|e| err(ErrorCode::BadRequest, format!("요약 형식: {e}\n형식:\n{}", summary::FORMAT)))
 }

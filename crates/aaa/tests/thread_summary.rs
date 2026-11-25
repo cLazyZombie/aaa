@@ -32,8 +32,11 @@ impl Lab {
 #[test]
 fn checks_summary_files_and_reports_original_line_numbers() {
     let lab = Lab::new();
+    let valid = "# 목표\n작업 요약 검사\n## 진행\n- [~] 검사 중\n";
+    let padded = format!("{valid}{}", "\n".repeat(1024));
     let cases = [
-        ("# 목표\n작업 요약 검사\n## 진행\n- [~] 검사 중\n", 0, "작업 요약 형식이 맞다"),
+        (valid, 0, "작업 요약 형식이 맞다"),
+        (&padded, 0, "작업 요약 형식이 맞다"),
         ("# 목표\n작업 요약 검사\n## 정함\n- 하나\n- 둘\n- 셋\n- 넷\n", 1, "7번 줄: 한 절은 3줄까지다"),
         ("\r\n\r\n## 목표\r\n작업 요약 검사\r\n", 1, "3번 줄: 모르는 머리 `## 목표`"),
     ];

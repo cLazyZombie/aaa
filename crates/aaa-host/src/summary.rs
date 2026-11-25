@@ -67,16 +67,18 @@ enum Part {
 
 /// 요약 글을 읽는다. 형식·상한을 어기면 까닭을 돌려준다(쓰기는 거부하고, 읽기는 글만 보인다)
 pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
-    // 저장할 글의 크기를 재고, 오류 줄 번호는 원본에서 센다.
-    let bytes = text.trim().len();
-    if bytes > MAX_BYTES {
-        return Err(format!("요약이 {bytes}바이트다. {MAX_BYTES}바이트 아래로 줄인다(지금 유효한 것만)"));
+    parse_at(text, 1)
+}
+
+pub(crate) fn parse_at(text: &str, first_line: usize) -> Result<Parsed, String> {
+    if text.len() > MAX_BYTES {
+        return Err(format!("요약이 {}바이트다. {MAX_BYTES}바이트 아래로 줄인다(지금 유효한 것만)", text.len()));
     }
     let mut p = Parsed::default();
     let mut part: Option<Part> = None;
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
-        let at = n + 1;
+        let at = first_line + n;
         if line.is_empty() {
             continue;
         }
