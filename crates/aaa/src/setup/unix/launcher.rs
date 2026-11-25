@@ -39,11 +39,7 @@ pub(super) fn prepare(layout: &Layout, launcher: &Path) -> Result<Vec<InstallFil
         "새 launcher는 .app/Contents/MacOS/aaa-launcher 경로에 둡니다"
     );
     ensure!(!root.exists(), "기존 launcher app은 바꾸지 않습니다: {}", root.display());
-    let package = layout
-        .source
-        .parent()
-        .context("설치기 폴더")?
-        .join(format!("aaa-launcher-macos-{}.json", std::env::consts::ARCH));
+    let package = layout.source.parent().context("설치기 폴더")?.join("aaa-launcher-macos-aarch64.json");
     let meta = package.symlink_metadata().with_context(|| format!(
         "launcher 준비 파일 {}가 없습니다. 같은 release의 launcher JSON을 설치기 옆에 두거나 --launcher로 기존 실행 파일을 지정하세요", package.display()))?;
     ensure!(
@@ -54,7 +50,7 @@ pub(super) fn prepare(layout: &Layout, launcher: &Path) -> Result<Vec<InstallFil
     ensure!(
         package.schema == 1
             && package.version == aaa_common::util::software().trim_start_matches("aaa ")
-            && package.platform == format!("macos-{}", std::env::consts::ARCH)
+            && package.platform == "macos-aarch64"
             && package.binary_sha256 == crate::update::sha256(&layout.source)?
             && package.files.len() == FILES.len()
             && FILES.iter().all(|name| package.files.contains_key(*name)),

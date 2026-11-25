@@ -8,7 +8,7 @@
 
 ## macOS
 
-GUI 로그인한 계정에서 실행한다. 기존 `~/Applications/aaa-launcher.app/Contents/MacOS/aaa-launcher`를 보존해 사용하며 `--launcher <절대 경로>`로 다른 launcher를 고를 수 있다. 새 Mac에는 같은 release의 `aaa-launcher-macos-aarch64.json` 또는 `aaa-launcher-macos-x86_64.json`을 설치기 옆에 둔다. 실행 파일 SHA·판·CPU·고정 파일 목록이 맞는 package만 새 app으로 풀고, 기존 app은 교체하지 않는다. package가 없으면 변경 전에 준비 방법을 안내한다.
+Apple Silicon Mac에서 GUI 로그인한 계정으로 실행한다. 기존 `~/Applications/aaa-launcher.app/Contents/MacOS/aaa-launcher`를 보존해 사용하며 `--launcher <절대 경로>`로 다른 launcher를 고를 수 있다. 새 Mac에는 같은 release의 `aaa-launcher-macos-aarch64.json`을 설치기 옆에 둔다. 실행 파일 SHA·판·CPU·고정 파일 목록이 맞는 package만 새 app으로 풀고, 기존 app은 교체하지 않는다. package가 없으면 변경 전에 준비 방법을 안내한다.
 
 ```sh
 ./aaa setup --host host.example.ts.net --name mac-a

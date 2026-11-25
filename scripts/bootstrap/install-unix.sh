@@ -20,6 +20,9 @@ main() (
         arm64|aarch64) arch=aarch64 ;;
         *) fail "지원하지 않는 CPU: $arch" ;;
     esac
+    if [ "$os" = macos ] && [ "$arch" != aarch64 ]; then
+        fail 'macOS는 Apple Silicon(arm64)만 지원합니다'
+    fi
     need curl
     need awk
     if command -v sha256sum >/dev/null 2>&1; then
@@ -71,7 +74,7 @@ main() (
     download SHA256SUMS "$temp/SHA256SUMS"
     verified_download "aaa-$os-$arch" "$temp/aaa"
     if [ "$os" = macos ]; then
-        launcher="aaa-launcher-macos-$arch.json"
+        launcher=aaa-launcher-macos-aarch64.json
         verified_download "$launcher" "$temp/$launcher"
     fi
     chmod 700 "$temp/aaa"

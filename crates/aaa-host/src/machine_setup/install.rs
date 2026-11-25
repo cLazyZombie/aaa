@@ -27,9 +27,9 @@ use base64::Engine as _;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::binary::{self, Source};
+use super::binary::{self, LAUNCHER_NAME, LAUNCHER_PLATFORM, Source};
 use super::release::Kind;
-use super::{Ran, Ssh, Target, bad, parse_target};
+use super::{Ran, SUPPORTED_TARGETS, Ssh, TARGETS, Target, bad, parse_target};
 use crate::Host;
 
 /// 원격 install의 읽기 계획·bootstrap 시한
@@ -109,6 +109,9 @@ pub(crate) fn check_settings(s: &MachineSetupSettings) -> Result<(), String> {
 
 /// 웹 설정 + 감지 → install choices(role agent, 등록 grant). 원격 상태·실행 파일 자리는 감지한 HOME 아래 install 기본 자리다
 pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<InstallChoices, String> {
+    if !TARGETS.contains(&(d.os.as_str(), d.arch.as_str())) {
+        return Err(format!("{}·{}에 넣을 aaa release가 없다(지원: {SUPPORTED_TARGETS})", d.os, d.arch));
+    }
     // 감독자까지 끝나는 OS만 설치한다: macOS launchd(I3)·Windows SCM. Linux는 install I4 뒤에 연다.
     if !matches!(d.os.as_str(), "macos" | "windows") {
         return Err(format!("{}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)", d.os));
@@ -352,20 +355,20 @@ struct Launcher {
 }
 
 /// package가 보낼 실행 파일(판·CPU·SHA)에 묶였으면 package의 SHA
-fn bound(path: &std::path::Path, name: &str, version: &str, sha: &str, arch: &str) -> Result<String, String> {
+fn bound(path: &std::path::Path, version: &str, sha: &str) -> Result<String, String> {
     let raw = std::fs::read(path).map_err(|e| format!("launcher package를 읽지 못했다: {e}"))?;
     let b: LauncherBinding =
-        serde_json::from_slice(&raw).map_err(|_| format!("launcher package({name})를 읽지 못했다"))?;
-    if b.binary_sha256 != sha || b.platform != format!("macos-{arch}") || b.version != version {
+        serde_json::from_slice(&raw).map_err(|_| format!("launcher package({LAUNCHER_NAME})를 읽지 못했다"))?;
+    if b.binary_sha256 != sha || b.platform != LAUNCHER_PLATFORM || b.version != version {
         return Err(format!(
-            "launcher package({name})가 보낼 실행 파일과 묶이지 않았다(판 {}, 실행 파일 SHA {})",
+            "launcher package({LAUNCHER_NAME})가 보낼 실행 파일과 묶이지 않았다(판 {}, 실행 파일 SHA {})",
             b.version, b.binary_sha256
         ));
     }
     Ok(sha256_hex(&raw))
 }
 
-/// 보낼 실행 파일(`file`, SHA `sha`)에 묶인 macOS launcher package. 그 파일 옆 `name`이 있으면 반드시 묶여야 한다(사람이 둔 것). 없으면
+/// 보낼 실행 파일(`file`, SHA `sha`)에 묶인 macOS launcher package. 그 파일 옆에 package가 있으면 반드시 묶여야 한다. 없으면
 /// 같은 판 release의 package를 받아 묶였을 때만 보낸다: 옛 release에 없거나, 받지 못했거나, host가 release 실행 파일이 아니면(같은 판 번호의
 /// 개발 빌드) 보내지 않는다. 그때는 원격에 이미 있는 launcher를 install이 보존하고, 없으면 install이 사람 일로 알린다
 async fn launcher_package(
@@ -373,21 +376,18 @@ async fn launcher_package(
     file: &std::path::Path,
     software: &str,
     sha: &str,
-    name: &str,
-    arch: &str,
 ) -> Result<Launcher, String> {
     let version = software.strip_prefix("aaa ").unwrap_or(software);
-    if let Some(p) = file.parent().map(|p| p.join(name)).filter(|p| p.is_file()) {
-        let package_sha = bound(&p, name, version, sha, arch)?;
+    if let Some(p) = file.parent().map(|p| p.join(LAUNCHER_NAME)).filter(|p| p.is_file()) {
+        let package_sha = bound(&p, version, sha)?;
         return Ok(Launcher { send: Some((p, package_sha)), note: None });
     }
     if !super::release::version_ok(version) {
         return Ok(Launcher { send: None, note: None });
     }
-    let key = format!("macos-{arch}");
-    let got = super::release::fetch(cache, &release_base(), version, Kind::Launcher, &key)
+    let got = super::release::fetch(cache, &release_base(), version, Kind::Launcher, LAUNCHER_PLATFORM)
         .await
-        .and_then(|f| bound(&f.path, name, version, sha, arch).map(|s| (f.path, s)));
+        .and_then(|f| bound(&f.path, version, sha).map(|s| (f.path, s)));
     Ok(match got {
         Ok(v) => Launcher { send: Some(v), note: None },
         Err(e) => Launcher { send: None, note: Some(e) },
@@ -589,15 +589,15 @@ impl Host {
             ssh.cleanup(&t, &keep).await;
             return;
         }
-        let name = binary::launcher_name(&d.os, &d.arch);
-        let launcher = match &name {
-            Some(name) => launcher_package(&cache, &file, &software, &sha, name, &d.arch).await,
-            None => Ok(Launcher { send: None, note: None }),
+        let launcher = if d.os == "macos" {
+            launcher_package(&cache, &file, &software, &sha).await
+        } else {
+            Ok(Launcher { send: None, note: None })
         };
         let planned = async {
             let launcher = launcher?;
-            if let (Some(name), Some((path, launcher_sha))) = (&name, &launcher.send) {
-                ssh.place_beside(&t, &placed.dir, name, path, launcher_sha).await?;
+            if let Some((path, launcher_sha)) = &launcher.send {
+                ssh.place_beside(&t, &placed.dir, LAUNCHER_NAME, path, launcher_sha).await?;
             }
             let (Ok(c), Some(script)) = (choices(&settings, &d), probe_script(&placed.dir, &d.os, &sha)) else {
                 return Err("설치 설정을 install choices로 옮기지 못했다".to_string());
@@ -651,8 +651,7 @@ impl Host {
                     {
                         let why = launcher.note.map(|n| format!(" (release: {n})")).unwrap_or_default();
                         j.view.error = Some(format!(
-                            "host에 그 머신용 launcher package({})가 없다: host 실행 파일 옆에 두거나 release 판 host에서 한다{why}",
-                            name.as_deref().unwrap_or("aaa-launcher-macos-<CPU>.json")
+                            "host에 launcher package({LAUNCHER_NAME})가 없다: host 실행 파일 옆에 두거나 release 판 host에서 한다{why}"
                         ));
                     }
                     j.view.review = Some(Box::new(summary));
@@ -695,6 +694,10 @@ impl Host {
             })?;
             if aaa_config::install::plan_sha256(&proposal.plan) != plan_sha256 {
                 return Err(conflict("계획 파일이 화면의 계획과 다르다"));
+            }
+            let platform = &proposal.plan.context.platform;
+            if platform.os == InstallOs::Macos && platform.arch != InstallArch::Aarch64 {
+                return Err(bad("macOS는 Apple Silicon(arm64)만 지원한다"));
             }
             if password.is_some() && proposal.plan.choices.service != Some(InstallService::WindowsScm) {
                 return Err(bad("이 설치는 서비스 암호를 받지 않는다"));

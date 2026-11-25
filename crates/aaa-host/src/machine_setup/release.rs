@@ -73,7 +73,7 @@ pub(crate) fn file_name(kind: Kind, key: &str) -> String {
     }
 }
 
-/// manifest에서 `key`(`macos-x86_64` 등) 파일을 고른다: 판·주소·SHA 꼴을 본다
+/// manifest에서 `key`(`macos-aarch64` 등) 파일을 고른다: 판·주소·SHA 꼴을 본다
 fn select(raw: &[u8], base: &str, version: &str, kind: Kind, key: &str) -> Result<(String, String), String> {
     let m: Manifest = serde_json::from_slice(raw)
         .map_err(|e| aaa_common::diagnostic::context(e, "release manifest를 읽지 못했다".to_string()))?;

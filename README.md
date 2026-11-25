@@ -38,7 +38,7 @@ Claude Code·Codex가 각 머신에서 일하고, aaa는 그 터미널과 작업
 
 ### 1. host 준비
 
-host는 웹과 프로젝트를 맡는 Mac 한 대입니다. [host 설치](docs/host-setup.md)대로 실행 파일·launcher·설정·서비스를 준비합니다.
+host는 웹과 프로젝트를 맡는 Apple Silicon Mac 한 대입니다. [host 설치](docs/host-setup.md)대로 실행 파일·launcher·설정·서비스를 준비합니다.
 
 ### 2. 머신 연결
 

@@ -46,7 +46,6 @@ export function targetProblem(raw: string): string | null {
 /** release 대상(host `TARGETS`와 같다) */
 export const TARGETS: { os: string; arch: string }[] = [
   { os: "macos", arch: "aarch64" },
-  { os: "macos", arch: "x86_64" },
   { os: "linux", arch: "x86_64" },
   { os: "linux", arch: "aarch64" },
   { os: "windows", arch: "x86_64" },

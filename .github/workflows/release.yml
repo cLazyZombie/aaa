@@ -48,10 +48,6 @@ jobs:
             os: macos-15
             asset: aaa-macos-aarch64
             debuginfo: unpacked
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-            asset: aaa-macos-x86_64
-            debuginfo: unpacked
           - target: x86_64-pc-windows-msvc
             os: windows-2025
             asset: aaa-windows-x86_64.exe
@@ -165,15 +161,12 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/aaa-macos-aarch64
-            release-artifacts/aaa-macos-x86_64
             release-artifacts/aaa-windows-x86_64.exe
             release-artifacts/aaa-windows-x86_64.pdb.gz
             release-artifacts/aaa-macos-aarch64.dSYM.tar.gz
-            release-artifacts/aaa-macos-x86_64.dSYM.tar.gz
             release-artifacts/aaa-linux-x86_64
             release-artifacts/aaa-linux-aarch64
             release-artifacts/aaa-launcher-macos-aarch64.json
-            release-artifacts/aaa-launcher-macos-x86_64.json
             release-artifacts/aaa-install-windows.ps1
             release-artifacts/install.ps1
             release-artifacts/SHA256SUMS

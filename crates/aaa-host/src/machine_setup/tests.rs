@@ -64,8 +64,10 @@ fn detection_output_maps_os_and_cpu() {
     assert_eq!(parse_detect("'sh' is not recognized as an internal or external command"), None);
     assert_eq!(parse_detect(&format!("{MARK}\nFreeBSD\namd64\n-\n-\n-\n{END}")), None);
     // 지원하지 않는 CPU는 감지는 되고 대상 표에서 빠진다
-    let arm = parse_detect(&format!("{MARK}\nWindows\nARM64\n-\n-\n-\n{END}")).unwrap();
-    assert!(!TARGETS.contains(&(arm.os.as_str(), arm.arch.as_str())));
+    for raw in ["Windows\nARM64", "Darwin\nx86_64"] {
+        let unsupported = parse_detect(&format!("{MARK}\n{raw}\n-\n-\n-\n{END}")).unwrap();
+        assert!(!TARGETS.contains(&(unsupported.os.as_str(), unsupported.arch.as_str())));
+    }
 }
 
 #[test]
@@ -432,8 +434,8 @@ fn the_binary_is_the_running_file_for_the_same_kind_and_a_release_otherwise() {
         pick(("macos", "aarch64"), "aaa 0.1.2+abc", ("macos", "aarch64"), exe),
         Source::Running { path: exe.into() }
     );
-    let Source::Refuse(why) = pick(("macos", "aarch64"), "aaa 0.1.2+abc", ("macos", "x86_64"), exe) else { panic!() };
-    assert!(why.contains("개발 판") && why.contains("macos·x86_64"), "{why}");
+    let Source::Refuse(why) = pick(("macos", "aarch64"), "aaa 0.1.2+abc", ("linux", "x86_64"), exe) else { panic!() };
+    assert!(why.contains("개발 판") && why.contains("linux·x86_64"), "{why}");
 }
 
 #[test]
@@ -686,12 +688,11 @@ exit 9
 /// host 실행 파일(시험은 대본) 옆에 그 파일에 묶인 launcher package(install은 내용·서명을 보지만 host는 묶음 칸만 본다)
 #[cfg(unix)]
 fn fake_launcher(binary: &Path, version: &str) -> PathBuf {
-    let arch = std::env::consts::ARCH;
-    let file = binary.with_file_name(format!("aaa-launcher-macos-{arch}.json"));
+    let file = binary.with_file_name(binary::LAUNCHER_NAME);
     let package = serde_json::json!({
         "schema": 1,
         "version": version,
-        "platform": format!("macos-{arch}"),
+        "platform": binary::LAUNCHER_PLATFORM,
         "binary_sha256": hex::encode(Sha256::digest(std::fs::read(binary).unwrap())),
         "files": {},
     });
@@ -703,12 +704,15 @@ fn fake_launcher(binary: &Path, version: &str) -> PathBuf {
 /// 보고 release를 받으러 가지 않게)
 #[cfg(unix)]
 fn as_mac(h: &Arc<Host>, job: &str) -> MachineDetected {
-    install::tests_binary::set_here(Some(("macos", std::env::consts::ARCH)));
-    h.setup_update(job, MachineSetupPhase::Ready, |j| j.view.detected.as_mut().unwrap().os = "macos".into())
-        .unwrap()
-        .view
-        .detected
-        .unwrap()
+    install::tests_binary::set_here(Some(("macos", "aarch64")));
+    h.setup_update(job, MachineSetupPhase::Ready, |j| {
+        let d = j.view.detected.as_mut().unwrap();
+        (d.os, d.arch) = ("macos".into(), "aarch64".into());
+    })
+    .unwrap()
+    .view
+    .detected
+    .unwrap()
 }
 
 /// 대본이 낼 install 계획: host가 보낼 choices로 실제 install planner를 돌린 것
@@ -718,7 +722,11 @@ fn fake_proposal(c: aaa_proto::install::InstallChoices, sha: &str, os: &str) -> 
     let context = InstallPlanContext {
         platform: InstallPlatform {
             os: if os == "macos" { InstallOs::Macos } else { InstallOs::Linux },
-            arch: if cfg!(target_arch = "aarch64") { InstallArch::Aarch64 } else { InstallArch::X86_64 },
+            arch: if os == "macos" || cfg!(target_arch = "aarch64") {
+                InstallArch::Aarch64
+            } else {
+                InstallArch::X86_64
+            },
         },
         version: "9.9.9".into(),
         binary_sha256: sha.into(),
@@ -767,10 +775,12 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let weak = rt.block_on(async {
         let h = host_for(&lab);
+        // 큰 요청 future의 저장 공간을 시험의 poll 스택에서 분리한다.
+        let call = |role, actor: &'static str, req| Box::pin(h.call(role, actor, req));
         let job = start(&h, "lab").await;
         let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
         let key = job.host_keys[0].sha256.clone();
-        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key })
+        call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key })
             .await
             .unwrap();
         let ready = leave(&h, &job.job, MachineSetupPhase::Detecting).await;
@@ -813,13 +823,22 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
         // 계획: 보낸 파일 확인 → 원격 install 계획. 화면에는 hash·공개 결과만
         let plan = |s: MachineSetupSettings| FrontRequest::MachineSetupPlan { job: job.job.clone(), settings: s };
         assert_eq!(
-            h.call(DeviceRole::Controller, WEB, plan(MachineSetupSettings { name: "labA x".into(), ..settings.clone() }))
+            call(DeviceRole::Controller, WEB, plan(MachineSetupSettings { name: "labA x".into(), ..settings.clone() }))
                 .await
                 .unwrap_err()
                 .code,
             ErrorCode::BadRequest
         );
-        h.call(DeviceRole::Controller, WEB, plan(settings.clone())).await.unwrap();
+        h.setup_update(&job.job, MachineSetupPhase::Ready, |j| {
+            j.view.detected.as_mut().unwrap().arch = "x86_64".into();
+        })
+        .unwrap();
+        let unsupported = call(DeviceRole::Controller, WEB, plan(settings.clone())).await.unwrap_err();
+        assert_eq!(unsupported.code, ErrorCode::BadRequest);
+        assert!(unsupported.message.contains("macos·x86_64"));
+        assert!(!remote.join("probe.in").exists());
+        as_mac(&h, &job.job);
+        call(DeviceRole::Controller, WEB, plan(settings.clone())).await.unwrap();
         let review = leave(&h, &job.job, MachineSetupPhase::Planning).await;
         assert_eq!(review.phase, MachineSetupPhase::Review, "{:?}", review.error);
         let summary = review.review.clone().unwrap();
@@ -845,11 +864,29 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
 
         // 적용: hash가 다르면·보기 기기·세션 안은 거부
         let apply = |p: &str| FrontRequest::MachineSetupApply { job: job.job.clone(), plan_sha256: p.into(), service_password: None };
-        assert_eq!(h.call(DeviceRole::Controller, WEB, apply(&"0".repeat(64))).await.unwrap_err().code, ErrorCode::Conflict);
-        assert!(h.call(DeviceRole::Reader, "device:tv", apply(&plan_sha)).await.is_err());
-        assert!(h.call(DeviceRole::Local, "local:demo@01ARZ3NDEKTSV4RRFFQ69G5FAV", apply(&plan_sha)).await.is_err());
+        assert_eq!(call(DeviceRole::Controller, WEB, apply(&"0".repeat(64))).await.unwrap_err().code, ErrorCode::Conflict);
+        assert!(call(DeviceRole::Reader, "device:tv", apply(&plan_sha)).await.is_err());
+        assert!(call(DeviceRole::Local, "local:demo@01ARZ3NDEKTSV4RRFFQ69G5FAV", apply(&plan_sha)).await.is_err());
         assert_eq!(h.setup_load(&job.job).unwrap().view.phase, MachineSetupPhase::Review);
-        h.call(DeviceRole::Controller, WEB, apply(&plan_sha)).await.unwrap();
+        // 지원 대상이 바뀌기 전에 저장된 Intel 계획도 승인 단계에서 거절한다.
+        let original = std::fs::read(&private).unwrap();
+        let mut intel: InstallProposal = serde_json::from_slice(&original).unwrap();
+        intel.plan.context.platform.arch = InstallArch::X86_64;
+        let intel_sha = aaa_config::install::plan_sha256(&intel.plan);
+        std::fs::write(&private, serde_json::to_vec(&intel).unwrap()).unwrap();
+        h.setup_update(&job.job, MachineSetupPhase::Review, |j| {
+            j.view.review.as_mut().unwrap().plan_sha256 = intel_sha.clone();
+        })
+        .unwrap();
+        let unsupported = call(DeviceRole::Controller, WEB, apply(&intel_sha)).await.unwrap_err();
+        assert_eq!(unsupported.code, ErrorCode::BadRequest);
+        assert!(unsupported.message.contains("Apple Silicon"));
+        std::fs::write(&private, original).unwrap();
+        h.setup_update(&job.job, MachineSetupPhase::Review, |j| {
+            j.view.review.as_mut().unwrap().plan_sha256 = plan_sha.clone();
+        })
+        .unwrap();
+        call(DeviceRole::Controller, WEB, apply(&plan_sha)).await.unwrap();
         // 적용이 시작되면(bootstrap 둘 뒤) 원격 worker 대신 grant로 등록한다
         let mut rx = h.enroll_changed.subscribe();
         let id = tokio::time::timeout(Duration::from_secs(60), async {
@@ -988,7 +1025,7 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
     let manifest = |version: &str, url: &str, sha: &str| {
         serde_json::to_vec(&serde_json::json!({
             "version": version,
-            "assets": { "macos-x86_64": { "url": url, "sha256": sha } }
+            "assets": { "macos-aarch64": { "url": url, "sha256": sha } }
         }))
         .unwrap()
     };
@@ -1000,26 +1037,26 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             vec![
                 (
                     "/releases/download/v1.2.3/manifest.json".into(),
-                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-x86_64"), &sha),
+                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-aarch64"), &sha),
                 ),
-                ("/releases/download/v1.2.3/aaa-macos-x86_64".into(), binary.clone()),
+                ("/releases/download/v1.2.3/aaa-macos-aarch64".into(), binary.clone()),
             ]
         });
         let cache = root.join("ok");
-        let got = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-x86_64").await.unwrap();
+        let got = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-aarch64").await.unwrap();
         assert_eq!((std::fs::read(&got.path).unwrap(), got.sha256.as_str()), (binary.clone(), sha.as_str()));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(got.path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         }
-        let again = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-x86_64").await.unwrap();
+        let again = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-aarch64").await.unwrap();
         assert_eq!(again, got);
-        let assets = srv.hits.lock().unwrap().iter().filter(|p| p.ends_with("aaa-macos-x86_64")).count();
+        let assets = srv.hits.lock().unwrap().iter().filter(|p| p.ends_with("aaa-macos-aarch64")).count();
         assert_eq!(assets, 1, "같은 SHA 캐시는 다시 받지 않는다");
         // 옛 manifest에는 launcher가 없다
         assert!(
-            release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Launcher, "macos-x86_64")
+            release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Launcher, "macos-aarch64")
                 .await
                 .unwrap_err()
                 .contains("launcher가 없다")
@@ -1037,31 +1074,31 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             vec![
                 (
                     "/releases/download/v1.2.3/manifest.json".into(),
-                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-x86_64"), &"0".repeat(64)),
+                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-aarch64"), &"0".repeat(64)),
                 ),
-                ("/releases/download/v1.2.3/aaa-macos-x86_64".into(), binary.clone()),
+                ("/releases/download/v1.2.3/aaa-macos-aarch64".into(), binary.clone()),
             ]
         });
         let cache = root.join("bad");
         assert!(
-            release::fetch(&cache, &bad.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
+            release::fetch(&cache, &bad.base, "1.2.3", release::Kind::Binary, "macos-aarch64")
                 .await
                 .unwrap_err()
                 .contains("SHA-256")
         );
         assert!(
-            !cache.join("v1.2.3/macos-x86_64/aaa").exists() && !cache.join("v1.2.3/macos-x86_64/aaa.part").exists()
+            !cache.join("v1.2.3/macos-aarch64/aaa").exists() && !cache.join("v1.2.3/macos-aarch64/aaa.part").exists()
         );
 
         // manifest 판이 다르거나, asset 주소가 그 판의 release 파일이 아니면 받지 않는다
         let other = http_with(|base| {
             vec![(
                 "/releases/download/v1.2.3/manifest.json".into(),
-                manifest("1.2.4", &format!("{base}/download/v1.2.4/aaa-macos-x86_64"), &sha),
+                manifest("1.2.4", &format!("{base}/download/v1.2.4/aaa-macos-aarch64"), &sha),
             )]
         });
         assert!(
-            release::fetch(&root.join("v"), &other.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
+            release::fetch(&root.join("v"), &other.base, "1.2.3", release::Kind::Binary, "macos-aarch64")
                 .await
                 .unwrap_err()
                 .contains("1.2.4")
@@ -1070,7 +1107,7 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             vec![("/releases/download/v1.2.3/manifest.json".into(), manifest("1.2.3", "https://example.com/aaa", &sha))]
         });
         assert!(
-            release::fetch(&root.join("a"), &away.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
+            release::fetch(&root.join("a"), &away.base, "1.2.3", release::Kind::Binary, "macos-aarch64")
                 .await
                 .unwrap_err()
                 .contains("공개 release 파일")
@@ -1131,19 +1168,18 @@ fn http_lazy() -> Lazy {
     (base, hits, tx)
 }
 
-/// 감지한 CPU가 host와 다르면 같은 판 release 파일을 받아(임시 HTTP 서버) 원격에 보내고 SHA·판을 확인한다. 원격 install 대본은
+/// 감지한 OS·CPU가 host와 다르면 같은 판 release 파일을 받아(임시 HTTP 서버) 원격에 보내고 SHA·판을 확인한다. 원격 install 대본은
 /// 계획에서 이 SSH를 거부하게 둬(exit 3) 전송·확인까지만 본다
 #[cfg(unix)]
 #[test]
-fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_remotely() {
+fn another_platform_gets_the_same_release_version_and_verifies_it_remotely() {
     use aaa_proto::install::InstallLogin;
     let Some(lab) = lab() else { return };
     let fake = fake_remote_as(&lab.root, "aaa 1.2.3");
     std::fs::write(lab.root.join("remote/probe.exit"), "3").unwrap();
     let asset = std::fs::read(&fake).unwrap();
     let sha = hex::encode(Sha256::digest(&asset));
-    let other = if std::env::consts::ARCH == "aarch64" { "x86_64" } else { "aarch64" };
-    let key = format!("macos-{other}");
+    let key = "macos-aarch64";
     // 같은 release의 launcher package(그 실행 파일 SHA에 묶임)
     let package = serde_json::to_vec(&serde_json::json!({
         "schema": 1, "version": "1.2.3", "platform": key, "binary_sha256": sha, "files": {}
@@ -1156,8 +1192,8 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
                 "/releases/download/v1.2.3/manifest.json".into(),
                 serde_json::to_vec(&serde_json::json!({
                     "version": "1.2.3",
-                    "assets": { key.clone(): { "url": format!("{base}/download/v1.2.3/aaa-{key}"), "sha256": sha } },
-                    "launchers": { key.clone(): {
+                    "assets": { key: { "url": format!("{base}/download/v1.2.3/aaa-{key}"), "sha256": sha } },
+                    "launchers": { key: {
                         "url": format!("{base}/download/v1.2.3/aaa-launcher-{key}.json"), "sha256": package_sha
                     } }
                 }))
@@ -1167,8 +1203,9 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
             (format!("/releases/download/v1.2.3/aaa-launcher-{key}.json"), package.clone()),
         ]
     });
-    // host 자기 파일은 쓰지 않는다(다른 CPU): 판만 release 판으로
+    // Linux host는 원격 macOS에 자기 실행 파일을 보내지 않는다.
     install::tests_binary::set(Some((lab.root.join("not-sent"), "aaa 1.2.3".into())));
+    install::tests_binary::set_here(Some(("linux", "x86_64")));
     install::tests_binary::set_base(Some(srv.base.clone()));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let weak = rt.block_on(async {
@@ -1184,10 +1221,10 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
         .await
         .unwrap();
         assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
-        // 실험실은 같은 머신이라 감지 CPU만 다른 종류로 바꾼다
+        // 실험실은 같은 머신이라 감지 결과를 macOS arm64로 둔다.
         h.setup_update(&job.job, MachineSetupPhase::Ready, |j| {
             let d = j.view.detected.as_mut().unwrap();
-            (d.os, d.arch) = ("macos".into(), other.into());
+            (d.os, d.arch) = ("macos".into(), "aarch64".into());
         })
         .unwrap();
         let settings = MachineSetupSettings {
@@ -1227,6 +1264,7 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
     });
     drop(rt);
     install::tests_binary::set(None);
+    install::tests_binary::set_here(None);
     install::tests_binary::set_base(None);
     assert!(weak.upgrade().is_none());
 }
@@ -1310,10 +1348,7 @@ fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_
         let asked = leave(&h, &job, MachineSetupPhase::Planning).await;
         assert_eq!(asked.phase, MachineSetupPhase::NeedsUser, "{:?}", asked.error);
         let why = asked.error.unwrap();
-        assert!(
-            why.contains(&format!("aaa-launcher-macos-{}.json", std::env::consts::ARCH)) && why.contains("release 판"),
-            "{why}"
-        );
+        assert!(why.contains(binary::LAUNCHER_NAME) && why.contains("release 판"), "{why}");
         assert!(
             dev_remote.join("probe.in").exists() && !dev_remote.join("probe.launcher").exists(),
             "launcher 없이 계획했다"

@@ -6,14 +6,14 @@ host는 웹과 프로젝트 상태를 맡는 Mac 한 대다. 다른 머신의 ag
 
 ## 준비
 
-- GUI로 로그인한 macOS 사용자 계정. 서비스는 그 사용자의 LaunchAgent로 돈다.
+- Apple Silicon Mac에서 GUI로 로그인한 사용자 계정. 서비스는 그 사용자의 LaunchAgent로 돈다.
 - [Tailscale](https://tailscale.com) 로그인. 다른 머신의 연결과 휴대폰의 웹 접속이 tailnet으로 들어온다.
 - 쓸 agent CLI(Claude Code·Codex)의 설치와 로그인.
 - launcher를 빌드할 Xcode Command Line Tools(`cc`)와 이 저장소의 clone.
 
 ## 1. 실행 파일
 
-[GitHub releases](https://github.com/cLazyZombie/aaa/releases/latest)에서 `aaa-macos-aarch64`(Apple Silicon) 또는 `aaa-macos-x86_64`(Intel)와
+[GitHub releases](https://github.com/cLazyZombie/aaa/releases/latest)에서 `aaa-macos-aarch64`와
 같은 release의 `SHA256SUMS`를 받아 `shasum -a 256 <파일>` 값이 맞는지 확인한다. 그 파일을 고정 경로에 둔다.
 
 ```sh

@@ -19,7 +19,7 @@ curl -fsSL https://cLazyZombie.github.io/aaa/install.sh | sh
 irm https://cLazyZombie.github.io/aaa/install.ps1 | iex
 ```
 
-macOS·Linux는 arm64와 x86_64, Windows는 x86_64를 지원한다. 설치할 사용자 계정의 일반 터미널에서 실행하고, aaa pane 안에서는 실행하지 않는다.
+macOS는 Apple Silicon(arm64), Linux는 arm64와 x86_64, Windows는 x86_64를 지원한다. 설치할 사용자 계정의 일반 터미널에서 실행하고, aaa pane 안에서는 실행하지 않는다.
 SSH는 `ssh -t`로 터미널을 붙인다. macOS·Linux에서 명령 전체를 `sudo`로 실행하지 않는다.
 
 ## 2. setup 질문에 답하기 ✋
@@ -78,13 +78,12 @@ aaa doctor
 | OS·CPU | 실행 파일 |
 | --- | --- |
 | macOS Apple Silicon | `aaa-macos-aarch64` |
-| macOS Intel | `aaa-macos-x86_64` |
 | Linux arm64 | `aaa-linux-aarch64` |
 | Linux x86_64 | `aaa-linux-x86_64` |
 | Windows x86_64 | `aaa-windows-x86_64.exe` |
 
 macOS·Linux는 `shasum -a 256 <파일>` 또는 `sha256sum <파일>`, Windows는 `Get-FileHash <파일> -Algorithm SHA256`의 값을 `SHA256SUMS`의 해당 행과 비교한다.
-맞는 파일을 Unix에서는 `aaa`, Windows에서는 `aaa.exe`로 이름을 바꾼다. 새 Mac은 같은 CPU의 `aaa-launcher-macos-….json`도 받아 SHA를 확인하고 실행 파일 옆에 둔다.
+맞는 파일을 Unix에서는 `aaa`, Windows에서는 `aaa.exe`로 이름을 바꾼다. 새 Mac은 `aaa-launcher-macos-aarch64.json`도 받아 SHA를 확인하고 실행 파일 옆에 둔다.
 
 ```sh
 chmod +x aaa

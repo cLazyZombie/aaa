@@ -5,7 +5,7 @@
 //!   host가 `+커밋` 개발 판이면 다른 종류 머신에 넣을 파일이 없으므로 거절하고 까닭을 보인다.
 //! - **원격.** `mktemp -d`로 만든 그 사용자 전용 폴더(umask 077)에만 쓴다. 확인이 어긋나면 그 폴더만 지운다. 폴더 이름은 표지 사이에서
 //!   읽고 `aaa-setup.` 꼴과 안전한 글자만 받는다(지우기 명령에 그대로 들어가므로).
-//! - **launcher.** macOS `--service launchd`의 install은 실행 파일 옆 `aaa-launcher-macos-<CPU>.json`(같은 release·같은 SHA에 묶인
+//! - **launcher.** macOS `--service launchd`의 install은 실행 파일 옆 `aaa-launcher-macos-aarch64.json`(같은 release·같은 SHA에 묶인
 //!   package, install I3)을 읽는다. host는 그 파일을 같은 폴더에 같은 방식으로 놓고 SHA를 확인한다. package 내용은 원격 install이 본다.
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,6 +16,8 @@ use super::{Ran, Ssh, Target};
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const UP: &str = "AAA-UP-1";
 const UP_END: &str = "AAA-UP-END";
+pub(super) const LAUNCHER_PLATFORM: &str = "macos-aarch64";
+pub(super) const LAUNCHER_NAME: &str = "aaa-launcher-macos-aarch64.json";
 
 /// 넣을 파일의 출처
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,11 +73,9 @@ pub(crate) fn upload_script() -> String {
     format!("sh -c '{body}'")
 }
 
-/// 실행 파일 옆에 놓는 파일(stdin을 `<dir>/<name>`으로 쓰고 같은 표지로 폴더·SHA를 낸다). 폴더는 [`safe_dir`], 이름은 [`launcher_name`]만
+/// 실행 파일 옆에 launcher package를 놓고 같은 표지로 폴더·SHA를 낸다.
 pub(crate) fn beside_script(dir: &str, name: &str) -> Option<String> {
-    if !safe_dir(dir)
-        || !name.strip_prefix("aaa-launcher-macos-").is_some_and(|a| a == "aarch64.json" || a == "x86_64.json")
-    {
+    if !safe_dir(dir) || name != LAUNCHER_NAME {
         return None;
     }
     let body = [
@@ -90,11 +90,6 @@ pub(crate) fn beside_script(dir: &str, name: &str) -> Option<String> {
     ]
     .join("; ");
     Some(format!("sh -c '{body}'"))
-}
-
-/// macOS 대상 CPU의 launcher package 이름(install이 실행 파일 옆에서 찾는 이름). 다른 OS는 없다
-pub(crate) fn launcher_name(os: &str, arch: &str) -> Option<String> {
-    (os == "macos" && matches!(arch, "aarch64" | "x86_64")).then(|| format!("aaa-launcher-macos-{arch}.json"))
 }
 
 /// 지우기 명령에 넣어도 되는 원격 폴더인가: 절대 경로, 마지막 이름이 `aaa-setup.<영숫자>`, 안전한 글자만

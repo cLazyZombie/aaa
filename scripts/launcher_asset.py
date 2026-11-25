@@ -16,8 +16,8 @@ FILES = (
 
 
 def pack(app: Path, binary: Path, platform: str, version: str, output: Path) -> None:
-    if platform not in ("macos-aarch64", "macos-x86_64"):
-        raise ValueError("macOS launcher 대상이 아니다")
+    if platform != "macos-aarch64":
+        raise ValueError("macOS launcher는 Apple Silicon(arm64)만 지원한다")
     subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(app)], check=True)
     actual = {str(p.relative_to(app)) for p in app.rglob("*") if p.is_file() or p.is_symlink()}
     if actual != set(FILES) or any(p.is_symlink() for p in app.rglob("*")):
