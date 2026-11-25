@@ -14,8 +14,10 @@ root = pathlib.Path(os.environ["GIT_GATE_ROOT"])
 # agent의 호출은 git -C <repo> <명령> 꼴이다. 경로·인자값은 기록하지 않는다.
 command = args[2] if len(args) > 2 and args[0] == "-C" else "other"
 action = args[3] if command == "worktree" and len(args) > 3 else ""
+if command == "branch" and len(args) > 3 and args[3] == "-D":
+    action = "delete-branch"
 # 관측하는 동안 선행 rev-parse·fetch 등의 실패도 같은 기록에 남긴다.
-observe = (root / "gate-add").exists() or (root / "gate-remove").exists()
+observe = any((root / ("gate-" + name)).exists() for name in ("add", "remove", "delete-branch"))
 gate = root / ("gate-" + action)
 
 

@@ -541,11 +541,7 @@ pub async fn cleanup_recorded(
         && !Path::new(cwd).exists()
         && result.branch_deleted
         && let (Some(repo), Some(branch)) = (repo, branch)
-        && git(Path::new(repo), &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
-            .await
-            .as_ref()
-            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
-            .is_err()
+        && super::branch_tip(Path::new(repo), branch).await?.is_none()
     {
         return Ok(result);
     }
@@ -554,12 +550,71 @@ pub async fn cleanup_recorded(
     }
     write(&path, &CleanupRecord { input, result: None, relock: owned_lock.clone() })?;
     let result =
-        super::cleanup(repo, cwd, branch, merged_head, keep_worktree, uncopied, owned_lock.as_deref(), wait).await?;
+        super::cleanup(state, repo, cwd, branch, merged_head, keep_worktree, uncopied, owned_lock.as_deref(), wait)
+            .await;
     let mut record: CleanupRecord = read(&path)?.context("정리 journal이 없다")?;
     restore_lock(state, &mut record).await?;
+    let result = result?;
     record.result = Some(result.clone());
     write(&path, &record)?;
     Ok(result)
+}
+
+/// Git 메타데이터가 지워져 `worktree remove`로는 지울 수 없는 aaa 기록 폴더만 치운다.
+pub(super) async fn remove_report_only_worktree(
+    state: &Path,
+    repo: &Path,
+    cwd: &Path,
+    branch: Option<&str>,
+) -> Result<bool> {
+    fn contains_only(dir: &Path, name: &std::ffi::OsStr) -> Result<bool> {
+        match dir.symlink_metadata() {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => return Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.file_name() != name || !entry.file_type()?.is_dir() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    let Some(key) = cwd.file_name().and_then(|n| n.to_str()) else { return Ok(false) };
+    let Some((project, number)) = key.rsplit_once("-t-") else { return Ok(false) };
+    if !valid_project(project) || !valid_thread(&format!("t-{number}")) {
+        return Ok(false);
+    }
+    let dot = cwd.join(".aaa");
+    if !contains_only(cwd, ".aaa".as_ref())? || !contains_only(&dot, key.as_ref())? {
+        return Ok(false);
+    }
+    let Some(saved) = read::<Placement>(&state.join("thread-preparations").join(format!("{key}.json")))? else {
+        return Ok(false);
+    };
+    if saved.cwd != cwd || saved.branch.as_deref() != branch || saved.repo.is_none() {
+        return Ok(false);
+    }
+    let top = git(repo, &["rev-parse", "--show-toplevel"], GIT_T).await?;
+    if saved.repo.as_deref() != Some(Path::new(&top)) {
+        return Ok(false);
+    }
+    // Git 조회를 기다리는 사이 코드나 다른 thread 기록이 생겼으면 그 자리를 보존한다.
+    if !contains_only(cwd, ".aaa".as_ref())? || !contains_only(&dot, key.as_ref())? {
+        return Ok(false);
+    }
+    let work = dot.join(key);
+    match std::fs::remove_dir_all(&work) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("보고 기록 정리 실패: {}", work.display())),
+    }
+    std::fs::remove_dir(&dot).with_context(|| format!("보고 상위 폴더 정리 실패: {}", dot.display()))?;
+    std::fs::remove_dir(cwd).with_context(|| format!("빈 worktree 폴더 정리 실패: {}", cwd.display()))?;
+    Ok(true)
 }
 
 async fn restore_lock(state: &Path, record: &mut CleanupRecord) -> Result<()> {
