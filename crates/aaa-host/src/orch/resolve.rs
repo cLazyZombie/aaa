@@ -74,15 +74,14 @@ impl Host {
         }
         let report_lock = self.report_collect_lock(project, id);
         let report_guard = report_lock.lock().await;
-        if rec.status != ThreadStatus::Resolved
-            && !opts.skip_copy
-            && rec.work_dir.is_some()
-            && let Err(e) = self.collect(project, id, true).await
-        {
-            return Err(bad(format!(
-                "마지막 사본이 실패해 resolve하지 않는다: {} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)",
-                e.message
-            )));
+        let collect_last = rec.status != ThreadStatus::Resolved && !opts.skip_copy && rec.work_dir.is_some();
+        let copy_error = |reason| {
+            bad(format!(
+                "마지막 사본이 실패해 resolve하지 않는다: {reason} (`--skip-copy`면 사본 없이 끝내고 worktree는 남긴다)"
+            ))
+        };
+        if collect_last {
+            self.collect(project, id, true).await.map_err(|e| copy_error(e.message))?;
         }
         // 마지막 사본에서 새 후속을 받았을 수 있다. 종료 상태·pane·worktree를 바꾸기 전에 다시 확인한다.
         rec = self.load(project, id)?;
@@ -91,6 +90,9 @@ impl Host {
             crate::followups::check_cli_resolve(&rec, actor)?;
         }
         let rec = self.update_rec(project, id, |r| {
+            if collect_last && r.pending_report_hash.is_some() {
+                return;
+            }
             if let (Some(revision), Some(body)) = (r.report_hash.clone(), last_report.as_deref()) {
                 crate::followups::capture(r, &revision, body);
             }
@@ -104,13 +106,11 @@ impl Host {
             r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
         })?;
-        if let Some(revision) = &rec.report_hash {
-            let path = self.project_dir(project)?.join("threads").join(format!("{id}.md"));
-            match std::fs::read_to_string(path) {
-                Ok(body) => self.complete_thread_report(project, id, &body, revision)?,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(crate::library_publish::io_error(e)),
-            }
+        if rec.resolve_pending.is_none() {
+            return Err(copy_error("agent가 알린 새 보고를 회수하지 못했다".into()));
+        }
+        if let (Some(revision), Some(body)) = (&rec.report_hash, last_report.as_deref()) {
+            self.complete_thread_report(project, id, body, revision)?;
         }
         drop(report_guard);
         self.followup_notice(&rec);
@@ -153,6 +153,27 @@ impl Host {
                 left.cwd.as_deref().unwrap_or("-")
             ));
         }
+        // pane 수명과 폴더 보존은 별개다. 이미 끝난 pane·남긴 worktree·adopted도 기록과 layout에서 지운다.
+        if let Some(pane) = &rec.pane {
+            // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
+            let closed = match pane_rx {
+                None => Ok(false),
+                Some(rx) => {
+                    match self
+                        .wait_pane(pane, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다")
+                        .await
+                    {
+                        Ok(()) => self.forget(pane, &rec.machine_id, actor).await.map(|_| true),
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            notes.push(match closed {
+                Ok(true) => "pane을 닫았다".into(),
+                Ok(false) => "pane은 이미 닫혔다".into(),
+                Err(e) => format!("pane을 닫지 못했다: {}", e.message),
+            });
+        }
         // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
         // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
         let uncopied = rec.kind == ThreadKind::Worktree
@@ -166,9 +187,25 @@ impl Host {
                 format!("집에 오지 않은 것: {}", copy_notes_summary(&rec.copy_notes))
             });
         }
+        let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
+        let merged_head = if repo.is_some() && rec.cwd.is_some() { self.main_branch_head(&rec).await } else { None };
+        // branch를 지우기 전에 병합 근거를 저장한다. 정리 요청이 끊겨도 그 근거로 할 일을 마친다.
+        let task_merge = if rec.task_clean.merged_main.is_none() {
+            self.task_main_merge(&rec, merged_head.as_deref()).await
+        } else {
+            None
+        };
+        if task_merge.is_some() || (merged_head.is_some() && !opts.keep_worktree && !uncopied) {
+            self.update_rec(project, id, |r| {
+                if task_merge.is_some() {
+                    r.task_clean.merged_main = task_merge;
+                }
+                if merged_head.is_some() && !opts.keep_worktree && !uncopied {
+                    r.task_clean.cleanup_branch_head = merged_head.clone();
+                }
+            })?;
+        }
         if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
-            let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
-            let merged_head = if repo.is_some() { self.main_branch_head(&rec).await } else { None };
             match conn
                 .request(AgentRequest::ThreadCleanup {
                     repo,
@@ -207,27 +244,6 @@ impl Host {
                 Err(e) => cleanup_error = Some(e),
             }
         }
-        // pane 수명과 폴더 보존은 별개다. 이미 끝난 pane·남긴 worktree·adopted도 기록과 layout에서 지운다.
-        if let Some(pane) = &rec.pane {
-            // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
-            let closed = match pane_rx {
-                None => Ok(false),
-                Some(rx) => {
-                    match self
-                        .wait_pane(pane, rx, |p| !p.info.state.is_running(), "끝내기를 보냈지만 세션이 끝나지 않았다")
-                        .await
-                    {
-                        Ok(()) => self.forget(pane, &rec.machine_id, actor).await.map(|_| true),
-                        Err(e) => Err(e),
-                    }
-                }
-            };
-            notes.push(match closed {
-                Ok(true) => "pane을 닫았다".into(),
-                Ok(false) => "pane은 이미 닫혔다".into(),
-                Err(e) => format!("pane을 닫지 못했다: {}", e.message),
-            });
-        }
         if let Some(e) = cleanup_error {
             let message = format!("정리 미완료: {}. `aaa thread resolve {project} {id}`로 이어서 한다", e.message);
             aaa_common::diagnostic::ignored(
@@ -236,17 +252,12 @@ impl Host {
             );
             return Err(ErrorBody { message, ..e });
         }
-        // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
-        // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
-        let merged_main = self.task_main_merge(&rec).await;
         // 이어진 task 완료 보관은 ticker가 한다.
         let resolved = self.update_rec(project, id, |r| {
-            if merged_main.is_some() {
-                r.task_clean.merged_main = merged_main.clone();
-            }
             if let Some(head) = &cleanup_head {
                 crate::followups::resolve_cleanup(r, head);
             }
+            r.task_clean.cleanup_branch_head = None;
             r.resolve_pending = None;
             r.error = None;
         })?;

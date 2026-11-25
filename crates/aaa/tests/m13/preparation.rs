@@ -256,16 +256,24 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     );
     connections.wait("B root agent 연결", |s| s.connected("labA").then_some(()));
 
-    GitGate::enable(&w, "remove");
+    let branch = result["branch"].as_str().unwrap();
+    git(&cwd, &["commit", "--allow-empty", "-qm", "정리 시험"]);
+    git(&w.repo, &["merge", "--no-ff", "-qm", "병합: 시험", branch]);
+    git(&w.repo, &["push", "-q", "origin", "main"]);
+    let work = Path::new(result["work_dir"].as_str().unwrap());
+    std::fs::write(work.join("report.md"), "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n").unwrap();
+    GitGate::enable(&w, "delete-branch");
     let (_, _old_output) = w.lab.spawn_piped("resolve-old", &w.h, &["--json", "thread", "resolve", "demo", &id]);
-    let pending = gate.take(&w, "remove", &id);
+    let pending = gate.take(&w, "delete-branch", &id);
     assert!(!cwd.exists(), "Git 정리는 끝났지만 응답은 아직 안 왔다");
+    assert_eq!(git(&w.repo, &["branch", "--list", branch]), "");
     phases.mark("contract", "host-restart-and-cleanup-receipt");
     restart_host(&mut w, "host2", "host3");
     let (_, mut output) = w.lab.spawn_piped("resolve-new", &w.h, &["--json", "thread", "resolve", "demo", &id]);
-    GitGate::release(&w, "remove", pending);
+    GitGate::release(&w, "delete-branch", pending);
     let result: Value = serde_json::from_str(&read_line_containing(&mut output, "resolved")).unwrap();
     assert!(result["error"].is_null(), "{result}");
+    assert_eq!(result["followups"][0]["actor"], "host", "{result}");
     assert!(w.lab.wait_exit("resolve-new", T).success());
     let events = w.h.ok(&["events", "demo"]);
     assert_eq!(

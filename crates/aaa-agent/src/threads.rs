@@ -686,6 +686,7 @@ pub use preparation::{cleanup_absent, cleanup_recorded, placement, protect_recor
 
 #[allow(clippy::too_many_arguments)]
 async fn cleanup(
+    state: &Path,
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
@@ -717,6 +718,7 @@ async fn cleanup(
             }
             _ => {}
         }
+        let residual = preparation::remove_report_only_worktree(state, &repo, Path::new(cwd), branch).await?;
         let gone = !Path::new(cwd).exists();
         if registered.is_none() && gone {
             c.worktree_removed = true;
@@ -727,7 +729,9 @@ async fn cleanup(
                 Err(e) => c.notes.push(format!("worktree를 남겼다: {e:#}")),
             }
         }
-        if c.worktree_removed && gone {
+        if c.worktree_removed && residual {
+            c.notes.push("보고 기록만 남은 worktree 폴더를 정리했다".into());
+        } else if c.worktree_removed && gone {
             c.notes.push("worktree는 이미 없다".into());
         }
     }
@@ -759,17 +763,22 @@ async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
     if head.is_empty() {
         bail!("main에 포함된 branch 끝을 모른다");
     }
-    let tip = git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
-        .await
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    if tip.is_empty() {
+    let Some(tip) = branch_tip(repo, branch).await? else {
         return Ok(false);
-    }
+    };
     if tip != head {
         bail!("main 포함 확인 뒤 branch 끝이 바뀌었다");
     }
-    git(repo, &["branch", "-D", branch], GIT_T).await.map(|_| true)
+    git(repo, &["branch", "-D", "--", branch], GIT_T).await.map(|_| true)
+}
+
+async fn branch_tip(repo: &Path, branch: &str) -> Result<Option<String>> {
+    let reference = format!("refs/heads/{branch}");
+    let refs = git(repo, &["for-each-ref", "--format=%(refname) %(objectname)", &reference], GIT_T).await?;
+    Ok(refs
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .find_map(|(name, sha)| (name == reference).then(|| sha.to_owned())))
 }
 
 #[cfg(test)]

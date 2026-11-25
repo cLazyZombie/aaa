@@ -119,6 +119,8 @@ harness의 pane 안 질문 창(예: Claude Code AskUserQuestion)으로 묻지 �
 `병합: <요약> (t-NNNN)`으로 끝낸다. 로컬 필수 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다(CI는 host가 본다).
 착지 결과는 첫 단락 끝 한 줄 `착지: main 1a2b3c4d · push함 · 실패 없음`이다(실패가 있었으면 무엇이 왜 실패했고 어떻게
 했는지 한 줄 더).
+착지 뒤에는 마지막 보고를 쓰고 worktree·branch 정리를 resolve에 맡긴다. 마지막 사본을 회수할 때까지 작업 폴더와
+그 안의 `.aaa`를 보존한다. 정리만 남았으면 Next에 `정리: worktree와 branch를 지운다`를 쓴다.
 
 ## aaa에서
 

@@ -1437,6 +1437,56 @@ async fn resolve_protects_the_worktree_when_the_last_report_cannot_be_read() {
 }
 
 #[tokio::test]
+async fn missing_report_source_requires_a_complete_matching_archive() {
+    for fault in ["정상 사본", "본문 손상", "목록 누락", "첨부 손상", "부분 사본", "새 보고"] {
+        let lab = Lab::with_report(0, b"old", "result.txt", b"old", "[완료] 시험\n");
+        let h = &lab.h;
+        lab.cleanup_thread();
+        h.collect_snapshot("p", "t-0001", false).await.unwrap();
+        let version = h.report_id("p", "t-0001").unwrap();
+        let dir = h.project_dir("p").unwrap();
+        let missing = err(ErrorCode::NotFound, "작업 폴더가 없다: /work/.aaa/p-t-0001: 없어진 경로 (os error 2)");
+        *lab.report_error.lock().unwrap() = Some(missing);
+        match fault {
+            "본문 손상" => std::fs::write(dir.join(format!("threads/{version}.md")), b"wrong").unwrap(),
+            "목록 누락" => std::fs::remove_file(crate::library::manifest_path(&dir, &version)).unwrap(),
+            "첨부 손상" => std::fs::write(dir.join(format!("library/{version}/result.txt")), b"new").unwrap(),
+            "부분 사본" => {
+                h.update_rec("p", "t-0001", |r| r.copy = Some("partial".into())).unwrap();
+            }
+            "새 보고" => {
+                h.on_report_changed("m", "p/t-0001", Some("b".repeat(64)));
+                assert_eq!(h.load("p", "t-0001").unwrap().pending_report_hash, Some("b".repeat(64)));
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    while h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+            }
+            "정상 사본" => {}
+            _ => unreachable!(),
+        }
+        let result = h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "local:cli").await;
+        let rec = h.load("p", "t-0001").unwrap();
+        if fault == "정상 사본" {
+            assert_eq!(result.unwrap().status, ThreadStatus::Resolved);
+            assert_eq!(rec.copy.as_deref(), Some("complete"));
+            assert!(!rec.task_clean.discard);
+        } else {
+            let e = result.unwrap_err();
+            assert!(e.message.contains("마지막 사본이 실패"), "{fault}: {e}");
+            assert_eq!(rec.status, ThreadStatus::Open, "{fault}");
+            assert!(rec.resolve_pending.is_none(), "{fault}");
+            assert_eq!(rec.copy.as_deref(), Some("failed"), "{fault}");
+        }
+        assert_eq!(h.report_version_names("p", "t-0001"), [version], "{fault}");
+        lab.close().await;
+    }
+}
+
+#[tokio::test]
 async fn resolve_records_cleanup_only_followup_before_exposing_resolved_task() {
     for report in [
         "[완료] 구현\n## Next\n정리: worktree와 branch를 지운다\n",

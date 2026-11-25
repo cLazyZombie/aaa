@@ -51,6 +51,7 @@ fn open_thread() -> ThreadRec {
         delivered_report: None,
         launch: None,
         report_hash: None,
+        pending_report_hash: None,
         report_copy_hash: None,
         report_stage: None,
         acked_hash: None,

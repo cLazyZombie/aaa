@@ -155,3 +155,134 @@ fn resolve_cleanup_only_next_archives_task_without_needs_check_notice() {
     assert!(notices.iter().all(|i| i["event"] != "task needs check"), "{notices:?}");
     assert!(notices.iter().any(|i| i["event"] == "task auto-cleaned"), "{notices:?}");
 }
+
+#[test]
+fn resolve_missing_worktree_keeps_verified_reports_and_completes_tasks() {
+    resolve_after_external_cleanup(false);
+}
+
+#[test]
+fn resolve_missing_worktree_on_remote_agent_keeps_verified_reports_and_completes_tasks() {
+    resolve_after_external_cleanup(true);
+}
+
+fn resolve_after_external_cleanup(remote: bool) {
+    let mut w = report_shell_world();
+    let machine = if remote {
+        w.add_remote();
+        "labB"
+    } else {
+        "labA"
+    };
+    w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@{machine}", path_str(&w.repo))]);
+    w.h.ok(&["machine", "workspaces", machine, "--allow", "repo"]);
+    let mut flow = w.lab.follow("cleanup-events", &w.h, "demo");
+    let mut successful = Vec::new();
+    for (title, residual) in [("noreport 사본 완료", false), ("noreport 기록만 남음", true)] {
+        w.h.ok(&["task", "add", title]);
+        let started = w.start(&[
+            "--from-task",
+            title,
+            "--link-task",
+            "--machine",
+            machine,
+            "--profile",
+            "fake",
+            "--repo",
+            path_str(&w.repo),
+        ]);
+        let id = started["id"].as_str().unwrap();
+        let cwd = Path::new(started["cwd"].as_str().unwrap());
+        let work = Path::new(started["work_dir"].as_str().unwrap());
+        let branch = started["branch"].as_str().unwrap();
+        w.wait_show("brief 받음", id, |v| v["brief"] == "delivered");
+        git(cwd, &["commit", "--allow-empty", "-qm", title]);
+        git(&w.repo, &["merge", "--no-ff", "-qm", "병합: 시험", branch]);
+        git(&w.repo, &["push", "-q", "origin", "main"]);
+        std::fs::write(work.join("library/out.txt"), title.as_bytes()).unwrap();
+        let report = if residual {
+            "[완료] 시험 병합\n## Next\n정리: worktree와 branch를 지운다\n"
+        } else {
+            "[착지] 시험 병합\n## Next\n"
+        };
+        std::fs::write(work.join("report.md"), report).unwrap();
+        flow.kind("report_ready", id, T);
+        let saved = w.show(id);
+        assert_eq!(saved["copy"], "complete", "{saved}");
+        let archived = w.h.ok(&["library", "show", id]);
+        let version = archived["report_id"].as_str().unwrap();
+        if residual {
+            // Git 등록만 남고 checkout의 Git 연결과 코드가 사라진 상태.
+            std::fs::remove_file(cwd.join(".git")).unwrap();
+            std::fs::remove_file(cwd.join("README.md")).unwrap();
+            assert_entries(cwd, &[".aaa"]);
+        } else {
+            std::fs::remove_dir_all(cwd).unwrap();
+        }
+        let resolved = w.h.ok(&["thread", "resolve", "demo", id]);
+        assert_eq!(resolved["status"], "resolved", "{resolved}");
+        assert_eq!(resolved["copy"], "complete", "{resolved}");
+        assert_eq!(resolved["report_hash"], saved["report_hash"]);
+        if residual {
+            assert_eq!(resolved["followups"][0]["actor"], "host", "{resolved}");
+        }
+        assert!(!cwd.exists());
+        assert!(!git(&w.repo, &["worktree", "list"]).contains(path_str(cwd)));
+        assert_eq!(git(&w.repo, &["branch", "--list", branch]), "");
+        assert_eq!(std::fs::read_to_string(w.projects.join(format!("demo/threads/{version}.md"))).unwrap(), report);
+        assert_eq!(
+            std::fs::read(w.projects.join(format!("demo/library/{version}/out.txt"))).unwrap(),
+            title.as_bytes()
+        );
+        successful.push(id.to_string());
+    }
+
+    let title = "noreport 미회수";
+    w.h.ok(&["task", "add", title]);
+    let started = w.start(&[
+        "--from-task",
+        title,
+        "--link-task",
+        "--machine",
+        machine,
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+    ]);
+    let id = started["id"].as_str().unwrap();
+    let cwd = Path::new(started["cwd"].as_str().unwrap());
+    let work = Path::new(started["work_dir"].as_str().unwrap());
+    w.wait_show("보고 없이 brief 받음", id, |v| v["brief"] == "delivered");
+    std::fs::write(work.join("library/uncopied.txt"), b"uncopied").unwrap();
+    std::fs::remove_dir_all(cwd).unwrap();
+    let error = w.h.json(&["thread", "resolve", "demo", id]).unwrap_err();
+    assert!(error.contains("마지막 사본이 실패") && error.contains("받지 못한 보고"), "{error}");
+    assert_eq!(w.show(id)["status"], "open");
+    assert!(w.h.json(&["pane", "get", started["pane"].as_str().unwrap()]).is_ok());
+    w.h.ok(&["thread", "resolve", "demo", id, "--skip-copy"]);
+
+    w.h.ticks(1);
+    let archived = w.h.ok(&["task", "archive"]);
+    let entries = archived["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{archived}");
+    assert!(entries.iter().any(|e| e["reason"] == "origin/main 병합"), "{archived}");
+    let tasks = w.h.ok(&["task", "list"]);
+    let jobs = tasks["tasks"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1, "{tasks}");
+    assert_eq!(jobs[0]["thread"], id);
+    assert!(jobs[0]["attention"].as_str().unwrap().contains("마지막 사본 없이 끝냈다"), "{tasks}");
+    let inbox = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
+    for item in inbox["items"].as_array().unwrap() {
+        if successful.iter().any(|id| item["subject"] == *id) {
+            assert_ne!(item["item_kind"], "report-copy-failed");
+            assert_ne!(item["event"], "task needs check");
+        }
+    }
+    let events = w.h.ok(&["events", "demo"]);
+    for event in events["events"].as_array().unwrap() {
+        if successful.iter().any(|id| event["thread"] == *id) {
+            assert_ne!(event["kind"], "copy_failed");
+        }
+    }
+}

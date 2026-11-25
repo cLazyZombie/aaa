@@ -167,6 +167,7 @@ pub(crate) fn thread_rec(
         report_stage: None,
         report_hash: copy_hash,
         report_copy_hash: None,
+        pending_report_hash: None,
         next,
         questions: Vec::new(),
         question_answer: None,

@@ -1,6 +1,7 @@
 //! 보고서·library 회수와 사본 갱신.
 
 use super::*;
+use anyhow::Context as _;
 
 impl Host {
     pub(crate) fn report_collect_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -19,13 +20,28 @@ impl Host {
     /// agent가 report.md hash 변화를 알렸다
     pub(crate) fn on_report_changed(self: &Arc<Self>, mid: &str, key: &str, hash: Option<String>) {
         let Some((project, id)) = key.split_once('/') else { return };
+        let Some(hash) = hash else { return };
         let Ok(rec) = self
             .load(project, id)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
-        if rec.machine_id != mid || rec.status != ThreadStatus::Open || hash.is_none() || hash == rec.report_hash {
+        if rec.machine_id != mid || rec.status != ThreadStatus::Open {
+            return;
+        }
+        let pending = (rec.report_hash.as_ref() != Some(&hash)).then_some(&hash);
+        if pending != rec.pending_report_hash.as_ref() {
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, id, |r| {
+                    if r.machine_id == mid && r.status == ThreadStatus::Open {
+                        r.pending_report_hash = (r.report_hash.as_ref() != Some(&hash)).then(|| hash.clone());
+                    }
+                }),
+                "agent가 알린 보고 판을 저장하지 못했다",
+            );
+        }
+        if pending.is_none() {
             return;
         }
         self.refresh_report(project, id);
@@ -117,6 +133,19 @@ impl Host {
         let (Some(_), Ok(conn)) = (rec.work_dir.as_ref(), self.live_conn(&rec.machine_id)) else { return };
         self.warn_question_format(&rec).await;
         let probe = self.current_report_hash(&rec, &conn).await;
+        if let Ok(hash) = &probe {
+            let pending = (rec.report_hash.as_ref() != Some(hash)).then_some(hash);
+            if pending != rec.pending_report_hash.as_ref() {
+                aaa_common::diagnostic::ignored(
+                    self.update_rec(project, id, |r| {
+                        if r.pending_report_hash == rec.pending_report_hash {
+                            r.pending_report_hash = pending.cloned();
+                        }
+                    }),
+                    "조회한 보고 판을 저장하지 못했다",
+                );
+            }
+        }
         if rec.copy.as_deref() != Some("failed")
             && !matches!(&probe, Ok(hash) if Some(hash) != rec.report_hash.as_ref())
         {
@@ -220,8 +249,17 @@ impl Host {
             let mut snap = match conn.request(request).await {
                 Ok(AgentResponse::ReportTransfer(s)) if transfer => s,
                 Ok(AgentResponse::Report(s)) if !transfer => s,
+                Err(e) if last && report_work_dir_missing(&work_dir, &e) => {
+                    let rec = self.load(project, id)?;
+                    return blocking(|| self.verify_missing_report_source(&rec, &dir)).map(|()| None);
+                }
                 // 한 번의 요청으로 마지막 본문과 첨부 목록을 읽는다. 읽기 실패를 보고 없음으로 처리하지 않는다.
-                Err(e) if last && final_report_absent(&rec, &work_dir, &e) => return Ok(None),
+                Err(e) if last && final_report_absent(&rec, &e) => {
+                    if self.load(project, id)?.pending_report_hash.is_some() {
+                        return Err(bad("agent가 알린 새 보고를 회수하지 못했다"));
+                    }
+                    return Ok(None);
+                }
                 Err(e) if !last && e.code == ErrorCode::Conflict => return Ok(None),
                 Err(e) => return Err(e),
                 _ => return Err(internal("보고 사본 응답이 아니다")),
@@ -469,6 +507,7 @@ impl Host {
                             r.question_missing = missing;
                         }
                         r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
+                        accept_report_hash(r, &rec, &hash);
                         r.report_stage = crate::report_mark::stage(&String::from_utf8_lossy(&report));
                         crate::followups::capture(r, &hash, &String::from_utf8_lossy(&report));
                         r.copy = Some(copy.clone());
@@ -524,6 +563,7 @@ impl Host {
                 let rec = self.update_rec(project, id, |r| {
                     r.report_stage = crate::report_mark::stage(&text);
                     crate::followups::capture(r, &hash, &text);
+                    accept_report_hash(r, &previous, &hash);
                     r.report_hash = Some(hash);
                     r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
@@ -566,19 +606,90 @@ impl Host {
             Err(e) => Err(e),
         }
     }
+
+    /// 원본이 사라진 경우에는 완료된 회수와 같은 판의 보관본을 대조한다.
+    fn verify_missing_report_source(&self, rec: &ThreadRec, dir: &Path) -> Result<(), ErrorBody> {
+        // Git 준비 응답을 잃은 자리는 준비 기록에 경로가 있어도 아직 .aaa를 만들기 전일 수 있다.
+        if rec.status == ThreadStatus::Failed
+            && !rec.launch_sent
+            && rec.pane.is_none()
+            && rec.report_hash.is_none()
+            && rec.pending_report_hash.is_none()
+            && rec.copy.is_none()
+        {
+            return Ok(());
+        }
+        let missing = |reason| bad(format!("작업 폴더가 없다. {reason}"));
+        if rec.pending_report_hash.is_some()
+            || rec.copy.as_deref() != Some("complete")
+            || rec.automation_run.as_ref().is_some_and(|run| run.memory)
+        {
+            return Err(missing("아직 받지 못한 보고·결과물·자동화 기억이 있을 수 있다"));
+        }
+        // 판 삭제·정리와 같은 잠금에서 목록과 실제 보존 파일을 검사한다.
+        let _lock = self.library_ops.lock().unwrap();
+        let latest = self
+            .db
+            .report_ids(&rec.project, &rec.id)
+            .map_err(internal)?
+            .into_iter()
+            .next()
+            .filter(|v| Some(&v.revision) == rec.report_hash.as_ref())
+            .ok_or_else(|| missing("마지막 보고의 보관 판이 없다"))?;
+        let verified = (|| -> anyhow::Result<()> {
+            let body = self.verified_report(rec).ok_or_else(|| anyhow::anyhow!("최신 보고 본문 hash가 다르다"))?;
+            let archived = std::fs::read(dir.join("threads").join(format!("{}.md", latest.id)))?;
+            anyhow::ensure!(body.as_bytes() == archived, "보관 판 본문 hash가 다르다");
+            let manifest = |id: &str| -> anyhow::Result<Vec<aaa_proto::LibraryFile>> {
+                Ok(serde_json::from_slice(&std::fs::read(crate::library::manifest_path(dir, id))?)?)
+            };
+            let files = manifest(&rec.id)?;
+            anyhow::ensure!(files == manifest(&latest.id)?, "보관 판 첨부 목록이 다르다");
+            for file in files {
+                anyhow::ensure!(!file.on_agent && crate::library::safe_rel(&file.path), "검증할 수 없는 첨부 경로");
+                let digest = |id: &str| -> anyhow::Result<_> {
+                    let (path, size) = crate::library::local_file(dir, id, &file.path)?;
+                    anyhow::ensure!(size == file.size, "첨부 크기가 다르다");
+                    let mut hash = sha2::Sha256::new();
+                    let count = std::io::copy(&mut std::fs::File::open(path)?, &mut hash)?;
+                    anyhow::ensure!(count == size, "검증하는 동안 첨부 크기가 바뀌었다");
+                    Ok(hash.finalize())
+                };
+                let matches = (|| Ok::<_, anyhow::Error>(digest(&rec.id)? == digest(&latest.id)?))()
+                    .with_context(|| format!("첨부 {} 검증 실패", file.path))?;
+                anyhow::ensure!(matches, "첨부 {} hash가 다르다", file.path);
+            }
+            Ok(())
+        })();
+        verified.map_err(|e| bad(format!("작업 폴더가 없다. 마지막 보고 사본 검증 실패: {e:#}")))
+    }
 }
 
-fn final_report_absent(rec: &ThreadRec, work_dir: &str, error: &ErrorBody) -> bool {
+fn accept_report_hash(current: &mut ThreadRec, before: &ThreadRec, hash: &str) {
+    if current.pending_report_hash == before.pending_report_hash || current.pending_report_hash.as_deref() == Some(hash)
+    {
+        current.pending_report_hash = None;
+    }
+}
+
+fn report_work_dir_missing(work_dir: &str, error: &ErrorBody) -> bool {
+    error.code == ErrorCode::NotFound
+        && (error.message == "작업 폴더가 없다"
+            || (missing_path_error(error) && error.message.starts_with(&format!("작업 폴더가 없다: {work_dir}: "))))
+}
+
+fn missing_path_error(error: &ErrorBody) -> bool {
+    error.message.ends_with("(os error 2)") || error.message.ends_with("(os error 3)")
+}
+
+fn final_report_absent(rec: &ThreadRec, error: &ErrorBody) -> bool {
     if error.code != ErrorCode::NotFound {
         return false;
-    }
-    // 작업 폴더를 사람이 먼저 없앤 경우 Git 기록을 정리할 수 있다. 구판 agent도 이 IO 문맥을 보낸다.
-    let missing_path = error.message.ends_with("(os error 2)") || error.message.ends_with("(os error 3)");
-    if missing_path && error.message.starts_with(&format!("작업 폴더가 없다: {work_dir}: ")) {
-        return true;
     }
     // 보류 뒤 새 자리에서는 이전 보고가 남아 있어도 새 본문이 없을 수 있다. 구판은 첨부 유무를 알려 주지 않으므로
     // 지워질 수 있는 worktree에서는 보고·첨부가 모두 없다는 응답을 요구한다.
     error.message == "report.md와 첨부가 없다"
-        || (rec.kind != ThreadKind::Worktree && missing_path && error.message.starts_with("report.md가 없다: "))
+        || (rec.kind != ThreadKind::Worktree
+            && missing_path_error(error)
+            && error.message.starts_with("report.md가 없다: "))
 }

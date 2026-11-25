@@ -286,7 +286,7 @@ impl Host {
         }
     }
 
-    /// 현재 branch 끝만 main에 포함됐을 때 정리 근거로 쓴다. 보고의 SHA는 삭제 근거가 아니다.
+    /// 현재 branch 끝 또는 이미 요청한 정리의 branch 끝을 원격 main과 대조한다.
     pub(crate) async fn main_branch_head(&self, rec: &ThreadRec) -> Option<String> {
         if !self.machine_feature(&rec.machine_id, "git_merged.v1") {
             return None;
@@ -294,7 +294,9 @@ impl Host {
         let repo = rec.repo.as_deref()?;
         let branch = rec.branch.as_ref().filter(|b| !b.is_empty())?;
         let conn = self.live_conn(&rec.machine_id).ok()?;
-        let query = aaa_proto::GitQuery::MergedIntoMain { branch: Some(branch.clone()), commits: vec![] };
+        let commits =
+            rec.task_clean.cleanup_branch_head.iter().filter(|_| rec.resolve_pending.is_some()).cloned().collect();
+        let query = aaa_proto::GitQuery::MergedIntoMain { branch: Some(branch.clone()), commits };
         match conn
             .request_timeout(
                 aaa_proto::AgentRequest::GitQuery { cwd: repo.into(), query },
@@ -316,7 +318,7 @@ impl Host {
         }
     }
 
-    pub(crate) async fn task_main_merge(&self, rec: &ThreadRec) -> Option<String> {
+    pub(crate) async fn task_main_merge(&self, rec: &ThreadRec, merged_head: Option<&str>) -> Option<String> {
         if rec.task_clean.discard
             || self.report_marker(rec) == Some("[완료]")
             || !self.machine_feature(&rec.machine_id, "git_merged.v1")
@@ -336,7 +338,10 @@ impl Host {
         if !tasks::parse(&tasks).iter().any(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             return None;
         }
-        self.report_main_merge(rec, &report).await
+        match merged_head {
+            Some(head) => Some(head.to_owned()),
+            None => self.report_main_merge(rec, &report).await,
+        }
     }
 
     async fn report_main_merge(&self, rec: &ThreadRec, report: &str) -> Option<String> {

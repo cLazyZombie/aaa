@@ -157,6 +157,9 @@ pub(crate) struct ThreadRec {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub report_hash: Option<String>,
+    /// agent가 알렸으나 아직 회수하지 못한 본문 판.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_report_hash: Option<String>,
     /// 원본 판 식별자와 별개로, 저장 전에 인증을 가린 본문 사본의 무결성을 확인한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_copy_hash: Option<String>,
@@ -317,6 +320,7 @@ impl ThreadRec {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            pending_report_hash: None,
             report_copy_hash: None,
             report_stage: None,
             acked_hash: None,
@@ -392,6 +396,9 @@ pub(crate) struct TaskClean {
     /// repo 머신 agent가 실제 origin/main의 조상으로 확인한 커밋.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged_main: Option<String>,
+    /// 정리 요청을 보낸 뒤 branch가 이미 사라졌을 때 원격 main 포함을 다시 확인할 커밋.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_branch_head: Option<String>,
     /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
     #[serde(default)]
     pub cleaned: Vec<String>,

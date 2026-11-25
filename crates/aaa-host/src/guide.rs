@@ -183,7 +183,7 @@ thread 일에 `aaa pane …` 명령을 직접 조립하지 않는다(thread 명�
   자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡는다(시작 출처로만 판정).
 - 보류(`aaa thread park`)는 사용자가 보류하라고 했을 때만, 끝내기(`aaa thread resolve`)는 사용자가 끝내라고 할 때만 한다.
   시안·연구·조사 thread는 「지금 구현·할 일로 만들기·폐기」 답 전에 resolve하지 않는다.
-- worktree는 force 없이 지운다. branch의 현재 끝이 원격 main에 포함된 것을 확인했을 때만 branch를 지운다.
+- 착지 뒤 작업 폴더는 resolve가 정리한다(`aaa guide threads`).
 - thread가 시작할 때 모아 묻는 질문(보고 `[결정 필요]`·`## Questions`)은 웹 「답할 것」 카드로 뜬다. 별도 카드를 만들지 않고,
   확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙여 기존 카드에 묶고 post 본문에 새 `## Questions`·선택지를 쓰지 않는다.
   memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약·추천·q 링크를 적고 확인 필요 post를 보낸 뒤
@@ -460,7 +460,11 @@ host는 작업 의도가 남은 idle thread가 새 보고·진행 보고·질문
   Next가 비었거나 보고 없이 시작에 실패한 thread도 후속이 없으면 막지 않는다. `--reopen`·`--dry-run`은 종료가 아니다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
-- worktree는 force 없이 지운다. branch의 현재 끝이 원격 main에 포함된 것을 확인했을 때만 branch를 지운다.
+- 착지 뒤 마지막 보고를 쓰고 worktree·branch 정리를 resolve에 맡긴다. 호스트가 회수할 때까지 작업 폴더와 `.aaa`를 보존한다.
+  원본 폴더가 이미 사라졌으면 호스트가 마지막 보고와 첨부를 보관 판과 대조한다. 검증한 사본이 있으면 같은 방식으로
+  정리하며, 불완전하거나 새 판을 못 받았으면 종료를 멈춘다.
+- resolve는 소유권이 확인된 `.aaa` 기록만 남은 폴더도 정리한다. 일반 worktree는 force 없이 지우며 branch의 현재 끝이
+  원격 main에 포함됐을 때만 branch를 지운다.
 - 시안·연구·조사 thread는 「지금 구현·할 일로 만들기·폐기」 답 전에 resolve하지 않는다.
 - 그 밖의 resolve는 사용자가 채팅에서 끝내라고 할 때만 한다.
 "#;
