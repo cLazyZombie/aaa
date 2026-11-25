@@ -506,9 +506,8 @@ fn top_region_count(spec: &str) -> Option<usize> {
 }
 
 fn bottom_lines(content: &str, count: usize) -> &str {
-    let lines: Vec<&str> = content.lines().collect();
-    let start = lines.len().saturating_sub(count);
-    slice_from_line_index(content, &lines, start)
+    let start = content.lines().count().saturating_sub(count);
+    slice_from_line_index(content, start)
 }
 
 fn bottom_non_empty_lines(content: &str, count: usize) -> &str {
@@ -524,7 +523,7 @@ fn bottom_non_empty_lines(content: &str, count: usize) -> &str {
     else {
         return "";
     };
-    slice_from_line_index(content, &lines, start_index)
+    slice_from_line_index(content, start_index)
 }
 
 fn top_non_empty_lines(content: &str, count: usize) -> &str {
@@ -534,8 +533,7 @@ fn top_non_empty_lines(content: &str, count: usize) -> &str {
     else {
         return "";
     };
-    let byte_offset = line_start_offset(content, &lines, end_index + 1);
-    &content[..byte_offset]
+    &content[..line_start_offset(content, end_index + 1)]
 }
 
 fn after_last_prompt_marker(content: &str) -> &str {
@@ -543,7 +541,7 @@ fn after_last_prompt_marker(content: &str) -> &str {
     let Some(index) = lines.iter().rposition(|line| codex_prompt_line(line)) else {
         return content;
     };
-    slice_from_line_index(content, &lines, index + 1)
+    slice_from_line_index(content, index + 1)
 }
 
 fn before_current_prompt_marker(content: &str) -> &str {
@@ -551,8 +549,7 @@ fn before_current_prompt_marker(content: &str) -> &str {
     let Some(index) = current_codex_prompt_index(&lines) else {
         return content;
     };
-    let byte_offset = lines[..index].iter().map(|line| line.len() + 1).sum::<usize>();
-    &content[..byte_offset.min(content.len())]
+    &content[..line_start_offset(content, index)]
 }
 
 fn whole_recent_without_current_prompt_marker(content: &str) -> &str {
@@ -570,7 +567,7 @@ fn after_current_prompt_block_marker(content: &str) -> Option<&str> {
     let lines: Vec<&str> = content.lines().collect();
     let prompt_index = current_codex_prompt_index(&lines)?;
     let block_index = lines[..prompt_index].iter().rposition(|line| codex_block_marker_line(line))?;
-    Some(slice_from_line_index(content, &lines, block_index))
+    Some(slice_from_line_index(content, block_index))
 }
 
 /// Codex 입력 줄(`›`) 가운데 지금 것: 그 아래에 응답 표지(•■✗✓)가 있으면 지난 입력이다
@@ -594,14 +591,14 @@ fn codex_block_marker_line(line: &str) -> bool {
 fn prompt_box_body(content: &str) -> Option<&str> {
     let lines: Vec<&str> = content.lines().collect();
     let top = prompt_box_top_border_index(&lines)?;
-    let start = line_start_offset(content, &lines, top + 1);
+    let start = line_start_offset(content, top + 1);
     let end_index = lines[top + 1..]
         .iter()
         .position(|line| is_horizontal_rule(line))
         .map(|relative| top + 1 + relative)
         .unwrap_or(lines.len());
-    let end = line_start_offset(content, &lines, end_index);
-    Some(&content[start.min(content.len())..end.min(content.len())])
+    let end = line_start_offset(content, end_index);
+    Some(&content[start..end])
 }
 
 fn above_prompt_box(content: &str) -> &str {
@@ -609,19 +606,17 @@ fn above_prompt_box(content: &str) -> &str {
     let Some(top) = prompt_box_top_border_index(&lines) else {
         return content;
     };
-    let end = line_start_offset(content, &lines, top);
-    &content[..end.min(content.len())]
+    &content[..line_start_offset(content, top)]
 }
 
 fn after_last_horizontal_rule(content: &str) -> &str {
     let mut last_rule_end = 0usize;
     let mut offset = 0usize;
-    for line in content.lines() {
-        let next_offset = offset + line.len() + 1;
+    for line in content.split_inclusive('\n') {
+        offset += line.len();
         if is_horizontal_rule(line) {
-            last_rule_end = next_offset.min(content.len());
+            last_rule_end = offset;
         }
-        offset = next_offset;
     }
     &content[last_rule_end..]
 }
@@ -658,13 +653,13 @@ fn is_horizontal_rule(line: &str) -> bool {
     suffix.is_empty() || rule_chars >= 3
 }
 
-fn slice_from_line_index<'a>(content: &'a str, lines: &[&str], index: usize) -> &'a str {
-    let byte_offset = line_start_offset(content, lines, index);
-    &content[byte_offset.min(content.len())..]
+fn slice_from_line_index(content: &str, index: usize) -> &str {
+    &content[line_start_offset(content, index)..]
 }
 
-fn line_start_offset(content: &str, lines: &[&str], index: usize) -> usize {
-    lines[..index.min(lines.len())].iter().map(|line| line.len() + 1).sum::<usize>().min(content.len())
+fn line_start_offset(content: &str, index: usize) -> usize {
+    // 판정은 lines()의 본문을 써도, 자를 위치는 CRLF를 포함한 원문에서 센다.
+    content.split_inclusive('\n').take(index).map(str::len).sum()
 }
 
 #[cfg(test)]

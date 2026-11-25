@@ -234,6 +234,28 @@ fn screen_regions_extract_structure_without_classifying_agent_state() {
 }
 
 #[test]
+fn screen_regions_preserve_mixed_line_endings_and_unicode_boundaries() {
+    let codex = "로그🙂\r\n\r\n■ 응답\n› 입력\r\n다음";
+    let claude = "요약🙂\r\n\r\n──── 세션\n입력🙂\r\n────\r\n아래";
+    for (input, spec, expected) in [
+        (codex, "before_current_prompt_marker", "로그🙂\r\n\r\n■ 응답\n"),
+        (codex, "after_last_prompt_marker", "다음"),
+        (codex, "after_current_prompt_block_marker", "■ 응답\n› 입력\r\n다음"),
+        (claude, "above_prompt_box", "요약🙂\r\n\r\n"),
+        (claude, "last_non_empty_above_prompt_box", "요약🙂"),
+        (claude, "prompt_box_body", "입력🙂\r\n"),
+        (claude, "after_last_horizontal_rule", "아래"),
+        (claude, "bottom_lines(2)", "────\r\n아래"),
+        (claude, "bottom_non_empty_lines(2)", "────\r\n아래"),
+        (claude, "top_non_empty_lines(2)", "요약🙂\r\n\r\n──── 세션\n"),
+        ("안내\r\n────", "after_last_horizontal_rule", ""),
+        ("안내\r\n끝", "bottom_lines(0)", ""),
+    ] {
+        assert_eq!(region(screen(input), spec), expected, "region={spec}");
+    }
+}
+
+#[test]
 fn bundled_manifests_parse_and_validate() {
     // Claude는 herdr 0.9.5 정본, Codex는 run-state 제목을 읽는 운영 회귀 보완판이다.
     for (h, version) in
