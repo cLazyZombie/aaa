@@ -6,7 +6,7 @@
 
 ## 설치 흐름
 
-- macOS·Linux: `scripts/bootstrap/install-unix.sh`를 POSIX sh로 실행한다. OS·CPU 선택 → 같은 tag의
+- Apple Silicon macOS·Linux: `scripts/bootstrap/install-unix.sh`를 POSIX sh로 실행한다. OS·CPU 선택 → 같은 tag의
   `SHA256SUMS`와 실행 파일 검증 → macOS launcher package 검증 → `aaa setup` 순서다.
   `curl | sh`의 입력을 `/dev/tty`로 돌려 setup이 같은 터미널에서 질문한다. 별도 PATH·서비스 설정을 하지 않는다.
   다운로드는 비공개 임시 폴더에만 두고 setup 종료 뒤 지운다. 기존 설치 위치의 쓰기는 setup이 맡는다.
@@ -25,7 +25,7 @@ python3 -m unittest scripts.test_install_site scripts.test_release
 ```
 
 생성 도구는 공개 최신 stable tag를 한 번 조회하고 그 tag의 manifest·SHA256SUMS만 읽는다.
-세 OS의 setup이 있는 v0.1.6 이상, 공식 자산 URL, 다섯 실행 파일과 두 launcher의 SHA 일치를 요구한다.
+세 OS의 setup이 있는 v0.1.6 이상, 공식 자산 URL, 지원 대상의 실행 파일 네 개와 macOS arm64 launcher의 SHA 일치를 요구한다.
 잘못된 판·외부 URL·누락·중복·SHA 불일치면 출력 전에 실패한다.
 출력은 `install.sh`, `install.ps1`, `release.json`, `.nojekyll` 네 파일이다. `release.json`은 게시판의 판·자산 SHA 기록이다.
 `--metadata-dir <폴더>`로 로컬 manifest·SHA256SUMS를 주면 네트워크 없이 같은 결과를 검사할 수 있다.

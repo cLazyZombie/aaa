@@ -2,7 +2,7 @@
 
 [e17a0bd4의 Intel CI](https://github.com/cLazyZombie/aaa/actions/runs/44832774284/job/136621593363)에서 설치 PTY 세 건이 60초 상한에 닿았다. 등록 창 닫힘 시험은 worker의 Stage Running까지, worker 수명·pin 충돌 시험은 최종 승인 입력의 에코까지 기록됐다. 당시 다음 단계와 실패 순간의 프로세스 상태를 가를 자료가 부족했다.
 
-정규 `macos-15-intel` Rust test 단계가 `AAA_CI_MACOS_INSTALL_PTY_DIAGNOSTICS=1`을 준다. PTY의 60초 상한에서 실패를 판정하고 소유한 자식을 정리하기 전에 다음 내용을 기존 분할 로그에 남긴다.
+당시 `macos-15-intel` Rust test 단계는 `AAA_CI_MACOS_INSTALL_PTY_DIAGNOSTICS=1`을 설정했다. 현재 macOS CI는 arm64에서 실행하며, 이 환경 변수는 로컬 진단에 쓸 수 있다. 진단을 켜면 PTY의 60초 상한에서 실패를 판정하고 소유한 자식을 정리하기 전에 다음 내용을 기존 분할 로그에 남긴다.
 
 - 평문 입력 API 반환과 승인 통과를 별도 표지로 남긴다. reader 미완료·EOF·읽기 오류와 마지막 수집 시각을 구분한다.
 - 직접 띄운 CLI와 그 직계 자식의 부모 PID·UID를 확인하고 BSD 상태, 스레드 수, CPU 시간의 Mach tick과 환산 비율, 상주 메모리, 페이지인, 디스크 I/O 누적 바이트를 기록한다.

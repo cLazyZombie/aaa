@@ -309,7 +309,6 @@ print({'-s': os.environ['TEST_OS'], '-m': os.environ['TEST_ARCH'], '-o': 'GNU/Li
 
     def test_pipe_preserves_setup_arguments_terminal_exit_and_macos_launcher(self):
         for system, machine, target in [('Darwin', 'arm64', 'macos-aarch64'),
-                                        ('Darwin', 'x86_64', 'macos-x86_64'),
                                         ('Linux', 'aarch64', 'linux-aarch64'),
                                         ('Linux', 'x86_64', 'linux-x86_64')]:
             with self.subTest(target=target):
@@ -362,11 +361,14 @@ print({'-s': os.environ['TEST_OS'], '-m': os.environ['TEST_ARCH'], '-o': 'GNU/Li
                     self.assertIn('curl 종료 코드 22', output)
 
     def test_unsupported_platform_and_no_terminal_fail_without_downloading_payload(self):
-        for system, machine in [('FreeBSD', 'amd64'), ('Linux', 'riscv64')]:
+        for system, machine, message in [('FreeBSD', 'amd64', '지원하지 않는 OS'),
+                                         ('Linux', 'riscv64', '지원하지 않는 CPU'),
+                                         ('Darwin', 'x86_64', 'Apple Silicon')]:
             self.env.update(TEST_OS=system, TEST_ARCH=machine)
             self.requests.clear()
             code, output = self.run_entry()
             self.assertEqual(code, 2, output)
+            self.assertIn(message, output)
             self.assertEqual(self.requests, ['/install.sh'])
             self.assertFalse(self.record.exists())
         self.env.update(TEST_OS='Linux', TEST_ARCH='x86_64')

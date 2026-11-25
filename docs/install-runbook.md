@@ -197,7 +197,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 3. `aaa --version`으로 설치판을 보고, `aaa update list`의 SHA-256으로 실제 파일을 구분한다. 보관은 `~/.local/bin/.aaa-old/`에 `[update] keep`개(기본 3)다. 판을 주지 않은 `aaa update`는 최신 안정 release를 고르며 같거나 옛 판이면 실행 파일을 받지 않는다. `--version v0.1.1`도 된다. 명시한 옛 판은 고정 검사를 거쳐 받을 수 있다. major 변경은 기존대로 사람이 TOML에 해당 판을 고정해야 한다.
 4. 문제가 있으면 ✋ `aaa update rollback`(지금과 다른 가장 새 보관, 이름을 주면 그것, 목록은 `aaa update list`)으로 되돌리고 2번의 재시작·확인을 한다. DB는 되돌리지 않는다(plan §11 「DB 백업」은 아직 없다).
 
-- **최초 전환(기존 0.1.0).** 옛 `aaa update`에는 내려받기가 없다. 첫 release `v0.1.1`에서 `aaa-macos-aarch64`(Intel은 `aaa-macos-x86_64`)와 `SHA256SUMS`를 받아 `shasum -a 256 <받은 파일>` 결과를 맞춘다. 옛 실행 파일로 `aaa update --from <받은 파일> --dry-run` → ✋ `aaa update --from <받은 파일>`을 한 번 한다. 이후 위 원격 update를 쓴다. Windows도 11.4의 `--from`으로 한 번 전환한다.
+- **최초 전환(기존 0.1.0).** 옛 `aaa update`에는 내려받기가 없다. 첫 release `v0.1.1`에서 `aaa-macos-aarch64`와 `SHA256SUMS`를 받아 `shasum -a 256 <받은 파일>` 결과를 맞춘다. 옛 실행 파일로 `aaa update --from <받은 파일> --dry-run` → ✋ `aaa update --from <받은 파일>`을 한 번 한다. 이후 위 원격 update를 쓴다. Windows도 11.4의 `--from`으로 한 번 전환한다.
 - **로컬 빌드 유지.** `aaa update --from target/release/aaa [--dry-run]`은 그대로다. 같은 version이어도 SHA-256이 다른 빌드는 바꿀 수 있다. `--from`과 `--version`은 함께 쓰지 않는다.
 - **판 고정.** 기존 host.toml·agent.toml에 `[update] version = "0.1.0"`처럼 고정했다면 사람이 목표 판으로 고쳐야 한다. updater는 설정을 저절로 바꾸지 않는다. 보관 이름은 UTC·밀리초·순번·판을 담아 같은 시각의 upgrade·downgrade도 생성 순서대로 되돌린다. 옛 이름의 보관도 계속 읽는다.
 - **네트워크와 실패.** curl이 필요하다(macOS·Windows 기본 제공). 개인 `.curlrc`·GitHub token은 쓰지 않는다. manifest는 `https://github.com/cLazyZombie/aaa/releases/latest/download/manifest.json`, 지정판은 `/releases/download/v<판>/manifest.json`이다. asset은 그 manifest 판의 같은 공개 저장소 release URL만 받는다. 전송 중단·checksum·self-check 실패면 기존 실행 파일과 보관은 건드리지 않고 staging을 지운다. 자동 재시도·우회 설치는 없다.
@@ -213,7 +213,7 @@ git tag v0.1.1
 git push origin refs/tags/v0.1.1
 ```
 
-`.github/workflows/release.yml`은 웹을 먼저 빌드해 실행 파일 안에 넣고, macOS arm64·Intel, Windows x86_64, Linux x86_64·arm64(musl)를 각각 빌드한다. 자기 runner에서 `aaa --version`까지 확인한 뒤 실행 파일 다섯 개·macOS launcher JSON 두 개·`SHA256SUMS`·`manifest.json`을 같은 공개 release에 올린다. 최초에는 Actions 다섯 빌드 및 게시 완료, asset 이름·checksum·웹 포함을 확인하고 시험 머신의 dry-run·실제 update·rollback 뒤 운영에 순차 배포한다. release workflow를 만드는 thread는 tag나 branch를 push하지 않는다.
+`.github/workflows/release.yml`은 웹을 먼저 빌드해 실행 파일 안에 넣고, macOS arm64, Windows x86_64, Linux x86_64·arm64(musl)를 각각 빌드한다. 자기 runner에서 `aaa --version`까지 확인한 뒤 실행 파일 네 개·macOS arm64 launcher JSON·`SHA256SUMS`·`manifest.json`을 같은 공개 release에 올린다. Actions 네 빌드 및 게시 완료, asset 이름·checksum·웹 포함을 확인하고 시험 머신의 dry-run·실제 update·rollback 뒤 운영에 순차 배포한다. release workflow를 만드는 thread는 tag나 branch를 push하지 않는다.
 
 | 항목 | herdr 참고본 | aaa와 다른 이유 |
 | --- | --- | --- |

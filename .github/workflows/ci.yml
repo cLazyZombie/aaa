@@ -35,17 +35,17 @@ jobs:
   # (macOS Safari·iPad 하드웨어 키보드·화면 키보드가 올라온 iPad)이 웹·터미널 코드를 바꾸는 모든 commit에서 돈다.
   web-e2e:
     if: ${{ !inputs.windows_native_diagnostic && !inputs.macos_arm_diagnostic }}
-    name: web-e2e + artifact (macos-15-intel, ${{ matrix.shard }}/3)
+    name: web-e2e + artifact (macos-15, ${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(inputs.e2e_route_diagnostic && '[2]' || '[1,2,3]') }}
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 40
     env:
       PLAYWRIGHT_VERSION: "1.64.1"
-      # 4 CPU Intel 러너에서 host·agent·두 브라우저를 두 벌 돌리지 않는다. 모든 spec·기기는
-      # 세 독립 러너에 나누고 한 러너는 하나씩 실행한다. 로컬 착지 gate는 전수·재시도 0이다.
+      # 모든 spec·기기는 세 독립 러너에 나누고 한 러너는 하나씩 실행한다.
+      # 로컬 착지 gate는 전수·재시도 0이다.
       AAA_E2E_WORKERS: "1"
     steps:
       - uses: actions/checkout@v5
@@ -133,7 +133,7 @@ jobs:
             if [ -n "$ARTIFACT_ID" ]; then upload='완료'; else upload='올릴 파일 없음'; fi
           fi
           {
-            printf '### 웹 E2E (macos-15-intel, %s/3)\n\n' '${{ matrix.shard }}'
+            printf '### 웹 E2E (macos-15, %s/3)\n\n' '${{ matrix.shard }}'
             printf '| 단계 | 결과 |\n| --- | --- |\n'
             printf '| 웹 E2E | %s |\n| 결과 업로드 | %s |\n' "$(label "$E2E_OUTCOME")" "$upload"
           } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -160,10 +160,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.windows_native_diagnostic && '["windows-2025"]' || inputs.macos_arm_diagnostic && '["macos-15"]' || '["macos-15-intel","ubuntu-24.04","windows-2025"]') }}
+        os: ${{ fromJSON(inputs.windows_native_diagnostic && '["windows-2025"]' || inputs.macos_arm_diagnostic && '["macos-15"]' || '["macos-15","ubuntu-24.04","windows-2025"]') }}
     runs-on: ${{ matrix.os }}
-    # Intel 전수의 첫 verify codegen·실제 설치까지 수용한다. 개별 owner의 시한은 그대로다.
-    timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 60 || 40 }}
+    timeout-minutes: 40
     steps:
       # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
       - run: git config --global core.autocrlf false
@@ -193,7 +192,7 @@ jobs:
             ~/.cargo/git/db
             target
           key: cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
-          # 기존 Rust 키의 OS별 아키텍처가 같은 조합만 전환 캐시로 받는다. Intel 웹은 이 예외를 쓰지 않는다.
+          # 기존 Rust 키의 OS별 아키텍처가 같은 조합만 전환 캐시로 받는다.
           restore-keys: |
             cargo-v2-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
             ${{ (runner.os == 'macOS' && runner.arch == 'ARM64' || runner.os != 'macOS' && runner.arch == 'X64') && format('cargo-v1-{0}-{1}-{2}-{3}-', github.job, runner.os, steps.rust.outputs.rustc, steps.rust.outputs.week) || '' }}
@@ -223,14 +222,13 @@ jobs:
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
-        timeout-minutes: ${{ matrix.os == 'macos-15-intel' && 25 || 15 }}
+        timeout-minutes: 15
         # Unix는 owner 실행기가 CPU 수만큼 binary를 이미 나눈다. 안쪽까지 8개씩
         # 돌리면 3 CPU에 24개 시험이 겹친다. Windows는 단일 Cargo 실행이므로 2개다.
         # 가짜 host·agent·CLI마다 만드는 Tokio runtime도 2 thread로 제한한다.
         env:
           RUST_TEST_THREADS: ${{ matrix.os == 'windows-2025' && '2' || '1' }}
           TOKIO_WORKER_THREADS: "2"
-          AAA_CI_MACOS_INSTALL_PTY_DIAGNOSTICS: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
           AAA_CI_WINDOWS_INSTALL_RECHECK: ${{ matrix.os == 'windows-2025' && !inputs.windows_native_diagnostic && '1' || '0' }}
         run: bash scripts/ci-local.sh --only test --logs . --tee
       # 완료를 기다려 출력하던 shard는 단계 중단 시 사라졌다. 준비/목록/실행 중 원문과

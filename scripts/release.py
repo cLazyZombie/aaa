@@ -19,17 +19,15 @@ RELEASES = "https://github.com/cLazyZombie/aaa/releases/download"
 ASSETS = {
     "linux-x86_64": "aaa-linux-x86_64",
     "linux-aarch64": "aaa-linux-aarch64",
-    "macos-x86_64": "aaa-macos-x86_64",
     "macos-aarch64": "aaa-macos-aarch64",
     "windows-x86_64": "aaa-windows-x86_64.exe",
 }
 BOOTSTRAP = "aaa-install-windows.ps1"
 WINDOWS_ENTRY = "install.ps1"
-LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json", "macos-x86_64": "aaa-launcher-macos-x86_64.json"}
+LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json"}
 SYMBOLS = {
     "windows-x86_64": "aaa-windows-x86_64.pdb.gz",
     "macos-aarch64": "aaa-macos-aarch64.dSYM.tar.gz",
-    "macos-x86_64": "aaa-macos-x86_64.dSYM.tar.gz",
 }
 
 

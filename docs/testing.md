@@ -1,3 +1,4 @@
+- t-2219 [macOS 지원 범위 변경과 Apple Silicon 로그 회전 확인](testing-macos-arm64-only-t-2219.md)
 - t-2216 [작업 폴더가 먼저 사라진 thread의 종료 검증](testing-resolve-worktree-loss-t-2216.md)
 - t-2209 [열린 질문 카드의 선택 안내와 별개 승인](testing-question-guard-t2209.md)
 - t-2208 [종료 전 마지막 보고 사본과 작업 폴더 정리 검증](testing-report-final-copy-t-2208.md)

@@ -67,7 +67,7 @@
 | 항목 | 이번 설계 |
 |---|---|
 | 중심 머신 | macOS 한 대에서 host backend를 돌린다. 단일 사용자·단일 권위 상태 저장소이고, 프로젝트별로 coordinator agent가 있다 |
-| agent 머신 | 대상: macOS arm64/x64, Linux x64/arm64, Windows x64 native. 중심 Mac도 로컬 agent backend로 agent를 돌린다. Windows arm64는 후속 검증 |
+| agent 머신 | 대상: macOS arm64, Linux x64/arm64, Windows x64 native. 중심 Mac도 로컬 agent backend로 agent를 돌린다. Windows arm64는 후속 검증 |
 | Windows | ConPTY가 되는 지원 버전부터 시작하고, 우선 Windows 11 x64다. WSL로 Windows 지원을 대신하지 않는다 |
 | macOS | SMAppService가 있는 macOS 13 이상을 후보로 둔다. 실제 하한은 서명·성능 gate에서 확정한다. 현재 운영 버전(27.x) 검증은 필수다 |
 | Linux | glibc 환경이 우선이다. systemd user + linger를 쓰고, 없으면 명시적 foreground 감독으로 돈다. musl 확대는 별도로 검증한다 |

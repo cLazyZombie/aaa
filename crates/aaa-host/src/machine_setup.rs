@@ -8,7 +8,7 @@
 //!   known_hosts로 `StrictHostKeyChecking=yes` 접속을 한다: 아는 키면 바로 감지, 모르는 키면 「믿음」 단계, 바뀐 키면 멈춘다.
 //!   사람이 지문을 믿으면 받은 줄을 aaa 전용 known_hosts(`<state>/ssh/known_hosts`)에만 더한다. 사용자 known_hosts는 읽기만 한다.
 //! - **감지.** 고정 echo로 믿는 키의 접속을 확인한 뒤 `sh -c`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판을 읽고, 표지가 없으면(Windows 기본 셸 cmd) PowerShell
-//!   `-EncodedCommand`로 다시 읽는다. 그래도 모르면 사람이 고른다. release 대상(macOS arm64·x86_64, Linux x86_64·arm64,
+//!   `-EncodedCommand`로 다시 읽는다. 그래도 모르면 사람이 고른다. release 대상(macOS arm64, Linux x86_64·arm64,
 //!   Windows x86_64)이 아닌 조합은 「지원 안 함」.
 //! - **작업.** host DB `machine_setups`에 JSON으로 남고 바뀔 때마다 웹 `enroll` 사건을 보낸다. host가 진행 중에 다시 시작하면
 //!   그 작업은 「멈췄다」로 끝난다(다시 시작은 새 작업).
@@ -38,8 +38,9 @@ const MARK: &str = "AAA-DETECT-1";
 const END: &str = "AAA-DETECT-END";
 
 /// release 대상(.github/workflows/release.yml)
-pub(crate) const TARGETS: [(&str, &str); 5] =
-    [("macos", "aarch64"), ("macos", "x86_64"), ("linux", "x86_64"), ("linux", "aarch64"), ("windows", "x86_64")];
+pub(crate) const TARGETS: [(&str, &str); 4] =
+    [("macos", "aarch64"), ("linux", "x86_64"), ("linux", "aarch64"), ("windows", "x86_64")];
+const SUPPORTED_TARGETS: &str = "macOS arm64, Linux arm64·x86_64, Windows x86_64";
 
 fn bad(msg: impl Into<String>) -> ErrorBody {
     ErrorBody::new(ErrorCode::BadRequest, msg.into())
@@ -598,10 +599,7 @@ impl Host {
                 j.view.phase = if TARGETS.contains(&(d.os.as_str(), d.arch.as_str())) {
                     MachineSetupPhase::Ready
                 } else {
-                    j.view.error = Some(format!(
-                        "{}에 넣을 aaa release가 없다(지원: macOS·Linux arm64·x86_64, Windows x86_64)",
-                        d.raw
-                    ));
+                    j.view.error = Some(format!("{}에 넣을 aaa release가 없다(지원: {SUPPORTED_TARGETS})", d.raw));
                     MachineSetupPhase::Unsupported
                 };
                 j.view.detected = Some(d);
@@ -673,7 +671,7 @@ impl Host {
         actor: &str,
     ) -> Result<MachineSetupView, ErrorBody> {
         if !TARGETS.contains(&(os, arch)) {
-            return Err(bad("release 대상만 고른다: macos·linux의 aarch64·x86_64, windows의 x86_64"));
+            return Err(bad(format!("release 대상만 고른다: {SUPPORTED_TARGETS}")));
         }
         let _g = self.setup_gate.lock().unwrap();
         let mut job = self.setup_load(id)?;

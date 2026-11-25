@@ -55,7 +55,7 @@ I0의 함수는 파일·env·OS·프로세스·네트워크를 읽거나 쓰지 
 | 인스턴스 | `--instance`, `--config-dir`, `--state-dir` | 기존 instance 이름 규칙. default 예약, config/state 충돌 금지. 실물 격리 검사는 I1 |
 | 설치 | `--mode fresh\|repair\|reinstall` | fresh. 같은 실효 계획은 unchanged. 실물 대조는 I1/I2 |
 | binary | `--bin-path`, `--version` 또는 `--from`+`--sha256` | 현재 binary 기본. exact 판만, latest/stable/nightly 금지. from의 파일 SHA 대조는 I1 |
-| 예상 대상 | `--expected-os macos\|linux\|windows`, `--expected-arch aarch64\|x86_64` | 현지 context와 일치해야 함. Windows aarch64 release 지원 주장 없음 |
+| 예상 대상 | `--expected-os macos\|linux\|windows`, `--expected-arch aarch64\|x86_64` | 현지 context와 일치해야 함. 지원 조합은 macOS arm64, Linux arm64·x86_64, Windows x86_64 |
 | 로컬 agent | `--local-agent enabled\|disabled` | host 기본 enabled, agent에는 금지 |
 | 프로젝트 | `--project-mode create\|use\|skip`, `--project`, `--projects-root`, `--goal`, 반복 `--repo`, `--no-repo` | host project-mode 필수. create/use는 이름과 repo/no-repo 선택 필수. agent는 로컬 repo만, host 프로젝트 변경 금지 |
 | 작업 디스크 | `--work-root`, `--work-mount` 또는 `--work-storage internal` | agent/로컬 agent host 필수. mount와 internal 상충. 실물 mount/volume identity는 I1 이후 |
@@ -254,7 +254,7 @@ macOS `--service launchd`는 현재 사용자 `gui/<uid>`의 LaunchAgent를 사�
 GUI 로그인 도메인이 없으면 `service_gui_session_required`/needs_user로 멈춘다. daemon·root·다른 계정으로 대체하지 않는다.
 
 - `--launcher-policy preserve`는 기존 launcher를 보존한다. 없으면 `installation_launcher_required`다.
-  `install`은 선택한 실행 파일 옆 `aaa-launcher-macos-aarch64.json` 또는 `aaa-launcher-macos-x86_64.json`을 읽는다.
+  `install`은 선택한 실행 파일 옆 `aaa-launcher-macos-aarch64.json`을 읽는다.
   새 package는 같은 release 판·OS/CPU·선택 binary SHA와 고정 네 파일을 대조한다. 다운로드/게시 자체는 bootstrap/release 단계다.
   I1의 `--from`은 실행하지 않아 판이 unknown이다. 이 경우 새 launcher는 현재 installer와 SHA가 같은 원본 사본만
   알려진 현재 판으로 대조한다. 다른 원본은 `installation_launcher_binary_unverified`로 멈춘다.

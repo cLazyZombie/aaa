@@ -18,12 +18,11 @@ struct Package {
     files: std::collections::BTreeMap<String, String>,
 }
 pub(super) fn source(plan: &InstallPlan) -> Result<PathBuf> {
+    if plan.context.platform.arch != InstallArch::Aarch64 {
+        return Err(Fault::conflict());
+    }
     let binary = plan.choices.from.as_ref().map(PathBuf::from).unwrap_or(std::env::current_exe().map_err(Fault::io)?);
-    let arch = match plan.context.platform.arch {
-        InstallArch::Aarch64 => "aarch64",
-        InstallArch::X86_64 => "x86_64",
-    };
-    Ok(binary.parent().ok_or_else(Fault::conflict)?.join(format!("aaa-launcher-macos-{arch}.json")))
+    Ok(binary.parent().ok_or_else(Fault::conflict)?.join("aaa-launcher-macos-aarch64.json"))
 }
 pub(super) struct AssetFile {
     pub path: PathBuf,
@@ -67,10 +66,6 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
     };
     let package: Package = serde_json::from_slice(&std::fs::read(asset).map_err(Fault::io)?)
         .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
-    let arch = match plan.context.platform.arch {
-        InstallArch::Aarch64 => "aarch64",
-        InstallArch::X86_64 => "x86_64",
-    };
     // I1은 --from을 실행해 판을 알아내지 않는다. 같은 실행 파일의 사본인 경우에만
     // 현재 installer의 알려진 판을 package 대조에 쓴다. 임의 원본의 판은 추정하지 않는다.
     let version = if plan.context.version == "unverified" {
@@ -84,7 +79,7 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
     };
     if package.schema != 1
         || package.version != version
-        || package.platform != format!("macos-{arch}")
+        || package.platform != "macos-aarch64"
         || package.binary_sha256 != plan.context.binary_sha256
         || package.files.len() != FILES.len()
         || FILES.iter().any(|name| !package.files.contains_key(*name))

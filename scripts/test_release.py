@@ -48,8 +48,9 @@ class ReleaseContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((output / "manifest.json").read_text())
         self.assertEqual(manifest["version"], self.version)
-        self.assertIn("macos-aarch64", manifest["assets"])
-        self.assertIn("windows-x86_64", manifest["assets"])
+        self.assertEqual(set(manifest["assets"]), {"macos-aarch64", "linux-aarch64", "linux-x86_64", "windows-x86_64"})
+        self.assertEqual(set(manifest["launchers"]), {"macos-aarch64"})
+        self.assertEqual(set(manifest["symbols"]), {"macos-aarch64", "windows-x86_64"})
         sums = dict(line.split("  ")[::-1] for line in (output / "SHA256SUMS").read_text().splitlines())
         for platform, asset in manifest["assets"].items():
             name = asset["url"].rsplit("/", 1)[1]

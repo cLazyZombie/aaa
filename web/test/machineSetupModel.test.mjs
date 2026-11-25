@@ -41,7 +41,7 @@ describe("SSH로 추가 M2", () => {
     assert.deepEqual(Object.keys(PHASE).filter((p) => !canCancel(p)), ["installing"]);
   });
   it("release 대상 다섯", () => {
-    assert.deepEqual(TARGETS.map(targetLabel), ["macOS · arm64", "macOS · x86_64", "Linux · x86_64", "Linux · arm64", "Windows · x86_64"]);
+    assert.deepEqual(TARGETS.map(targetLabel), ["macOS · arm64", "Linux · x86_64", "Linux · arm64", "Windows · x86_64"]);
   });
   it("감지 한 줄·접속 줄", () => {
     const d = { os: "macos", arch: "aarch64", raw: "Darwin arm64", chosen: false, home: "/Users/<me>", shell: "/bin/zsh", aaa: null };
