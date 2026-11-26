@@ -55,7 +55,19 @@ impl Host {
                     "새 손 그림·GIF는 문서 폴더 아래 `{media}`에 두고 착지할 때 상대 링크와 자료를 확인한다.\n"
                 ));
             }
-            guide.push_str(&format!("착지 창의 최종 통합 worktree에서 `aaa verify -- aaa plan check <문서 경로> --base <착지 시작 main SHA> --head <최종 통합 SHA> --command-json <아래 JSON 배열을 인자 하나로>`를 실행한다. design_media가 있으면 `--media <설정값>`도 준다. 고친 기획 문서와 새 그림을 확인하고 통과한 SHA를 push한다.\ndesign_check: {}\n", serde_json::json!(target.check)));
+            guide.push_str("\n착지 시작 main과 최종 통합 SHA를 비교해 검사 범위를 고른다. 같은 최종 통합 worktree에서 문서 검사와 저장소 검증을 실행하고 통과한 SHA를 push한다.\n");
+            guide.push_str(&format!(
+                "- **기획 문서·그림만 변경**. `aaa verify -- aaa plan check <문서 경로> --base <착지 시작 main SHA> \
+                 --head <최종 통합 SHA> --command-json <아래 JSON 배열을 인자 하나로>`를 실행한다. \
+                 design_media가 있으면 `--media <설정값>`도 준다. 문서 전용 검사기는 `.json`처럼 저장소가 허용한 문서·그림 범위 밖의 파일이 들어오면 중단한다.\n\n  design_check: {}\n",
+                serde_json::json!(target.check),
+            ));
+            guide.push_str(
+                "- **코드와 기획 문서를 함께 변경**. 저장소 안내에 따라 손으로 고친 문서·그림을 골라 \
+                 `aaa verify -- <저장소 문서 검사 명령과 인자>`로 직접 검사한다. 상대 링크가 가리키는 자료를 확인하고, \
+                 design_media가 있으면 새 그림이 문서 폴더 아래 지정된 위치에 있는지도 확인한다. \
+                 생성물은 저장소 절차로 검증한 뒤 저장소 전체 검증을 실행한다.\n",
+            );
         }
         let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
