@@ -889,6 +889,9 @@ async fn question_guard_checks_open_card_guidance_and_separate_approval_at_turn_
     let start = request.created_ms + 1;
     let guidance =
         format!("[검수 질문](#question={id})을 열었습니다.\n화면을 같이 올렸습니다.\n\n보시고 하나를 골라 주세요.");
+    let choices = format!(
+        "시안을 검수해 주세요 → [검수 질문](#question={id})\n\n**바뀐 점**\n화면을 같이 올렸습니다.\n\n**선택지**\n- A 첫 안 (추천)\n- B 둘째 안"
+    );
     let warnings = || {
         h.db.inbox_list(Some("demo"), true)
             .unwrap()
@@ -900,20 +903,23 @@ async fn question_guard_checks_open_card_guidance_and_separate_approval_at_turn_
     h.on_harness("m", completed_reply("codex", start, start, &guidance));
     assert!(warnings().is_empty(), "열린 카드에 연결한 선택 안내: {:?}", warnings());
 
-    let approval = format!("{guidance} 로컬 시안 브랜치를 지울까요?");
+    h.on_harness("m", completed_reply("codex", start, start + 1, &choices));
+    assert!(warnings().is_empty(), "설명 뒤의 선택지: {:?}", warnings());
+
+    let approval = format!("{choices}\n\n로컬 시안 브랜치를 지울까요?");
     // 이번 완료 턴에서 기존 카드가 실제 접수됐어도 브랜치 삭제는 별개 승인이다.
-    let event = completed_reply("codex", request.created_ms, start + 1, &approval);
+    let event = completed_reply("codex", request.created_ms, start + 2, &approval);
     h.on_harness("m", event.clone());
     let items = warnings();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].event, EVENT);
-    assert!(items[0].summary.contains("답변 4행 · 질문 어미"));
+    assert!(items[0].summary.contains("답변 10행 · 질문 어미"));
     h.inbox_finish_where("demo", |i| i.event == EVENT);
     h.on_harness("m", event);
     assert_eq!(warnings().len(), 1, "처리한 완료 사건은 다시 경고하지 않는다");
 
     h.post_handled("demo", &id, actor).unwrap();
-    h.on_harness("m", completed_reply("codex", start, start + 2, &guidance));
+    h.on_harness("m", completed_reply("codex", start, start + 3, &choices));
     let items = warnings();
     assert_eq!(items.len(), 2);
     let stale = items.iter().find(|i| i.event == STALE_EVENT).unwrap();

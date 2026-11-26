@@ -8,6 +8,135 @@ fn inspect(text: &str, cards: &HashMap<String, CardState>) -> Inspection {
     super::inspect(text, cards, &HashMap::new())
 }
 
+// 11-26 감사 기록과 완료 답변을 대조했다. 경고 구절과 카드 배치를 보존하고 링크 주소와 무관한 설명을 줄였다.
+const NOV_26_REVIEW: &str = concat!(
+    "서리 거인 발 구르기 시안을 검수해 주세요 → [q-4913 질문](#question=q-4913)\n\n",
+    "**바뀐 점**\n- 뛰는 동작을 바꿨습니다.\n\n",
+    "**알아 둘 점**\n- 영상은 두 개입니다.\n\n",
+    "**선택지**\n",
+    "- A(추천): 좋음. 설계 문서, 테스트, 검증까지 마무리합니다.\n",
+    "- B: 한 단계 더 높고 무겁게 다시 찍습니다.\n",
+    "- C: 고칠 곳을 글로 적어 주시면 반영합니다.",
+);
+const NOV_26_SCOPE: &str = concat!(
+    "수리 범위를 정해 주셔야 합니다 → [q-4915 질문](#question=q-4915)\n\n",
+    "**원인**\n- macOS 영상 재생 엔진에서 생기는 멈춤입니다.\n\n",
+    "**thread가 낸 선택지**\n",
+    "- **A(추천):** 원본 재생을 그대로 두고 플랫폼 결함으로 기록합니다.\n",
+    "- **B:** 기존 영상을 보존하면서 따로 호환 재생본을 만드는 방안을 검토합니다.\n\n",
+    "**제 의견**\n- 이 경우 카드에 직접 적어 주시면 됩니다.",
+);
+const NOV_26_NUMBERED: &str = concat!(
+    "**질문**\n",
+    "1. [q-4944 질문](#question=q-4944): 시안 전체. 추천은 **A 이대로 확정**입니다.\n",
+    "2. [q-4945 질문](#question=q-4945): 나올 때 전환.\n",
+    "3. [q-4946 질문](#question=q-4946): 여우 자리.\n",
+    "4. [q-4947 질문](#question=q-4947): 대사. 추천은 **A 이대로**입니다. ",
+    "고칠 대사가 있으면 B를 고르고 번호와 고칠 말을 채팅으로 알려 주세요.\n",
+    "5. [q-4948 질문](#question=q-4948): 전환 길이.\n\n",
+    "끝날 때 대사는 결과 하나에 2가지뿐입니다. 결과마다 5가지 이상을 원하시면 4번에서 B를 고르고 말씀해 주세요.",
+);
+const NOV_26_CORRECTION: &str = "내려찍는 순간 주인공이 피해를 입는다는 뜻으로 읽었습니다. 서 있는 동안 주인공이 거인을 때릴 틈을 말씀하신 거라면 알려 주세요.";
+const NOV_26_DEPLOY_STATUS: &str = concat!(
+    "요약 사전 검사 명령이 aaa main에 들어갔습니다.\n\n",
+    "**배포할 변경**\n어제 배포 이후 aaa에 들어간 변경이 두 건 있습니다. 둘 다 아직 배포되지 않았습니다.\n",
+    "- macOS WebKit 영상 탐색 시험 예외\n- 요약 사전 검사 명령\n\n",
+    "배포할지 말씀해 주세요.",
+);
+const NOV_26_DEPLOY_CHAT: &str = "배포하려면 채팅으로 「배포해」라고 말씀해 주세요.";
+const NOV_26_DEPLOY_CHAT_SHORT: &str = "배포하려면 채팅으로 「배포해」라고 해 주세요.";
+
+fn november_26_cards() -> HashMap<String, CardState> {
+    ["q-4913", "q-4915", "q-4944", "q-4945", "q-4946", "q-4947", "q-4948"]
+        .into_iter()
+        .map(|id| (id.to_owned(), CardState::Open))
+        .collect()
+}
+
+#[test]
+fn november_26_observed_card_and_chat_guidance() {
+    let cards = november_26_cards();
+    let mut unexpected = Vec::new();
+    for (time, text) in [
+        ("06:36", NOV_26_CORRECTION),
+        ("06:49", NOV_26_REVIEW),
+        ("07:08", NOV_26_SCOPE),
+        ("08:32", NOV_26_DEPLOY_STATUS),
+        ("14:48", NOV_26_DEPLOY_CHAT),
+        ("16:05", NOV_26_NUMBERED),
+        ("21:02", NOV_26_DEPLOY_CHAT_SHORT),
+    ] {
+        let result = inspect(text, &cards);
+        if result.missing.is_some() || result.stale.is_some() {
+            unexpected.push(format!("{time}: {:?} {:?}", result.missing, result.stale));
+        }
+    }
+    assert!(unexpected.is_empty(), "{}", unexpected.join("\n"));
+}
+
+#[test]
+fn november_26_guidance_preserves_separate_approvals_and_unknown_cards() {
+    let cards = november_26_cards();
+    let approval = "배포 승인 여부를 알려 주세요.";
+    for guidance in [
+        NOV_26_CORRECTION,
+        NOV_26_REVIEW,
+        NOV_26_SCOPE,
+        NOV_26_NUMBERED,
+        NOV_26_DEPLOY_STATUS,
+        NOV_26_DEPLOY_CHAT,
+        NOV_26_DEPLOY_CHAT_SHORT,
+    ] {
+        for text in [format!("{guidance}\n\n{approval}"), format!("{}, {approval}", guidance.trim_end_matches('.'))] {
+            assert_eq!(inspect(&text, &cards).missing.map(|e| e.rule), Some("request"), "{text}");
+        }
+    }
+    for text in [
+        "배포할지 말씀해 주세요.".to_owned(),
+        NOV_26_DEPLOY_STATUS.replace("배포할지", "지금 배포할지"),
+        NOV_26_DEPLOY_STATUS.replace("둘 다 아직 배포되지 않았습니다.", "배포 승인을 기다립니다."),
+        NOV_26_DEPLOY_CHAT.replace("「배포해」", "「배포를 승인해」"),
+        NOV_26_DEPLOY_CHAT.replace("채팅으로 「배포해」라고", "배포 승인 여부를"),
+        NOV_26_CORRECTION.replace("알려 주세요", "배포 승인 여부를 알려 주세요"),
+        NOV_26_REVIEW.replace("q-4913", "q-9999"),
+        NOV_26_SCOPE.replace("**원인**", "**별개 작업**"),
+        NOV_26_NUMBERED.replace("q-4947", "q-9999"),
+        NOV_26_NUMBERED.replace("고칠 말을 채팅으로", "배포 승인 여부를"),
+        NOV_26_NUMBERED.replace("B를 고르고 번호와 고칠 말을 채팅으로", "배포 승인 여부를"),
+        format!("{NOV_26_REVIEW}\n\n**별개 작업**\n\n**선택지**\n- A 배포 (추천)\n- B 보류"),
+    ] {
+        assert!(inspect(&text, &cards).missing.is_some(), "{text}");
+    }
+}
+
+#[test]
+fn november_26_numbered_choice_resolves_only_the_displayed_item() {
+    let text = concat!(
+        "3. [q-4946 질문](#question=q-4946): 여우 자리.\n",
+        "1. [q-4947 질문](#question=q-4947): 대사.\n",
+        "1. [q-4948 질문](#question=q-4948): 전환 길이.\n\n",
+        "4번에서 **B**를 고르고 번호와 고칠 말을 채팅으로 알려 주세요.",
+    );
+    let mut cards = november_26_cards();
+    let result = inspect(text, &cards);
+    assert!(result.missing.is_none() && result.stale.is_none(), "{:?} {:?}", result.missing, result.stale);
+    for state in [CardState::Answered, CardState::Closed] {
+        cards.insert("q-4947".into(), state);
+        let result = inspect(text, &cards);
+        assert!(result.missing.is_none());
+        assert_eq!(result.stale.unwrap().refs, [("q-4947".into(), state)]);
+    }
+    cards.remove("q-4947");
+    assert!(inspect(text, &cards).missing.is_some());
+    for text in [
+        text.replace("4번에서", "6번에서"),
+        text.replace("4번에서", "**다른 작업**\n\n4번에서"),
+        text.replace("고칠 말을 채팅으로", "배포 승인 여부를"),
+    ] {
+        assert!(inspect(&text, &november_26_cards()).missing.is_some(), "{text}");
+    }
+}
+
 /// 11-18의 오탐 세 건과 실제 터미널 조작 요청. 주소와 주변 작업 설명은 예시로 바꿨다.
 #[test]
 fn observed_model_offer_and_existing_card_options_do_not_warn() {

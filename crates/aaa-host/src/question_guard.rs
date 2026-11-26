@@ -91,6 +91,12 @@ struct Block {
     question_group: Option<usize>,
 }
 
+impl Block {
+    fn heading(&self, markdown: &Markdown) -> Option<&str> {
+        heading(self.text.lines().next()?, markdown.headings.contains(&self.line))
+    }
+}
+
 fn ids(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
         .filter_map(|s| aaa_proto::canonical_short_id(s, 'q'))
@@ -176,8 +182,14 @@ fn mask_withdrawn_card(text: &mut String, next_paragraph: &str, cards: &HashMap<
     }
 }
 
-/// 간접 인용은 보고한 구절만 지운다. 같은 줄의 카드 안내·새 요청까지 지우지 않는다.
+/// 간접 인용과 채팅 명령 안내를 구절 단위로 지운다.
 fn prose(line: &str) -> String {
+    static CHAT_DEPLOY: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"\b배포하려면\s+채팅으로\s+(?:「배포해」|“배포해”|"배포해"|'배포해'|`배포해`|배포해)라고\s*(?:말씀해|해)\s*(?:주세요|주십시오)\b"#,
+        )
+        .unwrap()
+    });
     static QUOTES: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"`[^`\n]*`|「[^」]*」|“[^”]*”|"[^"\n]*"|'[^'\n]*'"#).unwrap());
     static INDIRECT: LazyLock<Regex> = LazyLock::new(|| {
@@ -186,7 +198,8 @@ fn prose(line: &str) -> String {
         )
         .unwrap()
     });
-    let unquoted = QUOTES.replace_all(line, "");
+    let guidance_removed = CHAT_DEPLOY.replace_all(line, |c: &regex::Captures<'_>| " ".repeat(c[0].len()));
+    let unquoted = QUOTES.replace_all(&guidance_removed, "");
     INDIRECT.replace_all(&unquoted, "$1").into_owned()
 }
 
@@ -211,6 +224,7 @@ struct ListLine {
 struct OrderedList {
     start: usize,
     end: usize,
+    first_number: u64,
     items: Vec<usize>,
 }
 
@@ -243,17 +257,19 @@ fn markdown(text: &str) -> Markdown {
                 excluded += 1;
             }
             Event::End(TagEnd::BlockQuote(_) | TagEnd::CodeBlock | TagEnd::Heading(_)) => excluded -= 1,
-            Event::Start(Tag::List(ordinal)) => lists.push(if ordinal.is_some() && excluded == 0 {
-                let index = markdown.ordered.len();
-                markdown.ordered.push(OrderedList {
-                    start: line_at(span.start),
-                    end: line_at(span.end.saturating_sub(1)),
-                    items: Vec::new(),
+            Event::Start(Tag::List(ordinal)) => {
+                let list = ordinal.filter(|_| excluded == 0).map(|first_number| {
+                    let index = markdown.ordered.len();
+                    markdown.ordered.push(OrderedList {
+                        start: line_at(span.start),
+                        end: line_at(span.end.saturating_sub(1)),
+                        first_number,
+                        items: Vec::new(),
+                    });
+                    index
                 });
-                Some(index)
-            } else {
-                None
-            }),
+                lists.push(list);
+            }
             Event::End(TagEnd::List(_)) => {
                 lists.pop();
             }
@@ -306,6 +322,12 @@ fn markdown(text: &str) -> Markdown {
     markdown
 }
 
+fn heading(line: &str, markdown_heading: bool) -> Option<&str> {
+    let line = line.trim_start();
+    (markdown_heading || line.starts_with("**") && line.ends_with("**"))
+        .then(|| line.trim_matches('*').trim_start_matches('#').trim())
+}
+
 /// 인용·코드를 제외하고 제목과 문단의 연결을 보존한다.
 fn blocks(text: &str, markdown: &Markdown) -> Vec<Block> {
     let mut out: Vec<Block> = Vec::new();
@@ -328,13 +350,13 @@ fn blocks(text: &str, markdown: &Markdown) -> Vec<Block> {
             separated = true;
             continue;
         }
-        let heading = t.trim_matches('*').trim_start_matches('#').trim();
-        let title = markdown.headings.contains(&(index + 1)) || t.starts_with("**") && t.ends_with("**");
+        let title = heading(t, markdown.headings.contains(&(index + 1)));
+        let heading = title.unwrap_or_default();
         // 한 주제 안의 질문 1·2가 뒤의 카드 목록을 공유할 수 있다.
         let numbered = heading.chars().next().is_some_and(|c| c.is_ascii_digit()) && heading.contains(['.', ')']);
         // 목록 제목을 건너 연결할 수 있는 것은 선택지뿐이다. 독립 승인 요청은 계속 분리한다.
         let presentation = matches!(heading, "선택지" | "고칠 방식" | "정할 것");
-        if title && !heading.starts_with("질문") && !heading.starts_with("추천") && !numbered {
+        if title.is_some() && !heading.starts_with("질문") && !heading.starts_with("추천") && !numbered {
             section += 1;
             if !presentation {
                 choices_section += 1;
@@ -342,7 +364,9 @@ fn blocks(text: &str, markdown: &Markdown) -> Vec<Block> {
             question_group = None;
             separated = true;
         }
-        if title && let Some(number) = heading.strip_prefix("질문") {
+        if title.is_some()
+            && let Some(number) = heading.strip_prefix("질문")
+        {
             let digits = number.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect::<String>();
             if let Ok(number) = digits.parse() {
                 question_group = Some(number);
@@ -396,8 +420,10 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<Req
         Regex::new(r"(?i)(?:원하시면|원하신다면|싶으시면|싶으면|시려면|시작하려면|뜻이 다르면|다른 뜻|만료되면|재부팅|끝나면|그 뒤에|나중에|흐리면|문제가.*면|카드가 뜨면|카드가 나오면|올라오면|옮길 때|때가 되면|이었다면|시간이 지나면|항목이 있으면|if you want|if you'd like|if needed)").unwrap()
     });
     static OPTIONAL_FEEDBACK: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:필요하면|필요하다면|모델\s*을\s*바꾸려면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|다른\s*[가-힣 ]{1,40}(?:을|를)\s*말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
+        Regex::new(r"(?:필요하면|필요하다면|모델\s*을\s*바꾸려면|지우려면|삭제하려면|다르면|다르게\s*생각하시면|다르게 생각하신 거라면|다르게\s*뜻하셨(?:으면|다면)|다른 작업을 뜻하셨다면|\b말씀하신\s*거라면|다른\s*[가-힣]{1,24}(?:이라면|라면)\s*그때|뜻이셨다면|겹쳐야\s*한다면|(?:오류|증상)(?:\s*(?:문구|메시지))?(?:가|이)\s*있었다면|(?:경우|문제|오류|증상)(?:가|이)\s*있으면)\s*(?:따로\s*)?(?:말씀해|알려)\s*(?:주세요|주십시오)|^\s*(?:말씀해|알려)\s*(?:주세요|주십시오)\s*[,，]\s*(?:필요하면|필요하다면)").unwrap()
     });
+    static DEPLOY_HANDOFF: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\s*배포할지\s*말씀해\s*(?:주세요|주십시오)\b").unwrap());
     static DECIDED_NAME: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:^|[.!?？。\n])\s*(?:(?:폴더|디렉터리)\s+)?이름(?:은|을)\s+(?:제가\s+)?(?:[\w/-]*로\s+)?(?:정했습니다|확정했습니다)[.!。]?\s*$").unwrap()
     });
@@ -422,6 +448,11 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<Req
     let mut offset = 0;
     let mut previous = previous_block.unwrap_or_default();
     let mask = |m: &regex::Captures<'_>| " ".repeat(m[0].len());
+    let deploy_status = previous_block.is_some_and(|block| {
+        let mut lines = block.lines();
+        lines.next().is_some_and(|line| line.trim_matches(['*', '#', ' ']) == "배포할 변경")
+            && lines.any(|line| line.contains("아직 배포되지 않았습니다."))
+    });
     for sentence in text.split_inclusive(['.', '!', '?', '？', '。', ';', '\n']) {
         let mut matches = QUESTION.find_iter(sentence).map(|m| ("question", m.range())).collect::<Vec<_>>();
         // 직전 확정·완료 안내에 붙은 의견 구절만 같은 바이트 길이의 공백으로 바꾼다.
@@ -432,6 +463,8 @@ fn requests(text: &str, required: bool, previous_block: Option<&str>) -> Vec<Req
         } else {
             std::borrow::Cow::Borrowed(sentence)
         };
+        let actionable =
+            if offset == 0 && deploy_status { DEPLOY_HANDOFF.replace_all(&actionable, mask) } else { actionable };
         if !sentence.trim().is_empty() {
             previous = sentence;
         }
@@ -688,16 +721,28 @@ impl CardLinks<'_> {
         self.blocks[..=index].iter().rev().find_map(|b| b.text.lines().nth(line.checked_sub(b.line)?))
     }
 
-    fn named_group_ids(&self, index: usize, line: usize, expected: usize) -> Vec<String> {
+    fn topic_start(&self, index: usize) -> usize {
         let block = &self.blocks[index];
-        let topic_start = self.blocks[..=index]
+        self.blocks[..=index]
             .iter()
             .rev()
             .take_while(|b| b.section == block.section && b.question_group == block.question_group)
             .last()
-            .map_or(block.line, |b| b.line);
-        let Some(list) = self.markdown.ordered.iter().rev().find(|list| list.start >= topic_start && list.end < line)
-        else {
+            .map_or(block.line, |b| b.line)
+    }
+
+    fn preceding_numbered_list(&self, index: usize, line: usize) -> Option<&OrderedList> {
+        let topic_start = self.topic_start(index);
+        self.markdown.ordered.iter().rev().find(|list| list.start >= topic_start && list.end < line)
+    }
+
+    fn numbered_item_id(&self, index: usize, item: usize) -> Option<String> {
+        let [id] = self.markdown.item_cards.get(&item)?.as_slice() else { return None };
+        self.ids(self.line(index, item)?).contains(id).then(|| id.clone())
+    }
+
+    fn named_group_ids(&self, index: usize, line: usize, expected: usize) -> Vec<String> {
+        let Some(list) = self.preceding_numbered_list(index, line) else {
             return Vec::new();
         };
         if list.items.len() != expected {
@@ -705,18 +750,56 @@ impl CardLinks<'_> {
         }
         let mut result = Vec::new();
         for &item in &list.items {
-            let Some((id, source)) = self.markdown.item_cards.get(&item).and_then(|cards| {
-                let [id] = cards.as_slice() else { return None };
-                Some((id, self.line(index, item)?))
-            }) else {
+            let Some(id) = self.numbered_item_id(index, item) else {
                 return Vec::new();
             };
-            if !self.ids(source).contains(id) || result.contains(id) {
+            if result.contains(&id) {
                 return Vec::new();
             }
-            result.push(id.clone());
+            result.push(id);
         }
         result
+    }
+
+    /// 선택지 제목 앞의 해설을 건너뛰고 그 주제를 연 "→ 질문" 링크에만 연결한다.
+    fn described_choice_ids(&self, index: usize) -> Option<Vec<String>> {
+        static REFERENCE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(&format!(r"^\s*{CARD_REFERENCE}\s*$")).unwrap());
+        let mut sections = self.blocks[..=index].chunk_by(|left, right| left.section == right.section).rev();
+        let title = sections.next()?.first()?.heading(self.markdown)?;
+        if !matches!(title, "선택지" | "thread가 낸 선택지") {
+            return None;
+        }
+        let intro = sections
+            .map(|section| &section[0])
+            .find(|block| !matches!(block.heading(self.markdown), Some("바뀐 점" | "알아 둘 점" | "원인")))?;
+        let (_, reference) = intro.text.lines().next()?.rsplit_once('→')?;
+        REFERENCE.is_match(reference).then(|| self.ids(reference))
+    }
+
+    /// 선택 뒤에 덧붙일 말은 그 목록 항목, 또는 명시한 질문 번호의 카드에만 연결한다.
+    fn numbered_choice_id(&self, index: usize, request: &Request, prose: &str, line: usize) -> Option<String> {
+        static PICK: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"(?:(?<number>[0-9]+)번에서\s*)?\*{0,2}\b[A-D]\*{0,2}\s*(?:를|을)\s*(?:고르고|선택하고|고른\s*뒤|선택한\s*뒤)\b",
+            )
+            .unwrap()
+        });
+        let clause = &prose[request.scope.clone()];
+        let ask = &prose[request.offset..request.scope.end];
+        if decision_details(clause) || !(ask.starts_with("알려") || ask.starts_with("말씀해")) {
+            return None;
+        }
+        let pick = PICK.captures_iter(&prose[request.scope.start..request.offset]).last()?;
+        let item = if let Some(number) = pick.name("number") {
+            let list = self.preceding_numbered_list(index, line)?;
+            let number = number.as_str().parse::<u64>().ok()?;
+            let offset = usize::try_from(number.checked_sub(list.first_number)?).ok()?;
+            *list.items.get(offset)?
+        } else {
+            self.markdown.list_lines.get(&line)?.item_line
+        };
+        self.numbered_item_id(index, item)
     }
 
     fn link(&self, index: usize, request: &Request, prose: &str, line: usize, has_next: bool) -> CardLink {
@@ -741,6 +824,14 @@ impl CardLinks<'_> {
         // 기존 카드의 빠른 응답은 명시한 카드의 증거를 없애지 않는다.
         if fresh || own.iter().any(|id| !self.cards.contains_key(id)) {
             return CardLink::Mentioned(own);
+        }
+        if own.is_empty() {
+            if is_choices && let Some(ids) = self.described_choice_ids(index) {
+                return CardLink::Guidance { expected: 1, ids };
+            }
+            if is_request && let Some(id) = self.numbered_choice_id(index, request, prose, line) {
+                return CardLink::Guidance { expected: 1, ids: vec![id] };
+            }
         }
         if is_request && let Some(count) = summary_card_count(prose, request.offset) {
             let ids = if self.reply_ids.len() >= count { self.reply_ids.clone() } else { Vec::new() };
@@ -840,11 +931,11 @@ impl CardLinks<'_> {
             linked = self.reply_ids.clone();
         }
         // 그 턴에서 앞 카드를 실제로 올렸어도 뒤의 별개 승인은 새 카드가 필요하다.
-        if linked.is_empty()
-            && !earlier.is_empty()
-            && (request.rule == "question" || is_request && decision_details(clause))
-        {
-            return CardLink::SeparateRequest;
+        if linked.is_empty() && (request.rule == "question" || is_request && decision_details(clause)) {
+            let described = || self.described_choice_ids(index).is_some_and(|ids| ids.iter().any(known));
+            if !earlier.is_empty() || described() {
+                return CardLink::SeparateRequest;
+            }
         }
         CardLink::Mentioned(linked)
     }
