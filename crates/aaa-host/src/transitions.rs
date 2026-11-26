@@ -270,8 +270,8 @@ impl Host {
     }
 
     /// 검토 대기인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
-    /// 계속 작업하는 thread의 착지·완료·확인 필요도 hash당 한 번 inbox에 남긴다. push는 완료·확인 필요만이다. 상태·진행률은 그대로다.
-    /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다. 낸 항목은 앱 안 알림으로도 보낸다(notice.rs). 냈으면 true
+    /// 계속 작업하는 thread의 착지·완료·확인 표지도 hash당 한 번 inbox에 남긴다. 모두 답한 검수는 일반 새 보고로 남긴다.
+    /// 완료·미답 확인 요청은 앱 안 알림으로도 보낸다(notice.rs). inbox에 새 항목을 냈으면 true.
     pub(crate) fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
             return false;
@@ -308,6 +308,7 @@ impl Host {
         {
             return false;
         }
+        let attention = crate::report_mark::pending_attention(r, attention);
         let event =
             if attention == Some(aaa_proto::ReportAttention::NeedsUser) { "report needs user" } else { "new report" };
         self.inbox_add(project, "thread-state", &r.id, event, &summary);

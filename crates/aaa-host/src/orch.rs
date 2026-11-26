@@ -735,7 +735,7 @@ impl Host {
             branch: r.branch.clone(),
             report_hash: r.report_hash.clone(),
             report_id: self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()),
-            report_attention: self.report_attention(r),
+            report_attention: crate::report_mark::pending_attention(r, self.report_attention(r)),
             stage: r.execution_stage(),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),

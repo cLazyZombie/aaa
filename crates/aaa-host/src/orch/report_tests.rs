@@ -658,25 +658,24 @@ async fn missing_library_files_warn_with_the_paths() {
     lab.close().await;
 }
 
-/// 보고 밖의 진행 글이 바뀌거나 질문 일부만 남아도 답을 되묻지 않는다.
-/// 새 질문이 섞이면 그 질문만 원문 번호로 열어 답 전달 번호를 바꾸지 않는다.
+/// 진행 목록만 바뀐 검수는 일반 보고로 알리고, 바뀌거나 섞인 새 질문은 원문 번호로 연다.
 #[tokio::test]
 async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() {
-    const OLD: &str = "## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n";
-    for (report, changed) in [
+    const BEFORE: &str =
+        "[검수 대기] 검수\n## 진행\n- [~] 시안\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n";
+    for (report, pending_number) in [
+        ("[검수 대기] 검수\n## 진행\n- [x] 시안\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n", None),
+        ("[검수 대기] 검수\n## Questions\n### 1. 진행\n- B 세 번째 안 (추천)\n- A 원래\n", Some(1)),
         (
-            "[결정 필요] 질문 1개: 재보고\n## Report\n진행 글 변경\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n",
-            false,
-        ),
-        (
-            "[결정 필요] 질문 2개: 섞임\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n### 2. 색\n- A 파랑\n- B 회색\n",
-            true,
+            "[검수 대기] 검수\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n### 2. 색\n- A 파랑\n- B 회색\n",
+            Some(2),
         ),
     ] {
-        let lab = Lab::with_report(0, b"", "unused", b"", report);
-        let mut old = lab.h.load("p", "t-0001").unwrap();
-        old.questions =
-            lab.h.identify_questions("p", "thread", &old.id, "previous", &aaa_proto::report_questions(OLD)).unwrap();
+        let lab = Lab::with_report(0, b"", "unused", b"", BEFORE);
+        let h = &lab.h;
+        h.collect("p", "t-0001", false).await.unwrap();
+        let old = h.load("p", "t-0001").unwrap();
+        assert_eq!(old.questions.len(), 1);
         let id = old.questions[0].id.clone();
         let answer = aaa_proto::QuestionAnswerView {
             delivery: None,
@@ -687,25 +686,55 @@ async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() 
             by: "CLI".into(),
             at_ms: 10,
         };
-        lab.h.record_answer(&old, &answer);
-        lab.h.collect("p", "t-0001", true).await.unwrap();
-        let q = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+        let old = h.update_rec("p", "t-0001", |r| r.question_answer = Some(answer.clone())).unwrap();
+        h.record_answer(&old, &answer);
+        *lab.report.lock().unwrap() = report;
+        h.collect("p", "t-0001", true).await.unwrap();
+        let current = h.thread_show("p", "t-0001").unwrap();
+        let q = current.questions.unwrap();
         assert_eq!(q.items.len(), 1);
-        if changed {
+        if let Some(number) = pending_number {
             assert!(q.answer.is_none());
             assert_ne!(q.items[0].id, id);
-            assert_eq!(q.items[0].source_number, Some(2));
-            assert_eq!(crate::answer::compose(&q.items, &[Some(1)], None, &[]).unwrap().1, "2B");
+            if number == 2 {
+                assert_eq!(q.items[0].source_number, Some(2));
+                assert_eq!(crate::answer::compose(&q.items, &[Some(1)], None, &[]).unwrap().1, "2B");
+            }
         } else {
             assert_eq!(q.items[0].id, id);
             assert_eq!(q.answer.unwrap(), answer);
-            assert!(lab.h.question_catalog(false).unwrap().is_empty());
+            assert!(h.question_catalog(false).unwrap().is_empty());
         }
-        let records = lab.h.db.ask_list("p").unwrap();
+        let records = h.db.ask_list("p").unwrap();
         assert_eq!(records.len(), 1, "재보고로 답 기록도 복제하지 않는다");
-        lab.h.backfill_review_questions().unwrap();
-        let after = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+        h.backfill_review_questions().unwrap();
+        let after = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
         assert_eq!(after.items, q.items, "재시작의 재해석에서도 중복을 만들지 않는다");
+
+        let mut notices = h.notice_events.subscribe();
+        let publish = |event, attention| {
+            let r = h.update_rec("p", "t-0001", |r| r.last_group = Some(aaa_proto::ThreadGroup::Working)).unwrap();
+            assert_eq!(h.thread_view(&r).report_attention, attention);
+            assert!(h.new_report_item("p", &r), "작업 중인 thread의 새 보고도 inbox에 남긴다");
+            let revision = r.report_hash.as_ref().unwrap();
+            let items = h.inbox("p", true, true).unwrap().items;
+            assert!(items.iter().any(|i| i.summary.contains(&revision[..12]) && i.event == event));
+            assert!(!h.new_report_item("p", &h.load("p", "t-0001").unwrap()), "같은 hash는 한 번만 알린다");
+        };
+        let needs_user = Some(aaa_proto::ReportAttention::NeedsUser);
+        if pending_number.is_some() {
+            publish("report needs user", needs_user);
+            assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::Report);
+        } else {
+            publish("new report", None);
+            assert!(notices.try_recv().is_err(), "답한 검수의 보고 알림을 다시 보내지 않는다");
+
+            *lab.report.lock().unwrap() = "[확인 필요] 카드 없이 사람이 확인할 새 일\n";
+            h.collect("p", "t-0001", false).await.unwrap();
+            assert!(h.thread_show("p", "t-0001").unwrap().questions.is_none());
+            publish("report needs user", needs_user);
+            assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::Report);
+        }
         lab.close().await;
     }
 }
