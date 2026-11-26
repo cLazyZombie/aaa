@@ -60,6 +60,11 @@ pub(crate) fn needs_user(report: &str) -> bool {
     matches!(marker(report), Some("[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]"))
 }
 
+/// 회수기가 모두 답한 카드에만 답을 이어 붙인다. 미답 카드가 남거나 카드 없는 요청이면 답 칸은 비어 있다.
+pub(crate) fn pending_attention(r: &ThreadRec, attention: Option<ReportAttention>) -> Option<ReportAttention> {
+    attention.filter(|&kind| kind != ReportAttention::NeedsUser || r.question_answer.is_none())
+}
+
 /// 검수 결과를 보고도 채팅으로 따로 답하지 않게 한다. 명시한 Questions는 그대로 정본이다.
 pub(crate) fn default_review(report: &str) -> bool {
     marker(report) == Some("[검수 대기]") && !has_questions(report)
@@ -354,6 +359,7 @@ impl Host {
         marker(&self.verified_report(r)?)
     }
 
+    /// 사본의 표지 의도. 알림을 낼 때는 현재 카드의 답 상태도 본다.
     pub(crate) fn report_attention(&self, r: &ThreadRec) -> Option<ReportAttention> {
         let report = self.verified_report(r)?;
         if needs_user(&report) {
