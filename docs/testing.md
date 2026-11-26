@@ -1,3 +1,4 @@
+- t-2246 [열린 카드 선택지와 채팅 안내의 누락 오경보](testing-question-guard-t2246.md)
 - t-2233 [작업 요약 파일의 로컬 검사](testing-thread-summary-check-t-2233.md)
 - t-2219 [macOS 지원 범위 변경과 Apple Silicon 로그 회전 확인](testing-macos-arm64-only-t-2219.md)
 - t-2216 [작업 폴더가 먼저 사라진 thread의 종료 검증](testing-resolve-worktree-loss-t-2216.md)
