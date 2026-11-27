@@ -548,7 +548,7 @@ impl Host {
             }] if profile.is_some() || machine.is_some() || review.as_ref().is_some_and(|r| r.profile.is_some() || r.account.is_some()))
             {
                 return Err(bad(
-                    "--user-request는 한 task의 모델·머신·검수 모델·검수 계정 변경에 쓴다. 다른 칸은 따로 고친다",
+                    "--user-request는 한 task의 --profile·--machine·--review-profile·--review-account 변경에만 쓴다. 다른 칸은 따로 고친다",
                 ));
             }
         }

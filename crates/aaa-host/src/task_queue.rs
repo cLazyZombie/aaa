@@ -173,7 +173,7 @@ impl Host {
             {
                 return Err(err(
                     ErrorCode::Forbidden,
-                    "예약에서 승인한 모델·머신·검수 설정은 사용자가 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
+                    "예약에서 승인한 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다. 검수 모델·계정도 같은 절차로 바꾼다",
                 ));
             }
             let (op, om) = tasks::agent_parts(old.owner.as_deref(), &profiles).unwrap_or_default();
