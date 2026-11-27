@@ -42,6 +42,7 @@ impl std::fmt::Display for Version {
 // 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
 // 같은 1.11의 선택 기능 thread_read.v1: 인증된 세션의 명시적 읽기 요청만 host Reader로 전달한다.
 // 같은 1.11의 선택 기능 imagegen.v1: 세션 peer·token 확인 뒤 자기 이미지 요청/결과만 양쪽에서 보낸다.
+// 같은 1.11의 선택 기능 review.v1: 자기 thread의 검수 원장 요청·원격 일회 실행.
 // 같은 1.11의 선택 기능 terminal_payload.zstd.v1: 원격 snapshot/history만 압축한다(t-0876). IPC는 원시다.
 // 같은 1.11의 선택 기능 report_hash.v1: library 없이 보고 hash만 조회한다.
 // 같은 1.11의 선택 기능 model_catalog.v1: host가 모델 목록을 물으면 그 머신 harness 목록 파일에서 보이는 모델만 답한다(t-1509).

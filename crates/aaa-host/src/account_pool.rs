@@ -32,6 +32,11 @@ pub(crate) struct Allocation {
     pub ended_at_ms: Option<u64>,
     pub released: bool,
 }
+
+pub(crate) struct TaskReservation {
+    pub account: String,
+    pub allocation: Allocation,
+}
 #[derive(Clone, Serialize, Deserialize)]
 struct Job {
     view: AccountStartView,
@@ -338,6 +343,7 @@ impl Host {
     /// 종료 사건을 확인한 예약만 종료로 기록한다. 단절·결과 불명은 유지한다.
     fn pool_reconcile(&self, report: &AccountQuotaReport) -> Result<(), ErrorBody> {
         self.image_reconcile(report)?;
+        self.review_reconcile(report)?;
         let pool = self.account_pool()?;
         for text in self.db.threads(None).map_err(internal)? {
             let r: ThreadRec = serde_json::from_str(&text).map_err(internal)?;
@@ -682,7 +688,8 @@ impl SelectionInput {
             .map(|s| serde_json::from_str::<ThreadRec>(&s))
             .collect::<serde_json::Result<Vec<_>>>()?;
         let mut rejected = self.excluded.clone();
-        let images = crate::image::pool_reservations(tx)?;
+        let mut jobs = crate::image::pool_reservations(tx)?;
+        jobs.extend(crate::review::pool_reservations(tx)?);
         let mut candidates = Vec::new();
         for c in &self.candidates {
             if self.required_account.as_ref().is_some_and(|a| a != &c.member.account) {
@@ -715,7 +722,7 @@ impl SelectionInput {
                                     .is_some_and(|a| !a.released && a.ended_at_ms.is_none())))
                 })
                 .count()
-                + images
+                + jobs
                     .iter()
                     .filter(|r| {
                         r.account == c.member.account && !r.allocation.released && r.allocation.ended_at_ms.is_none()
@@ -726,8 +733,7 @@ impl SelectionInput {
                 .filter(|r| r.account.as_deref() == Some(&c.member.account))
                 .map(|r| r.account_allocation.as_ref().map_or(r.created_at_ms, |a| a.selection.selected_at_ms))
                 .chain(
-                    images
-                        .iter()
+                    jobs.iter()
                         .filter(|r| r.account == c.member.account)
                         .map(|r| r.allocation.selection.selected_at_ms),
                 )

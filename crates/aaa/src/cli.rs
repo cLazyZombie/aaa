@@ -1025,6 +1025,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             },
         ),
         Cmd::Image { cmd } => crate::image::run(json, cmd),
+        Cmd::Review { cmd } => crate::review::run(json, cmd),
         Cmd::Post(args) => post_cmd(json, args),
         Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),

@@ -173,6 +173,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "post.v1".into(),
             "automation_results.v1".into(),
             "imagegen.v1".into(),
+            aaa_proto::REVIEW_FEATURE.into(),
             "thread_read.v1".into(),
             "mission.v1".into(), // N-1 host의 파일 전송
             "work_files.v1".into(),
@@ -272,6 +273,9 @@ async fn session_state_mode(
                 std::sync::atomic::Ordering::Relaxed,
             );
             agent.host_image.store(w.features.iter().any(|f| f == "imagegen.v1"), std::sync::atomic::Ordering::Relaxed);
+            agent
+                .host_review
+                .store(w.features.iter().any(|f| f == aaa_proto::REVIEW_FEATURE), std::sync::atomic::Ordering::Relaxed);
             *agent.host_work_files.lock().unwrap() = w.features.iter().any(|f| f == "work_files.v1");
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
             agent

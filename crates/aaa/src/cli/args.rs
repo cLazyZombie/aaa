@@ -152,6 +152,11 @@ pub(super) enum Cmd {
         #[command(subcommand)]
         cmd: crate::image::Cmd,
     },
+    /// 지정한 Codex·Claude profile로 자기 thread의 Git 후보를 검수한다
+    Review {
+        #[command(subcommand)]
+        cmd: crate::review::Cmd,
+    },
     /// host에서 로그인하고 새 작업의 기본 인증을 정한다(aaa 세션 밖 CLI)
     Account {
         #[command(subcommand)]

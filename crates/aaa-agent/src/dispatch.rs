@@ -204,6 +204,14 @@ impl Agent {
                 }
                 return;
             }
+            AgentRequest::ReviewReply { request_id, result } => {
+                if let Some(tx) = self.review_waiters.lock().unwrap().remove(&request_id) {
+                    aaa_common::diagnostic::ignored(tx.send(result), "검수 응답 수신자가 끝났다");
+                }
+                return;
+            }
+            AgentRequest::ReviewRun(run) => Ok(AgentResponse::ReviewFinished(self.run_review(*run).await)),
+            AgentRequest::ReviewCancel { id } => self.cancel_review(&id).map(|()| AgentResponse::Done),
             AgentRequest::PostAck { post_id, result } => {
                 self.post_ack(&post_id, result);
                 return;

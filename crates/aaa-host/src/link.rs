@@ -367,6 +367,7 @@ async fn serve_connection(
             "post.v1".into(),
             "automation_results.v1".into(),
             "imagegen.v1".into(),
+            aaa_proto::REVIEW_FEATURE.into(),
             "thread_read.v1".into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
@@ -491,6 +492,21 @@ async fn serve_connection(
                                 });
                                 aaa_common::diagnostic::ignored(tx.json(&LinkMsg::Req { id: format!("image-{request_id}"), deadline_ms: None,
                                     body: aaa_proto::AgentRequest::ImageReply { request_id, result: result.into() } }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
+                            });
+                        }
+                    }
+                    LinkMsg::Event(AgentEvent::Review { request_id, session, request }) => {
+                        if hello.features.iter().any(|f| f == aaa_proto::REVIEW_FEATURE) {
+                            let h = host.clone(); let m = mid.clone(); let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let result = h.review_request(&m, &session, request).await;
+                                let result: Outcome<aaa_proto::ReviewResponse> = result.into();
+                                if let Ok(result) = aaa_common::redact::json(result) {
+                                    aaa_common::diagnostic::ignored(tx.json(&LinkMsg::Req {
+                                        id: format!("review-{request_id}"), deadline_ms: None,
+                                        body: aaa_proto::AgentRequest::ReviewReply { request_id, result },
+                                    }).await, "검수 응답 전송 실패");
+                                }
                             });
                         }
                     }

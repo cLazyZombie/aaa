@@ -674,6 +674,18 @@ fn codex_sign_in(source: &str) -> Option<SignIn> {
     })
 }
 
+pub(crate) fn review_codex_auth(source: &str) -> anyhow::Result<aaa_proto::ReviewAuth> {
+    let auth = codex_sign_in(source).ok_or_else(|| anyhow::anyhow!("Codex 검수의 ChatGPT 인증을 확인한다"))?;
+    let account_id = auth.chatgpt_account.ok_or_else(|| anyhow::anyhow!("Codex 검수의 ChatGPT 계정 ID가 없다"))?;
+    anyhow::ensure!(auth.expires_at.is_none_or(|ms| ms > aaa_common::util::now_ms()), "Codex 검수 인증이 만료됐다");
+    // refresh token·ID token은 thread 머신의 일회 실행기에 전달할 필요가 없다.
+    Ok(aaa_proto::ReviewAuth::Codex {
+        access_token: aaa_proto::SecretText(auth.token),
+        account_id: aaa_proto::SecretText(account_id),
+        plan: auth.plan,
+    })
+}
+
 fn codex_window(v: Option<&Value>, now: u64) -> Option<UsageWindow> {
     let w = record(v);
     let used = number(w.get("used_percent"))?;

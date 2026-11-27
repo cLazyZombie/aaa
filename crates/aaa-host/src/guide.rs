@@ -91,6 +91,12 @@ pub const TOPICS: &[GuideTopic] = &[
         when: "library에 웹 보고서(HTML·script·음원)를 만들 때",
         text: WEB_REPORT,
     },
+    GuideTopic {
+        name: "review",
+        audience: Audience::Thread,
+        when: "사용자가 다른 모델의 검수 profile을 지정했을 때",
+        text: include_str!("../../../docs/review.md"),
+    },
 ];
 
 /// 이름으로 주제를 찾는다
