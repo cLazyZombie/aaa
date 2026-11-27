@@ -447,6 +447,20 @@ Claude의 cwd·조상 조회와 격리 홈 `.claude.json` 경로는 설치된 �
 모델·계정별 적용 조건을 설명한다. 설정 전달이 성공해도 advisor의 실제 활성 여부는
 Claude의 계정·모델 정책에 따른다. 검증 범위는 [별도 기록](testing-claude-advisor.md)에 남긴다.
 
+### 격리 계정 thread의 finish
+
+계정 격리 thread를 시작하거나 재개하면 실행 머신의 사용자 설정 홈에서 `skills/finish`를 읽는다.
+Claude는 `agents/finish-reviewer.md`도 읽고, Codex는 `skills/finish/agents/`를 포함한 스킬 폴더를 읽는다.
+원본 홈은 실행 profile·머신 설정의 `CLAUDE_CONFIG_DIR` 또는 `CODEX_HOME`, agent 환경의 같은 변수,
+기본 `~/.claude` 또는 `~/.codex` 순으로 정한다. 명시적으로 빈 값은 기본 홈을 고른다.
+Claude에서는 `/finish`, Codex에서는 `/skills` 또는 `$finish`로 찾을 수 있다.
+[Claude 스킬](https://code.claude.com/docs/en/skills) · [Claude 리뷰어](https://code.claude.com/docs/en/sub-agents) · [Codex 스킬](https://learn.chatgpt.com/docs/build-skills)
+
+격리 홈에는 파일 쓰기 권한을 뺀 독립 사본을 둔다. 원본 편집과 삭제는 다음 시작부터 반영된다.
+전달 대상 경로 안의 심볼릭 링크와 특수 파일은 거부한다. 원본이 없거나 읽을 수 없으면 세션 호스트 로그에
+경고를 남긴 뒤 실행한다. 원래 격리 홈에 별도로 둔 같은 이름의 항목이 있으면 이를 보존한다.
+전달 범위는 두 경로로 제한한다. [검증 기록](testing-account-finish-t-2271.md)
+
 
 ## 계정 Claude thread의 첫 실행 안내
 

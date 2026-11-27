@@ -218,6 +218,7 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
     let projects = lab.root.join("projects");
     let proof = lab.root.join("proof");
     let claude_source = scripts.join("source-claude");
+    let codex_source = scripts.join("source-codex");
     std::fs::create_dir(&claude_source).unwrap();
     std::fs::create_dir_all(&proof).unwrap();
     let mut config = format!(
@@ -226,7 +227,12 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
     for (profile, harness) in [("token", "claude"), ("file", "codex"), ("plain", "claude")] {
         let extra =
             if profile == "token" { format!(",CLAUDE_CODE_OAUTH_TOKEN={legacy_token:?}") } else { String::new() };
-        config.push_str(&format!("[profiles.{profile}]\nagent={harness:?}\ncommand=[{:?}]\nmodel=\"example-model\"\neffort=\"high\"\nenv={{ACCOUNT_GATE={:?},CLAUDE_CONFIG_DIR={claude_source:?},ACCOUNT_PROOF={proof:?},ACCOUNT_KIND={harness:?},ACCOUNT_AAA={:?}{extra}}}\n",executable,gate.address(),lab::BIN));
+        let home_env = if harness == "codex" {
+            format!("CODEX_HOME={codex_source:?}")
+        } else {
+            format!("CLAUDE_CONFIG_DIR={claude_source:?}")
+        };
+        config.push_str(&format!("[profiles.{profile}]\nagent={harness:?}\ncommand=[{:?}]\nmodel=\"example-model\"\neffort=\"high\"\nenv={{ACCOUNT_GATE={:?},{home_env},ACCOUNT_PROOF={proof:?},ACCOUNT_KIND={harness:?},ACCOUNT_AAA={:?}{extra}}}\n",executable,gate.address(),lab::BIN));
     }
     let h = lab.node("h", Some(&config));
     let mut w = World {
@@ -1159,6 +1165,127 @@ trust_case!(account_trust_coordinator_codex_local_dir, "coordinator", "file", "l
 trust_case!(account_trust_coordinator_claude_remote_worktree, "coordinator", "token", "labB", "worktree");
 trust_case!(account_trust_user_codex_local_worktree, "user", "file", "labA", "worktree");
 trust_case!(account_trust_user_claude_remote_dir, "user", "token", "labB", "dir");
+
+const FINISH_HARNESS: &str = r#"#!/usr/bin/env python3
+import os,sys,json,pathlib,socket,subprocess,uuid
+kind=os.environ['ACCOUNT_KIND']
+if sys.argv[1:]==['--version']:
+    print('codex-cli 0.163.0' if kind=='codex' else '2.1.304 (Claude Code)');sys.exit(0)
+home=pathlib.Path(os.environ['CODEX_HOME' if kind=='codex' else 'CLAUDE_CONFIG_DIR'])
+assert home.is_relative_to(pathlib.Path(os.environ['ACCOUNT_PROOF']).parent), 'home escaped lab'
+assert home.name == kind+'-home', 'not an account home'
+skill=home/'skills'/'finish'
+reviewer=home/'agents'/'finish-reviewer.md'
+files={}
+for path in [*skill.rglob('*'), reviewer]:
+    assert not path.is_symlink(), path
+    if path.is_file():
+        assert path.stat().st_mode & 0o222 == 0, path
+        if os.geteuid() != 0:
+            try:
+                with path.open('r+b'): raise AssertionError(f'writable: {path}')
+            except PermissionError: pass
+        files[str(path.relative_to(home))]=path.read_text()
+for unrelated in ['skills/other/SKILL.md', 'agents/other.md', 'unrelated-settings.json']:
+    assert not (home/unrelated).exists(), unrelated
+resumed='--resume' in sys.argv or 'resume' in sys.argv
+sid=str(uuid.uuid5(uuid.NAMESPACE_URL,str(home)))
+payload=dict(hook_event_name='SessionStart',session_id=sid,source='resume' if resumed else 'startup')
+subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent',kind,json.dumps(payload)],check=True,stdout=subprocess.PIPE)
+h,p=os.environ['ACCOUNT_GATE'].split(':')
+s=socket.create_connection((h,int(p)),timeout=30)
+s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=5,home=str(home),files=files,resumed=resumed))+'\n').encode())
+assert s.recv(1)==b'X'
+"#;
+
+fn account_finish_case(harness: &str, profile: &str) {
+    let gate = Gate::new();
+    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), FINISH_HARNESS);
+    let source = w.scripts.join(format!("source-{harness}"));
+    let extra = if harness == "claude" { "agents/finish-reviewer.md" } else { "skills/finish/agents/openai.yaml" };
+    let skill = "skills/finish/SKILL.md";
+    let retired = "skills/finish/references/retired.md";
+    let write = |rel: &str, content: &str| {
+        let path = source.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    };
+    for rel in [extra, skill, retired, "skills/other/SKILL.md", "agents/other.md", "unrelated-settings.json"] {
+        write(rel, "first");
+    }
+    if harness == "codex" {
+        write("agents/finish-reviewer.md", "Claude 전용");
+    }
+    let credential = if harness == "claude" {
+        aaa_test_support::token("finish-claude")
+    } else {
+        serde_json::json!({"tokens":{"access_token":aaa_test_support::token("finish-codex-access"),"refresh_token":aaa_test_support::token("finish-codex-refresh")}}).to_string()
+    };
+    let file = w.scripts.join("credential-fixture");
+    std::fs::write(&file, credential).unwrap();
+    w.h.ok(&["account", "import", "finish-fixture", "--harness", harness, "--file", path_str(&file)]);
+    let task = w.task("finish.md", "finish 전달 검증");
+    let thread = w.start(&[
+        "--title",
+        "finish 전달",
+        "--profile",
+        profile,
+        "--account",
+        "finish-fixture",
+        "--kind",
+        "dir",
+        "--task-file",
+        &task,
+    ]);
+    let id = thread["id"].as_str().unwrap();
+    let inspect = |expected: Value, resumed| {
+        let ready = gate.take(1, 5);
+        let proof = &ready[0].1;
+        assert_eq!(proof["tid"], id);
+        assert_eq!(proof["files"], expected);
+        assert_eq!(proof["resumed"], resumed);
+        let home = PathBuf::from(proof["home"].as_str().unwrap());
+        let pane = w.wait_show("finish fixture hook", id, |v| v["agent"]["harness_session"].is_string())["pane"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        Gate::release(ready, b'X');
+        w.wait_show("finish fixture 종료", id, |v| v["agent"]["activity"] == "exited");
+        (home, pane)
+    };
+    let (home, _) = inspect(serde_json::json!({skill: "first", retired: "first", extra: "first"}), false);
+    write(skill, "updated");
+    write(extra, "review updated");
+    std::fs::remove_file(source.join(retired)).unwrap();
+    w.h.ok(&["thread", "restart", "demo", id, "--resume"]);
+    let (resumed_home, _) = inspect(serde_json::json!({skill: "updated", extra: "review updated"}), true);
+    assert_eq!(resumed_home, home);
+    // 격리 파일의 mode 변경과 복사가 원본에 닿지 않았다.
+    assert_eq!(std::fs::read_to_string(source.join(skill)).unwrap(), "updated");
+    assert!(!source.join(skill).metadata().unwrap().permissions().readonly());
+
+    std::fs::rename(source.join("skills/finish"), source.join("removed-finish")).unwrap();
+    if harness == "claude" {
+        std::fs::rename(source.join(extra), source.join("removed-reviewer.md")).unwrap();
+    }
+    w.h.ok(&["thread", "restart", "demo", id]);
+    let (_, pane) = inspect(serde_json::json!({}), false);
+    let log = std::fs::read_to_string(w.h.state.join("agent/sessions").join(pane).join("session-host.log")).unwrap();
+    assert!(log.contains("finish 전달 실패") && log.contains("skills/finish") && log.contains("os error"), "{log}");
+    if harness == "claude" {
+        assert!(log.contains("agents/finish-reviewer.md"), "{log}");
+    }
+}
+
+#[test]
+fn account_finish_claude_refreshes_skill_and_reviewer_on_resume() {
+    account_finish_case("claude", "token");
+}
+
+#[test]
+fn account_finish_codex_refreshes_skill_resources_on_resume() {
+    account_finish_case("codex", "file");
+}
 
 /// 시험용 Codex id_token(서명은 가짜): 공식 CLI가 로그인 때 남기는 계정 정보 자리
 fn id_token(email: &str, plan: &str) -> String {

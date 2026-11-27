@@ -1,3 +1,4 @@
+- t-2271 [계정 격리 thread의 finish 검증](testing-account-finish-t-2271.md)
 - t-2248 [답한 검수 카드가 든 새 보고의 알림](testing-answered-report-attention-t-2248.md)
 - t-2246 [열린 카드 선택지와 채팅 안내의 누락 오경보](testing-question-guard-t2246.md)
 - t-2233 [작업 요약 파일의 로컬 검사](testing-thread-summary-check-t-2233.md)

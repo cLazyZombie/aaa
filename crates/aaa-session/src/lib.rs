@@ -2,6 +2,7 @@
 
 mod account;
 pub mod files;
+mod finish;
 pub mod host;
 mod output;
 pub mod ring;
