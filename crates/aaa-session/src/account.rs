@@ -33,12 +33,12 @@ pub async fn prepare(
     exe: &Path,
     tx: mpsc::Sender<BrokerRequest>,
     argv: &[String],
+    env: &[(String, String)],
 ) -> Result<Prepared> {
     aaa_common::redact::remember_auth(&credential.harness, &credential.secret.0);
-    if credential.harness == "claude"
-        && (!aaa_proto::account_run_parts(&credential.run).is_some_and(|(_, task)| aaa_proto::valid_thread(task))
-            || (argv.iter().any(|a| a == "--resume") && !home.exists()))
-    {
+    let is_thread =
+        aaa_proto::account_run_parts(&credential.run).is_some_and(|(_, task)| aaa_proto::valid_thread(task));
+    if credential.harness == "claude" && (!is_thread || (argv.iter().any(|a| a == "--resume") && !home.exists())) {
         // 도입 전 로컬 홈에 남긴 대화의 재개는 원래 기록 홈을 유지한다.
         return Ok(Prepared {
             env: vec![("CLAUDE_CODE_OAUTH_TOKEN".into(), credential.secret.0)],
@@ -64,6 +64,9 @@ pub async fn prepare(
             std::fs::canonicalize(path).context("신뢰할 작업 폴더 확인 실패")
         })
         .transpose()?;
+    if is_thread {
+        crate::finish::refresh(home, &credential.harness, env);
+    }
     match credential.harness.as_str() {
         "claude" => {
             let mut projects = serde_json::Map::new();
@@ -403,6 +406,18 @@ mod tests {
         }
     }
 
+    async fn prepare_fixture(
+        home: &Path,
+        auth: AccountCredential,
+        exe: &Path,
+        tx: mpsc::Sender<BrokerRequest>,
+        argv: &[String],
+    ) -> Result<Prepared> {
+        let source = home.with_file_name("absent-user-config").to_string_lossy().into_owned();
+        let env = [("CLAUDE_CONFIG_DIR".into(), source.clone()), ("CODEX_HOME".into(), source)];
+        prepare(home, auth, exe, tx, argv, &env).await
+    }
+
     // 필요: pane 화면이 갱신 실패 원인을 정확히 보이는 계약(t-1688). 제공자 상태·오류 코드는 그대로, 코드 꼴이 아니면 버리고,
     // aaa 안의 실패는 503이다.
     #[test]
@@ -437,7 +452,7 @@ mod tests {
             SecretText(serde_json::json!({"OPENAI_API_KEY":aaa_test_support::token("session-codex-key")}).to_string());
         let (tx, _) = mpsc::channel(1);
         let argv = ["codex".into(), "--dangerously-bypass-approvals-and-sandbox".into()];
-        let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        let prepared = prepare_fixture(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
         let read =
             || toml::from_str::<toml::Value>(&std::fs::read_to_string(home.join("config.toml")).unwrap()).unwrap();
         let config = read();
@@ -470,13 +485,13 @@ mod tests {
         assert!(config.get("windows").is_none(), "YOLO 실행에 샌드박스 설치를 요청하지 않는다");
         drop(prepared);
         // 재시작도 같은 키를 쓰며 coordinator → user 변경 때 사전 신뢰를 없앤다.
-        let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        let prepared = prepare_fixture(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
         assert_eq!(read(), config);
         assert_eq!(hooks(), installed);
         assert_eq!(std::fs::read_to_string(home.join("sessions/history.jsonl")).unwrap(), "history");
         drop(prepared);
         auth.trust_cwd = None;
-        let _prepared = prepare(&home, auth, Path::new("new aaa"), tx, &argv).await.unwrap();
+        let _prepared = prepare_fixture(&home, auth, Path::new("new aaa"), tx, &argv).await.unwrap();
         assert!(read().get("projects").is_none());
         assert_eq!(read()["features"]["hooks"].as_bool(), Some(true));
         assert_ne!(hooks(), installed, "실행 파일 이동 때 옛 명령을 남기지 않는다");
@@ -495,7 +510,7 @@ mod tests {
         let mut auth = credential(None);
         auth.harness = "codex".into();
         let (tx, _) = mpsc::channel(1);
-        let result = prepare(&home, auth, Path::new("aaa"), tx, &["codex".into()]).await;
+        let result = prepare_fixture(&home, auth, Path::new("aaa"), tx, &["codex".into()]).await;
         let error = match result {
             Ok(_) => panic!("hook 설치 실패를 무시했다"),
             Err(e) => e,
@@ -517,8 +532,9 @@ mod tests {
         let config = home.join(".claude.json");
         std::fs::write(&config, r#"{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/unrelated":{"hasTrustDialogAccepted":true}}}"#).unwrap();
         let (tx, _) = mpsc::channel(1);
-        let out =
-            prepare(&home, credential(Some(&cwd)), Path::new("aaa"), tx.clone(), &["claude".into()]).await.unwrap();
+        let out = prepare_fixture(&home, credential(Some(&cwd)), Path::new("aaa"), tx.clone(), &["claude".into()])
+            .await
+            .unwrap();
         assert!(out.env.iter().any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v == &home.to_string_lossy()));
         let read = || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&config).unwrap()).unwrap();
         let v = read();
@@ -530,7 +546,9 @@ mod tests {
             projects[&std::fs::canonicalize(&cwd).unwrap().to_string_lossy().into_owned()]["hasTrustDialogAccepted"],
             true
         );
-        prepare(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()]).await.unwrap();
+        prepare_fixture(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()])
+            .await
+            .unwrap();
         assert!(read()["projects"].as_object().unwrap().is_empty());
     }
 
@@ -539,7 +557,7 @@ mod tests {
         let lab = Lab::new();
         let home = lab.0.join("absent-claude-home");
         let (tx, _) = mpsc::channel(1);
-        let out = prepare(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()])
+        let out = prepare_fixture(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()])
             .await
             .unwrap();
         assert_eq!(out.env.len(), 1);
@@ -572,7 +590,7 @@ mod tests {
         let home = lab.0.join("claude-home");
         let (tx, _) = mpsc::channel(1);
         let argv = ["claude".into(), "--dangerously-skip-permissions".into()];
-        let out = prepare(&home, credential(None), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        let out = prepare_fixture(&home, credential(None), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
         let read =
             |name| serde_json::from_slice::<serde_json::Value>(&std::fs::read(home.join(name)).unwrap()).unwrap();
         assert_eq!(read(".claude.json"), serde_json::json!({"hasCompletedOnboarding":true,"projects":{}}));
@@ -589,9 +607,11 @@ mod tests {
         }
         std::fs::write(home.join("settings.json"), r#"{"skipDangerousModePermissionPrompt":false,"theme":"dark"}"#)
             .unwrap();
-        prepare(&home, credential(None), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        prepare_fixture(&home, credential(None), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
         assert_eq!(read("settings.json"), serde_json::json!({"skipDangerousModePermissionPrompt":true,"theme":"dark"}));
-        prepare(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()]).await.unwrap();
+        prepare_fixture(&home, credential(None), Path::new("aaa"), tx, &["claude".into(), "--resume".into()])
+            .await
+            .unwrap();
         assert_eq!(read("settings.json"), serde_json::json!({"theme":"dark"}));
     }
 

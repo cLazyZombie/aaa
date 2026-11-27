@@ -389,7 +389,7 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
                 let (_, task) = aaa_proto::account_run_parts(&c.run).context("계정 작업 참조 오류")?;
                 anyhow::ensure!(aaa_proto::valid_thread(task), "thread 폴더만 미리 신뢰한다");
             }
-            Some(crate::account::prepare(&home, c, &std::env::current_exe()?, broker_tx, &s.argv).await?)
+            Some(crate::account::prepare(&home, c, &std::env::current_exe()?, broker_tx, &s.argv, &s.env).await?)
         }
         None => None,
     };
