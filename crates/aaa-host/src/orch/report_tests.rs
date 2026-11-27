@@ -497,15 +497,18 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
 
 #[tokio::test]
 async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_once() {
-    for report in [
-        "[결정 필요] 질문 1개: 진행\n## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",
-        "[검수 대기] 질문 1개: 진행\n## Questions\n### 1. 진행\n- A 진행\n",
+    for (report, expected) in [
+        (
+            "[결정 필요] 질문 1개: 진행\n## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",
+            "1번 질문 · 4번 줄. A 선택지의 줄 머리를",
+        ),
+        ("[검수 대기] 질문 1개: 진행\n## Questions\n### 1. 진행\n- A 진행\n", "1번 질문 · 3번 줄. 선택지가 1개다"),
     ] {
         let lab = Lab::with_report(0, b"", "unused", b"", report);
         lab.h.collect_if_changed("p", "t-0001").await;
         let view = lab.h.thread_show("p", "t-0001").unwrap();
         let q = view.questions.unwrap();
-        assert!(q.format_warning.as_deref().unwrap().contains("형식 확인 필요"));
+        assert!(q.format_warning.as_deref().unwrap().contains(expected));
         assert!(!q.review, "명시한 질문이 깨지면 기본 검수 카드로 대신하지 않는다");
         assert_eq!(view.copy.as_deref(), Some("complete"));
         let err = lab
@@ -524,6 +527,8 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
         let items = lab.h.inbox("p", true, true).unwrap().items;
         let warnings: Vec<_> = items.iter().filter(|i| i.item_kind == "question-format-warning").collect();
         assert_eq!(warnings.len(), 1, "{items:?}");
+        assert!(warnings[0].body.contains(expected), "{}", warnings[0].body);
+        assert!(warnings[0].body.contains("aaa question check"), "{}", warnings[0].body);
         assert!(warnings[0].body.contains("pane 알림 전달 실패: thread 세션이 없다"));
         assert!(lab.h.load("p", "t-0001").unwrap().question_answer.is_none());
         lab.close().await;

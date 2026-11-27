@@ -474,7 +474,7 @@ pub(super) enum Cmd {
         #[arg(long)]
         activity: String,
     },
-    /// 확인창 질문(폴더 신뢰·권한 확인)을 보고 답한다
+    /// 질문을 검사하고 열린 질문을 보고 답한다
     Question {
         #[command(subcommand)]
         cmd: QuestionCmd,
@@ -512,6 +512,11 @@ pub(super) enum DebugCmd {
 
 #[derive(Subcommand)]
 pub(super) enum QuestionCmd {
+    /// 보고서·사용자 요청 본문의 Questions 형식을 발행 전에 검사한다
+    Check {
+        /// Markdown 파일(`-`는 표준 입력)
+        file: String,
+    },
     List {
         /// 답한 것도 보인다
         #[arg(long)]

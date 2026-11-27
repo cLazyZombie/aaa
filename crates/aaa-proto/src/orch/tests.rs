@@ -198,28 +198,68 @@ fn report_questions_do_not_count_korean_words_or_alphanumeric_names() {
 #[test]
 fn report_questions_keep_deploy_thread_list_in_body() {
     // 수정해서 등록한 q-4321의 본문에 거절 당시 목록 표기를 되돌렸다.
-    let report = include_str!("../../tests/fixtures/deploy-approval-questions.md");
-    let parsed = parse_report_questions(report);
+    let report = format!(
+        "{}- `d-2033` 후속 기록\n",
+        include_str!("../../tests/fixtures/deploy-approval-questions.md")
+            .replace("t-2030: ", "t-2030(질문 카드) ")
+            .replace("t-2032: ", "r-2032 — ")
+    );
+    let parsed = parse_report_questions(&report);
     assert!(parsed.warning.is_none(), "{parsed:?}");
     assert_eq!(parsed.items.len(), 1);
     let question = &parsed.items[0];
     let body = question.body.as_deref().unwrap();
-    for id in ["t-2030", "t-2031", "t-2032"] {
-        assert!(body.lines().any(|line| line.starts_with(&format!("- {id}: "))), "{body}");
+    for start in ["- t-2030(", "- t-2031: ", "- r-2032 — "] {
+        assert!(body.lines().any(|line| line.starts_with(start)), "{body}");
     }
+    assert_eq!(question.after.as_deref(), Some("- `d-2033` 후속 기록"));
     let choices: Vec<_> = question.choices.iter().map(|c| (c.letter.as_deref(), c.label.as_str())).collect();
     assert_eq!(choices, [(Some("A"), "지금 배포"), (Some("B"), "나중에")]);
 }
 
 #[test]
-fn report_questions_count_malformed_choices_next_to_deploy_thread_list() {
+fn report_questions_locate_malformed_choices_next_to_deploy_thread_list() {
     let report = include_str!("../../tests/fixtures/deploy-approval-questions.md");
     for wrong in ["C: 중단", "C-2030: 중단", "**C 중단", "T-2030: 중단", "t-2030x: 중단"] {
         let broken = report.replace("\n세 건 모두", &format!("\n- {wrong}\n\n세 건 모두"));
         let parsed = parse_report_questions(&broken);
         let warning = parsed.warning.as_deref().unwrap();
-        assert!(warning.contains("선택지 3개 중 2개"), "{wrong}: {warning}");
+        assert!(warning.contains("1번 질문 · 8번 줄"), "{wrong}: {warning}");
+        let fix = if wrong.starts_with(['T', 't']) {
+            "선택지 글자는 A부터 I까지다"
+        } else {
+            "형식으로 고친다"
+        };
+        assert!(warning.contains(fix), "{wrong}: {warning}");
     }
+}
+
+#[test]
+fn report_questions_locate_short_duplicate_and_missing_choices() {
+    let report = concat!(
+        "[결정 필요] 질문 3개: 검토\r\n\r\n## Questions\r\n",
+        "### 1. 진행\r\n- A 진행\r\n- B 보류\r\n",
+        "### 2. 배포\r\n- t-2261(replay resume) 설명\r\n- A 배포\r\n",
+        "### 3. 시점\r\n- A 지금\r\n- A 나중에\r\n- C 내일\r\n",
+    );
+    let parsed = parse_report_questions(report);
+    let warning = parsed.warning.as_deref().unwrap();
+    assert!(warning.contains("2번 질문 · 7번 줄. 선택지가 1개다"), "{warning}");
+    assert!(warning.contains("3번 질문 · 12번 줄. A 선택지가 11번 줄과 중복된다"), "{warning}");
+    assert!(warning.contains("3번 질문 · 13번 줄. B 선택지가 빠졌다"), "{warning}");
+    assert_eq!(warning.lines().count(), 3, "{warning}");
+    assert_eq!(parsed.items[1].body.as_deref(), Some("- t-2261(replay resume) 설명"));
+    assert_eq!(parsed.items[1].choices.len(), 1);
+    assert!(parsed.items[2].choices.is_empty());
+}
+
+#[test]
+fn report_questions_bound_the_warning_for_many_invalid_lines() {
+    let report = format!("## Questions\n### 1. 진행\n- A 진행\n- B 보류\n{}", "- Z 확인\n".repeat(100));
+    let warning = parse_report_questions(&report).warning.unwrap();
+    assert!(warning.starts_with("형식 확인 필요: 1번 질문 · 5번 줄."));
+    assert_eq!(warning.lines().count(), 65);
+    assert!(warning.ends_with("오류가 36개 더 있다. 위 줄을 고친 뒤 다시 검사한다."));
 }
 
 #[test]
