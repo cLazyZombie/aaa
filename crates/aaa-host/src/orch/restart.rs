@@ -130,6 +130,9 @@ impl Host {
                 self.check_profile_allowed(project, again)?;
             }
             let p = self.resolved_profile(Some(project), &rec.machine_id, again)?;
+            if profile.as_ref().is_some_and(|name| name != &rec.profile) {
+                self.check_implicit_review_profile(rec.review.as_ref(), &p)?;
+            }
             if let Some(account) = &rec.account {
                 let credential = self.accounts.credential(account)?;
                 if credential.harness != p.harness {
@@ -223,10 +226,11 @@ impl Host {
                 let task = with_handoff(
                     std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?,
                 );
-                let brief = self.brief(&dir, &rec, &task, true);
-                let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
                 // 새 대화는 host 정본과 지금 safety를 다시 읽는다. --resume은 위의 저장된 launch를 쓴다.
                 let again = profile.clone().unwrap_or_else(|| rec.profile.clone());
+                let brief_rec = ThreadRec { profile: again.clone(), ..rec.clone() };
+                let brief = self.brief(&dir, &brief_rec, &task, true);
+                let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
                 let safety = None;
                 let relaunched = match conn
                     .request(AgentRequest::ThreadRebrief {

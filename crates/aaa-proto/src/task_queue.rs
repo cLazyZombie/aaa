@@ -52,6 +52,9 @@ pub struct TaskChoicePin {
     pub owner: Option<String>,
     pub profile: String,
     pub machine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review: Option<crate::TaskReview>,
     pub actor: String,
     #[ts(type = "number")]
     pub at_ms: u64,

@@ -124,9 +124,35 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     );
     rec.id = "t-0001".into();
     rec.account = Some("work".into());
+    rec.review = Some(aaa_proto::TaskReview { profile: Some("work".into()), account: Some("work".into()) });
     rec.status = aaa_proto::ThreadStatus::Parked;
     h.db.thread_import("demo", &rec.id, "parked", &serde_json::to_string(&rec).unwrap()).unwrap();
-    // 현 schema에 별도 account 칸이 없는 task/profile 이름은 계정 별칭과 같아도 그대로다.
+    let tasks = h.project_dir("demo").unwrap().join("TASKS.md");
+    let task = "- [ ] work (work@mac-a) <!-- aaa-review:{\"profile\":\"work\",\"account\":\"work\"} --> <!-- aaa-task:AAAAAAAAAAAAAAAAAAAAAAAAAA -->\r\n  work\r\n";
+    std::fs::write(&tasks, task).unwrap();
+    let archived_id = "BBBBBBBBBBBBBBBBBBBBBBBBBB";
+    let body =
+        format!("- [x] 끝난 일 <!-- aaa-review:{{\"account\":\"work\"}} --> <!-- aaa-task:{archived_id} -->\n  메모");
+    let mut archived_task = crate::tasks::parse(&body).remove(0);
+    archived_task.list = "Backlog".into();
+    h.db.archive_save(
+        "demo",
+        &aaa_proto::ArchivedTask {
+            task_id: archived_id.into(),
+            task: archived_task,
+            body,
+            reason: "fixture".into(),
+            report: None,
+            completed_ms: 12,
+            restored: false,
+            committed: false,
+            removed_sha256: crate::tasks::sha256(task),
+            history: vec![],
+            started_ms: None,
+        },
+    )
+    .unwrap();
+    // task·profile 이름과 메모는 계정 이름과 같아도 유지한다.
     let path = h.project_dir("demo").unwrap().join("automations");
     std::fs::create_dir_all(&path).unwrap();
     let path = path.join("fixture.toml");
@@ -155,6 +181,20 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     assert_ne!(pool.revision, "before");
     let rec = h.load("demo", "t-0001").unwrap();
     assert_eq!(rec.account.as_deref(), Some("renamed"));
+    assert_eq!(rec.review.as_ref().unwrap().account.as_deref(), Some("renamed"));
+    assert_eq!(
+        std::fs::read_to_string(&tasks).unwrap(),
+        task.replace("\"account\":\"work\"", "\"account\":\"renamed\"")
+    );
+    h.task_archive("demo", Some(archived_id), None, "device:phone").await.unwrap();
+    let restored = crate::tasks::parse(&std::fs::read_to_string(&tasks).unwrap())
+        .into_iter()
+        .find(|task| task.id.as_deref() == Some(archived_id))
+        .unwrap();
+    assert_eq!(restored.review.unwrap().account.as_deref(), Some("renamed"));
+    assert!(!restored.done);
+    let archived = h.db.archive_list("demo").unwrap().remove(0);
+    assert!(archived.committed && archived.restored);
     assert_eq!(rec.account_label.as_deref(), Some("work"));
     assert_eq!(h.thread_view(&rec).account.as_deref(), Some("work"));
     assert_eq!(h.parked_account_pane("demo/t-0001", "renamed", "codex").unwrap(), "ended");

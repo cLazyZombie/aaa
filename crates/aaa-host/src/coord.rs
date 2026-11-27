@@ -302,6 +302,7 @@ impl Host {
                 .as_deref()
                 .map(|m| self.resolve_machine(Some(m)).map(|id| self.machine_name(&id)))
                 .transpose()?,
+            review: None,
             repo,
             notes,
             parent: None,
@@ -348,6 +349,7 @@ impl Host {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: None,
             thread: Some(thread.to_string()),
             done: None,
@@ -481,6 +483,17 @@ impl Host {
             unlinked_threads,
             text,
             repos,
+            default_profile: Some(self.default_thread_profile(project)),
+            review_profiles: self.profile_config().ok().map(|cfg| {
+                let safety = self.safety(project);
+                cfg.profiles
+                    .into_iter()
+                    .filter(|(name, p)| {
+                        safety.profile_allowed(name) && crate::review::supports_profile(&p.harness, &p.model)
+                    })
+                    .map(|(name, p)| (name, p.harness))
+                    .collect()
+            }),
         })
     }
 
@@ -530,11 +543,13 @@ impl Host {
                 return Err(bad("사용자 지시 근거는 비지 않은 한 줄(2000바이트 이하)로 쓴다"));
             }
             if !matches!(ops.as_slice(), [TaskOp::Update {
-                profile, machine, owner: None, person: false, title: None, notes: None,
+                profile, machine, review, owner: None, person: false, title: None, notes: None,
                 thread: None, done: None, repo: None, ..
-            }] if profile.is_some() || machine.is_some())
+            }] if profile.is_some() || machine.is_some() || review.as_ref().is_some_and(|r| r.profile.is_some() || r.account.is_some()))
             {
-                return Err(bad("--user-request는 한 task의 --profile·--machine 변경에만 쓴다. 다른 칸은 따로 고친다"));
+                return Err(bad(
+                    "--user-request는 한 task의 모델·머신·검수 모델·검수 계정 변경에 쓴다. 다른 칸은 따로 고친다",
+                ));
             }
         }
         // 「답할 것」의 할 일 확인 필요(plan §8.345): 이 편집으로 풀린 것을 기록에 남긴다
@@ -552,6 +567,8 @@ impl Host {
             _ => false,
         });
         let owners = if checks_owner { self.assignable(project).await } else { Vec::new() };
+        // 선택을 검증하고 파일에 쓰는 동안 계정 별칭이 바뀌지 않게 한다.
+        let _account_read = self.account_rename_gate.read().await;
         // 예약 dispatch와 같은 문으로 직렬화하여 옛 값으로 시작하는 틈을 막는다.
         let _queue_guard = if user_request.is_some() { Some(self.queue_gate.lock().await) } else { None };
         let owner_ok = |o: &str, person: bool| -> Result<(), String> {
@@ -687,6 +704,17 @@ impl Host {
                         self.check_requested_task_choices(project, &rev.text, &a.text)?;
                     } else {
                         self.protect_task_choices(&rev.text, &a.text, actor)?;
+                    }
+                    if ops.iter().any(|op| {
+                        matches!(
+                            op,
+                            TaskOp::Add { review: Some(_), .. }
+                                | TaskOp::Update { review: Some(_), .. }
+                                | TaskOp::Update { owner: Some(_), .. }
+                                | TaskOp::Update { profile: Some(_), .. }
+                        )
+                    }) {
+                        self.check_task_reviews(project, &rev.text, &a.text, ctx.profiles, user_request.is_some())?;
                     }
                     for r in a.records.iter().filter(|_| user_request.is_none()) {
                         if r.action == TaskAction::Update {

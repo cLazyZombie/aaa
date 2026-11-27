@@ -502,6 +502,7 @@ mod tests {
                 owner: task.owner.clone(),
                 profile: "codex".into(),
                 machine: Some("mac-b".into()),
+                review: None,
                 actor: "local:cli".into(),
                 at_ms: 1,
             },

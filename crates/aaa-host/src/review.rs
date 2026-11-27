@@ -27,8 +27,14 @@ struct Job {
     harness: String,
     model: String,
     effort: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required_account: Option<String>,
     view: ReviewView,
     allocation: Option<Allocation>,
+}
+
+pub(crate) fn supports_profile(harness: &str, model: &str) -> bool {
+    matches!(harness, "codex" | "claude") && !model.trim().is_empty()
 }
 
 fn key(id: &str) -> String {
@@ -62,6 +68,32 @@ pub(crate) fn pool_reservations(db: &Connection) -> anyhow::Result<Vec<TaskReser
 }
 
 impl Host {
+    pub(crate) fn check_implicit_review_profile(
+        &self,
+        review: Option<&TaskReview>,
+        implementation: &ResolvedProfile,
+    ) -> Result<(), ErrorBody> {
+        let Some(name) = review.filter(|r| r.profile.is_none()).and_then(|r| r.account.as_deref()) else {
+            return Ok(());
+        };
+        if !supports_profile(&implementation.harness, &implementation.model) {
+            return Err(bad("검수 계정만 지정한 할 일은 모델을 명시한 Codex 또는 Claude 구현 profile이 필요하다"));
+        }
+        if self.accounts.list()?.iter().any(|a| a.name == name && a.harness != implementation.harness) {
+            return Err(bad("구현 profile과 지정 검수 계정의 harness가 다르다. 할 일의 검수 설정을 확인한다"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn configured_review_profile(&self, project: &str, name: &str) -> Result<ResolvedProfile, ErrorBody> {
+        self.check_profile_allowed(project, name)?;
+        let profile = self.configured_thread_profile(Some(project), name)?;
+        if !supports_profile(&profile.harness, &profile.model) {
+            return Err(bad("모델을 명시한 Codex 또는 Claude profile을 지정한다"));
+        }
+        Ok(profile)
+    }
+
     fn review_load(&self, id: &str) -> Result<Option<Job>, ErrorBody> {
         self.db.meta(&key(id)).map_err(internal)?.map(|v| serde_json::from_str(&v).map_err(internal)).transpose()
     }
@@ -136,11 +168,12 @@ impl Host {
             if !start.target.valid() || start.cwd.is_empty() || start.cwd.len() > 4096 || start.cwd.contains('\0') {
                 return Err(bad("검수의 기준·후보·tree SHA와 작업 폴더를 확인한다"));
             }
-            self.check_profile_allowed(&rec.project, &start.profile)?;
-            let profile = self.configured_thread_profile(Some(&rec.project), &start.profile)?;
-            if !matches!(profile.harness.as_str(), "codex" | "claude") || profile.model.trim().is_empty() {
-                return Err(bad("모델을 명시한 Codex 또는 Claude profile을 지정한다"));
-            }
+            let profile = self.configured_review_profile(&rec.project, &start.profile)?;
+            let required_account = rec
+                .review
+                .as_ref()
+                .filter(|_| rec.independent_review_profile() == Some(start.profile.as_str()))
+                .and_then(|r| r.account.clone());
             let view = ReviewView {
                 id: start.id.clone(),
                 profile: start.profile.clone(),
@@ -158,6 +191,7 @@ impl Host {
                 harness: profile.harness,
                 model: profile.model,
                 effort: profile.effort,
+                required_account,
                 view,
                 allocation: None,
             }
@@ -192,7 +226,6 @@ impl Host {
         session: &str,
         request: ReviewRequest,
     ) -> Result<ReviewResponse, ErrorBody> {
-        let rec = self.review_owner(machine, session)?;
         let id = request.id().to_string();
         if !review_id_ok(&id) {
             return Err(bad("검수 작업 ID는 26자리 영문 대문자·숫자다"));
@@ -202,6 +235,7 @@ impl Host {
         } else {
             None
         };
+        let rec = self.review_owner(machine, session)?;
         let mut changes = self.changed.subscribe();
         let lock = self.thread_op_lock("review", "ledger");
         let guard = lock.lock().await;
@@ -270,18 +304,26 @@ impl Host {
         if !self.machine_feature(&job.machine, REVIEW_FEATURE) {
             return Err(bad("thread 머신 agent에 review.v1 지원이 필요하다"));
         }
-        self.check_profile_allowed(&job.project, &job.start.profile)?;
-        let profile = self.configured_thread_profile(Some(&job.project), &job.start.profile)?;
+        let profile = self.configured_review_profile(&job.project, &job.start.profile)?;
         if profile.harness != job.harness || profile.model != job.model || profile.effort != job.effort {
             return Err(err(ErrorCode::Conflict, "검수 profile 설정이 바뀌었다. 새 작업 ID로 요청한다"));
         }
         let size = AccountTaskSize::Small;
-        let selection = self.account_selection_input(&job.project, &profile, None, size).await?;
+        let required = job.required_account.as_deref();
+        if let Some(name) = required {
+            self.check_reserved_account(name, &profile)?;
+        }
+        let selection = self.account_selection_input(&job.project, &profile, required, size).await?;
         let default = if selection.is_none() {
-            let name = self.default_account(&job.harness)?.ok_or_else(|| {
-                err(ErrorCode::Unavailable, format!("host의 {} 계정 풀 또는 기본 계정이 필요하다", job.harness))
-            })?;
-            self.check_reserved_account(&name, &profile)?;
+            let name = if let Some(name) = required {
+                name.to_string()
+            } else {
+                let name = self.default_account(&job.harness)?.ok_or_else(|| {
+                    err(ErrorCode::Unavailable, format!("host의 {} 계정 풀 또는 기본 계정이 필요하다", job.harness))
+                })?;
+                self.check_reserved_account(&name, &profile)?;
+                name
+            };
             let group = self
                 .account_pool()?
                 .members
@@ -312,7 +354,12 @@ impl Host {
                                 size,
                                 group,
                                 unobserved: false,
-                                reason: "host 기본 계정".into(),
+                                reason: if required.is_some() {
+                                    "할 일의 지정 검수 계정"
+                                } else {
+                                    "host 기본 계정"
+                                }
+                                .into(),
                                 selected_at_ms: now,
                             },
                         },

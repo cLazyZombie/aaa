@@ -38,11 +38,36 @@ fn update(at: TaskAnchor) -> TaskOp {
         person: false,
         profile: None,
         machine: None,
+        review: None,
         notes: None,
         thread: None,
         done: None,
         repo: None,
     }
+}
+
+#[test]
+fn review_patch_round_trips_and_retains_other_fields() {
+    let before = "- [ ] 확인 (claude) [aaa] · t-0001 <!-- aaa-task:AAAAAAAAAAAAAAAAAAAAAAAAAA -->\r\n  원래 메모\r\n";
+    assert!(parse(before)[0].review.is_none());
+    let edit = |text: &str, profile, account| {
+        let mut op = update(anchor(text, "확인"));
+        let TaskOp::Update { review, .. } = &mut op else { unreachable!() };
+        *review = Some(aaa_proto::TaskReview { profile, account });
+        run(text, vec![op]).unwrap()
+    };
+    let added = edit(before, Some("review-a".into()), Some("review-account".into()));
+    assert_eq!(
+        added.text,
+        "- [ ] 확인 (claude) [aaa] · t-0001 <!-- aaa-review:{\"profile\":\"review-a\",\"account\":\"review-account\"} --> <!-- aaa-task:AAAAAAAAAAAAAAAAAAAAAAAAAA -->\r\n  원래 메모\r\n",
+    );
+    assert_ne!(parse(before)[0].block_sha256, parse(&added.text)[0].block_sha256);
+    assert!(added.records[0].after.as_ref().unwrap().contains("\"account\":\"review-account\""));
+    let account_reset = edit(&added.text, None, Some(String::new()));
+    let review = parse(&account_reset.text)[0].review.clone().unwrap();
+    assert_eq!(review.profile.as_deref(), Some("review-a"));
+    assert_eq!(review.account, None);
+    assert_eq!(edit(&account_reset.text, Some(String::new()), None).text, before);
 }
 
 /// 모델·머신 칸(plan §8.335): 칸마다 고치고(다른 칸은 그대로), 바뀌지 않은 옛 줄은 바이트 그대로, owner(me)와 함께 주면 거부
@@ -85,6 +110,7 @@ fn model_machine_edits() {
         person: false,
         profile: p.map(Into::into),
         machine: m.map(Into::into),
+        review: None,
         notes: vec![],
         parent: None,
         before: None,
@@ -110,6 +136,7 @@ fn repo_field_edits() {
         person: false,
         profile: None,
         machine: None,
+        review: None,
         notes: vec![],
         parent: None,
         before: None,
@@ -129,6 +156,7 @@ fn repo_field_edits() {
                 person: false,
                 profile: None,
                 machine: None,
+                review: None,
                 notes: None,
                 thread: None,
                 done: None,
@@ -151,6 +179,7 @@ fn repo_field_edits() {
         person: false,
         profile: None,
         machine: None,
+        review: None,
         notes: None,
         thread: Some("t-2".into()),
         done: None,
@@ -164,6 +193,7 @@ fn repo_field_edits() {
         person: false,
         profile: None,
         machine: None,
+        review: None,
         notes: vec![],
         parent: None,
         before: None,
@@ -191,6 +221,7 @@ fn update_keeps_other_bytes() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes,
             thread: None,
             done: None,
@@ -216,6 +247,7 @@ fn update_keeps_other_bytes() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: Some(vec!["메모 A".into()]),
             thread: None,
             done: Some(false),
@@ -235,6 +267,7 @@ fn update_keeps_other_bytes() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: None,
             thread: None,
             done: None,
@@ -311,6 +344,7 @@ fn save_checks() {
         person,
         profile: None,
         machine: None,
+        review: None,
         notes: notes.into_iter().map(str::to_string).collect(),
         parent: None,
         before: None,
@@ -353,6 +387,7 @@ fn save_checks() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: None,
             thread: None,
             done: None,
@@ -456,6 +491,7 @@ fn list_ops() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: vec![],
             parent: None,
             before: None,
@@ -532,6 +568,7 @@ fn update_then_move_in_one_request() {
                 person: false,
                 profile: None,
                 machine: None,
+                review: None,
                 notes: Some(vec!["메모".into()]),
                 thread: None,
                 done: None,
@@ -545,6 +582,7 @@ fn update_then_move_in_one_request() {
                 person: false,
                 profile: None,
                 machine: None,
+                review: None,
                 notes: None,
                 thread: None,
                 done: None,

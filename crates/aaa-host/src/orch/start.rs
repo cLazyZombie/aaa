@@ -44,6 +44,18 @@ impl Host {
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
         let mut guide = THREAD_GUIDE.to_string();
+        if let Some(review) = &r.review {
+            guide.push_str(&format!(
+                "\n\n## 할 일 검수 설정\n\n- 검수 모델: {}\n- 검수 계정: {}\n",
+                review.profile.as_deref().unwrap_or("구현 모델과 같음"),
+                review.account.as_deref().unwrap_or("자동"),
+            ));
+            if let Some(profile) = r.independent_review_profile() {
+                guide.push_str(&format!(
+                    "\nfinish의 첫 독립 리뷰에서 커밋된 후보로 `aaa review start --profile {profile} --base <sha>`를 한 번 호출한다. `aaa guide review`에 따라 결과를 받아 판정한다. host가 이 thread의 검수 계정 설정을 적용한다.\n"
+                ));
+            }
+        }
         if let Some(repo) = r.repo.as_deref().map(crate::brief_text::repo_leaf)
             && let Ok(targets) = self.design_targets(&r.project)
             && let Some(target) = targets.iter().find(|t| t.name == repo && t.folder.is_some())
@@ -239,6 +251,8 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
+        let review = a.start_task.as_ref().and_then(|t| t.review.clone());
+        self.check_implicit_review_profile(review.as_ref(), &profile)?;
         let agy_subscription = if profile.harness == "agy" {
             if a.account.is_some() || a.role != Role::Worker {
                 return Err(bad("agy는 실행 머신의 개인 로그인으로 worker를 시작한다"));
@@ -294,6 +308,7 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
             account: a.account.clone(),
+            review,
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
             over_limit: a.over_limit.clone(),

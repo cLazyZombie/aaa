@@ -432,6 +432,7 @@ impl Host {
             person: false,
             profile,
             machine,
+            review: None,
             repo: Some(repo),
             notes,
             parent: None,

@@ -944,6 +944,7 @@ export function TasksView({
               afterApi={afterApi}
               afterAllApi={apiAtLeast(frontApi, [1, 150])}
               accountApi={apiAtLeast(frontApi, [1, 164])}
+              reviewApi={apiAtLeast(frontApi, [1, 194])}
               autoMergeApi={autoMergeApi}
               reserveRequest={reserveReq}
               onQueueStep={manual ? (t, dir) => t.id && stepReserved(t.id, dir) : undefined}

@@ -398,6 +398,8 @@ export interface TaskDraft {
   profile: string;
   /** 머신 칸, 빈 글은 정하지 않음(시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳) */
   machine: string;
+  reviewProfile: string;
+  reviewAccount: string;
   person: string;
   notes: string;
   /** 상위 task(고른 판의 블록 고정점, 없으면 맨 위 단계). 줄 번호로 들면 그사이 줄이 밀렸을 때 다른 task 밑으로 간다 */
@@ -438,6 +440,8 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
     who: kind === "me" || kind === "person" ? kind : "agent",
     profile: parts?.profile ?? "",
     machine: parts?.machine ?? "",
+    reviewProfile: t.review?.profile ?? "",
+    reviewAccount: t.review?.account ?? "",
     person: kind === "person" ? (t.owner ?? "") : "",
     notes: t.notes.join("\n"),
     parent,
@@ -447,7 +451,7 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
 }
 
 export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
-  return { title: "", list, who: "agent", profile: "", machine: "", person: "", notes: "", parent, thread: null, repo: "" };
+  return { title: "", list, who: "agent", profile: "", machine: "", reviewProfile: "", reviewAccount: "", person: "", notes: "", parent, thread: null, repo: "" };
 }
 
 /**
@@ -488,7 +492,8 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notes = noteLines(d.notes);
   const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, profile: null, machine: null, notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
+    const review = d.reviewProfile || d.reviewAccount ? { profile: d.reviewProfile || undefined, account: d.reviewAccount || undefined } : undefined;
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, profile: null, machine: null, ...(review && { review }), notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
@@ -496,8 +501,11 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const ownerChanged = owner !== was;
   const notesChanged = !sameNotes(notes, t.notes);
   const repoChanged = d.repo !== (t.repo ?? "");
-  if (title !== null || ownerChanged || notesChanged || repoChanged) {
-    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, profile: null, machine: null, notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
+  const profile = d.reviewProfile !== (t.review?.profile ?? "") ? d.reviewProfile : undefined;
+  const account = d.reviewAccount !== (t.review?.account ?? "") ? d.reviewAccount : undefined;
+  const review = profile !== undefined || account !== undefined ? { profile, account } : undefined;
+  if (title !== null || ownerChanged || notesChanged || repoChanged || review) {
+    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, profile: null, machine: null, ...(review && { review }), notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
   }
   if ((parent?.block_sha256 ?? null) !== (wasParent?.block_sha256 ?? null) || (parent === null && d.list.trim() !== t.list)) {
     ops.push(parent ? { op: "move", at: anchorOf(t), to_list: "", before: null, parent } : move(t, { to_list: d.list.trim() }));

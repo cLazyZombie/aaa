@@ -17,11 +17,11 @@
 // (`issue-properties.tsx`, AGPL-3.0, 모양만 참고)처럼 이름·값 한 줄이고 고르면 바로 저장한다. 제목·메모는 모아서 「저장」한다.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { ArrowDown, ArrowUp, ArrowUpToLine, Bot, Check, ChevronLeft, Circle, CircleDot, CirclePause, Clock, Ellipsis, Monitor, Play, Trash2, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
-import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
+import type { AccountView, OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { QueueStatus, ReservePanel, useQueue, type Queue, type ReserveRequest } from "./TaskQueue";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { Markdown } from "./Markdown";
-import { uploadTaskFile } from "./api";
+import { call, onAccountsChanged, uploadTaskFile } from "./api";
 import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
 import { GROUP_WORD } from "./sidebarModel";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
@@ -152,6 +152,7 @@ export interface DetailProps {
   afterApi?: boolean;
   afterAllApi?: boolean;
   accountApi?: boolean;
+  reviewApi?: boolean;
   /** host가 자동 병합을 안다(FRONT_API 1.143): 상세의 스위치·새 할 일·예약 확인의 칸 */
   autoMergeApi?: boolean;
   /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
@@ -376,6 +377,30 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
   }, [draft.title]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [registeredAccounts, setRegisteredAccounts] = useState<AccountView[] | null>(null);
+  const [accountListError, setAccountListError] = useState(false);
+  useEffect(() => {
+    if (!props.reviewApi) return;
+    let request = 0;
+    const load = async () => {
+      const turn = ++request;
+      try {
+        const result = await call({ op: "account_list" });
+        if (result.kind !== "accounts") throw new Error("등록 계정 응답이 아니다");
+        if (turn !== request) return;
+        setRegisteredAccounts(result.accounts);
+        setAccountListError(false);
+      } catch {
+        if (turn === request) setAccountListError(true);
+      }
+    };
+    void load();
+    const unsubscribe = onAccountsChanged(() => void load());
+    return () => {
+      ++request;
+      unsubscribe();
+    };
+  }, [props.reviewApi]);
   const submitting = useRef(false);
   const [newMerge, setNewMerge] = useState(false);
   // 속성(저장소·담당·모델·머신·상위)은 고르면 바로 저장하고(사용자 10-26 q-1382 3B), 제목·메모·사람 이름은 모아서 「저장」한다.
@@ -420,6 +445,10 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
   const parentChoices = board.tasks.filter((x) => !base || (x.line !== base.line && !children.has(x.line)));
   const models = modelOptions(owners ?? [], draft.machine, draft.profile);
   const machines = machineOptions(owners ?? [], draft.machine);
+  const reviewProfiles = useMemo(() => new Map(Object.entries(board.review_profiles ?? {})), [board.review_profiles]);
+  const reviewHarness = reviewProfiles.get(draft.reviewProfile || draft.profile || board.default_profile || "");
+  const reviewModels = modelOptions(owners ?? [], "", draft.reviewProfile);
+  const reviewAccounts = registeredAccounts?.filter((a) => a.harness === reviewHarness) ?? [];
   const mineOf = (d: TaskDraft): MyEdit => {
     const { owner } = draftOwner(d);
     return { title: d.title.trim(), owner: owner || null, repo: d.repo || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
@@ -459,7 +488,10 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
     if (!base || !saved || submitting.current) return;
     // 사람은 이름을 쓴 뒤 「저장」한다: 그동안 담당 칸은 그 판 값으로 보낸다
     const who = next.who === "person" ? { who: saved.who, person: saved.person, profile: saved.profile, machine: saved.machine } : { who: next.who, profile: next.profile, machine: next.machine };
-    const want: TaskDraft = { ...saved, ...who, repo: next.repo, parent: next.parent };
+    const want: TaskDraft = {
+      ...saved, ...who, repo: next.repo, parent: next.parent,
+      reviewProfile: next.reviewProfile, reviewAccount: next.reviewAccount,
+    };
     const ops = draftOps(base, want, baseParent);
     if (ops.length === 0) return;
     const revert = () => setDraft((d) => withText(saved, d));
@@ -781,6 +813,33 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
                   {owners === null && <option disabled>머신 목록 읽는 중</option>}
                 </select>
               </label>
+              {props.reviewApi && (
+                <>
+                  <label className="task-prop">
+                    <span>검수 모델</span>
+                    <select className="input" value={draft.reviewProfile} disabled={busy} onFocus={props.onRefreshOwners} onChange={(e) => setProp({ reviewProfile: e.target.value })} data-testid="task-field-review-profile">
+                      <option value="">구현 모델과 같음</option>
+                      {reviewModels.map((p) => (
+                        <option key={p} value={p} disabled={p !== draft.reviewProfile && !reviewProfiles.has(p)}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="task-prop">
+                    <span>검수 계정</span>
+                    <select className="input" value={draft.reviewAccount} disabled={busy} onChange={(e) => setProp({ reviewAccount: e.target.value })} data-testid="task-field-review-account">
+                      <option value="">자동</option>
+                      {draft.reviewAccount && !reviewAccounts.some((a) => a.name === draft.reviewAccount) && (
+                        <option value={draft.reviewAccount}>{draft.reviewAccount}{registeredAccounts && !accountListError ? " (사용 불가)" : ""}</option>
+                      )}
+                      {reviewAccounts.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+                      {accountListError && <option disabled>계정 목록을 읽지 못함</option>}
+                      {!registeredAccounts && !accountListError && <option disabled>계정 목록 읽는 중</option>}
+                    </select>
+                  </label>
+                </>
+              )}
             </>
           )}
           {draft.who === "person" && (

@@ -178,6 +178,7 @@ pub fn typescript_bindings() -> String {
         TaskAttentionAction::decl(&cfg),
         TaskAttentionEvidence::decl(&cfg),
         TaskView::decl(&cfg),
+        TaskReview::decl(&cfg),
         TaskListView::decl(&cfg),
         TaskThread::decl(&cfg),
         DesignChange::decl(&cfg),

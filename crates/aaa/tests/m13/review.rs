@@ -51,23 +51,42 @@ fn remote_review_is_pinned_owned_and_cancellable() {
         w.h.ok(&["account", "import", name, "--harness", harness, "--file", &path]);
         w.h.ok(&["account", "default", harness, name]);
     }
-
-    let owner = w.start(&[
-        "--title",
+    let fallback = w.task(
+        "review-fallback.json",
+        &serde_json::json!({"tokens":{
+            "access_token":aaa_test_support::token("review-fallback"),"account_id":"other-workspace",
+            "refresh_token":aaa_test_support::token("review-fallback-refresh"),
+        }})
+        .to_string(),
+    );
+    w.h.ok(&["account", "import", "review-fallback", "--harness", "codex", "--file", &fallback]);
+    w.h.ok(&["account", "default", "codex", "review-fallback"]);
+    w.h.ok(&[
+        "task",
+        "add",
         "review owner",
-        "--task-file",
-        &w.task("review-owner.md", "noreport"),
+        "--note",
+        "noreport",
         "--machine",
         "labB",
         "--repo",
         path_str(&w.repo),
         "--profile",
         "fake",
+        "--review-profile",
+        "review-codex",
+        "--review-account",
+        "review-openai",
     ]);
+    let owner = w.start(&["--from-task", "review owner"]);
     let id = owner["id"].as_str().unwrap();
     let pane = owner["pane"].as_str().unwrap();
     let cwd = Path::new(owner["cwd"].as_str().unwrap());
-    w.wait_show("검수 thread 준비", id, |v| v["brief"] == "delivered");
+    let show = w.wait_show("검수 thread 준비", id, |v| v["brief"] == "delivered");
+    assert_eq!(show["review"], serde_json::json!({"profile":"review-codex","account":"review-openai"}));
+    let brief = fs::read_to_string(Path::new(show["work_dir"].as_str().unwrap()).join("brief.md")).unwrap();
+    assert!(brief.contains("aaa review start --profile review-codex --base <sha>"));
+    assert!(brief.contains("검수 계정: review-openai"));
     let base = git(cwd, &["rev-parse", "HEAD"]);
     fs::write(cwd.join("README.md"), "candidate-only\n").unwrap();
     git(cwd, &["add", "README.md"]);

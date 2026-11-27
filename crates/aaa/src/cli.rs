@@ -436,6 +436,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     list,
                     profile,
                     machine,
+                    review_profile,
+                    review_account,
                     owner,
                     person,
                     notes,
@@ -456,6 +458,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         person,
                         profile,
                         machine,
+                        review: (review_profile.is_some() || review_account.is_some())
+                            .then_some(aaa_proto::TaskReview { profile: review_profile, account: review_account }),
                         notes,
                         parent: parent.as_deref().map(task_at),
                         before: before.as_deref().map(task_at),
@@ -471,6 +475,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     title,
                     profile,
                     machine,
+                    review_profile,
+                    review_account,
                     owner,
                     person,
                     notes,
@@ -484,6 +490,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let only_merge = title.is_none()
                         && profile.is_none()
                         && machine.is_none()
+                        && review_profile.is_none()
+                        && review_account.is_none()
                         && owner.is_none()
                         && !person
                         && notes.is_empty()
@@ -512,6 +520,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         person,
                         profile,
                         machine,
+                        review: (review_profile.is_some() || review_account.is_some())
+                            .then_some(aaa_proto::TaskReview { profile: review_profile, account: review_account }),
                         notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
                         thread,
                         done: if done {
@@ -1599,6 +1609,12 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         }
         if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
             anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
+        }
+        if let FrontRequest::TaskEdit { ops, .. } = &req
+            && c.proto.minor < 194
+            && ops.iter().any(|op| matches!(op, aaa_proto::TaskOp::Add { review: Some(_), .. } | aaa_proto::TaskOp::Update { review: Some(_), .. }))
+        {
+            anyhow::bail!("할 일 검수 설정은 Front API 1.194 이상 host가 필요하다");
         }
         if let FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { after_all: Some(ids), .. }, .. } = &req
             && c.proto.minor < 150 && ids.len() > 1
