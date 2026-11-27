@@ -240,6 +240,9 @@ fn standalone_user_requests_require_answerable_questions_before_creating_cards()
         };
         assert!(reason.contains(expected), "{reason}");
         assert!(reason.contains(if n == 20 { "- A 진행" } else { "aaa question check" }), "{reason}");
+        if n != 20 {
+            assert!(reason.contains("본문의 `## Questions` 아래에 질문과 선택지"), "{reason}");
+        }
         assert_eq!(h.front_post("demo", i, "local:cli").unwrap(), refused(reason));
     }
     assert!(h.user_requests("demo").unwrap().is_empty());
