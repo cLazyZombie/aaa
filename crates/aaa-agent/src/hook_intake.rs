@@ -78,6 +78,9 @@ impl Agent {
         if msg.harness == "imagegen" {
             return self.on_image(msg, pid).await.map(hooks::Reply::Image).map(Some);
         }
+        if msg.harness == "review" {
+            return self.on_review(msg, pid).await.map(hooks::Reply::Review).map(Some);
+        }
         if msg.harness == "post" {
             let result = self.on_post(msg.clone(), pid).await;
             if let Err(e) = &result {

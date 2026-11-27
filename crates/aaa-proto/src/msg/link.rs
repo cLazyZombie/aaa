@@ -200,6 +200,15 @@ pub enum AgentRequest {
         request_id: String,
         result: Outcome<crate::ImageResponse>,
     },
+    /// review.v1: 소유 thread의 검수 요청에 답하고, 그 머신에서만 지정한 후보를 실행한다.
+    ReviewReply {
+        request_id: String,
+        result: Outcome<crate::ReviewResponse>,
+    },
+    ReviewRun(Box<crate::ReviewRun>),
+    ReviewCancel {
+        id: String,
+    },
     Spawn(SpawnSpec),
     List,
     /// 출력 구독. `from`이 보존 범위 안이면 그 위치부터 bytes만, 아니면 snapshot을 먼저 보낸다.
@@ -672,6 +681,7 @@ pub enum AgentRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    ReviewFinished(crate::ReviewExecution),
     WorkspaceMetrics(crate::WorkspaceCollected),
     AccountQuota {
         snapshot: Option<crate::QuotaSnapshot>,
@@ -881,6 +891,11 @@ pub enum AgentEvent {
         request_id: String,
         session: String,
         request: crate::ImageRequest,
+    },
+    Review {
+        request_id: String,
+        session: String,
+        request: crate::ReviewRequest,
     },
     AccountRefresh(crate::AccountRefresh),
     AgyQuota(crate::AgyQuotaSample),

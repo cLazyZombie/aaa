@@ -1,5 +1,9 @@
 //! host 소유 이미지 원장. 요청 ID·소유 세션·예약을 보존하고 불명 실행을 반복하지 않는다.
-use crate::{Host, account_pool::Allocation, err};
+use crate::{
+    Host,
+    account_pool::{Allocation, TaskReservation},
+    err,
+};
 use aaa_common::util;
 use aaa_proto::*;
 use rusqlite::Connection;
@@ -34,18 +38,14 @@ pub(crate) struct Job {
     pub allocation: Option<Allocation>,
     pub launched: bool,
 }
-pub(crate) struct Reservation {
-    pub account: String,
-    pub allocation: Allocation,
-}
-pub(crate) fn pool_reservations(tx: &Connection) -> anyhow::Result<Vec<Reservation>> {
+pub(crate) fn pool_reservations(tx: &Connection) -> anyhow::Result<Vec<TaskReservation>> {
     let mut st = tx.prepare("SELECT value FROM meta WHERE substr(key,1,10)='image-job:'")?;
     let rows = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut out = vec![];
     for text in rows {
         let j: Job = serde_json::from_str(&text)?;
         if let (Some(account), Some(allocation)) = (j.view.account, j.allocation) {
-            out.push(Reservation { account, allocation });
+            out.push(TaskReservation { account, allocation });
         }
     }
     Ok(out)

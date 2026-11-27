@@ -29,6 +29,8 @@ mod preparation;
 mod report_events;
 #[path = "m13/resolve_followups.rs"]
 mod resolve_followups;
+#[path = "m13/review.rs"]
+mod review;
 #[path = "m13/secret_k0.rs"]
 mod secret_k0;
 #[path = "m13/ssh_install.rs"]

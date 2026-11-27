@@ -106,6 +106,7 @@ mod report_mark;
 mod report_sandbox;
 mod resource;
 mod restore;
+mod review;
 mod rollout;
 mod routine;
 mod routine_runs;
@@ -821,6 +822,7 @@ impl Host {
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
         host.setup_recover();
         host.image_recover()?;
+        host.review_recover()?;
         host.library_delete_recover();
         Ok(host)
     }

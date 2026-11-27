@@ -11,6 +11,7 @@ mod file_backup;
 mod image;
 mod init;
 mod install;
+mod review;
 use aaa_agent::integration;
 mod launchd;
 mod migrate;

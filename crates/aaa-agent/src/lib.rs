@@ -47,6 +47,7 @@ mod quota;
 #[cfg(target_os = "macos")]
 mod report_watch;
 mod responsibility;
+pub mod review;
 mod selfcheck;
 mod settings_jobs;
 mod shell_chat;
@@ -143,6 +144,9 @@ pub struct Agent {
     read_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::FrontResponse>>>>,
     host_image: std::sync::atomic::AtomicBool,
     image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
+    host_review: std::sync::atomic::AtomicBool,
+    review_waiters: Mutex<HashMap<String, review::ReplySender>>,
+    review_slots: Mutex<HashMap<String, review::Slot>>,
     host_mission: Mutex<bool>,
     host_work_files: Mutex<bool>,
     post_gate: Mutex<()>,
@@ -216,6 +220,9 @@ impl Agent {
             read_waiters: Mutex::new(HashMap::new()),
             host_image: std::sync::atomic::AtomicBool::new(false),
             image_waiters: Mutex::new(HashMap::new()),
+            host_review: std::sync::atomic::AtomicBool::new(false),
+            review_waiters: Mutex::new(HashMap::new()),
+            review_slots: Mutex::new(HashMap::new()),
             host_mission: Mutex::new(false),
             host_work_files: Mutex::new(false),
             post_gate: Mutex::new(()),

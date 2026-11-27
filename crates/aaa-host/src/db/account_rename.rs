@@ -66,7 +66,7 @@ impl Db {
             if key.starts_with("default-account:") && text == from {
                 next = to.into();
             } else if matches!(key.as_str(), "account-pool-v1" | "account-pool-v2")
-                || ["account-run:", "account-job:", "image-job:"].iter().any(|p| key.starts_with(p))
+                || ["account-run:", "account-job:", "image-job:", "review-job:"].iter().any(|p| key.starts_with(p))
             {
                 let mut value: serde_json::Value = serde_json::from_str(&text)?;
                 if key.starts_with("account-run:") {

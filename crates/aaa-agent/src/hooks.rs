@@ -59,6 +59,7 @@ pub(crate) enum Reply {
     Text(String),
     ThreadRead(Box<aaa_proto::Outcome<aaa_proto::FrontResponse>>),
     Image(aaa_proto::Outcome<aaa_proto::ImageResponse>),
+    Review(aaa_proto::Outcome<aaa_proto::ReviewResponse>),
 }
 
 pub(crate) fn reply(result: Result<Option<Reply>>) -> String {
@@ -78,6 +79,10 @@ pub(crate) fn reply(result: Result<Option<Reply>>) -> String {
             // B64는 원시 bytes를 가린 뒤 인코딩했다. 완성된 JSON을 글로 다시 가리면
             // 우연히 겹친 base64 글자가 '*'로 바뀌어 수신측 decode가 실패한다.
             Ok(format!("imagegen.v1 {clean}"))
+        }
+        Some(Reply::Review(result)) => {
+            let clean = aaa_common::redact::to_value(&result).context("검수 응답 가림 직렬화")?;
+            Ok(format!("review.v1 {clean}"))
         }
     });
     match encoded {
