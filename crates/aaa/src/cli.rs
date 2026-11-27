@@ -1108,6 +1108,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Question { cmd } => front(
             json,
             match cmd {
+                QuestionCmd::Check { file } => return check_question_file(json, &file),
                 QuestionCmd::List { all } => FrontRequest::Questions { all },
                 QuestionCmd::Answer { id, choice, text, auto, reason_file } => {
                     if auto {
@@ -1618,6 +1619,23 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         }
         c.call(req).await
     })
+}
+
+fn check_question_file(json: bool, file: &str) -> Result<ExitCode> {
+    let text = file_text(file, "질문 파일")?;
+    let parsed = aaa_proto::parse_report_questions(&text);
+    let warning = parsed.warning.or_else(|| {
+        parsed.items.is_empty().then(|| "질문 절을 찾지 못했다. `## Questions` 아래에 질문과 선택지를 쓴다.".into())
+    });
+    if let Some(warning) = warning {
+        return front_print(json, Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::BadRequest, warning)));
+    }
+    if json {
+        println!("{}", serde_json::json!({"valid": true}));
+    } else {
+        println!("질문 카드 형식이 맞다");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// 응답 출력(herdr `print_response`): JSON은 한 줄. 오류는 표준 오류로 가고 종료 코드 1이다(JSON이면 `{"error":…}` 한 줄).

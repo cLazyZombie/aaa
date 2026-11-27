@@ -104,9 +104,8 @@ impl Host {
             );
             anyhow::ensure!(
                 parsed.warning.is_none() && parsed.items.iter().all(|q| q.choices.len() >= 2),
-                "{} {}",
-                parsed.warning.as_deref().unwrap_or("질문마다 선택지가 2개 이상이어야 한다."),
-                QUESTION_POST_FORMAT
+                "{}\n본문의 `## Questions` 아래에 질문과 선택지를 쓴다. 고친 본문을 `aaa question check <파일>`로 검사한 뒤 새 post ID로 다시 보낸다(aaa guide questions).",
+                parsed.warning.as_deref().unwrap_or("질문마다 선택지가 2개 이상이어야 한다.")
             );
             return Ok(None);
         }
@@ -511,7 +510,7 @@ impl Host {
         if result.is_none() {
             match self.link_thread_question(project, &mut input) {
                 Ok(ids) => linked_question_ids = ids,
-                Err(error) => result = Some(refused(format!("thread 질문 연결 실패: {error:#}"))),
+                Err(error) => result = Some(refused(format!("사용자 요청 검사 실패: {error:#}"))),
             }
         }
         #[cfg(test)]

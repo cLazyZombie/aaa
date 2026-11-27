@@ -112,6 +112,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa pane send-text <pane> "…"` · `aaa pane send-keys <pane> enter` | 글만 · 키만 보내기 |
 | `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
+| `aaa question check <파일>` | 보고서·post 본문의 Questions 형식을 발행 전에 검사 |
 | `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
 | `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다) |
 | `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread. 웹은 활동 막대 「할 일」(§8.306) |
@@ -562,6 +563,10 @@ thread 메시지는 m-ID로 연결되고, 진단에는 본문의 길이·해시�
 카드 없이 명시한 확인 요청에는 「확인 필요」 알림을 보낸다.
 
 ## 사용자 확인 요청의 선택지
+
+`aaa question check <파일>`은 thread 보고서와 사용자 요청 본문의 `## Questions`를 로컬에서 검사합니다.
+형식이 잘못되면 질문 번호와 원본 파일의 줄 번호, 수정 방법을 표시하고 종료 코드 1을 반환합니다.
+`-`를 주면 표준 입력을 읽습니다. 연결할 기존 카드와 첨부 자료는 발행할 때 host가 확인합니다.
 
 `aaa post user --request --needs-user`는 같은 프로젝트의 열린 미답변 thread 질문 카드에 연결하거나, 본문에 질문마다 선택지 2개 이상의 `## Questions`를 써야 합니다. 평문만 보내면 host가 형식 예시와 함께 거절합니다. 거절한 글을 고쳐 보낼 때는 새 post ID를 씁니다.
 

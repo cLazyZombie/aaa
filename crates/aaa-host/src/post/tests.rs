@@ -223,21 +223,26 @@ fn plain_user_requests_link_only_one_current_thread_question() {
 fn standalone_user_requests_require_answerable_questions_before_creating_cards() {
     let (h, _lab) = host();
     h.project_create("demo", Default::default(), "test").unwrap();
-    for (n, body) in [
-        (20, "병합을 승인해 주세요"),
-        (21, "## Questions\n### 1. 승인\n"),
-        (22, "## Questions\n### 1. 승인\n- A 승인\n"),
-        (23, "## Questions\n### 1. 승인\n- A 승인\n- B 보류\n### 2. 인증\n직접 해 주세요"),
-        (24, "## Questions\n### 1. 승인\n- A 승인\n- A 보류\n"),
+    for (n, body, expected) in [
+        (20, "병합을 승인해 주세요", "## Questions"),
+        (21, "## Questions\n### 1. 승인\n", "1번 질문 · 2번 줄. 선택지가 0개다"),
+        (22, "## Questions\n### 1. 승인\n- A 승인\n", "1번 질문 · 2번 줄. 선택지가 1개다"),
+        (
+            23,
+            "## Questions\n### 1. 승인\n- A 승인\n- B 보류\n### 2. 인증\n직접 해 주세요",
+            "2번 질문 · 5번 줄. 선택지가 0개다",
+        ),
+        (24, "## Questions\n### 1. 승인\n- A 승인\n- A 보류\n", "1번 질문 · 4번 줄. A 선택지가 3번 줄과 중복된다"),
     ] {
         let i = PostInput { to: "user".into(), body: body.into(), ..input(n) };
         let PostResult::Refused { reason, .. } = h.front_post("demo", i.clone(), "local:cli").unwrap() else {
             panic!("선택지 없는 요청 {n}")
         };
-        assert!(
-            reason.contains("## Questions") && reason.contains("- A 진행") && reason.contains("- B 보류"),
-            "{reason}"
-        );
+        assert!(reason.contains(expected), "{reason}");
+        assert!(reason.contains(if n == 20 { "- A 진행" } else { "aaa question check" }), "{reason}");
+        if n != 20 {
+            assert!(reason.contains("본문의 `## Questions` 아래에 질문과 선택지"), "{reason}");
+        }
         assert_eq!(h.front_post("demo", i, "local:cli").unwrap(), refused(reason));
     }
     assert!(h.user_requests("demo").unwrap().is_empty());
@@ -245,7 +250,7 @@ fn standalone_user_requests_require_answerable_questions_before_creating_cards()
     assert!(h.db.post_list("demo").unwrap().is_empty());
     let i = PostInput {
         to: "user".into(),
-        body: "## Questions\n### 1. 배포 승인\n- t-2030: 질문 카드 경고 수리\n\n- A 배포\n- B 보류\n".into(),
+        body: "## Questions\n### 1. 배포 승인\n- t-2261(replay resume) 재개 수리\n\n- A 배포\n- B 보류\n".into(),
         ..input(25)
     };
     let result = h.front_post("demo", i.clone(), "local:cli").unwrap();
@@ -254,7 +259,9 @@ fn standalone_user_requests_require_answerable_questions_before_creating_cards()
     let requests = h.user_requests("demo").unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].question_id.as_deref(), Some("q-1000"), "거절은 q-ID를 만들지 않는다");
-    assert_eq!(requests[0].questions.as_ref().unwrap().items[0].choices.len(), 2);
+    let question = &requests[0].questions.as_ref().unwrap().items[0];
+    assert_eq!(question.choices.len(), 2);
+    assert_eq!(question.body.as_deref(), Some("- t-2261(replay resume) 재개 수리"));
 }
 
 /// 연결 검사 뒤 보고가 닫히는 사건을 고정한다. 독립 post q-ID를 새로 만들면 안 된다.

@@ -117,7 +117,7 @@ impl Host {
         let mut fixes = Vec::new();
         if let Some(w) = &rec.question_warning {
             fixes.push(format!(
-                "형식 오류: {w}\n보고의 Questions를 고쳐 다시 쓴다. 선택지는 A부터 순서대로 쓰고 추천은 (추천)으로만 표시한다."
+                "{w}\n지정된 줄을 고쳐 보고를 다시 쓴다. 발행 전 `aaa question check <파일>`로 확인한다."
             ));
         }
         if let Some(g) = &rec.question_evidence {
