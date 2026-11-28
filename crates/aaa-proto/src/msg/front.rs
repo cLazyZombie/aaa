@@ -1442,9 +1442,17 @@ pub enum FrontRequest {
         thread: String,
         #[serde(default)]
         resume: bool,
-        /// 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+        /// 이 profile로 띄운다. 다른 harness는 새 thread를 만들며 대화를 이을 수 없다.
         #[serde(default)]
         profile: Option<String>,
+        /// FRONT_API 1.195. 같은 프로젝트 coordinator가 채팅의 직접 지시를 인용한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        user_request: Option<String>,
+        /// FRONT_API 1.195. 모델을 바꾸기 전에 실행 중인 pane 종료를 허용한다.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(optional, as = "Option<bool>")]
+        stop_running: bool,
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {

@@ -745,11 +745,17 @@ impl Host {
             FrontRequest::ThreadUnpark { project, thread, machine, repo, dry_run } => {
                 self.thread_unpark(&project, &thread, machine, repo, dry_run, actor).await
             }
-            FrontRequest::ThreadRestart { project, thread, resume, profile } => self
-                .thread_restart(&project, &thread, resume, profile, actor)
+            FrontRequest::ThreadRestart { project, thread, resume, profile, user_request, stop_running } => {
+                Box::pin(self.thread_restart_requested(
+                    &project,
+                    &thread,
+                    orch::RestartRequest { resume, profile, user_request, stop_running },
+                    actor,
+                ))
                 .await
                 .map(Box::new)
-                .map(FrontResponse::Thread),
+                .map(FrontResponse::Thread)
+            }
             FrontRequest::ThreadBrief { project, thread } => {
                 self.thread_brief(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }

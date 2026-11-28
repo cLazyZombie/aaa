@@ -225,6 +225,17 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let _guard = self.claim_thread(project, id)?;
+        self.park_close_claimed(project, id, request, actor, true).await
+    }
+
+    pub(crate) async fn park_close_claimed(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        request: Option<ThreadPark>,
+        actor: &str,
+        notify: bool,
+    ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
         parkable(&rec).map_err(|why| bad(format!("{id}: {why}")))?;
         let mut park = request.or_else(|| rec.park.clone()).ok_or_else(|| bad(format!("{id}에 보류 요청이 없다")))?;
@@ -313,7 +324,7 @@ impl Host {
         self.db.audit(actor, "thread_park", &format!("{project}/{id}"));
         self.flow(&rec, "thread_parked", None, notes.join("; "));
         // 기획 대화 thread는 사용자 모르게 쉰다(t-1255 결정 20): 알림함 항목을 내지 않는다
-        if !rec.chat_only() {
+        if notify && !rec.chat_only() {
             self.inbox_add(
                 project,
                 "thread-state",
@@ -445,6 +456,9 @@ impl Host {
         if rec.status != ThreadStatus::Parked {
             return Err(bad(format!("{id}는 보류한 thread가 아니다(지금 {})", rec.status.as_str())));
         }
+        if let Some(change) = rec.profile_changes.iter().rev().find(|c| c.from_thread == id && c.to_thread != id) {
+            return Err(bad(format!("이 thread의 모델은 {}에서 이어진다", change.to_thread)));
+        }
         if dry_run {
             return Ok(FrontResponse::UnparkPreview(self.unpark_preview(&rec)));
         }
@@ -496,7 +510,7 @@ impl Host {
         }
         let resume = way == Way::Same { resume: true };
         let extra = extra.unwrap_or_default();
-        let restarted = self.thread_restart_with(project, id, resume, None, actor, Some(&extra)).await;
+        let restarted = self.thread_restart_with(project, id, resume, actor, Some(&extra)).await;
         let view = match restarted {
             Ok(v) => v,
             Err(e) => {

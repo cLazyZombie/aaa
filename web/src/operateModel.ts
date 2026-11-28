@@ -12,7 +12,7 @@ export const canPark = (frontApi: string | null | undefined): boolean => apiAtLe
 
 /** thread 화면 머리의 동작 중 지금 할 수 있는 것. `running`은 그 thread의 agent pane이 도는가 */
 export function threadActions(
-  t: Pick<ThreadView, "status" | "thread_kind" | "cleanup_pending" | "brief" | "role" | "automation" | "park">,
+  t: Pick<ThreadView, "id" | "status" | "thread_kind" | "cleanup_pending" | "brief" | "role" | "automation" | "park" | "profile_changes">,
   running: boolean,
 ): {
   resolve: boolean;
@@ -35,7 +35,7 @@ export function threadActions(
     brief: running && !ended && t.brief !== "delivered",
     // 사람·coordinator가 띄운 열린 일반 thread만(host `park::parkable`). 정리를 맡긴 동안에도 창에서 바로 보류·거두기를 고른다
     park: t.status === "open" && t.role === "worker" && !t.automation && t.thread_kind !== "adopted" && !t.cleanup_pending,
-    unpark: parked,
+    unpark: parked && !t.profile_changes?.some(c => c.from_thread === t.id && c.to_thread !== t.id),
   };
 }
 

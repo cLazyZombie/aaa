@@ -313,9 +313,15 @@ pub(super) enum ThreadCmd {
         /// 저장된 대화를 잇는다(brief 안내 없음)
         #[arg(long)]
         resume: bool,
-        /// 이 profile로 새 대화를 띄운다(그 머신 agent.toml에서 다시 해석한다)
-        #[arg(long, conflicts_with = "resume")]
+        /// 이 profile로 띄운다. 같은 harness는 --resume 가능, 다른 harness는 새 thread
+        #[arg(long)]
         profile: Option<String>,
+        /// coordinator가 채팅에서 받은 사용자의 모델 변경 지시를 한 줄로 인용
+        #[arg(long, requires = "profile")]
+        user_request: Option<String>,
+        /// 실행 중인 응답을 중단하고 pane 종료를 확인한 뒤 모델 변경(먼저 저장 상태 확인)
+        #[arg(long, requires = "profile")]
+        stop_running: bool,
     },
     /// thread agent에 메시지를 보낸다. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다)
     Message {

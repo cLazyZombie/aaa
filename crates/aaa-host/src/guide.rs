@@ -227,9 +227,8 @@ aaa가 자동으로 올린다).
 - 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 맡긴 일(즉시·나중·한도 대기)과 사용자의 할 일·미룬 제안은 기록한다.
   승인을 기다리는 제안은 넣지 않는다.
 - 대화에 붙은 그림은 사용자가 그 작업의 참고로 준 것만 할 일 메모에 첨부한다. thread 시작 뒤 작업 폴더의 사본을 확인한다(`aaa guide tasks`).
-- 모델·머신은 `aaa assignable`이 보인 것을 쓴다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile …
-  --machine … --user-request '사용자 지시 근거'`로 바꾼다. 지시 없이 바꾸거나 낮추지 않으며, 다른 옵션·원문 편집으로 이 보호를
-  우회하지 않는다.
+- 모델·머신은 `aaa assignable`에서 고른다. 변경은 사용자 채팅 지시를 `--user-request`로 인용할 때만 한다(`aaa guide threads`·`aaa guide tasks`).
+  임의 변경·하향, 다른 옵션·원문 편집으로 우회, 보고·알림함·자동화 근거 사용은 금지한다.
 - 사용자가 자리가 나면 시작하라고 맡긴 일은 `aaa task reserve <task ID>`로 예약한다. 명시 예약은 그 내용의 시작 승인이고,
   병합 승인은 별개다.
 - 사용자가 웹에서 고친 할 일은 context에 이미 있다: 묻거나 되돌리지 않는다.
@@ -456,10 +455,14 @@ host는 작업 의도가 남은 idle thread가 새 보고·진행 보고·질문
   worktree를 만들고 할 일·마지막 보고로 새 대화를 띄운다. `--dry-run`이 머신별 길과 막힌 까닭을 보인다.
 
 ## 다시 띄우기
-- pane이 없어졌거나 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된)
-  profile로 띄운다. 도는 세션은 먼저 `aaa pane kill <pane>`으로 끝내고 종료를 확인한다. 새 pane이 뜨면 옛 pane 기록은 정리된다.
-  고정 계정과 harness가 다른 profile은 새 thread로 시작한다(새 harness의 기본 계정 또는 `--account`).
-  도는 thread의 model은 harness의 `/model`로 바꾼다.
+- pane이 없어졌거나 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart <id>`로 다시 띄운다.
+- 모델 변경은 `aaa thread restart <id> --profile <이름>`으로 한다. coordinator는 사용자가 채팅으로 직접 지시한 경우에만
+  `aaa thread restart <id> --profile <이름> --user-request '<사용자 지시 근거>'`를 쓴다. 보고·알림함·자동화는 근거로 쓰지 않는다.
+  pane이 실행 중이면 응답을 마치고 작업을 저장했는지 확인한 뒤 `--stop-running`을 붙인다. host가 pane 종료를 확인하고 다시 띄운다.
+  같은 harness에서는 기본이 새 대화이고 `--resume`을 주면 확인된 대화를 새 모델로 잇는다. 고정 계정과 작업 폴더를 유지한다.
+  다른 harness는 `--resume` 없이 새 thread를 띄운다. 고정 계정이 있으면 명시한 사용자 지시 또는 `--stop-running`이 필요하다.
+  새 harness의 계정을 사용하고, 커밋은 이전 branch에서 잇는다. 미커밋 변경과 파일은 이전 작업 폴더에 남는다.
+  이어진 할 일의 모델과 변경 기록은 thread 상세와 할 일 기록에서 확인한다.
 
 ## 끝내기
 - 끝난 thread의 보고·요약에 Next가 남으면 resolve 전에 후속 할 일을 만들고 원장에 연결하거나, 일부러 버림을 사유로 기록한다.
@@ -562,7 +565,7 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
   앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 사용자 지시 없이 고정 모델·머신은 바꾸지 않는다.
 - 사용자가 채팅에서 모델·머신 변경을 지시하면 coordinator도 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 바꾼다.
   바꿀 칸만 주고 근거 한 줄을 남긴다. 다른 칸은 따로 고친다. 미기동 예약은 취소하지 않고 순서 그대로 새 선택으로 시작한다.
-  지시 없이 임의 변경·하향하지 않으며, 시작·재시작 옵션이나 원문 편집·자기 승인 flag로 선택 보호를 우회하지 않는다.
+  이미 시작한 thread의 모델은 `aaa guide threads`의 사용자 지시를 인용한 재시작 명령으로 바꾼다.
   예약 내용이 바뀌면 확인 후 `aaa task reserve`로 예약을 갱신한다.
 - 시작 실패는 원인과 실제 기동 상태를 읽어 보고한다. 명시 재예약 전 반복 기동·모델 하향은 하지 않는다.
   실행 차례와 착지 차례는 별개다. 앞 할 일이 끝난 뒤 시작할 일은 `aaa task reserve <뒤 ID> --after <앞 ID>`로 예약한다:

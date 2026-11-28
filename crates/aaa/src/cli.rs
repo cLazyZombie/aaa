@@ -948,9 +948,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadStop { project, thread }
                 }
-                ThreadCmd::Restart { thread, legacy, resume, profile } => {
+                ThreadCmd::Restart { thread, legacy, resume, profile, user_request, stop_running } => {
                     let (project, thread) = on_target(thread, legacy)?;
-                    FrontRequest::ThreadRestart { project, thread, resume, profile }
+                    if stop_running {
+                        eprintln!("실행 중인 응답은 중단됩니다. 디스크에 저장한 작업은 기존 작업 폴더에 남습니다.");
+                    }
+                    FrontRequest::ThreadRestart { project, thread, resume, profile, user_request, stop_running }
                 }
                 ThreadCmd::Park { thread, legacy, now, note, user_request, cancel } => {
                     let (project, thread) = on_target(thread, legacy)?;
@@ -1610,6 +1613,12 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         }
         if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
             anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
+        }
+        if matches!(&req, FrontRequest::ThreadRestart { user_request, stop_running, profile, resume, .. }
+            if user_request.is_some() || *stop_running || (*resume && profile.is_some()))
+            && c.proto.minor < 195
+        {
+            anyhow::bail!("사용자 지시·실행 중 종료·대화 잇기를 포함한 모델 변경은 Front API 1.195 이상 host가 필요하다");
         }
         if let FrontRequest::TaskEdit { ops, .. } = &req
             && c.proto.minor < 194

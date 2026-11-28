@@ -236,7 +236,7 @@ impl Host {
                     "이 harness는 대화를 이어 띄우지 못한다",
                 ))
             } else {
-                self.thread_restart(&rec.project, &rec.id, resume, None, ACTOR).await
+                self.thread_restart(&rec.project, &rec.id, resume, ACTOR).await
             };
             return match restarted {
                 Ok(v) => {

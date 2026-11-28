@@ -210,6 +210,19 @@ pub struct ThreadLimitOverride {
     pub user_request: Option<String>,
 }
 
+/// 사용자가 승인한 profile 변경. harness가 바뀌면 두 thread ID가 서로 다르다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadProfileChange {
+    pub before: String,
+    pub after: String,
+    pub actor: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub user_request: Option<String>,
+    pub from_thread: String,
+    pub to_thread: String,
+}
+
 /// 검증한 보고 사본 첫 줄의 알림 의도. 묶음·진행률과 별개다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -257,6 +270,9 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub over_limit: Option<ThreadLimitOverride>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<ThreadProfileChange>>")]
+    pub profile_changes: Vec<ThreadProfileChange>,
     /// 보류 요청·보류 기록(FRONT_API 1.105). 보류하지 않은 thread와 옛 host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

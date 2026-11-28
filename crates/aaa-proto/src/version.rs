@@ -348,7 +348,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.192: Antigravity CLI profile, 구독 사용량 `UsageReport.agy`와 재설정 시각 미상인 `ThreadView.limited`(선택, t-2116).
 // 1.193: 터미널 WS의 `state=grid.v1` 협상과 `Grid` 상태(t-2128). 요청하지 않으면 기존 `State`를 보낸다.
 // 1.194: 할 일의 검수 모델·계정과 시작할 때 확정한 thread 검수 설정(t-2273).
-pub const FRONT_API: Version = Version { major: 1, minor: 194 };
+// 1.195: 사용자 지시로 thread 모델 변경(thread_restart.user_request·stop_running, ThreadView.profile_changes).
+pub const FRONT_API: Version = Version { major: 1, minor: 195 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -1482,10 +1482,12 @@ async fn requested_choices_reject_changed_contents_and_started_reservations() {
     let row = one_reservation(&lab).await;
     let original = lab.text();
     let changed = original.replace("claude@mac-offline", "codex@mac-offline");
-    assert!(lab.h.check_requested_task_choices("demo", &original, &changed).is_ok());
+    assert!(lab.h.check_requested_task_choices("demo", &original, &changed, None).is_ok());
     let modified = original.replace("독립 설명과 완료 범위", "다른 범위");
-    let error =
-        lab.h.check_requested_task_choices("demo", &modified, &modified.replace("claude@", "codex@")).unwrap_err();
+    let error = lab
+        .h
+        .check_requested_task_choices("demo", &modified, &modified.replace("claude@", "codex@"), None)
+        .unwrap_err();
     assert_eq!(error.code, ErrorCode::Conflict);
     assert!(error.message.contains("다른 내용"));
     for state in [S::Starting, S::Running, S::Check] {
@@ -1497,7 +1499,7 @@ async fn requested_choices_reject_changed_contents_and_started_reservations() {
                 Ok(())
             })
             .unwrap();
-        let error = lab.h.check_requested_task_choices("demo", &original, &changed).unwrap_err();
+        let error = lab.h.check_requested_task_choices("demo", &original, &changed, None).unwrap_err();
         assert_eq!(error.code, ErrorCode::Conflict);
         assert!(error.message.contains("기동한 예약"));
     }
@@ -1702,8 +1704,9 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
     assert_eq!(host.default_thread_profile("demo"), "codex");
     let before = lab.text();
     let after = before.replace("@mac-offline", "@mac-other");
-    host.check_requested_task_choices("demo", &before, &after).unwrap();
-    host.record_requested_task_choices("demo", &before, &after, "coordinator:p (사용자 지시: 머신만 변경)").unwrap();
+    host.check_requested_task_choices("demo", &before, &after, None).unwrap();
+    host.record_requested_task_choices("demo", &before, &after, "coordinator:p (사용자 지시: 머신만 변경)", None)
+        .unwrap();
     let updated = host.db.queue_list("demo").unwrap().remove(0);
     assert_eq!(updated.machine.as_deref(), Some("mac-other"));
     assert_eq!(updated.profile, original.profile, "머신 변경은 이미 승인한 기본 모델을 바꾸지 않는다");
