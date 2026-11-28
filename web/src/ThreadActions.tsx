@@ -112,7 +112,7 @@ export function ParkBanner({ t, canAct, running }: { t: ThreadView; canAct: bool
       <span>
         <strong>{parked ? "보류" : "보류 준비 중"}</strong> · {parkFacts(t)}
       </span>
-      {canAct && (
+      {canAct && (!parked || threadActions(t, running).unpark) && (
         <button type="button" className="btn small" data-testid={parked ? "park-banner-unpark" : "park-banner-park"} onClick={() => setOpen(parked ? "unpark" : "park")}>
           {parked ? <CirclePlay aria-hidden="true" /> : <CirclePause aria-hidden="true" />}
           {parked ? "이어 하기" : "보류 창"}

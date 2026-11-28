@@ -75,6 +75,7 @@ fn open_thread() -> ThreadRec {
         resolve_pending: None,
         task_clean: TaskClean::default(),
         task_id: None,
+        profile_changes: Vec::new(),
         attachments: Vec::new(),
         prepare_started_ms: None,
         leftover: None,

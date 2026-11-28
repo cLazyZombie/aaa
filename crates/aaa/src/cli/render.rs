@@ -66,6 +66,14 @@ pub(super) fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
     }
+    for c in &t.profile_changes {
+        let reason = c.user_request.as_ref().map(|r| format!(" · 사용자 지시: {r}")).unwrap_or_default();
+        let _ = writeln!(
+            s,
+            "모델 변경: {} {} → {} {} · {}{reason}",
+            c.from_thread, c.before, c.to_thread, c.after, c.actor
+        );
+    }
     if let Some(r) = &t.responsibility {
         match r.state {
             aaa_proto::ResponsibilityState::Detached => {

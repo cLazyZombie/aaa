@@ -9,6 +9,7 @@ mod projects;
 pub use projects::*;
 mod profiles;
 mod restart;
+pub(crate) use restart::RestartRequest;
 mod start;
 #[cfg(test)]
 use restart::*;
@@ -226,6 +227,8 @@ pub(crate) struct ThreadRec {
     /// 이어진 할 일의 ULID(자동 병합 조회, plan §8.530). 이 칸 전에 띄운 thread는 없어 할 일 목록의 연결로 찾는다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profile_changes: Vec<aaa_proto::ThreadProfileChange>,
     /// `--from-task`로 넘길 task 첨부(plan §8.327): 작업 폴더 `attachments/`에 쓸 이름과 host 원본. 세션을 띄울 때마다 쓴다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<crate::task_attach::TaskFile>,
@@ -354,6 +357,7 @@ impl ThreadRec {
             resolve_pending: None,
             task_clean: TaskClean::default(),
             task_id: None,
+            profile_changes: Vec::new(),
             attachments: Vec::new(),
             prepare_started_ms: Some(now),
             created_at_ms: now,
@@ -720,6 +724,7 @@ impl Host {
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             design: r.design.clone(),
             over_limit: r.over_limit.clone(),
+            profile_changes: r.profile_changes.clone(),
             park: r.park.clone().map(Box::new),
             auto_merge: self.thread_auto_merge(r),
             project: r.project.clone(),

@@ -170,7 +170,7 @@ impl Host {
         actor: &str,
         background: bool,
     ) -> Result<ThreadView, ErrorBody> {
-        self.thread_start_key(a, actor, background, None).await
+        self.thread_start_key(a, actor, background, None, None).await
     }
 
     pub(crate) async fn thread_start_once(
@@ -179,7 +179,7 @@ impl Host {
         actor: &str,
         origin: &StartOrigin,
     ) -> Result<ThreadView, ErrorBody> {
-        self.thread_start_key(a, actor, true, Some(origin)).await
+        self.thread_start_key(a, actor, true, Some(origin), None).await
     }
 
     pub(super) async fn thread_start_key(
@@ -188,8 +188,10 @@ impl Host {
         actor: &str,
         background: bool,
         origin: Option<&StartOrigin>,
+        profile_change: Option<aaa_proto::ThreadProfileChange>,
     ) -> Result<ThreadView, ErrorBody> {
-        let _account_read = self.account_rename_gate.read().await;
+        // 모델 변경은 예약 gate를 잡기 전에 계정 읽기 잠금을 얻어 이 경로에 들어온다.
+        let _account_read = if profile_change.is_none() { Some(self.account_rename_gate.read().await) } else { None };
         let pool_key = a.pool.as_ref().map(|p| crate::account_pool::receipt(&a.project, &p.id));
         if let Some(key) = &pool_key
             && let Some(id) = self.db.meta(key).map_err(internal)?
@@ -404,15 +406,32 @@ impl Host {
         }
         rec.id = id.clone();
         // pane·worktree를 만들기 전에 연결한다. 연결에 실패한 기동은 실패 상태로 남기고 띄우지 않는다.
-        if let Some(t) = &a.start_task
-            && let Some(why) = self.link_started(&a.project, t, &id, actor).await
-        {
+        let profile_change = profile_change.map(|mut c| {
+            c.to_thread.clone_from(&id);
+            c
+        });
+        let link = match (&a.start_task, &profile_change) {
+            (Some(t), Some(c)) => self.task_change_thread_profile(&a.project, t, c),
+            (Some(t), None) => self
+                .link_started(&a.project, t, &id, actor)
+                .await
+                .map_or(Ok(()), |why| Err(err(ErrorCode::Conflict, why))),
+            _ => Ok(()),
+        };
+        if let Err(error) = link {
             self.update_rec(&a.project, &id, |r| {
                 r.status = ThreadStatus::Failed;
-                r.error = Some(why.clone());
+                r.error = Some(error.message.clone());
             })?;
             self.db.cancel_unspawned_agy_slot(&mid, &format!("{}/{id}", a.project)).map_err(internal)?;
-            return Err(err(ErrorCode::Conflict, why));
+            return Err(error);
+        }
+        if let Some(change) = profile_change {
+            let prior = self.update_rec(&a.project, &change.from_thread, |r| {
+                r.profile_changes.push(change.clone());
+            })?;
+            rec = self.update_rec(&a.project, &id, |r| r.profile_changes.push(change.clone()))?;
+            self.profile_change_event(&prior, &change);
         }
         #[cfg(test)]
         {

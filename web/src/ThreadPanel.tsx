@@ -238,6 +238,14 @@ export function ThreadPanel({
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
             </div>
             {t.account_selection && <p className="muted" data-testid="thread-account-selection">{t.account_selection.reason} · 한도 그룹 {t.account_selection.group} · 예상 예약 {({ small: 5, medium: 15, large: 30 })[t.account_selection.size]}%p</p>}
+            {t.profile_changes?.map((change, index) => {
+              const other = change.from_thread === t.id ? change.to_thread : change.from_thread;
+              return <p className="muted" data-testid="thread-profile-change" key={index}>
+                모델 변경 {change.before} → {change.after} · {change.actor} · {new Date(change.at_ms).toLocaleString()}
+                {change.user_request && <> · 사용자 지시 {change.user_request}</>}
+                {other !== t.id && <> · <a href={`#thread=${encodeURIComponent(`${t.project}/${other}`)}`}>{other}</a></>}
+              </p>;
+            })}
           </div>
           {t.automation && <section className="card" data-testid="thread-automation-origin">
             <h2>자동화 thread</h2>

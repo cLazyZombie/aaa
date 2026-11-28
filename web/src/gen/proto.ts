@@ -1833,9 +1833,17 @@ discard_uncopied: boolean, } | { "op": "thread_park", project?: string, thread: 
  */
 repo?: string, dry_run?: boolean, } | { "op": "thread_stop", project?: string, thread: string, } | { "op": "thread_restart", project?: string, thread: string, resume: boolean,
 /**
- * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
+ * 이 profile로 띄운다. 다른 harness는 새 thread를 만들며 대화를 이을 수 없다.
  */
-profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "thread_answer", project?: string, thread: string,
+profile: string | null,
+/**
+ * FRONT_API 1.195. 같은 프로젝트 coordinator가 채팅의 직접 지시를 인용한다.
+ */
+user_request?: string,
+/**
+ * FRONT_API 1.195. 모델을 바꾸기 전에 실행 중인 pane 종료를 허용한다.
+ */
+stop_running?: boolean, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "thread_answer", project?: string, thread: string,
 /**
  * 답하는 질문의 보고 hash(`ThreadQuestions.report_hash`)
  */
@@ -2236,7 +2244,7 @@ responsibility?: Responsibility, account_selection?: AccountSelection,
 /**
  * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
  */
-over_limit?: ThreadLimitOverride,
+over_limit?: ThreadLimitOverride, profile_changes?: Array<ThreadProfileChange>,
 /**
  * 보류 요청·보류 기록(FRONT_API 1.105). 보류하지 않은 thread와 옛 host는 생략한다.
  */
@@ -2346,6 +2354,8 @@ open?: boolean, status?: ThreadStatus, limit?: number, after?: string,
 details?: boolean, };
 
 export type ThreadLimitOverride = { actor: string, at_ms: number, user_request: string | null, };
+
+export type ThreadProfileChange = { before: string, after: string, actor: string, at_ms: number, user_request: string | null, from_thread: string, to_thread: string, };
 
 export type ThreadPark = { actor: string, requested_at_ms: number,
 /**

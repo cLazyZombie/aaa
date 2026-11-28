@@ -300,6 +300,7 @@ pub fn typescript_bindings() -> String {
         ThreadView::decl(&cfg),
         ThreadListQuery::decl(&cfg),
         ThreadLimitOverride::decl(&cfg),
+        ThreadProfileChange::decl(&cfg),
         ThreadPark::decl(&cfg),
         UnparkOption::decl(&cfg),
         UnparkPreview::decl(&cfg),

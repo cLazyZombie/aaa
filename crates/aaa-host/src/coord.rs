@@ -364,6 +364,57 @@ impl Host {
         Some(format!("{thread}를 「{}」 task에 잇지 못했다({why}). 할 일 화면 「task에 잇기」로 잇는다", t.title))
     }
 
+    /// thread 모델 변경의 선택값과 (다른 harness면) 새 thread 연결을 같은 할 일 판에 쓴다.
+    /// 호출자는 예약 gate와 기존 thread의 작업 잠금을 보유한다.
+    pub(crate) fn task_change_thread_profile(
+        &self,
+        project: &str,
+        task: &TaskView,
+        change: &aaa_proto::ThreadProfileChange,
+    ) -> Result<(), ErrorBody> {
+        let op = TaskOp::Update {
+            at: aaa_proto::TaskAnchor {
+                list: task.list.clone(),
+                title: task.title.clone(),
+                block_sha256: task.block_sha256.clone(),
+                line: task.line,
+            },
+            title: None,
+            owner: None,
+            person: false,
+            profile: Some(change.after.clone()),
+            machine: None,
+            review: None,
+            notes: None,
+            thread: (change.from_thread != change.to_thread).then(|| change.to_thread.clone()),
+            done: None,
+            repo: None,
+        };
+        // 변경 경로가 이미 머신에서 profile을 해석했다. 지금 task의 머신과 나머지 칸은 유지한다.
+        let owner_ok = |_: &str, _: bool| Ok(());
+        let repo_ok = |r: &str| self.task_repo_ok(project, r);
+        let removed = |_: i64| Err("모델 변경에는 할 일 복원을 쓰지 않는다".into());
+        let profiles = self.known_profiles(project);
+        let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
+        let dir = self.project_dir(project)?;
+        let actor = self.task_writer(project, &change.actor)?;
+        let (conflict, _) = self.task_write_requested(
+            project,
+            &dir,
+            &[op],
+            None,
+            &actor,
+            &ctx,
+            false,
+            change.user_request.as_deref(),
+            Some(&change.from_thread),
+        )?;
+        if let Some((_, reason, _)) = conflict {
+            return Err(err(ErrorCode::Conflict, reason));
+        }
+        Ok(())
+    }
+
     /// 할 일 「바로 시작」 확인창(`thread_start_preview`): `thread start --from-task`와 같은 규칙으로 채운 값과 저장소·한도
     pub(crate) async fn thread_start_preview(
         &self,
@@ -596,8 +647,17 @@ impl Host {
         let repo_ok = |r: &str| self.task_repo_ok(project, r);
         let profiles = self.known_profiles(project);
         let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
-        let (conflict, log_ids) =
-            self.task_write_requested(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false, user_request)?;
+        let (conflict, log_ids) = self.task_write_requested(
+            project,
+            &dir,
+            &ops,
+            base_sha256.as_deref(),
+            &actor,
+            &ctx,
+            false,
+            user_request,
+            None,
+        )?;
         let board = self.task_board(project)?;
         for (title, why, thread) in &attention_before {
             let now = tasks::find(&board.tasks, title);
@@ -644,7 +704,7 @@ impl Host {
         ctx: &task_edit::Ctx,
         auto: bool,
     ) -> Result<(Option<WriteConflict>, Vec<i64>), ErrorBody> {
-        self.task_write_requested(project, dir, ops, base_sha256, actor, ctx, auto, None)
+        self.task_write_requested(project, dir, ops, base_sha256, actor, ctx, auto, None, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -658,7 +718,9 @@ impl Host {
         ctx: &task_edit::Ctx,
         auto: bool,
         user_request: Option<&str>,
+        profile_thread: Option<&str>,
     ) -> Result<(Option<WriteConflict>, Vec<i64>), ErrorBody> {
+        let requested = user_request.is_some() || profile_thread.is_some();
         let log_actor = user_request.map(|reason| format!("{actor} (사용자 지시: {reason})"));
         let log_actor = log_actor.as_deref().unwrap_or(actor);
         let path = dir.join("TASKS.md");
@@ -700,8 +762,8 @@ impl Host {
                                 .collect();
                         }
                     }
-                    if user_request.is_some() {
-                        self.check_requested_task_choices(project, &rev.text, &a.text)?;
+                    if requested {
+                        self.check_requested_task_choices(project, &rev.text, &a.text, profile_thread)?;
                     } else {
                         self.protect_task_choices(&rev.text, &a.text, actor)?;
                     }
@@ -714,9 +776,9 @@ impl Host {
                                 | TaskOp::Update { profile: Some(_), .. }
                         )
                     }) {
-                        self.check_task_reviews(project, &rev.text, &a.text, ctx.profiles, user_request.is_some())?;
+                        self.check_task_reviews(project, &rev.text, &a.text, ctx.profiles, requested)?;
                     }
-                    for r in a.records.iter().filter(|_| user_request.is_none()) {
+                    for r in a.records.iter().filter(|_| !requested) {
                         if r.action == TaskAction::Update {
                             self.protect_task_choices(
                                 r.before.as_deref().unwrap_or_default(),
@@ -835,8 +897,14 @@ impl Host {
         })?;
         let mut log_ids = Vec::new();
         if let Some(after) = &saved.after {
-            if user_request.is_some() {
-                self.record_requested_task_choices(project, &saved.before.text, &after.text, log_actor)?;
+            if requested {
+                self.record_requested_task_choices(
+                    project,
+                    &saved.before.text,
+                    &after.text,
+                    log_actor,
+                    profile_thread,
+                )?;
             } else {
                 self.record_task_choices(project, &saved.before.text, &after.text, actor)?;
             }
@@ -885,7 +953,7 @@ impl Host {
             self.tick_wake.notify_one();
             self.db.audit(
                 actor,
-                if user_request.is_some() {
+                if requested {
                     "task_choices_user_request"
                 } else if auto {
                     "task_auto_clean"

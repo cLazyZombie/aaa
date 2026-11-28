@@ -209,15 +209,19 @@ impl Host {
         project: &str,
         before: &str,
         after: &str,
+        profile_thread: Option<&str>,
     ) -> Result<(), ErrorBody> {
         let new = tasks::parse(after);
         let rows = self.db.queue_list(project).map_err(internal)?;
         for old in tasks::parse(before) {
             let Some(t) = new.iter().find(|t| t.id == old.id) else { continue };
-            if !choices_changed(&old, t) {
+            if !(choices_changed(&old, t) || profile_thread.is_some() && t.thread != old.thread) {
                 continue;
             }
             let Some(q) = rows.iter().find(|q| old.id.as_ref() == Some(&q.task_id)) else { continue };
+            if profile_thread.is_some() && q.thread.as_deref() == profile_thread {
+                continue;
+            }
             if matches!(q.state, S::Starting | S::Running) || (q.state == S::Check && q.thread.is_some()) {
                 return Err(err(
                     ErrorCode::Conflict,
@@ -241,6 +245,7 @@ impl Host {
         before: &str,
         after: &str,
         actor: &str,
+        profile_thread: Option<&str>,
     ) -> Result<(), ErrorBody> {
         let mut old = tasks::parse(before);
         tasks::fill_agent(&mut old, &self.known_profiles(project));
@@ -249,12 +254,13 @@ impl Host {
         self.db
             .queue_change(project, actor, |rows| {
                 for q in rows {
+                    let restarting = profile_thread.is_some() && q.thread.as_deref() == profile_thread;
                     let a = old.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     let b = new.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     if let (Some(a), Some(b)) = (a, b)
-                        && choices_changed(a, b)
+                        && (choices_changed(a, b) || (restarting && a.thread != b.thread))
                     {
-                        let pending = matches!(q.state, S::Queued | S::Check);
+                        let pending = matches!(q.state, S::Queued | S::Check) && !restarting;
                         let now = aaa_common::util::now_ms();
                         if a.owner != b.owner {
                             q.selection.owner.clone_from(&b.owner);
@@ -262,7 +268,7 @@ impl Host {
                             // 머신만 바꿀 때는 예약 당시 해석한 기본 모델과 설정 판을 유지한다.
                             if a.profile != b.profile {
                                 let profile = b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project));
-                                if pending {
+                                if pending || restarting {
                                     let (model, effort, revision) = model_selection(self, &profile)
                                         .map_err(|e| std::io::Error::other(e.message))?;
                                     q.model = model;
@@ -281,6 +287,13 @@ impl Host {
                         update_review_pin(&mut q.selection.review, a, b);
                         q.selection.actor = actor.into();
                         q.selection.at_ms = now;
+                        if restarting {
+                            if let Some(thread) = &b.thread {
+                                q.thread = Some(thread.clone());
+                            }
+                            q.task = b.clone();
+                            q.approved_block.clone_from(&b.block_sha256);
+                        }
                         if pending {
                             q.task = b.clone();
                             q.approved_block = b.block_sha256.clone();

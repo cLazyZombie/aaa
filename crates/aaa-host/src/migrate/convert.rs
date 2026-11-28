@@ -188,6 +188,7 @@ pub(crate) fn thread_rec(
         resolve_pending: None,
         task_clean: Default::default(),
         task_id: None,
+        profile_changes: Vec::new(),
         attachments: Vec::new(),
         prepare_started_ms: None,
         leftover: None,
