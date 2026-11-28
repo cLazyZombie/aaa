@@ -4,6 +4,16 @@ import { AA, aaa, browser, pairPage, root, step, until, waitOutput, webkit } fro
 
 const config = `${root}/c/host.toml`;
 const claude = `${root}/claude-profile.sh`;
+// 첫 prompt는 brief보다 먼저 뜬다. brief 처리 뒤에만 권한 시험 입력을 보낸다.
+fs.writeFileSync(`${root}/fake.sh`, `printf 'fake> '
+while IFS= read -r line; do
+  case "$line" in
+    post-probe\\ *) sh "\${line#post-probe }" ;;
+    *brief.md*) printf 'profile-fixture-brief-received\\n' ;;
+  esac
+  printf 'fake> '
+done
+`);
 fs.writeFileSync(claude, `while [ "$#" -gt 0 ]; do
   case "$1" in --session-id|--resume|--model) printf '%s %s\\n' "$1" "$2"; shift ;; esac
   shift
@@ -51,7 +61,8 @@ export default async function () {
       const t = task();
       return t.thread && queue()?.state === "running" && thread(t.thread);
     });
-    await waitOutput(original.pane, "fake>");
+    await waitOutput(original.pane, "profile-fixture-brief-received", "recent");
+    await until("brief 전달 기록", () => thread(original.id).brief === "delivered");
     const coordinator = aaa("project", "open", "demo", "--profile", "fake").pane.id;
     await waitOutput(coordinator, "fake>");
     const cmd = ["thread", "restart", "demo", original.id, "--profile", "claude-a"];
