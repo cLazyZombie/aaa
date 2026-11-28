@@ -5204,3 +5204,4 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [다른 모델 검수 원장과 원격 실행 검증](testing-review-t-2270.md)
 
 - [할 일 검수 모델·계정 저장과 실행 검증](testing-task-review-t-2273.md)
+- [Windows 페어링과 모델 시험의 Front API 스택 고갈 수리](testing-pairing-stack-t-2283.md)
