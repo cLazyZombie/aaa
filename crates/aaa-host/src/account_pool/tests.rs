@@ -670,6 +670,33 @@ fn connect_pool_machine(l: &Lab) {
 }
 
 #[test]
+fn direct_start_claims_before_publishing_a_new_job() {
+    let l = Lab::new();
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    runtime.block_on(async {
+        connect_pool_machine(&l);
+        let id = "new-job";
+        let key = job_key("demo", id);
+        let mut job = job_fixture(id);
+        // 잠금 순서만 검사한다. 실제 계정 선정을 하기 전에 시작을 끝낸다.
+        job.args.task.clear();
+        let guard = l.h.claim_thread("demo", "account-new-job").unwrap();
+        let submit = l.h.pool_submit(job.args, &job.actor, None, false);
+        tokio::pin!(submit);
+        assert!(futures_util::poll!(&mut submit).is_pending());
+        assert!(l.h.db.meta(&key).unwrap().is_none(), "잠금 전에는 새 작업을 배경 배정에 공개하지 않는다");
+        l.h.pool_pass("demo").await.unwrap();
+        drop(guard);
+
+        let response = submit.await.unwrap();
+        assert!(matches!(response, FrontResponse::AccountStart { start }
+            if start.state == AccountStartState::Failed && start.reason == "제목·할 일이 비었다"));
+        assert_eq!(l.h.pool_job("demo", id).unwrap().view.state, AccountStartState::Failed);
+    });
+    drop(runtime);
+}
+
+#[test]
 fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
     let l = Lab::new();
     // 연결 때 예약한 rewatch도 Host를 쥔다. runtime을 Lab보다 먼저 닫아 DB 수명을 끝낸다.
@@ -735,8 +762,8 @@ fn failure_after_waiting_reaches_the_inbox_once() {
     drop(runtime);
 }
 
-fn queued_job(l: &Lab, id: &str) -> Job {
-    let job = Job {
+fn job_fixture(id: &str) -> Job {
+    Job {
         args: StartArgs {
             automatic_workspace: None,
             start_task: None,
@@ -771,7 +798,11 @@ fn queued_job(l: &Lab, id: &str) -> Job {
             reason: "대기".into(),
             created_at_ms: NOW,
         },
-    };
+    }
+}
+
+fn queued_job(l: &Lab, id: &str) -> Job {
+    let job = job_fixture(id);
     l.h.db.set_meta(&job_key("demo", id), &serde_json::to_string(&job).unwrap()).unwrap();
     job
 }

@@ -8,6 +8,7 @@ use aaa_proto::*;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::OwnedMutexGuard;
 
 // 전역 key는 project_meta의 `<종류>:<프로젝트>` 이름 공간과 겹치지 않는다.
 const CONFIG: &str = "account-pool-v2";
@@ -442,6 +443,7 @@ impl Host {
         if !crate::accounts::valid_name(&request.id) {
             return Err(bad("시작 ID는 영문·숫자·-·_ 64자 이하다"));
         }
+        let _account_read = self.account_rename_gate.read().await;
         self.check_active(&args.project)?;
         if args.profile.is_empty() {
             args.profile = self.default_thread_profile(&args.project);
@@ -464,6 +466,14 @@ impl Host {
             actor: actor.into(),
             picked,
         };
+        // 배경 배정이 새 작업을 읽기 전에 제출자가 작업 잠금을 잡는다.
+        // 이미 원장에 있는 ID의 재전송은 진행 중 응답을 바로 받을 수 있다.
+        let lock = self.thread_op_lock(&job.args.project, &format!("account-{}", request.id));
+        let guard = match lock.clone().try_lock_owned() {
+            Ok(guard) => Some(guard),
+            Err(_) if self.db.meta(&key).map_err(internal)?.is_some() => None,
+            Err(_) => Some(lock.lock_owned().await),
+        };
         self.db
             .update_meta(&key, |old| {
                 if let Some(old) = old {
@@ -479,19 +489,33 @@ impl Host {
                     );
                     Ok(old)
                 } else {
+                    anyhow::ensure!(guard.is_some(), "새 시작 작업의 잠금이 없다");
                     Ok(serde_json::to_string(&job)?)
                 }
             })
             .map_err(|e| err(ErrorCode::Conflict, e.to_string()))?;
-        self.pool_run(&job.args.project, &request.id, background).await
+        match guard {
+            Some(guard) => self.pool_run_locked(&job.args.project, &request.id, background, guard).await,
+            None => Ok(FrontResponse::AccountStart { start: self.pool_job(&job.args.project, &request.id)?.view }),
+        }
     }
 
     async fn pool_run(self: &Arc<Self>, project: &str, id: &str, background: bool) -> Result<FrontResponse, ErrorBody> {
         let _account_read = self.account_rename_gate.read().await;
-        let _guard = match self.claim_thread(project, &format!("account-{id}")) {
+        let guard = match self.claim_thread(project, &format!("account-{id}")) {
             Ok(g) => g,
             Err(_) => return Ok(FrontResponse::AccountStart { start: self.pool_job(project, id)?.view }),
         };
+        self.pool_run_locked(project, id, background, guard).await
+    }
+
+    async fn pool_run_locked(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        background: bool,
+        _guard: OwnedMutexGuard<()>,
+    ) -> Result<FrontResponse, ErrorBody> {
         let mut job = self.pool_job(project, id)?;
         let previous = job.view.clone();
         if job.view.state == AccountStartState::Cancelled || job.view.state == AccountStartState::Failed {
