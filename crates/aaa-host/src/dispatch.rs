@@ -5,17 +5,29 @@ use super::*;
 impl Host {
     // ───────────── Front API ─────────────
 
-    pub async fn call(
-        self: &Arc<Self>,
+    pub fn call<'a>(
+        self: &'a Arc<Self>,
         role: DeviceRole,
-        actor: &str,
+        actor: &'a str,
         req: FrontRequest,
-    ) -> Result<FrontResponse, ErrorBody> {
-        self.call_from(role, actor, None, req).await
+    ) -> impl Future<Output = Result<FrontResponse, ErrorBody>> + Send + 'a {
+        self.call_from(role, actor, None, req)
     }
 
     /// `front`는 대화형 연결(웹 터미널)일 때만 준다. 조작 lease는 이 연결에 묶인다.
-    pub async fn call_from(
+    pub fn call_from<'a>(
+        self: &'a Arc<Self>,
+        role: DeviceRole,
+        actor: &'a str,
+        front: Option<&'a FrontRef>,
+        req: FrontRequest,
+    ) -> impl Future<Output = Result<FrontResponse, ErrorBody>> + Send + 'a {
+        // 일부 갈래의 큰 future를 요청 입구에서 heap에 둔다. 호출자가 여러 요청을 차례로 await할 때
+        // 큰 임시 값이 poll 프레임에 요청마다 쌓여, 페어링처럼 작은 요청도 기본 스택을 넘길 수 있다.
+        Box::pin(self.dispatch(role, actor, front, req))
+    }
+
+    async fn dispatch(
         self: &Arc<Self>,
         role: DeviceRole,
         actor: &str,
