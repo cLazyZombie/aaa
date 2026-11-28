@@ -13,7 +13,14 @@ impl Db {
         Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub(crate) fn account_rename(&self, from: &str, to: &str, actor: &str, journal: &str) -> Result<()> {
+    pub(crate) fn account_rename(
+        &self,
+        from: &str,
+        to: &str,
+        actor: &str,
+        journal: &str,
+        hashes: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         for (table, column) in [
@@ -34,7 +41,21 @@ impl Db {
                 if table == "threads" {
                     crate::account_rename::preserve_label(&mut value, from);
                 }
-                crate::account_rename::json(&mut value, from, to);
+                crate::account_rename::json(&mut value, from, to, hashes);
+                if table == "task_archive"
+                    && let Some(body) = value["body"].as_str()
+                {
+                    let next = crate::tasks::rename_review_account(body, from, to);
+                    if next != body {
+                        if let Some(task) = crate::tasks::parse(&next)
+                            .into_iter()
+                            .find(|task| task.id.as_deref() == value["task_id"].as_str())
+                        {
+                            value["task"]["block_sha256"] = task.block_sha256.into();
+                        }
+                        value["body"] = next.into();
+                    }
+                }
                 if table == "inbox" && value["item_kind"] == "account" && value["subject"] == from {
                     value["subject"] = to.into();
                     // 안내 문구는 과거 명령을 남기지 않고 새 별칭으로 다시 만든다.
@@ -72,7 +93,7 @@ impl Db {
                 if key.starts_with("account-run:") {
                     crate::account_rename::preserve_label(&mut value, from);
                 }
-                crate::account_rename::json(&mut value, from, to);
+                crate::account_rename::json(&mut value, from, to, hashes);
                 if matches!(key.as_str(), "account-pool-v1" | "account-pool-v2") {
                     value["revision"] = aaa_common::util::new_id().into();
                     if key == "account-pool-v2"

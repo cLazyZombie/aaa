@@ -99,6 +99,8 @@ pub(crate) struct ThreadRec {
     pub machine_id: String,
     pub profile: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<aaa_proto::TaskReview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     /// 이름 변경 전 시작한 작업의 표시 이름. 인증·배정은 account의 현재 이름으로 찾는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,6 +236,12 @@ pub(crate) struct ThreadRec {
 }
 
 impl ThreadRec {
+    pub(crate) fn independent_review_profile(&self) -> Option<&str> {
+        let review = self.review.as_ref()?;
+        let profile = review.profile.as_deref().unwrap_or(&self.profile);
+        (profile != self.profile || review.account.is_some()).then_some(profile)
+    }
+
     pub(crate) fn protects_report_copy(&self) -> bool {
         self.status != ThreadStatus::Resolved || self.resolve_pending.is_some()
     }
@@ -292,6 +300,7 @@ impl ThreadRec {
             title: title.to_string(),
             machine_id: machine_id.to_string(),
             profile: profile.to_string(),
+            review: None,
             account: None,
             account_label: None,
             role,
@@ -718,6 +727,7 @@ impl Host {
             title: r.title.clone(),
             machine: self.machine_name(&r.machine_id),
             profile: r.profile.clone(),
+            review: r.review.clone(),
             account: r.account_label.clone().or_else(|| r.account.clone()),
             role: r.role,
             thread_kind: r.kind,

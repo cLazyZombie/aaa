@@ -95,6 +95,18 @@ impl Db {
         Ok(())
     }
 
+    /// 파일 제거를 확인한 판의 영수증만 확정한다. 이름 이전이 갱신한 본문과 선택은 유지한다.
+    pub(crate) fn archive_commit_revision(&self, project: &str, revision: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE task_archive SET data = json_set(data, '$.committed', json('true'))
+             WHERE project = ?1 AND json_extract(data, '$.committed') = 0
+             AND json_extract(data, '$.removed_sha256') = ?2",
+            params![project, revision],
+        )?;
+        Ok(())
+    }
+
     /// 이미 자리를 가진 Open의 재개는 같은 자리다. Failed 재시작의 새 자리만 원자적으로 잡는다.
     pub(crate) fn thread_restart_claim(
         &self,

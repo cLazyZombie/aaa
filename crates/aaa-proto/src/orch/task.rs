@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// 할 일 검수 선택. 생략하면 구현 profile과 자동 계정 배정을 사용한다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct TaskReview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
+}
+
 /// TASKS.md의 task 한 줄. 내용은 Markdown, 표시 번호는 host DB가 정본이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct TaskView {
@@ -23,6 +35,10 @@ pub struct TaskView {
     /// agent에게 맡긴 task의 머신 칸(FRONT_API 1.75): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
     #[serde(default)]
     pub machine: Option<String>,
+    /// FRONT_API 1.194. 두 검수 설정이 기본값이면 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review: Option<TaskReview>,
     /// owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
     /// 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
     #[serde(default)]
@@ -129,6 +145,9 @@ pub enum TaskOp {
         /// 머신 칸(FRONT_API 1.75)
         #[serde(default)]
         machine: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        review: Option<TaskReview>,
         #[serde(default)]
         notes: Vec<String>,
         #[serde(default)]
@@ -157,6 +176,10 @@ pub enum TaskOp {
         /// 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
         #[serde(default)]
         machine: Option<String>,
+        /// 준 검수 칸만 바꾼다. 빈 글은 해당 칸의 기본값이다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        review: Option<TaskReview>,
         #[serde(default)]
         notes: Option<Vec<String>>,
         #[serde(default)]
@@ -380,6 +403,14 @@ pub struct TaskBoard {
     pub text: String,
     /// task 저장소 칸에 쓸 수 있는 이름(FRONT_API 1.73): `project.toml` repos 경로의 마지막 이름, 겹치지 않게 적힌 차례
     pub repos: Vec<String>,
+    /// 구현 모델 칸을 비운 할 일의 기본 profile(FRONT_API 1.194).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_profile: Option<String>,
+    /// 검수 실행을 지원하는 profile의 이름과 harness. 웹에서 assignable 목록과 대조한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review_profiles: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// 할 일 「바로 시작」 확인창이 보일 것(FRONT_API 1.63, `thread_start_preview`). host가 `thread start --from-task`와 같은 규칙으로

@@ -3,7 +3,10 @@ use crate::{Host, err};
 use aaa_proto::{ErrorBody, ErrorCode, FrontResponse};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 mod gate;
 pub(crate) use gate::Gate;
@@ -106,23 +109,33 @@ pub(crate) fn preserve_label(v: &mut serde_json::Value, from: &str) {
 }
 
 /// 구조화된 계정 칸만 바꾼다. account_label·profile·명령·보고·과거 감사는 보존한다.
-pub(crate) fn json(v: &mut serde_json::Value, from: &str, to: &str) {
+pub(crate) fn json(v: &mut serde_json::Value, from: &str, to: &str, hashes: &BTreeMap<String, String>) {
     match v {
         serde_json::Value::Object(map) => {
+            let task = map.contains_key("block_sha256") && map.contains_key("id");
             for (key, child) in map {
                 if matches!(key.as_str(), "env" | "body" | "payload" | "credential") {
                     continue;
                 }
                 if matches!(key.as_str(), "account" | "required_account") && child.as_str() == Some(from) {
                     *child = to.into();
+                } else if matches!(key.as_str(), "approved_block" | "block_sha256" | "removed_sha256")
+                    && let Some(next) = child.as_str().and_then(|hash| hashes.get(hash))
+                {
+                    *child = next.clone().into();
+                } else if task
+                    && key == "raw"
+                    && let Some(raw) = child.as_str().filter(|raw| crate::tasks::is_task(raw))
+                {
+                    *child = crate::tasks::rename_review_account(raw, from, to).into();
                 } else {
-                    json(child, from, to);
+                    json(child, from, to, hashes);
                 }
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                json(item, from, to);
+                json(item, from, to, hashes);
             }
         }
         _ => (),
@@ -247,7 +260,11 @@ impl Host {
             .map(|s| serde_json::from_str(&s).map_err(internal))
             .collect::<Result<_, _>>()?;
         let mut thread_guards = Vec::new();
-        for r in records.iter().filter(|r| r.account.as_deref() == Some(from)) {
+        let affected_thread = |r: &&crate::orch::ThreadRec| {
+            r.account.as_deref() == Some(from)
+                || r.review.as_ref().and_then(|review| review.account.as_deref()) == Some(from)
+        };
+        for r in records.iter().filter(affected_thread) {
             thread_guards.push(self.claim_thread(&r.project, &r.id)?);
         }
         // 실행 인증은 run/session으로 찾는다. 현재 금고 참조만 옮기며 준비가 불명확한 실행은 보호한다.
@@ -279,7 +296,7 @@ impl Host {
         let _records = self.rec_lock.lock().unwrap();
         let mut candidates = Vec::new();
         for (_, dir) in &projects {
-            for name in ["aaa.toml", "project.toml"] {
+            for name in ["aaa.toml", "project.toml", "TASKS.md"] {
                 if dir.join(name).try_exists().map_err(internal)? {
                     candidates.push(dir.join(name));
                 }
@@ -293,12 +310,26 @@ impl Host {
         let locks: Vec<_> = candidates.iter().map(|p| self.file_locks.of(p)).collect();
         let _files: Vec<_> = locks.iter().map(|l| l.lock().unwrap()).collect();
         let mut journal = Journal { from: from.into(), to: to.into(), committed: false, files: vec![] };
+        let mut hashes = BTreeMap::new();
         for path in candidates {
             if !path.symlink_metadata().map_err(internal)?.is_file() {
                 return Err(internal("일반 설정 파일이 아니다"));
             }
             let before = std::fs::read_to_string(&path).map_err(internal)?;
-            let after = config(&before, from, to).map_err(internal)?;
+            let after = if path.file_name().is_some_and(|n| n == "TASKS.md") {
+                let after = crate::tasks::rename_review_account(&before, from, to);
+                if before != after {
+                    hashes.insert(crate::tasks::sha256(&before), crate::tasks::sha256(&after));
+                    for (old, new) in crate::tasks::parse(&before).into_iter().zip(crate::tasks::parse(&after)) {
+                        if old.block_sha256 != new.block_sha256 {
+                            hashes.insert(old.block_sha256, new.block_sha256);
+                        }
+                    }
+                }
+                after
+            } else {
+                config(&before, from, to).map_err(internal)?
+            };
             if before != after {
                 journal.files.push(FileChange { path, before, after });
             }
@@ -315,7 +346,7 @@ impl Host {
                 durable(&f.path, f.after.as_bytes())?;
             }
             journal.committed = true;
-            self.db.account_rename(from, to, actor, &serde_json::to_string(&journal)?)?;
+            self.db.account_rename(from, to, actor, &serde_json::to_string(&journal)?, &hashes)?;
             Ok(())
         })();
         if let Err(e) = result {
@@ -338,7 +369,7 @@ impl Host {
             tracing::error!(error=%e,"계정 이름 확정 뒤 정리 실패; journal로 다음 시작에서 정리");
         }
         drop(_records);
-        for r in records.iter().filter(|r| r.account.as_deref() == Some(from)) {
+        for r in records.iter().filter(affected_thread) {
             match self.thread_show(&r.project, &r.id) {
                 Ok(thread) => {
                     let _ = self.thread_events.send(thread);

@@ -143,6 +143,7 @@ fn identity_preserves_other_bytes_and_survives_edits() {
             person: false,
             profile: None,
             machine: None,
+            review: None,
             notes: None,
             thread: None,
             done: None,
@@ -170,6 +171,12 @@ fn selected_fields_reject_coordinator_and_allow_user_actor() {
         assert!(lab.h.protect_task_choices(old, new, "device:user").is_ok());
     }
     assert!(lab.h.protect_task_choices(old, &format!("{old}  메모\n"), "coordinator:p").is_ok());
+    let review =
+        "- [ ] 일 (claude@mac-a) [작업 폴더] <!-- aaa-review:{\"profile\":\"review-a\",\"account\":\"sample\"} -->\n";
+    for new in [old.to_string(), review.replace("review-a", "review-b"), review.replace("sample", "other")] {
+        assert_eq!(lab.h.protect_task_choices(review, &new, "coordinator:p").unwrap_err().code, ErrorCode::Forbidden);
+        assert!(lab.h.protect_task_choices(review, &new, "device:user").is_ok());
+    }
 }
 
 #[test]
@@ -464,6 +471,7 @@ async fn completed_or_deleted_tasks_retire_pending_reservations_before_the_board
                 person: false,
                 profile: None,
                 machine: None,
+                review: None,
                 notes: None,
                 thread: None,
                 done: Some(true),
@@ -1105,6 +1113,7 @@ async fn approved_default_model_is_protected_even_while_the_task_field_is_empty(
         person: false,
         profile: Some("codex".into()),
         machine: None,
+        review: None,
         notes: None,
         thread: None,
         done: None,
@@ -1162,6 +1171,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
         person: false,
         profile: Some("codex".into()),
         machine: None,
+        review: None,
         notes: None,
         thread: None,
         done: None,
@@ -1496,6 +1506,114 @@ async fn requested_choices_reject_changed_contents_and_started_reservations() {
 }
 
 #[tokio::test]
+async fn requested_review_choice_updates_pending_approval_and_logs_user_reason() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    let mut config = lab.h.cfg.clone();
+    config.profiles.insert(
+        "review-a".into(),
+        aaa_config::Profile { harness: "codex".into(), model: "review-model".into(), ..Default::default() },
+    );
+    let host = Host::open(config, lab.h.state.clone()).unwrap();
+    let op = TaskOp::Update {
+        at: at(&row.task),
+        title: None,
+        owner: None,
+        person: false,
+        profile: None,
+        machine: None,
+        review: Some(aaa_proto::TaskReview { profile: Some("review-a".into()), account: None }),
+        notes: None,
+        thread: None,
+        done: None,
+        repo: None,
+    };
+    assert_eq!(
+        host.task_edit("demo", vec![op.clone()], None, None, "coordinator:p").await.unwrap_err().code,
+        ErrorCode::Forbidden
+    );
+    let reason = "사용자가 첫 검수 모델 변경을 지시";
+    let response = host.task_edit("demo", vec![op], None, Some(reason.into()), "coordinator:p").await.unwrap();
+    let FrontResponse::TaskEdited { board, log_ids, conflict: None, .. } = response else { panic!("{response:?}") };
+    let updated = &board.queue[0];
+    assert_eq!((updated.position, updated.created_ms), (row.position, row.created_ms));
+    assert_eq!((&updated.profile, &updated.profile_revision), (&row.profile, &row.profile_revision));
+    assert_eq!(updated.selection.review.as_ref().unwrap().profile.as_deref(), Some("review-a"));
+    assert_eq!(updated.approved_block, board.tasks[0].block_sha256);
+    let log = host.db.task_log_get("demo", log_ids[0]).unwrap().unwrap();
+    assert!(log.actor.contains(reason));
+    assert!(log.after.unwrap().contains("\"profile\":\"review-a\""));
+}
+
+#[tokio::test]
+async fn review_account_changes_keep_the_reserved_implementation_choice() {
+    let lab = Lab::new();
+    let mut cfg = lab.h.cfg.clone();
+    for (name, harness) in [("build-a", "claude"), ("build-b", "codex")] {
+        cfg.profiles.insert(
+            name.into(),
+            aaa_config::Profile { harness: harness.into(), model: "review-model".into(), ..Default::default() },
+        );
+    }
+    cfg.defaults.thread_profile = "build-a".into();
+    let host = Host::open(cfg.clone(), lab.h.state.clone()).unwrap();
+    host.accounts.import("review-sample", "claude", &aaa_test_support::token("review-reserved-account")).unwrap();
+    lab.write("## Backlog\n- [ ] 검수 예약 (@mac-offline) [작업 폴더]\n  검수 계정과 승인 모델을 확인한다.\n");
+    let task = host.task_board("demo").unwrap().tasks.remove(0);
+    host.task_queue(
+        "demo",
+        QueueOp::Reserve {
+            account: None,
+            task: task.title.clone(),
+            block: task.block_sha256.clone(),
+            profile: "build-a".into(),
+            profile_revision: model_selection(&host, "build-a").unwrap().2,
+            after: None,
+            after_all: None,
+        },
+        "device:user",
+    )
+    .await
+    .unwrap();
+    drop(host);
+    cfg.defaults.thread_profile = "build-b".into();
+    let host = Host::open(cfg, lab.h.state.clone()).unwrap();
+    let edit = |task: &TaskView, account: &str| TaskOp::Update {
+        at: at(task),
+        title: None,
+        owner: None,
+        person: false,
+        profile: None,
+        machine: None,
+        review: Some(aaa_proto::TaskReview { profile: None, account: Some(account.into()) }),
+        notes: None,
+        thread: None,
+        done: None,
+        repo: None,
+    };
+    let response = host
+        .task_edit(
+            "demo",
+            vec![edit(&task, "review-sample")],
+            None,
+            Some("사용자가 검수 계정을 지정".into()),
+            "coordinator:p",
+        )
+        .await
+        .unwrap();
+    let FrontResponse::TaskEdited { board, conflict: None, .. } = response else { panic!("{response:?}") };
+    let row = &board.queue[0];
+    assert_eq!(row.profile, "build-a");
+    assert_eq!(row.selection.profile, "build-a");
+    assert_eq!(row.approved_block, board.tasks[0].block_sha256);
+    assert_eq!(row.selection.review.as_ref().unwrap().account.as_deref(), Some("review-sample"));
+    let response = host.task_edit("demo", vec![edit(&board.tasks[0], "")], None, None, "device:user").await.unwrap();
+    let FrontResponse::TaskEdited { board, conflict: None, .. } = response else { panic!("{response:?}") };
+    assert_eq!(board.queue[0].selection.profile, "build-a");
+    assert_eq!(board.queue[0].selection.review, None);
+}
+
+#[tokio::test]
 async fn requested_choices_validate_reason_and_operation_scope_before_writing() {
     let lab = Lab::new();
     let row = one_reservation(&lab).await;
@@ -1507,6 +1625,7 @@ async fn requested_choices_validate_reason_and_operation_scope_before_writing() 
         person: false,
         profile: Some(String::new()),
         machine: Some(String::new()),
+        review: None,
         notes: None,
         thread: None,
         done: None,
@@ -2144,6 +2263,7 @@ async fn multiple_predecessors_wait_through_failure_park_restart_and_detect_dele
                 person: false,
                 profile: None,
                 machine: None,
+                review: None,
                 notes: None,
                 thread: Some(tid.clone()),
                 done: None,

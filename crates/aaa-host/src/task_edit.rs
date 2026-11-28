@@ -395,7 +395,20 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
         let bad = at_op(i);
         let op = &remap(op, &renames);
         match op {
-            TaskOp::Add { list, title, owner, person, profile, machine, notes, parent, before, thread, repo } => {
+            TaskOp::Add {
+                list,
+                title,
+                owner,
+                person,
+                profile,
+                machine,
+                review,
+                notes,
+                parent,
+                before,
+                thread,
+                repo,
+            } => {
                 let title = tasks::check_title(title).map_err(&bad)?;
                 let owner =
                     tasks::edited_owner(None, owner.as_deref(), profile.as_deref(), machine.as_deref(), ctx.profiles)
@@ -420,7 +433,9 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     String::new()
                 };
                 let (at, ws, list) = target(&mut d, &list, before.as_ref(), parent.as_ref(), i)?;
-                let fields = tasks::Fields { owner, repo: repo.as_deref(), thread: thread.as_deref() };
+                let review = tasks::edited_review(None, review.as_ref()).map_err(&bad)?;
+                let fields =
+                    tasks::Fields { owner, repo: repo.as_deref(), thread: thread.as_deref(), review: review.as_ref() };
                 let line = tasks::task_line(&ws, ' ', &title, fields);
                 tasks::reads_back(&line, &title, fields).map_err(&bad)?;
                 let mut block = vec![line];
@@ -433,7 +448,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 records.push(r);
                 titles.push(title);
             }
-            TaskOp::Update { at, title, owner, person, profile, machine, notes, thread, done, repo } => {
+            TaskOp::Update { at, title, owner, person, profile, machine, review, notes, thread, done, repo } => {
                 let spans = d.spans();
                 let s = spans[find(&spans, at, i)?].clone();
                 let v = &s.view;
@@ -470,11 +485,13 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     Some(r) => Some((ctx.repo_ok)(r).map_err(&bad)?),
                 };
                 let new_done = done.unwrap_or(v.done);
+                let new_review = tasks::edited_review(v.review.as_ref(), review.as_ref()).map_err(&bad)?;
                 let raw = plain(&d.lines[s.idx]).to_string();
                 let line_changed = new_title != v.title
                     || new_owner != v.owner
                     || new_repo != v.repo
                     || new_thread != v.thread
+                    || new_review != v.review
                     || new_done != v.done;
                 let ws = s.ws(&d).to_string();
                 let mut block: Vec<String> = Vec::new();
@@ -496,6 +513,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                         owner: new_owner.as_deref(),
                         repo: new_repo.as_deref(),
                         thread: new_thread.as_deref(),
+                        review: new_review.as_ref(),
                     };
                     let line = tasks::task_line(&ws, c, &new_title, fields);
                     tasks::reads_back(&line, &new_title, fields)
@@ -773,7 +791,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
     let r = |a: &TaskAnchor| renamed(a, renames);
     let ro = |a: &Option<TaskAnchor>| a.as_ref().map(r);
     match op {
-        TaskOp::Add { list, title, owner, person, profile, machine, notes, parent, before, thread, repo } => {
+        TaskOp::Add { list, title, owner, person, profile, machine, review, notes, parent, before, thread, repo } => {
             TaskOp::Add {
                 list: list.clone(),
                 title: title.clone(),
@@ -781,6 +799,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
                 person: *person,
                 profile: profile.clone(),
                 machine: machine.clone(),
+                review: review.clone(),
                 notes: notes.clone(),
                 parent: ro(parent),
                 before: ro(before),
@@ -788,18 +807,21 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
                 repo: repo.clone(),
             }
         }
-        TaskOp::Update { at, title, owner, person, profile, machine, notes, thread, done, repo } => TaskOp::Update {
-            at: r(at),
-            title: title.clone(),
-            owner: owner.clone(),
-            person: *person,
-            profile: profile.clone(),
-            machine: machine.clone(),
-            notes: notes.clone(),
-            thread: thread.clone(),
-            done: *done,
-            repo: repo.clone(),
-        },
+        TaskOp::Update { at, title, owner, person, profile, machine, review, notes, thread, done, repo } => {
+            TaskOp::Update {
+                at: r(at),
+                title: title.clone(),
+                owner: owner.clone(),
+                person: *person,
+                profile: profile.clone(),
+                machine: machine.clone(),
+                review: review.clone(),
+                notes: notes.clone(),
+                thread: thread.clone(),
+                done: *done,
+                repo: repo.clone(),
+            }
+        }
         TaskOp::AppendNotes { at, notes } => TaskOp::AppendNotes { at: r(at), notes: notes.clone() },
         TaskOp::Delete { at } => TaskOp::Delete { at: r(at) },
         TaskOp::Move { at, to_list, before, parent } => {

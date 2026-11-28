@@ -31,6 +31,7 @@ fn job(state: ReviewState) -> Job {
         harness: "codex".into(),
         model: "model-a".into(),
         effort: "high".into(),
+        required_account: None,
         allocation: (state == ReviewState::Running).then(|| Allocation {
             selection: AccountSelection {
                 size: AccountTaskSize::Small,

@@ -47,6 +47,27 @@ pub(crate) fn identify(text: &str) -> Result<String, ErrorBody> {
 fn at(t: &TaskView) -> TaskAnchor {
     TaskAnchor { list: t.list.clone(), title: t.title.clone(), block_sha256: t.block_sha256.clone(), line: t.line }
 }
+
+fn choices_changed(old: &TaskView, new: &TaskView) -> bool {
+    old.owner != new.owner || old.review != new.review
+}
+
+fn update_review_pin(pin: &mut Option<aaa_proto::TaskReview>, old: &TaskView, new: &TaskView) {
+    if old.review == new.review {
+        return;
+    }
+    let before = old.review.clone().unwrap_or_default();
+    let after = new.review.clone().unwrap_or_default();
+    let mut choice = pin.take().unwrap_or_default();
+    if before.profile != after.profile {
+        choice.profile = after.profile;
+    }
+    if before.account != after.account {
+        choice.account = after.account;
+    }
+    *pin = (choice.profile.is_some() || choice.account.is_some()).then_some(choice);
+}
+
 fn empty_ctx() -> crate::task_edit::Ctx<'static> {
     crate::task_edit::Ctx {
         owner_ok: &|_, _| Ok(()),
@@ -66,6 +87,64 @@ pub(crate) fn model_selection(host: &Host, profile: &str) -> Result<(String, Str
 }
 
 impl Host {
+    pub(crate) fn check_task_reviews(
+        &self,
+        project: &str,
+        before: &str,
+        after: &str,
+        profiles: &[String],
+        keep_reservation_profile: bool,
+    ) -> Result<(), ErrorBody> {
+        let before = tasks::parse(before);
+        let default = self.default_thread_profile(project);
+        let pending =
+            if keep_reservation_profile { self.db.queue_list(project).map_err(internal)? } else { Vec::new() };
+        let implementation =
+            |task: &TaskView| tasks::agent_parts(task.owner.as_deref(), profiles).and_then(|(profile, _)| profile);
+        let effective_profile = |task: &TaskView, reserved: Option<&str>| {
+            task.review
+                .as_ref()
+                .and_then(|r| r.profile.clone())
+                .or_else(|| reserved.map(str::to_string))
+                .or_else(|| implementation(task))
+                .unwrap_or_else(|| default.clone())
+        };
+        let mut accounts = None;
+        for task in tasks::parse(after) {
+            let Some(review) = &task.review else { continue };
+            let old = before.iter().find(|old| match &old.id {
+                Some(id) => task.id.as_ref() == Some(id),
+                None => task.title == old.title,
+            });
+            let previous = old.and_then(|t| t.review.as_ref());
+            let profile_changed =
+                review.profile.is_some() && previous.and_then(|r| r.profile.as_ref()) != review.profile.as_ref();
+            let old_reserved = pending
+                .iter()
+                .find(|q| task.id.as_ref() == Some(&q.task_id) && matches!(q.state, S::Queued | S::Check))
+                .map(|q| q.profile.as_str());
+            let reserved = old_reserved.filter(|_| old.and_then(&implementation) == implementation(&task));
+            let name = effective_profile(&task, reserved);
+            let account = review.account.as_ref().filter(|account| {
+                previous.and_then(|r| r.account.as_ref()) != Some(*account)
+                    || old.is_some_and(|old| effective_profile(old, old_reserved) != name)
+            });
+            if profile_changed || account.is_some() {
+                let profile = self.configured_review_profile(project, &name)?;
+                if let Some(account) = account {
+                    let registered = match &accounts {
+                        Some(list) => list,
+                        None => accounts.insert(self.accounts.list()?),
+                    };
+                    if !registered.iter().any(|a| a.name == *account && a.harness == profile.harness) {
+                        return Err(err(ErrorCode::BadRequest, "검수 모델과 맞는 등록 계정을 지정한다"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 명시한 사용자 지시 없는 coordinator 편집은 선택 보호를 따른다. API 원문 쓰기도 같은 정책이다.
     pub(crate) fn protect_task_choices(&self, before: &str, after: &str, actor: &str) -> Result<(), ErrorBody> {
         if !actor.starts_with("coordinator:") {
@@ -86,7 +165,7 @@ impl Host {
                 continue;
             };
             // 빈 칸으로 승인한 기본 모델·자동 머신도 예약 뒤에는 고정 선택이다.
-            if old.owner != new.owner
+            if choices_changed(&old, new)
                 && approved.iter().any(|q| {
                     old.id.as_ref() == Some(&q.task_id)
                         && matches!(q.state, S::Queued | S::Check | S::Starting | S::Running)
@@ -94,7 +173,7 @@ impl Host {
             {
                 return Err(err(
                     ErrorCode::Forbidden,
-                    "예약에서 승인한 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
+                    "예약에서 승인한 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다. 검수 모델·계정도 같은 절차로 바꾼다",
                 ));
             }
             let (op, om) = tasks::agent_parts(old.owner.as_deref(), &profiles).unwrap_or_default();
@@ -103,6 +182,21 @@ impl Host {
                 return Err(err(
                     ErrorCode::Forbidden,
                     "정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
+                ));
+            }
+            if let Some(review) = &old.review
+                && (review
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| new.review.as_ref().and_then(|r| r.profile.as_ref()) != Some(p))
+                    || review
+                        .account
+                        .as_ref()
+                        .is_some_and(|a| new.review.as_ref().and_then(|r| r.account.as_ref()) != Some(a)))
+            {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "정해진 검수 설정은 사용자가 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
                 ));
             }
         }
@@ -120,7 +214,7 @@ impl Host {
         let rows = self.db.queue_list(project).map_err(internal)?;
         for old in tasks::parse(before) {
             let Some(t) = new.iter().find(|t| t.id == old.id) else { continue };
-            if old.owner == t.owner {
+            if !choices_changed(&old, t) {
                 continue;
             }
             let Some(q) = rows.iter().find(|q| old.id.as_ref() == Some(&q.task_id)) else { continue };
@@ -158,40 +252,45 @@ impl Host {
                     let a = old.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     let b = new.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     if let (Some(a), Some(b)) = (a, b)
-                        && a.owner != b.owner
+                        && choices_changed(a, b)
                     {
-                        let profile_changed = a.profile != b.profile;
-                        // 머신만 바꿀 때는 예약 당시 해석한 기본 모델과 설정 판을 유지한다.
                         let pending = matches!(q.state, S::Queued | S::Check);
-                        let profile = if profile_changed {
-                            b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project))
-                        } else if pending {
-                            q.profile.clone()
-                        } else {
-                            q.selection.profile.clone()
-                        };
                         let now = aaa_common::util::now_ms();
-                        q.selection = aaa_proto::TaskChoicePin {
-                            owner: b.owner.clone(),
-                            profile: profile.clone(),
-                            machine: b.machine.clone(),
-                            actor: actor.into(),
-                            at_ms: now,
-                        };
-                        if pending {
-                            if profile_changed {
-                                let (model, effort, revision) =
-                                    model_selection(self, &profile).map_err(|e| std::io::Error::other(e.message))?;
-                                q.model = model;
-                                q.effort = effort;
-                                q.profile_revision = revision;
+                        if a.owner != b.owner {
+                            q.selection.owner.clone_from(&b.owner);
+                            q.selection.machine.clone_from(&b.machine);
+                            // 머신만 바꿀 때는 예약 당시 해석한 기본 모델과 설정 판을 유지한다.
+                            if a.profile != b.profile {
+                                let profile = b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project));
+                                if pending {
+                                    let (model, effort, revision) = model_selection(self, &profile)
+                                        .map_err(|e| std::io::Error::other(e.message))?;
+                                    q.model = model;
+                                    q.effort = effort;
+                                    q.profile_revision = revision;
+                                    q.profile.clone_from(&profile);
+                                }
+                                q.selection.profile = profile;
+                            } else if pending {
+                                q.selection.profile.clone_from(&q.profile);
                             }
-                            q.profile = profile;
-                            q.machine = b.machine.clone();
+                            if pending {
+                                q.machine.clone_from(&b.machine);
+                            }
+                        }
+                        update_review_pin(&mut q.selection.review, a, b);
+                        q.selection.actor = actor.into();
+                        q.selection.at_ms = now;
+                        if pending {
                             q.task = b.clone();
                             q.approved_block = b.block_sha256.clone();
                             q.state = S::Queued;
-                            q.reason = "사용자 지시로 모델·머신 변경 · 자리 대기".into();
+                            q.reason = if a.review != b.review {
+                                "사용자 지시로 검수 설정 변경 · 자리 대기"
+                            } else {
+                                "사용자 지시로 모델·머신 변경 · 자리 대기"
+                            }
+                            .into();
                         }
                         q.updated_ms = now;
                     }
@@ -221,15 +320,17 @@ impl Host {
                     let a = old.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     let b = new.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
                     if let (Some(a), Some(b)) = (a, b)
-                        && a.owner != b.owner
+                        && choices_changed(a, b)
                     {
-                        q.selection = aaa_proto::TaskChoicePin {
-                            owner: b.owner.clone(),
-                            profile: b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project)),
-                            machine: b.machine.clone(),
-                            actor: actor.into(),
-                            at_ms: aaa_common::util::now_ms(),
-                        };
+                        if a.owner != b.owner {
+                            q.selection.owner.clone_from(&b.owner);
+                            q.selection.profile =
+                                b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project));
+                            q.selection.machine.clone_from(&b.machine);
+                        }
+                        update_review_pin(&mut q.selection.review, a, b);
+                        q.selection.actor = actor.into();
+                        q.selection.at_ms = aaa_common::util::now_ms();
                     }
                 }
                 Ok(())
@@ -367,11 +468,12 @@ impl Host {
                         q.selection.owner != old.owner
                             || q.selection.profile != profile
                             || q.selection.machine != old.machine
+                            || q.selection.review != old.review
                     })
                 {
                     return Err(err(
                         ErrorCode::Forbidden,
-                        "모델·머신 변경의 사용자 출처가 없다. 사용자가 직접 변경/예약한다",
+                        "모델·머신 또는 검수 설정 변경의 사용자 출처가 없다. 사용자가 직접 변경/예약한다",
                     ));
                 }
                 let expected = old.profile.clone().unwrap_or_else(|| self.default_thread_profile(project));
@@ -395,14 +497,8 @@ impl Host {
                     .ok_or_else(|| err(ErrorCode::Conflict, "task가 바뀌었다"))?
                     .clone();
                 // ID 이행 외에 내용이 바뀌었으면 이전 승인으로 등록하지 않는다.
-                if (
-                    old.title.clone(),
-                    old.owner.clone(),
-                    old.repo.clone(),
-                    old.notes.clone(),
-                    old.thread.clone(),
-                    old.done,
-                ) != (t.title.clone(), t.owner.clone(), t.repo.clone(), t.notes.clone(), t.thread.clone(), t.done)
+                if (&old.title, &old.owner, &old.repo, &old.notes, &old.thread, old.done, &old.review)
+                    != (&t.title, &t.owner, &t.repo, &t.notes, &t.thread, t.done, &t.review)
                 {
                     return Err(err(ErrorCode::Conflict, "예약 중 task 내용이 바뀌었다"));
                 }
@@ -417,6 +513,7 @@ impl Host {
                             person: false,
                             profile: None,
                             machine: None,
+                            review: None,
                             notes: None,
                             thread: Some(String::new()),
                             done: None,
@@ -458,6 +555,7 @@ impl Host {
                             owner: t.owner.clone(),
                             profile: profile.clone(),
                             machine: t.machine.clone(),
+                            review: t.review.clone(),
                             actor: by.clone(),
                             at_ms: now,
                         });
@@ -976,12 +1074,7 @@ impl Host {
 
     pub(crate) fn archive_recover(&self, project: &str) -> Result<(), ErrorBody> {
         let rev = file_rev::read(&self.project_dir(project)?.join("TASKS.md")).map_err(internal)?;
-        for mut row in self.db.archive_list(project).map_err(internal)? {
-            if !row.committed && row.removed_sha256 == rev.sha256 {
-                row.committed = true;
-                self.db.archive_save(project, &row).map_err(internal)?;
-            }
-        }
+        self.db.archive_commit_revision(project, &rev.sha256).map_err(internal)?;
         self.retire_task_queue(project, None, &rev.text)?;
         Ok(())
     }
@@ -993,6 +1086,7 @@ impl Host {
         view: Option<aaa_proto::TaskArchiveQuery>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        let _account_read = if restore.is_some() { Some(self.account_rename_gate.read().await) } else { None };
         self.project_dir(project)?;
         self.archive_recover(project)?;
         let restore = restore.map(|v| self.task_selector(project, v)).transpose()?;
@@ -1026,6 +1120,7 @@ impl Host {
                     person: false,
                     profile: None,
                     machine: None,
+                    review: None,
                     notes: None,
                     thread: Some(String::new()),
                     done: Some(false),

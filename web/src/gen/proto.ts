@@ -502,7 +502,7 @@ after?: string,
  */
 after_all?: Array<string>, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
 
-export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
+export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, review?: TaskReview, actor: string, at_ms: number, };
 
 export type TaskReservation = { selection: TaskChoicePin, task_id: string, task: TaskView, approved_block: string, profile: string, model: string, effort: string, profile_revision: string, machine: string | null,
 /**
@@ -631,6 +631,10 @@ profile: string | null,
  */
 machine: string | null,
 /**
+ * FRONT_API 1.194. 두 검수 설정이 기본값이면 생략한다.
+ */
+review?: TaskReview,
+/**
  * owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
  * 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
  */
@@ -681,6 +685,8 @@ attention_evidence?: TaskAttentionEvidence,
  * 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
  */
 auto_merge?: boolean, };
+
+export type TaskReview = { profile?: string, account?: string, };
 
 export type TaskListView = {
 /**
@@ -1033,7 +1039,15 @@ text: string,
 /**
  * task 저장소 칸에 쓸 수 있는 이름(FRONT_API 1.73): `project.toml` repos 경로의 마지막 이름, 겹치지 않게 적힌 차례
  */
-repos: Array<string>, };
+repos: Array<string>,
+/**
+ * 구현 모델 칸을 비운 할 일의 기본 profile(FRONT_API 1.194).
+ */
+default_profile?: string,
+/**
+ * 검수 실행을 지원하는 profile의 이름과 harness. 웹에서 assignable 목록과 대조한다.
+ */
+review_profiles?: { [key in string]: string }, };
 
 export type TaskSuggestion = { title: string, owner: string | null, thread: string | null,
 /**
@@ -1067,7 +1081,7 @@ profile: string | null,
 /**
  * 머신 칸(FRONT_API 1.75)
  */
-machine: string | null, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
+machine: string | null, review?: TaskReview, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
 /**
  * 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
  */
@@ -1083,7 +1097,11 @@ profile: string | null,
 /**
  * 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
  */
-machine: string | null, notes: Array<string> | null, thread: string | null, done: boolean | null,
+machine: string | null,
+/**
+ * 준 검수 칸만 바꾼다. 빈 글은 해당 칸의 기본값이다.
+ */
+review?: TaskReview, notes: Array<string> | null, thread: string | null, done: boolean | null,
 /**
  * 저장소 칸(FRONT_API 1.73, Add의 `repo`와 같은 값)
  */
@@ -2227,6 +2245,10 @@ park?: ThreadPark,
  * 이어진 할 일의 자동 병합(FRONT_API 1.143). off·할 일 없는 thread·옛 host는 생략한다
  */
 auto_merge?: boolean,
+/**
+ * 시작할 때 받은 할 일 검수 설정(FRONT_API 1.194).
+ */
+review?: TaskReview,
 /**
  * 실행 중인 pane의 번개 표지(`fast`·`ultrafast`). 표준 또는 미확인일 때는 생략한다.
  */

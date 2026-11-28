@@ -5202,3 +5202,5 @@ E2E 134의 Codex 초기 사용량 응답·native press 경합 대조와 수리�
 - [coordinator 대화 첨부 검증](testing-chat-media-t-2220.md)
 - [macOS WebKit 확대 영상 탐색 결함](testing-webkit-seek-t-2236.md)
 - [다른 모델 검수 원장과 원격 실행 검증](testing-review-t-2270.md)
+
+- [할 일 검수 모델·계정 저장과 실행 검증](testing-task-review-t-2273.md)

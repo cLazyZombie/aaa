@@ -265,6 +265,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub auto_merge: bool,
+    /// 시작할 때 받은 할 일 검수 설정(FRONT_API 1.194).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review: Option<TaskReview>,
     /// 실행 중인 pane의 번개 표지(`fast`·`ultrafast`). 표준 또는 미확인일 때는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

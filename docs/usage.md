@@ -282,6 +282,22 @@ aaa task edit d-0001 --profile codex --machine mac-a --user-request '사용자�
 할 일 기록에는 「coordinator가 사용자 지시로 변경」과 근거, 변경 전후 값이 남고 감사에도 같은 근거를 남긴다.
 미기동 예약은 취소 없이 순서·생성 시각을 유지하고 새 값으로 시작한다. 취소된 예약은 변경해도 취소 상태를 유지한다.
 이미 기동한 예약이나 다른 내용이 먼저 바뀐 예약은 거부한다. 상태·내용을 확인해 별도로 처리한다.
+
+### 할 일의 검수 모델과 계정
+
+웹 할 일 편집에서 모델·머신 아래의 「검수 모델」과 「검수 계정」을 고른다. 기본값은 「구현 모델과 같음」과 「자동」이다.
+검수에는 `aaa assignable`에 표시되는 profile 중 모델을 명시한 Codex·Claude profile과 같은 harness의 등록 계정을 쓸 수 있다.
+
+```sh
+aaa task add '알림 설정 확인' --review-profile review-a
+aaa task edit d-0001 --review-account review-account
+aaa task edit d-0001 --review-profile '' --review-account ''
+```
+
+편집에서 생략한 옵션은 기존 값을 유지하고 빈 값은 해당 칸을 기본값으로 돌린다. `TASKS.md`의 할 일 줄은 지정값을 ID 앞 주석에 보존한다.
+검수 설정 변경에는 모델·머신과 같은 보호를 적용하며, coordinator는 사용자 지시로 보호된 값을 바꿀 때 `--user-request`에 근거를 적는다.
+시작할 때 할 일의 선택이 thread 정보와 brief에 담긴다. 이전 할 일과 자동화는 생략한 설정을 기본값으로 읽는다.
+첫 독립 리뷰의 실행과 결과 확인은 [다른 모델 검수](review.md)를 따른다.
 사용자 지시 없는 변경·하향, 원문 편집 우회, 시작·재시작 옵션으로 다른 모델·머신을 쓰는 동작은 계속 거부한다.
 웹이나 aaa 밖 CLI의 일반 편집은 기존처럼 가능하며, 예약의 선택을 일반 편집으로 바꾸면 내용을 확인해 예약을 갱신한다.
 

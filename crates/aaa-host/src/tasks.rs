@@ -13,7 +13,7 @@
 //! - 쓰는 꼴(정규형): `- [ ] 제목 (owner) [저장소] · t-0001`. 저장 때 제목을 검사하고(`check_title`), 쓴 줄을 다시 읽어 같은 값인지 본다.
 //!   형식 어긋남 task에는 「정리 제안」(`suggest`)을 단다: 사람이 보고 「이대로 저장」해야 바뀐다.
 
-use aaa_proto::{TaskListView, TaskSuggestion, TaskView};
+use aaa_proto::{TaskListView, TaskReview, TaskSuggestion, TaskView};
 use sha2::Digest as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,14 +191,73 @@ pub(crate) struct Line {
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub thread: Option<String>,
+    pub review: Option<TaskReview>,
     pub problems: Vec<String>,
+}
+
+const REVIEW_PREFIX: &str = " <!-- aaa-review:";
+
+/// 검수 주석은 task ID 바로 앞에 둔다. 일반 HTML 주석은 제목에 남긴다.
+fn split_review(text: &str) -> (&str, Result<Option<TaskReview>, String>) {
+    let Some((body, json)) = text.trim_end().rsplit_once(REVIEW_PREFIX) else { return (text, Ok(None)) };
+    let Some(json) = json.strip_suffix(" -->") else { return (text, Ok(None)) };
+    let review = serde_json::from_str::<TaskReview>(json)
+        .map_err(|_| "검수 설정 주석 형식이 맞지 않는다".to_string())
+        .and_then(|r| edited_review(None, Some(&r)));
+    (body, review)
+}
+
+pub(crate) fn edited_review(
+    old: Option<&TaskReview>,
+    patch: Option<&TaskReview>,
+) -> Result<Option<TaskReview>, String> {
+    let Some(patch) = patch else { return Ok(old.cloned()) };
+    let field = |value: Option<&str>, previous: Option<&str>| {
+        value.or(previous).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+    };
+    let profile = field(patch.profile.as_deref(), old.and_then(|r| r.profile.as_deref()));
+    let account = field(patch.account.as_deref(), old.and_then(|r| r.account.as_deref()));
+    if let Some(profile) = &profile {
+        aaa_config::profile_edit::validate_name(profile).map_err(|_| "검수 profile 이름 형식이 맞지 않는다")?;
+    }
+    if account.as_deref().is_some_and(|name| !crate::accounts::valid_name(name)) {
+        return Err("검수 계정 이름 형식이 맞지 않는다".into());
+    }
+    Ok((profile.is_some() || account.is_some()).then_some(TaskReview { profile, account }))
+}
+
+fn review_suffix(review: Option<&TaskReview>) -> String {
+    review.map(|r| format!("{REVIEW_PREFIX}{} -->", serde_json::to_string(r).unwrap())).unwrap_or_default()
+}
+
+pub(crate) fn rename_review_account(text: &str, from: &str, to: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            if !is_task(line) {
+                return line.to_string();
+            }
+            let before_id = crate::task_queue::split_id(line).0.trim_end();
+            let (body, review) = split_review(before_id);
+            let Ok(Some(mut review)) = review else { return line.to_string() };
+            if review.account.as_deref() != Some(from) {
+                return line.to_string();
+            }
+            review.account = Some(to.into());
+            format!("{body}{}{}", review_suffix(Some(&review)), &line[before_id.len()..])
+        })
+        .collect()
 }
 
 /// 줄 본문 → 제목·owner·저장소·thread·형식 어긋남
 pub(crate) fn split_line(text: &str) -> Line {
-    let mut rest = crate::task_queue::split_id(text).0.trim().to_string();
+    let (body, review) = split_review(crate::task_queue::split_id(text).0);
+    let mut rest = body.trim().to_string();
     let mut thread = None;
     let mut problems = Vec::new();
+    let review = review.unwrap_or_else(|reason| {
+        problems.push(reason);
+        None
+    });
     if let Some((head, tail)) = rest.rsplit_once('·') {
         let t = tail.trim();
         if t.starts_with("t-") && t.len() > 2 && t[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
@@ -244,7 +303,7 @@ pub(crate) fn split_line(text: &str) -> Line {
     if rest.chars().count() > TITLE_MAX_CHARS {
         problems.push("제목이 김(메모로 옮길 후보)".into());
     }
-    Line { title: rest, owner, repo, thread, problems }
+    Line { title: rest, owner, repo, thread, review, problems }
 }
 
 /// 그 이름의 목록 자리(없으면 더한다)
@@ -295,7 +354,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
         }
         let t = l.trim_start();
         let done = matches!(&t[3..4], "x" | "X");
-        let Line { title, owner, repo, thread, problems } = split_line(&t[5..]);
+        let Line { title, owner, repo, thread, review, problems } = split_line(&t[5..]);
         let base = indent(l);
         let line = i as u32 + 1;
         while stack.last().is_some_and(|(d, _)| *d >= base) {
@@ -328,6 +387,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             owner,
             profile: None,
             machine: None,
+            review,
             repo,
             thread,
             notes,
@@ -395,6 +455,7 @@ pub(crate) struct Fields<'a> {
     pub owner: Option<&'a str>,
     pub repo: Option<&'a str>,
     pub thread: Option<&'a str>,
+    pub review: Option<&'a TaskReview>,
 }
 
 impl<'a> Fields<'a> {
@@ -408,13 +469,13 @@ pub(crate) fn task_line(ws: &str, done: char, title: &str, f: Fields) -> String 
     let owner = Fields::get(f.owner).map(|o| format!(" ({o})")).unwrap_or_default();
     let repo = Fields::get(f.repo).map(|r| format!(" [{r}]")).unwrap_or_default();
     let thread = Fields::get(f.thread).map(|t| format!(" · {t}")).unwrap_or_default();
-    format!("{ws}- [{done}] {title}{owner}{repo}{thread}")
+    format!("{ws}- [{done}] {title}{owner}{repo}{thread}{}", review_suffix(f.review))
 }
 
 /// 쓴 줄을 다시 읽은 값이 뜻한 값과 같은가(제목·owner·저장소·thread). 다르면 까닭
 pub(crate) fn reads_back(line: &str, title: &str, f: Fields) -> Result<(), String> {
     let t = line.trim_start();
-    let Line { title: rt, owner: ro, repo: rr, thread: rth, problems } = split_line(&t[5..]);
+    let Line { title: rt, owner: ro, repo: rr, thread: rth, review, problems } = split_line(&t[5..]);
     // 제목 끝 `[이름]`은 owner·저장소 칸이 뒤에 오면 제목으로 읽힌다. 칸이 없으면 저장소로 읽히므로 그때만 거부한다
     if rr.as_deref() != Fields::get(f.repo) && repo_tail(title).is_some() {
         return Err(format!(
@@ -426,6 +487,7 @@ pub(crate) fn reads_back(line: &str, title: &str, f: Fields) -> Result<(), Strin
         || ro.as_deref() != Fields::get(f.owner)
         || rr.as_deref() != Fields::get(f.repo)
         || rth.as_deref() != Fields::get(f.thread)
+        || review.as_ref() != f.review
     {
         return Err(format!("`{t}`가 다른 값으로 다시 읽힌다(제목 `{rt}`)"));
     }
@@ -522,7 +584,12 @@ pub(crate) fn suggest(t: &TaskView, open_threads: &[String]) -> Option<TaskSugge
     {
         return None;
     }
-    let fields = Fields { owner: owner.as_deref(), repo: t.repo.as_deref(), thread: thread.as_deref() };
+    let fields = Fields {
+        owner: owner.as_deref(),
+        repo: t.repo.as_deref(),
+        thread: thread.as_deref(),
+        review: t.review.as_ref(),
+    };
     let line = task_line("", ' ', &title, fields);
     reads_back(&line, &title, fields)
         .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
@@ -768,15 +835,20 @@ mod tests {
         );
         // 쓴 줄은 다시 읽어도 같은 값이다
         for f in [
-            Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518") },
-            Fields { owner: None, repo: Some(REPO_DIR), thread: None },
-            Fields { owner: Some("codex@mac-b"), repo: None, thread: Some("t-1") },
+            Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518"), review: None },
+            Fields { owner: None, repo: Some(REPO_DIR), thread: None, review: None },
+            Fields { owner: Some("codex@mac-b"), repo: None, thread: Some("t-1"), review: None },
         ] {
             let line = task_line("  ", ' ', "고치기", f);
             reads_back(&line, "고치기", f).unwrap();
         }
         assert_eq!(
-            task_line("", ' ', "고치기", Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518") }),
+            task_line(
+                "",
+                ' ',
+                "고치기",
+                Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518"), review: None }
+            ),
             "- [ ] 고치기 (claude) [aaa] · t-0518"
         );
         // 제목 끝 `[이름]`은 뒤에 owner·저장소 칸이 오면 제목이고, 칸이 없으면 저장소로 읽혀 쓰지 않는다

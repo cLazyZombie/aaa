@@ -136,6 +136,7 @@ pub(crate) fn thread_rec(
         legacy: Default::default(),
         account: None,
         account_label: None,
+        review: None,
         holds: vec![],
         started_by: None,
         automation: None,

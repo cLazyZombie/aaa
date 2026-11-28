@@ -49,6 +49,12 @@ pub(super) enum TaskCmd {
         /// agent에게 맡길 머신. 비우면 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳
         #[arg(long)]
         machine: Option<String>,
+        /// 검수 모델(profile). 비우면 구현 모델과 같다
+        #[arg(long)]
+        review_profile: Option<String>,
+        /// 검수에 쓸 등록 계정. 비우면 자동 배정
+        #[arg(long)]
+        review_account: Option<String>,
         /// 사람의 할 일: `me`(사용자)나 사람 이름(--person). 옛 꼴 profile@machine도 받는다. --profile·--machine과 함께 쓰지 않는다
         #[arg(long)]
         owner: Option<String>,
@@ -81,7 +87,7 @@ pub(super) enum TaskCmd {
     Edit {
         /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
-        /// 사용자 지시로 모델·머신·자동 병합을 바꾸는 근거 한 줄. --profile·--machine·--auto-merge 변경에만 쓴다(예약 유지)
+        /// 사용자 지시로 모델·머신·검수 설정·자동 병합을 바꾸는 근거 한 줄(미기동 예약 유지)
         #[arg(long, value_name = "REASON")]
         user_request: Option<String>,
         /// 자동 병합 on/off. on이면 `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창을 준다
@@ -98,6 +104,12 @@ pub(super) enum TaskCmd {
         /// 머신 칸. 빈 글이면 비운다(모델 칸은 그대로)
         #[arg(long)]
         machine: Option<String>,
+        /// 검수 모델(profile). 빈 글이면 구현 모델과 같음
+        #[arg(long)]
+        review_profile: Option<String>,
+        /// 검수 계정. 빈 글이면 자동 배정
+        #[arg(long)]
+        review_account: Option<String>,
         /// 사람의 할 일(`me`·사람 이름). 빈 글이면 미할당
         #[arg(long)]
         owner: Option<String>,

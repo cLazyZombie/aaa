@@ -107,6 +107,9 @@ pub(super) fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     if t.auto_merge {
         let _ = writeln!(s, "자동 병합: on (병합 준비되면 사용자에게 묻지 않고 착지 창)");
     }
+    if let Some(review) = &t.review {
+        let _ = writeln!(s, "{}", render_task_review(review));
+    }
     if let Some(o) = &t.over_limit {
         let _ = writeln!(
             s,
@@ -326,6 +329,9 @@ pub(super) fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let id = t.short_id.as_deref().map(|s| format!("{s} ")).unwrap_or_default();
             let merge = if t.auto_merge { "  {자동 병합}" } else { "" };
             let _ = writeln!(s, "{pad}{mark} {id}{}{owner}{repo}{thread}{merge}  [{}줄]", t.title, t.line);
+            if let Some(review) = &t.review {
+                let _ = writeln!(s, "{pad}    {}", render_task_review(review));
+            }
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
             }
@@ -340,6 +346,14 @@ pub(super) fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let _ = writeln!(s, "  {} {} · {}", t.id, t.title, t.group.label());
         }
     }
+}
+
+fn render_task_review(review: &aaa_proto::TaskReview) -> String {
+    format!(
+        "검수 모델 {} · 검수 계정 {}",
+        review.profile.as_deref().unwrap_or("구현 모델과 같음"),
+        review.account.as_deref().unwrap_or("자동"),
+    )
 }
 
 /// `aaa task log`: `#id 언제 누가 동작 [목록] 제목`, 되살린 삭제는 표시한다

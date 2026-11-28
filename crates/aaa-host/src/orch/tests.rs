@@ -20,6 +20,7 @@ fn open_thread() -> ThreadRec {
         legacy: Default::default(),
         account: None,
         account_label: None,
+        review: None,
         holds: vec![],
         started_by: None,
         over_limit: None,
@@ -129,6 +130,18 @@ fn g(r: &ThreadRec, a: Option<AgentStatus>) -> ThreadGroup {
 
 fn with_report(r: ThreadRec) -> ThreadRec {
     ThreadRec { report_hash: Some("h".into()), ..r }
+}
+
+#[test]
+fn independent_review_uses_another_profile_or_the_same_profile_with_a_pinned_account() {
+    let mut thread = open_thread();
+    assert_eq!(thread.independent_review_profile(), None);
+    thread.review = Some(aaa_proto::TaskReview { profile: Some("review-codex".into()), account: None });
+    assert_eq!(thread.independent_review_profile(), Some("review-codex"));
+    thread.review = Some(aaa_proto::TaskReview { profile: Some("claude".into()), account: None });
+    assert_eq!(thread.independent_review_profile(), None);
+    thread.review = Some(aaa_proto::TaskReview { profile: None, account: Some("review-account".into()) });
+    assert_eq!(thread.independent_review_profile(), Some("claude"));
 }
 
 use AgentActivity::*;
